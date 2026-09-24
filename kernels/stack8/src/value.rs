@@ -240,7 +240,12 @@ pub struct CursorState {
 
 #[derive(Debug, Clone)]
 pub enum CursorSource {
-    Items(Vec<Value>, usize),
+    /// A row walked place by place from a copy made whole beforehand,
+    /// so that a step forward through it means moving the place the
+    /// walk stands at and nothing more: the row itself is one member
+    /// of the cursor's own state, shared out to every step of it
+    /// rather than copied out and back again at each one.
+    Items(Rc<Vec<Value>>, usize),
     /// A counted row walked place by place, never made whole.
     Counted(Rc<Counted>, BigInt),
     /// A list walked through the cell it lives in, read as it stands at
@@ -335,20 +340,68 @@ pub enum Descriptor {
     Bound(Value, Value),
 }
 
+/// A stand-in for the standard library's own scattering, which guards
+/// against an adversary choosing keys on purpose. A set's own members
+/// are kept under a key already reckoned by `set_key`, never a
+/// program's raw text, so that guard buys nothing here and every
+/// member read or written pays for it regardless. This is the
+/// textbook Fowler-Noll-Vo pass, one byte at a time: no table, no
+/// lookahead, just a running product folded against each byte in turn.
+pub struct QuickHash(u64);
+
+impl QuickHash {
+    const START: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+}
+
+impl Default for QuickHash {
+    fn default() -> Self { QuickHash(Self::START) }
+}
+
+impl std::hash::Hasher for QuickHash {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut running = self.0;
+        for &byte in bytes {
+            running ^= byte as u64;
+            running = running.wrapping_mul(Self::PRIME);
+        }
+        self.0 = running;
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+pub type FxBuildHasher = std::hash::BuildHasherDefault<QuickHash>;
+
 /// The hash finds a member; the row remembers when it first came.
 #[derive(Debug, Clone)]
 pub struct Members {
     pub row: Vec<String>,
-    pub held: std::collections::HashMap<String, Value>,
+    pub held: std::collections::HashMap<String, Value, FxBuildHasher>,
     pub word: String,
+    /// Whether these are the members of a set that cannot be changed.
+    /// The kind a set is of stands here, beside the members themselves,
+    /// so that whoever holds the members knows which kind they are of
+    /// without asking the definition for the word again.
+    pub fixed: bool,
+    /// The fold of a fixed set's members, once it has been reckoned.
+    /// Nothing may alter such a set, so the fold never goes stale and
+    /// is reckoned but once however often it is asked for. A set of
+    /// sets would otherwise fold its members afresh at every level and
+    /// cost what the whole nesting beneath it costs.
+    pub folded: std::cell::Cell<Option<i64>>,
 }
 
 impl Members {
-    pub fn empty(word: String) -> Self {
-        Self { row: Vec::new(), held: std::collections::HashMap::new(), word }
+    pub fn empty(word: String, fixed: bool) -> Self {
+        Self { row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None) }
     }
 
     pub fn insert(&mut self, key: String, value: Value) {
+        self.folded.set(None);
         if !self.held.contains_key(&key) {
             self.row.push(key.clone());
             self.held.insert(key, value);
@@ -356,6 +409,7 @@ impl Members {
     }
 
     pub fn remove(&mut self, key: &str) -> Option<Value> {
+        self.folded.set(None);
         let found = self.held.remove(key);
         if found.is_some() { self.row.retain(|k| k != key); }
         found
@@ -373,7 +427,7 @@ impl Members {
     }
 
     pub fn combine(&self, other: &Self, how: u8) -> Self {
-        let mut result = Self::empty(self.word.clone());
+        let mut result = Self::empty(self.word.clone(), self.fixed);
         for key in &self.row {
             let shared = other.held.contains_key(key);
             if how == 0 || (how == 1 && shared) || (how >= 2 && !shared) {
@@ -388,9 +442,33 @@ impl Members {
         result
     }
 
+    /// The members written out. An empty set names its kind and shows
+    /// nothing between braces at all; a set that cannot be changed
+    /// names its kind before the braces, since nothing written in the
+    /// program stands for one and the braces alone would read as the
+    /// changeable kind.
     pub fn show(&self, shown: impl Fn(&Value) -> String) -> String {
         if self.row.is_empty() { return format!("{}()", self.word); }
-        format!("{{{}}}", self.row.iter().map(|k| shown(&self.held[k])).collect::<Vec<_>>().join(", "))
+        let apart = self.row.iter().map(|k| shown(&self.held[k])).collect::<Vec<_>>().join(", ");
+        if self.fixed { return format!("{}({{{}}})", self.word, apart); }
+        format!("{{{apart}}}")
+    }
+
+    /// The address the whole of these members takes where a set holds
+    /// them: the addresses of the members themselves, put in order and
+    /// then folded into one number, so that two sets of the same
+    /// members share the one address however either was gathered. The
+    /// addresses are folded rather than written one after another
+    /// because a set of sets would double the writing at every level:
+    /// the numbers built out of sets alone reach a length no machine
+    /// could hold, whilst the fold stays one number wide however deep
+    /// the nesting goes.
+    pub fn address(&self) -> String {
+        let mut places: Vec<&str> = self.row.iter().map(String::as_str).collect();
+        places.sort_unstable();
+        let mut state = std::collections::hash_map::DefaultHasher::new();
+        for place in places { std::hash::Hash::hash(place, &mut state); }
+        format!("frozen:{:x}", std::hash::Hasher::finish(&state))
     }
 }
 
@@ -662,6 +740,18 @@ impl Value {
         text
     }
 
+    /// Whether a value is a set that cannot be changed, read through
+    /// whatever cells stand between a name and the set itself. A set
+    /// held whilst its members are being read answers as a changeable
+    /// one, since nothing may ask it anything at such a moment.
+    pub fn set_fixed(&self) -> bool {
+        match self {
+            Value::Set(members) | Value::SetWalk(members, _) => members.try_borrow().map_or(false, |held| held.fixed),
+            Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => cell.borrow().set_fixed(),
+            _ => false,
+        }
+    }
+
     pub fn member_key(&self) -> Result<String, &'static str> {
         if let Value::Tuple(items) = self {
             let keys = items.iter().map(Value::member_key).collect::<Result<Vec<_>, _>>()?;
@@ -701,7 +791,12 @@ impl Value {
             Value::Ellipsis => Ok("dots".into()),
             Value::Array(_) => Err("list"),
             Value::Map(_) => Err("dict"),
-            Value::Set(_) => Err("set"),
+            // A set that cannot be changed is addressed by what it
+            // holds; a changeable one has no address at all.
+            Value::Set(members) => match members.try_borrow() {
+                Ok(held) if held.fixed => Ok(held.address()),
+                _ => Err("set"),
+            },
             Value::Bond(cell) => cell.borrow().member_key(),
             _ => Err(""),
         }
@@ -1158,15 +1253,35 @@ impl Value {
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
             // A kind's own method read from the kind itself is bound to
-            // nothing and is written with the kind it belongs to.
+            // nothing and is written with the kind it belongs to; a data
+            // member reads the same way, but under CPython's own word
+            // for the descriptor that carries it.
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
-                [Value::Text(kind), Value::Text(word)] => format!("<method '{word}' of '{kind}' objects>"),
+                [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
+                    Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
+                    None => format!("<method '{word}' of '{kind}' objects>"),
+                },
                 _ => "<member wrapper>".to_string(),
             },
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
+        }
+    }
+
+    /// Whether a loose member, read off a builtin kind's own word, is a
+    /// data member rather than a method, for the small set of kinds
+    /// that carry one: what CPython calls the descriptor in its repr,
+    /// and the name `type()` gives it. `int`, `bool` and `float` show
+    /// an attribute; `complex`, `range` and `slice` show a member, as
+    /// CPython 3.11 has it.
+    pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        match kind {
+            "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
+            "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),
+            "range" | "slice" if matches!(name, "start" | "stop" | "step") => Some(("member", "member_descriptor")),
+            _ => None,
         }
     }
 

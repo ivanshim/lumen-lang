@@ -459,7 +459,10 @@ pub enum Builtin {
     Tuple,
     ValueMethod,
     Sorted,
-    InstanceOf, Set, Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Ascii, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
+    InstanceOf, Set,
+    /// The maker of a set that cannot be changed, a kind apart from Set.
+    Frozen,
+    Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Ascii, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
     SetMake,
     SetAdd,
     SetRemove,
@@ -541,6 +544,12 @@ pub enum Builtin {
     /// inside a routine a copy of its own, outside the same dictionary
     /// as the outermost names.
     NearNames,
+    /// The compiler's own stand-in for `locals()` written through by a
+    /// place within it, read where a class body stands: a dictionary
+    /// of its own, made fresh and thrown away once the write is done,
+    /// never the world's, which a class body has no place of its own
+    /// in to begin with.
+    ClassLocalsPlace,
     /// Text read and run as statements, in dictionaries handed over or
     /// where the call stands (ext.builtin.exec).
     RunText,
@@ -788,12 +797,19 @@ pub enum Instr {
 }
 
 impl Builtin {
+    /// The set workings that change the set handed to them. A set that
+    /// cannot be changed answers to none of these: the words are no
+    /// members of it at all, as the reference has it.
+    pub fn set_alters(self) -> bool {
+        matches!(self, Self::SetAdd | Self::SetRemove | Self::SetDiscard | Self::SetPop | Self::SetClear | Self::SetUpdate | Self::SetMeetUpdate | Self::SetLessUpdate | Self::SetXorUpdate)
+    }
+
     /// Whether this builtin word names a kind of value rather than a
     /// piece of work. Such a word stands for the kind it makes, and is
     /// written as that kind rather than as work waiting to be done.
     pub fn names_kind(self) -> bool {
         matches!(self, Self::ToInt | Self::ToText | Self::AsReal | Self::SortOf | Self::List | Self::Dict
-            | Self::Tuple | Self::Set | Self::Bool | Self::Complex | Self::Bytes(0 | 1) | Self::Span
+            | Self::Tuple | Self::Set | Self::Frozen | Self::Bool | Self::Complex | Self::Bytes(0 | 1) | Self::Span
             | Self::Enumerate | Self::Zip | Self::Map | Self::Filter | Self::Reversed | Self::MakeSlice
             | Self::ClassTool(9..=11))
     }

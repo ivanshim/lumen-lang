@@ -12,7 +12,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Descriptor, Class, Ending, Instance, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
+use crate::value::{Descriptor, Class, Ending, Instance, KeyedPairs, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -291,7 +291,8 @@ enum Kindred {
     Row,
     Tuple,
     Map,
-    Set,
+    /// A set, and whether it is one that cannot be changed.
+    Set(bool),
     Counted,
     View(bool),
 }
@@ -321,6 +322,15 @@ const SET_METHOD_LABELS: &[&str] = &[
     "ext.builtin.set.intersection", "ext.builtin.set.difference", "ext.builtin.set.symmetric_difference",
     "ext.builtin.set.issubset", "ext.builtin.set.issuperset", "ext.builtin.set.isdisjoint",
     "ext.builtin.set.intersection_update", "ext.builtin.set.difference_update", "ext.builtin.set.symmetric_difference_update",
+];
+
+/// The same labels less the ones that change the set: the methods a
+/// set that cannot be changed answers to. Nothing here writes into the
+/// set it is given, so a fixed set has every one of them.
+const SET_STILL_LABELS: &[&str] = &[
+    "ext.builtin.set.copy", "ext.builtin.set.union", "ext.builtin.set.intersection",
+    "ext.builtin.set.difference", "ext.builtin.set.symmetric_difference",
+    "ext.builtin.set.issubset", "ext.builtin.set.issuperset", "ext.builtin.set.isdisjoint",
 ];
 
 /// What parts a group of exceptions: classes its members may stand
@@ -1864,14 +1874,23 @@ impl<'a> Engine<'a> {
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
             if let Value::Binding(shared) = &frame[s] {
-                let value = shared.borrow().clone();
+                // A taking read of a name closed-over locals still box
+                // leaves its cell in the same shape a plain slot's does:
+                // the value moves out and a gap stands where it stood,
+                // rather than a clone of everything held paid for a
+                // read about to be overwritten anyway.
+                let value = if slot.moving { std::mem::replace(&mut *shared.borrow_mut(), Value::Gap) } else { shared.borrow().clone() };
                 if self.lang.closes_over && matches!(value, Value::Blank) {
                     return Err(Self::named_fault(if slot.free { &self.lang.free_unbound } else { &self.lang.local_unbound }, &slot.ident));
                 }
                 return Ok(value);
             }
             if let Value::Bond(shared) = &frame[s] {
-                return Ok(if self.lang.bind_names { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
+                return Ok(match () {
+                    _ if self.lang.bind_names => Value::Bond(shared.clone()),
+                    _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
+                    _ => shared.borrow().clone(),
+                });
             }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
@@ -1884,7 +1903,11 @@ impl<'a> Engine<'a> {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) { return found; }
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
-            return Ok(if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
+            return Ok(match () {
+                _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
+                _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
+                _ => shared.borrow().clone(),
+            });
         }
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
@@ -3382,7 +3405,7 @@ impl<'a> Engine<'a> {
                         }
                         // The names standing where the call is made are
                         // only to be seen from here, where the frame is.
-                        Action::Builtin(kind @ (Builtin::NearNames | Builtin::Vars | Builtin::ClassTool(8) | Builtin::OuterNames), _) if *argc == 0 && !self.lang.compile_modes.is_empty() => {
+                        Action::Builtin(kind @ (Builtin::NearNames | Builtin::Vars | Builtin::ClassTool(8) | Builtin::OuterNames | Builtin::ClassLocalsPlace), _) if *argc == 0 && !self.lang.compile_modes.is_empty() => {
                             self.names_about(program, frame, *kind).map(|names| self.data.push(names))
                         }
                         // What a call was given is read back as it
@@ -3711,6 +3734,167 @@ impl<'a> Engine<'a> {
         self.special_truth(&equal)
     }
 
+    /// Where a key given to one of a map's own methods stands among its
+    /// rows, answered exactly as the subscript road answers it: the
+    /// lookup's own place first, and the program's own equality —
+    /// which `alike`, a free function, cannot call — only where the
+    /// place itself cannot say. The keyed form of the key comes back
+    /// beside the place, ready to store should the key be new.
+    fn map_locate(&mut self, pairs: &[(Value, Value)], store: Option<&crate::value::KeyedPairs>, key: &Value) -> Res<(Option<usize>, Value)> {
+        let keyed = self.special_key(key)?;
+        if let (Some(store), Ok(keytext)) = (store, keyed.member_key()) {
+            match store.locate(&keytext) {
+                Placement::AtRow(at) => return Ok((Some(at), keyed)),
+                Placement::NotThere => return Ok((None, keyed)),
+                Placement::Uncertain => {}
+            }
+        }
+        for (position, (old, _)) in pairs.iter().enumerate() {
+            if self.special_keys_equal(old, &keyed)? { return Ok((Some(position), keyed)); }
+        }
+        Ok((None, keyed))
+    }
+
+    /// A key written into a store-backed map, in place: `map_locate`'s
+    /// own answer, grown into the rows on a miss, or written over the
+    /// row on a hit — the very road `d[k] = v` already takes for a map
+    /// alone in its own cell, taken here for a map alone in the data
+    /// stack's care instead, so the store's index grows one row at a
+    /// time rather than being rebuilt from every row for every key.
+    fn store_write(&mut self, pairs: &mut Rc<KeyedPairs>, key: Value, value: Value) -> Res<()> {
+        let store: &KeyedPairs = pairs.as_ref();
+        let (found, keyed) = self.map_locate(store, Some(store), &key)?;
+        match found {
+            Some(at) => Rc::make_mut(pairs).overwrite_row(at, value),
+            None => store_insert_new(pairs, keyed, value),
+        }
+        Ok(())
+    }
+
+    /// A row written over the value its key already holds, or added
+    /// last: `put_key` in its own words, but able to call `__eq__` for
+    /// a key that needs it, which the free function it stands beside
+    /// cannot.
+    fn map_enter(&mut self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) -> Res<()> {
+        let keyed = self.special_key(&key)?;
+        for entry in pairs.iter_mut() {
+            if self.special_keys_equal(&entry.0, &keyed)? { entry.1 = value; return Ok(()); }
+        }
+        pairs.push((keyed, value));
+        Ok(())
+    }
+
+    /// The cell a map method's receiver stands in, written over with a
+    /// new set of rows, exactly as `methods::call`'s own `store` writes it.
+    fn replace_map(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>) -> Res<()> {
+        let Value::Collection(cell, _) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
+        let new_value = Value::Map(Rc::new(pairs.into()));
+        if crate::methods::reaches(&new_value, cell, 0) { return Err(self.lang.method_errors["unready"].clone()); }
+        *cell.borrow_mut() = new_value;
+        Ok(())
+    }
+
+    /// `get`, `setdefault` and `pop`: the one key each is asked about is
+    /// looked for by the road `map_locate` takes, so a Thing with its
+    /// own `__eq__` is found by it and an int subclass by the plain int
+    /// it is worth, exactly as `d[key]` finds them.
+    fn dict_key_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>) -> Res<Value> {
+        if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
+        if matches!(args[0].contents(), Value::Array(_) | Value::Map(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
+        let Value::Map(store) = receiver.contents() else { return Err(self.lang.method_errors["unready"].clone()); };
+        let pairs = store.to_vec();
+        let (found, keyed) = self.map_locate(&pairs, Some(store.as_ref()), &args[0])?;
+        if let Some(index) = found {
+            let value = pairs[index].1.clone();
+            if operation == "pop" {
+                let mut remaining = pairs;
+                remaining.remove(index);
+                self.replace_map(receiver, remaining)?;
+            }
+            return Ok(value);
+        }
+        if operation == "pop" && args.len() == 1 {
+            return Err(self.lang.method_errors["key"].clone() + &args[0].representation(&self.wording()));
+        }
+        let value = args.get(1).cloned().unwrap_or(Value::Null);
+        if operation == "setdefault" {
+            let mut grown = pairs;
+            grown.push((keyed, value.clone()));
+            self.replace_map(receiver, grown)?;
+        }
+        Ok(value)
+    }
+
+    /// `update`: each pair goes in as it is met, through `map_enter`, so
+    /// that the pairs read before an ill-shaped one are kept when the
+    /// call stops on it, as they were before, and a key that needs
+    /// `__eq__` to find its place is found by it.
+    fn dict_update(&mut self, receiver: &Value, args: Vec<Value>, named: &[(String, Value)]) -> Res<Value> {
+        if args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+        let Value::Map(store) = receiver.contents() else { return Err(self.lang.method_errors["unready"].clone()); };
+        let mut pairs = store.to_vec();
+        let mut amiss = None;
+        if let Some(v) = args.first() {
+            match v.contents() {
+                Value::Map(p) => { for (k, v) in p.iter() { self.map_enter(&mut pairs, k.clone(), v.clone())?; } }
+                other => {
+                    for item in crate::methods::members(&other, &|k| self.lang.method_errors[k].clone())? {
+                        let pair = crate::methods::members(&item, &|k| self.lang.method_errors[k].clone())?;
+                        if pair.len() != 2 { amiss = Some(self.lang.method_errors["arguments"].clone()); break; }
+                        self.map_enter(&mut pairs, pair[0].clone(), pair[1].clone())?;
+                    }
+                }
+            }
+        }
+        if amiss.is_none() { for (k, v) in named { self.map_enter(&mut pairs, Value::text(k), v.clone())?; } }
+        self.replace_map(receiver, pairs)?;
+        match amiss { Some(told) => Err(told), None => Ok(Value::Null) }
+    }
+
+    /// `dict.fromkeys`: a new map with a row for each member its
+    /// iterable target gives, every one holding the fill value it was
+    /// given, or nothing — deduplicated through `map_locate`, the
+    /// store's own text-keyed index first and `special_keys_equal`
+    /// (rather than the free function `alike`) only where that leaves
+    /// things uncertain, so a Thing with its own `__eq__` still
+    /// collapses to the one key CPython gives it, and a target of
+    /// many keys is not scanned again for every one it grows by.
+    fn dict_fromkeys(&mut self, target: &Value, filling: Value) -> Res<Value> {
+        let items = crate::methods::members(target, &|k| self.lang.method_errors[k].clone())?;
+        let mut pairs: Rc<KeyedPairs> = Rc::new(Vec::new().into());
+        for key in items {
+            let store: &KeyedPairs = pairs.as_ref();
+            let (found, keyed) = self.map_locate(store, Some(store), &key)?;
+            if found.is_none() { store_insert_new(&mut pairs, keyed, filling.clone()); }
+        }
+        Ok(Value::Map(pairs).held(false))
+    }
+
+    /// Whether two maps hold the same rows, key for key, by the very
+    /// road the subscript takes rather than `mapping_equality`'s
+    /// `same_place`/`equals`, which cannot call a key's own `__eq__`:
+    /// same length, and every key of the one found among the other's
+    /// through `special_keys_equal`, its value equal to the one paired
+    /// with it there. A value that is itself a Thing keeps to
+    /// `mapping_equality`; only a map's own keys need the interpreter
+    /// to compare them.
+    fn maps_equal(&mut self, one: &crate::value::KeyedPairs, other: &crate::value::KeyedPairs) -> Res<bool> {
+        if one.len() != other.len() { return Ok(false); }
+        // Each key of the one is sought among the other's through
+        // `map_locate`, which is the lookup's own place first and a
+        // walk only where the place cannot say — so a map of plain
+        // keys stays the linear comparison it always was, and only a
+        // map with a Thing among its keys pays for the walk.
+        for (key, value) in one.iter() {
+            let (found, _) = self.map_locate(other, Some(other), key)?;
+            match found {
+                Some(index) if self.mapping_equality(value, &other[index].1) => {}
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
         let Value::Object(object) = value else { return None };
         let named = self.lang.class_special.get(place)?;
@@ -3751,11 +3935,12 @@ impl<'a> Engine<'a> {
             Builtin::List => Value::array(Vec::new()),
             Builtin::Tuple => Value::Tuple(Rc::new(Vec::new())),
             Builtin::Dict => Value::Map(Rc::new(Vec::new().into())),
-            Builtin::Set => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
+            kind @ (Builtin::Set | Builtin::Frozen) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string(), *kind == Builtin::Frozen)))),
             Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
             Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
                 start: BigInt::from(0), stop: BigInt::from(0), step: BigInt::from(1), name: word.to_string(),
             })),
+            Builtin::MakeSlice => Value::Slice(Rc::new([Value::Null, Value::Null, Value::Null])),
             _ => return None,
         })
     }
@@ -3766,6 +3951,10 @@ impl<'a> Engine<'a> {
     /// the kind before the method is a way to the kind's own maker and
     /// not a member of a value, so it is left out.
     pub(super) fn kind_member_names(&self, sample: &Value) -> Vec<String> {
+        // A slice keeps its bounds and answers to nothing else the
+        // family mechanism below reckons, its own family standing for
+        // no working a program writes in the plain way.
+        if matches!(sample, Value::Slice(_)) { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         for (spelling, working) in self.lang.value_methods.iter() {
@@ -3776,10 +3965,13 @@ impl<'a> Engine<'a> {
         let (book, labels) = match family {
             Kindred::Text => (&self.lang.text_words, TEXT_METHOD_LABELS),
             Kindred::Bytes(_) => (&self.lang.byte_words, BYTE_METHOD_LABELS),
-            Kindred::Set => (&self.lang.set_words, SET_METHOD_LABELS),
+            Kindred::Set(fixed) => (&self.lang.set_words, if fixed { SET_STILL_LABELS } else { SET_METHOD_LABELS }),
             _ => (&self.lang.text_words, [].as_slice()),
         };
         for label in labels { names.extend(book.get(*label).into_iter().flatten().cloned()); }
+        // A counted row keeps its bounds beside the places it answers
+        // through the methods above.
+        if matches!(family, Kindred::Counted) { names.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
@@ -3879,10 +4071,14 @@ impl<'a> Engine<'a> {
     /// unbound method is called. Nothing where the word names no
     /// builtin kind, or where that kind carries no such member.
     pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
-        let Value::Native(_, word) = value else { return None };
-        let sample = self.kind_sample(word)?;
+        let word: Rc<str> = match value {
+            Value::Native(_, word) => word.clone(),
+            Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
+            _ => return None,
+        };
+        let sample = self.kind_sample(&word)?;
         if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
-        Some(Self::adapter(29, vec![Value::text(word), Value::text(name)]))
+        Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
@@ -3918,8 +4114,9 @@ impl<'a> Engine<'a> {
         }
         // A set answers some of its methods through builtins that take
         // the receiver first, so the member bound to the value is the
-        // word itself with the value behind it.
-        if matches!((&held, self.lang.builtins.get(name)), (Value::Set(_), Some(word)) if word.set_method()) {
+        // word itself with the value behind it. A set that cannot be
+        // changed answers none of the methods that would alter it.
+        if matches!((&held, self.lang.builtins.get(name)), (Value::Set(_), Some(word)) if word.set_method() && !(word.set_alters() && held.set_fixed())) {
             return Ok(Some(Value::Adapter(Rc::new((3, vec![Value::text(name), held])))));
         }
         let Some(operation) = self.lang.value_methods.get(name).cloned() else { return Ok(None) };
@@ -3948,7 +4145,7 @@ impl<'a> Engine<'a> {
             Value::Array(_) => Kindred::Row,
             Value::Tuple(_) => Kindred::Tuple,
             Value::Map(_) => Kindred::Map,
-            Value::Set(_) => Kindred::Set,
+            Value::Set(ref members) => Kindred::Set(members.try_borrow().map_or(false, |held| held.fixed)),
             Value::Counted(_) => Kindred::Counted,
             // A window upon a map is read before its contents, which
             // stand as a plain row and would lose the ways a window has.
@@ -3968,7 +4165,11 @@ impl<'a> Engine<'a> {
     fn family_answers(family: Kindred, place: usize) -> bool {
         let number = matches!(family, Kindred::Whole | Kindred::Real | Kindred::Ratio | Kindred::Complex);
         let ordered = matches!(family, Kindred::Text | Kindred::Bytes(_) | Kindred::Row | Kindred::Tuple | Kindred::Counted);
-        let holds = ordered || matches!(family, Kindred::Map | Kindred::Set);
+        let holds = ordered || matches!(family, Kindred::Map | Kindred::Set(_));
+        // Both kinds of set answer for the workings a set is written
+        // with; only the changeable one answers for writing through
+        // them, and only the fixed one for its own hash.
+        let setted = matches!(family, Kindred::Set(_));
         let joined = matches!(family, Kindred::Text | Kindred::Bytes(_) | Kindred::Row | Kindred::Tuple);
         // A walk and a window stand for something else and are read and
         // compared as that thing is, so neither answers for itself here.
@@ -3979,26 +4180,26 @@ impl<'a> Engine<'a> {
         let emptied = matches!(family, Kindred::Row | Kindred::Map | Kindred::Bytes(true));
         match place {
             0..=7 => standing,
-            8 => standing && !matches!(family, Kindred::Row | Kindred::Map | Kindred::Set | Kindred::Bytes(true)),
+            8 => standing && !matches!(family, Kindred::Row | Kindred::Map | Kindred::Set(false) | Kindred::Bytes(true)),
             9 => number,
             10 => holds || matches!(family, Kindred::View(_)),
-            11 => holds && !matches!(family, Kindred::Set),
+            11 => holds && !setted,
             12 => written,
             13 => emptied,
             14 => holds || matches!(family, Kindred::View(false)),
             15 => holds || matches!(family, Kindred::Walk | Kindred::View(_)),
             16 => matches!(family, Kindred::Walk),
             18 | 20 | 28 => number || joined,
-            19 => number || matches!(family, Kindred::Set),
+            19 => number || setted,
             23 | 31 => number && !matches!(family, Kindred::Complex) || matches!(family, Kindred::Text | Kindred::Bytes(_)),
             21 | 24 | 25 | 26 | 27 | 29 | 32 | 38 | 39 | 40 | 41 => number,
             22 | 30 | 60 | 61 => number && !matches!(family, Kindred::Complex),
             43 | 44 | 62 | 63 | 67 | 68 => matches!(family, Kindred::Whole),
             47 | 49 => matches!(family, Kindred::Row | Kindred::Bytes(true)),
-            48 | 57 | 59 => matches!(family, Kindred::Set),
-            58 => matches!(family, Kindred::Set | Kindred::Map),
-            64 | 66 | 69 | 71 => matches!(family, Kindred::Whole | Kindred::Set),
-            65 | 70 => matches!(family, Kindred::Whole | Kindred::Set | Kindred::Map),
+            48 | 57 | 59 => matches!(family, Kindred::Set(false)),
+            58 => matches!(family, Kindred::Set(false) | Kindred::Map),
+            64 | 66 | 69 | 71 => matches!(family, Kindred::Whole) || setted,
+            65 | 70 => matches!(family, Kindred::Whole | Kindred::Map) || setted,
             // Every value is written to a specification, the writer
             // having marks of its own for each kind or words against
             // the kinds that take none.
@@ -4019,6 +4220,9 @@ impl<'a> Engine<'a> {
             Kindred::Ratio => matches!(other, Kindred::Whole | Kindred::Real | Kindred::Ratio),
             Kindred::Complex => matches!(other, Kindred::Whole | Kindred::Real | Kindred::Complex),
             Kindred::Bytes(_) => matches!(other, Kindred::Bytes(_)),
+            // Either kind of set works with either, so that a set and
+            // one that cannot be changed meet under one sign.
+            Kindred::Set(_) => matches!(other, Kindred::Set(_)),
             _ => family == other,
         }
     }
@@ -4221,21 +4425,45 @@ impl<'a> Engine<'a> {
     }
 
     fn holds_object(value: &Value) -> bool {
+        Self::holds_object_within(value, true)
+    }
+
+    /// Whether an argument must go the thing-aware road of a builtin.
+    /// A set holding things is written out through each thing's own
+    /// words, but the other builtins (`len`, the set signs' methods and
+    /// the rest) take a set as it is, and only the plain road takes a
+    /// set's subclass by its worth; so they do not look into a set.
+    fn argument_holds_object(value: &Value) -> bool {
+        Self::holds_object_within(value, false)
+    }
+
+    fn holds_object_within(value: &Value, into_sets: bool) -> bool {
         // A cell come round to again holds nothing further to look at.
-        fn looked_into(value: &Value, seen: &mut Vec<*const RefCell<Value>>) -> bool {
+        fn looked_into(value: &Value, seen: &mut Vec<*const RefCell<Value>>, into_sets: bool) -> bool {
             match value {
                 Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Object(_) | Value::Method(..) => true,
                 Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => {
                     if seen.contains(&Rc::as_ptr(c)) { return false; }
                     seen.push(Rc::as_ptr(c));
-                    looked_into(&c.borrow(), seen)
+                    looked_into(&c.borrow(), seen, into_sets)
                 }
-                Value::Tuple(items) | Value::Array(items) => items.iter().any(|item| looked_into(item, seen)),
-                Value::Map(items) => items.iter().any(|(k, v)| looked_into(k, seen) || looked_into(v, seen)),
+                Value::Tuple(items) | Value::Array(items) => items.iter().any(|item| looked_into(item, seen, into_sets)),
+                Value::Map(items) => items.iter().any(|(k, v)| looked_into(k, seen, into_sets) || looked_into(v, seen, into_sets)),
+                // A set cannot hold itself, but one set may stand inside
+                // many others; one seen already held nothing to find, or
+                // the look would have ended there, so it is not walked
+                // through twice.
+                Value::Set(cell) => {
+                    if !into_sets { return false; }
+                    let mark = Rc::as_ptr(cell) as *const RefCell<Value>;
+                    if seen.contains(&mark) { return false; }
+                    seen.push(mark);
+                    cell.try_borrow().map_or(false, |held| held.row.iter().any(|k| looked_into(&held.held[k], seen, into_sets)))
+                }
                 _ => false,
             }
         }
-        looked_into(value, &mut Vec::new())
+        looked_into(value, &mut Vec::new(), into_sets)
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
@@ -4332,6 +4560,19 @@ impl<'a> Engine<'a> {
                 }
                 Ok(format!("{{{}}}", parts.join(", ")))
             }),
+            // A set cannot reach itself, so its members need no note
+            // left on them the way a row's or a map's do; each is asked
+            // for its own representation, a thing's own `__repr__`
+            // among them, and not the plain address every other reader
+            // of a set's members is given.
+            Value::Set(cell) => {
+                let members = cell.borrow().items();
+                if members.is_empty() { return Ok(cell.borrow().word.clone() + "()"); }
+                let mut parts = Vec::with_capacity(members.len());
+                for item in &members { parts.push(self.special_text(item, true)?); }
+                let inner = format!("{{{}}}", parts.join(", "));
+                Ok(if cell.borrow().fixed { format!("{}({})", cell.borrow().word, inner) } else { inner })
+            }
             Value::Text(_) if representation => self.rem_repr(value),
             _ => Ok(value.display(&self.wording())),
         }
@@ -4394,7 +4635,7 @@ impl<'a> Engine<'a> {
 
     /// The name a complaint gives a value: its class for a thing, and
     /// the core kind for anything else.
-    fn shown_kind(value: &Value) -> String {
+    pub(super) fn shown_kind(value: &Value) -> String {
         match value { Value::Object(o) => o.class.name.clone(), other => other.core_kind() }
     }
 
@@ -4618,6 +4859,31 @@ impl<'a> Engine<'a> {
             return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
         }
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
+        // A view standing beside a set under a set sign is turned into
+        // a set first, as the plain working does, but through the road
+        // that asks a thing among its members for its own hash and its
+        // own equality: the plain working's own turning is `&self` and
+        // so cannot call either.
+        if matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne | Action::Sub) && (matches!(a, Value::View(_)) || matches!(b, Value::View(_))) {
+            let turned = |engine: &mut Self, v: &Value| -> Res<Value> {
+                if !matches!(v, Value::View(_)) { return Ok(v.clone()); }
+                let items = match v.contents() { Value::Array(items) => items.as_ref().clone(), _ => Vec::new() };
+                Ok(Value::Set(Rc::new(RefCell::new(engine.set_gathered(items)?))))
+            };
+            let left = turned(self, a)?;
+            let right = turned(self, b)?;
+            return self.special_dyad(op, &left, &right);
+        }
+        // Two maps set against each other by the sign go the road the
+        // subscript takes for their keys — `dyadic`'s own `==`, reached
+        // for a plain map from below, is `&self` and so cannot call a
+        // key's own `__eq__`.
+        if let (Action::Eq | Action::Ne, Value::Map(one), Value::Map(other)) = (op, a, b) {
+            if self.lang.unordered_maps {
+                let alike = self.maps_equal(one, other)?;
+                return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
+            }
+        }
         if let Value::Fields(o) = a {
             let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
             return self.special_dyad(op, &Value::Map(Rc::new(entries)), b);
@@ -4867,7 +5133,7 @@ impl<'a> Engine<'a> {
     /// other, though a refusal still names each of them apart.
     fn order_family(value: &Value) -> String {
         let kind = value.core_kind();
-        match kind.as_str() { "bytearray" => "bytes".to_string(), _ => kind }
+        match kind.as_str() { "bytearray" => "bytes".to_string(), "frozenset" => "set".to_string(), _ => kind }
     }
 
     /// The complaint that two values stand in no order, with the sign
@@ -4881,7 +5147,10 @@ impl<'a> Engine<'a> {
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
         let first = args.first();
-        if Self::core_builtin(op) && !args.iter().any(|v| Self::holds_object(v) || matches!(v, Value::Walk(_))) { return Ok(None); }
+        // Writing a value out looks into a set for a thing; the other
+        // builtins do not (see argument_holds_object).
+        let writes = matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText);
+        if Self::core_builtin(op) && !args.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) { return Ok(None); }
         if op == Builtin::InstanceOf { return Ok(None); }
         // A thing keeping a worth of its kind is written into through
         // that worth, and is that worth for whatever its class does not
@@ -4920,7 +5189,7 @@ impl<'a> Engine<'a> {
             Builtin::Fetch | Builtin::Replace | Builtin::Erase => &[usize::MAX],
             Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
             Builtin::ToText => &[0, 1], Builtin::Repr | Builtin::Ascii => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
-            Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
+            Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
             Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
             _ => &[usize::MAX],
         };
@@ -4936,7 +5205,7 @@ impl<'a> Engine<'a> {
                 None => settled.push(value.clone()),
             }
         }
-        if changed && !settled.iter().any(|v| Self::holds_object(v) || matches!(v, Value::Walk(_))) {
+        if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
             let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
             return Ok(Some(self.builtin(op, &word, &mut settled)?));
         }
@@ -5942,7 +6211,14 @@ impl<'a> Engine<'a> {
                     for item in incoming { self.set_put(&cell, item)?; }
                     Value::Set(cell)
                 } else if *map {
-                    let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
+                    // The map grown one key at a time is the very map the
+                    // literal keeps growing, not a clone of everything
+                    // gathered so far for every key added: the store's
+                    // own text-keyed index answers where a key already
+                    // stands, exactly as a single `d[k] = v` answers it,
+                    // and grows in step with the rows rather than being
+                    // thrown away and rebuilt on the next key.
+                    let mut pairs = match gathered_so_far { Value::Map(p) => p, _ => unreachable!() };
                     let new_pairs = match (spread, next.contents()) {
                         (true, Value::Map(p)) => p.to_vec(),
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
@@ -5950,19 +6226,17 @@ impl<'a> Engine<'a> {
                     };
                     for (key, value) in new_pairs {
                         if let Some(told) = self.unkeyable(&key) { return Err(told.into()); }
-                        if self.lang.class_special.is_empty() { put_key(&mut pairs, key, value); continue; }
-                        let key = self.special_key(&key)?;
-                        let mut found = None;
-                        for (at, (old, _)) in pairs.iter().enumerate() {
-                            if self.special_keys_equal(old, &key)? { found = Some(at); break; }
-                        }
-                        if let Some(at) = found { pairs[at].1 = value; } else { pairs.push((key, value)); }
+                        self.store_write(&mut pairs, key, value)?;
                     }
-                    Value::Map(Rc::new(pairs))
+                    Value::Map(pairs)
                 } else {
-                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a.as_ref().clone(), _ => unreachable!() };
-                    if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
-                    Value::array(items)
+                    // A literal grown one item at a time keeps the same
+                    // row throughout when nothing else shares it, so an
+                    // item joins in one push rather than a clone of
+                    // everything gathered so far for every item added.
+                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a, _ => unreachable!() };
+                    if *spread { Rc::make_mut(&mut items).extend(self.comprehension_items(&next)?); } else { Rc::make_mut(&mut items).push(next); }
+                    Value::Array(items)
                 }
             }
             Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
@@ -7121,8 +7395,13 @@ impl<'a> Engine<'a> {
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
                 // A thing in a field is formatted by its own method, or
-                // shown as text first where a conversion was asked.
-                if matches!(value.contents(), Value::Object(_)) && !self.lang.class_special.is_empty() {
+                // shown as text first where a conversion was asked. A
+                // collection carrying a thing among its members takes
+                // the same road, exactly as the template and remainder
+                // fillers already do, so a set of things in a field
+                // shows each by its own `__repr__` rather than the
+                // plain address every other reader of a set is given.
+                if Self::holds_object(&value.contents()) && !self.lang.class_special.is_empty() {
                     let thing = value.contents();
                     let shown = if conversion.is_empty() { self.special_format(&thing, &specification)? } else {
                         let text = Value::text(&self.special_text(&thing, conversion != "s")?);
@@ -7399,13 +7678,16 @@ impl<'a> Engine<'a> {
     }
 
     /// The complaint for a value that cannot key a map, naming its kind:
-    /// a list, a map or a set, however deep inside a tuple. Nothing
-    /// where the value may key one, or the definition has no words.
+    /// a list, a map or a changeable set, however deep inside a tuple.
+    /// A set that cannot be changed keys a map as its members have it,
+    /// so it is no offence here. Nothing where the value may key one,
+    /// or the definition has no words.
     fn unkeyable(&self, key: &Value) -> Option<String> {
         let [before, after] = self.lang.map_unhashable.as_slice() else { return None };
         fn offending(value: &Value) -> Option<String> {
             match value {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => offending(&cell.borrow()),
+                Value::Set(_) if value.set_fixed() => None,
                 Value::Array(_) | Value::Map(_) | Value::Set(_) => Some(value.core_kind()),
                 Value::Tuple(items) => items.iter().find_map(offending),
                 _ => None,
@@ -7722,7 +8004,8 @@ impl<'a> Engine<'a> {
             let numeric = |v: &Value| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
             // Two of one kind may order themselves further on, as sets and
             // rows do; two of different kinds, or of a kind with no order
-            // at all, cannot.
+            // at all, cannot. The two kinds of set are one kind here,
+            // since either holds members the other may hold as well.
             let orderless = Self::order_family(a) != Self::order_family(b) || matches!(a, Value::Null | Value::Map(_));
             if orderless && !(numeric(a) && numeric(b)) && !matches!((a, b), (Value::Text(_), Value::Text(_))) && arith::order_values(a, b).is_none() {
                 let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", _ => ">=" };
@@ -7777,7 +8060,12 @@ impl<'a> Engine<'a> {
         if let Action::SetWrite(how) = op {
             let plain = match how { 0 => Action::BitEither, 1 => Action::BitBoth, 2 => Action::Sub, _ => Action::BitOne };
             let answer = self.dyadic(&plain, a, b)?;
+            // A set that cannot be changed is not written through: the
+            // plain working stands, and what it made is handed back so
+            // that the name takes the new set, as the reference does
+            // where no writing member of that name is to be found.
             if let (Value::Set(cell), Value::Set(result)) = (a, &answer) {
+                if a.set_fixed() { return Ok(answer); }
                 *cell.borrow_mut() = result.borrow().clone();
                 return Ok(a.clone());
             }
@@ -9019,6 +9307,17 @@ impl<'a> Engine<'a> {
     /// A value put into a set at the address it takes there. A thing is
     /// kept beside its hash, as a map's keys are.
     fn set_put(&mut self, cell: &Rc<RefCell<crate::value::Members>>, value: Value) -> Res<()> {
+        // A value addressed by its worth alone wants none of the
+        // members: its address is the same whoever else is there. Only
+        // a thing, whose hash and equality the program itself answers,
+        // is placed against the members, so the members are taken out
+        // for it alone and a set is gathered in one pass and not in as
+        // many passes as it has members.
+        if !matches!(value, Value::Object(_) | Value::Hashed(_)) {
+            let key = self.set_key(&value)?;
+            cell.borrow_mut().insert(key, value);
+            return Ok(());
+        }
         let members = Self::set_pairs(cell);
         let key = self.set_place(&members, &value)?;
         let kept = if matches!(value, Value::Object(_)) { self.special_key(&value)? } else { value };
@@ -9027,7 +9326,7 @@ impl<'a> Engine<'a> {
     }
 
     fn set_from(&self, items: Vec<Value>) -> Res<crate::value::Members> {
-        let mut set = crate::value::Members::empty(self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default());
+        let mut set = crate::value::Members::empty(self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default(), false);
         for item in items { set.insert(self.set_key(&item)?, item); }
         Ok(set)
     }
@@ -9037,7 +9336,7 @@ impl<'a> Engine<'a> {
     /// hash and its own equality wherever it is gathered.
     fn set_gathered(&mut self, items: Vec<Value>) -> Res<crate::value::Members> {
         let word = self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default();
-        let cell = Rc::new(RefCell::new(crate::value::Members::empty(word)));
+        let cell = Rc::new(RefCell::new(crate::value::Members::empty(word, false)));
         for item in items { self.set_put(&cell, item)?; }
         let gathered = cell.borrow().clone();
         Ok(gathered)
@@ -9090,6 +9389,9 @@ impl<'a> Engine<'a> {
             }
             return Ok(Value::Null);
         }
+        // Copying a set that cannot be changed answers with the set
+        // itself, there being nothing a second one could hold apart.
+        if op == SetCopy && args[0].set_fixed() { return Ok(args[0].clone()); }
         if op == SetPop {
             let key = cell.borrow().row.first().cloned().ok_or_else(|| self.set_said(".empty", ""))?;
             return Ok(cell.borrow_mut().remove(&key).unwrap());
@@ -9637,7 +9939,10 @@ impl<'a> Engine<'a> {
         }
         if matches!(receiver.contents(), Value::Set(_)) {
             let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None }
-                .or_else(|| self.lang.builtins.get(operation).copied().filter(|word| word.set_method()));
+                .or_else(|| self.lang.builtins.get(operation).copied().filter(|word| word.set_method()))
+                // A set that cannot be changed has no changing word of
+                // its own, so the call finds no member of that name.
+                .filter(|word| !(word.set_alters() && receiver.set_fixed()));
             if let Some(method) = method {
                 if !named.is_empty() { return Err(self.set_said(".arguments", "")); }
                 let mut given = vec![receiver.contents()]; given.extend(args);
@@ -9699,6 +10004,27 @@ impl<'a> Engine<'a> {
             }
             if meddled { return Err(format!("\0{}", self.lang.sort_modified[0])); }
             return Ok(Value::Null);
+        }
+        // A map's own methods that look up a key take the very road the
+        // subscript takes rather than `methods::call`'s free `alike`,
+        // which cannot call `__eq__`: the lookup's own place first, and
+        // the program's own equality only where the place cannot say.
+        // `fromkeys` looks up no place of an existing map, but still
+        // needs that same equality to dedupe the keys it is given, so
+        // it is answered here beside the rest, before a member call
+        // with no receiver of its own reaches `methods::call` at all.
+        if operation == "fromkeys" {
+            if args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let filling = args.into_iter().next().unwrap_or(Value::Null);
+            return self.dict_fromkeys(receiver, filling);
+        }
+        if matches!(receiver.contents(), Value::Map(_)) {
+            if matches!(operation, "get" | "setdefault" | "pop") {
+                return self.dict_key_method(receiver, operation, args);
+            }
+            if operation == "update" {
+                return self.dict_update(receiver, args, &named);
+            }
         }
         crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone(),
             &|value, op| self.member_amiss(value, &self.spelled_member(op)))
@@ -9832,7 +10158,7 @@ impl<'a> Engine<'a> {
                         if pair.len() != 2 {
                             return Err(self.lang.map_pair_amiss.clone().unwrap_or_else(|| "A map item needs two values".into()));
                         }
-                        put_key(&mut pairs, pair[0].clone(), pair[1].clone());
+                        self.map_enter(&mut pairs, pair[0].clone(), pair[1].clone())?;
                     }
                 }
             }
@@ -9841,7 +10167,7 @@ impl<'a> Engine<'a> {
         for (key, value) in items {
             if let Some(key) = key {
                 if !named.insert(key.clone()) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
-                put_key(&mut pairs, Value::text(&key), value);
+                self.map_enter(&mut pairs, Value::text(&key), value)?;
             }
         }
         Ok(Value::Map(Rc::new(pairs.into())))
@@ -10858,7 +11184,29 @@ impl<'a> Engine<'a> {
                 }
                 return self.byte_call(task, args);
             }
-            Builtin::Text(op) => { let normalized: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect(); crate::strings::run(op, name, &normalized, self.lang, &sp)? },
+            Builtin::Text(op) => {
+                let normalized: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect();
+                // A word of the text kind spelled with the method after
+                // a dot, such as `str.upper`, is refused as CPython's
+                // unbound method or descriptor is when it is handed no
+                // receiver at all, or one that is no text. The kind's
+                // one static method, which builds a table and has no
+                // text of its own, is let through.
+                if let (Some((word, operation)), false) = (name.split_once('.'), op == crate::strings::TextOp::Maketrans) {
+                    match normalized.first() {
+                        None => {
+                            let pieces = self.lang.class_details.get("descriptor.unbound").cloned().unwrap_or_default();
+                            return if pieces.len() == 3 { Err(format!("{}{word}{}{operation}{}", pieces[0], pieces[1], pieces[2])) } else { Err(crate::strings::fault(self.lang, "receiver")) };
+                        }
+                        Some(Value::Text(_)) => {}
+                        Some(other) => {
+                            let pieces = self.lang.class_details.get("descriptor.foreign").cloned().unwrap_or_default();
+                            return if pieces.len() == 4 { Err(format!("{}{operation}{}{word}{}{}{}", pieces[0], pieces[1], pieces[2], Self::shown_kind(other), pieces[3])) } else { Err(crate::strings::fault(self.lang, "receiver")) };
+                        }
+                    }
+                }
+                crate::strings::run(op, name, &normalized, self.lang, &sp)?
+            },
             Builtin::ClassTool(work) => return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
                 arity(1)?;
@@ -10943,7 +11291,7 @@ impl<'a> Engine<'a> {
             // language spells the manners text may be read in; a
             // language spelling the words without the manners is
             // refused here.
-            Builtin::OuterNames | Builtin::NearNames | Builtin::RunText | Builtin::ReadyText | Builtin::Summon => return Err(self.source_unready()),
+            Builtin::OuterNames | Builtin::NearNames | Builtin::ClassLocalsPlace | Builtin::RunText | Builtin::ReadyText | Builtin::Summon => return Err(self.source_unready()),
             // Source read while the program runs, assembled against
             // the same globals and run where it stands. A file that
             // cannot be read gives false back, as such a language says.
@@ -11609,7 +11957,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
-            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
+            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -11814,7 +12162,7 @@ impl<'a> Engine<'a> {
                         Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
                         Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
-                        Value::Set(_) => Some(Builtin::Set), Value::Map(_) => Some(Builtin::Dict),
+                        Value::Set(_) => Some(if args[0].set_fixed() { Builtin::Frozen } else { Builtin::Set }), Value::Map(_) => Some(Builtin::Dict),
                         // A counted row and a span of bounds are kinds
                         // the definition spells, so each answers with
                         // the builtin word that makes one.
@@ -12313,21 +12661,24 @@ fn gathered(items: Vec<Value>, always_map: bool, plain_keys: bool) -> Value {
     if !always_map && !items.iter().any(|v| matches!(v, Value::Tie(_))) {
         return Value::array(items);
     }
-    let mut pairs: Vec<(Value, Value)> = Vec::with_capacity(items.len());
+    // Grown as one store-backed map throughout, so a literal of many
+    // keys writes each one into the rows it already has rather than
+    // scanning them all again for every key that joins.
+    let mut pairs: Rc<KeyedPairs> = Rc::new(Vec::with_capacity(items.len()).into());
     for item in items {
         match item {
             Value::Tie(pair) => {
                 let (k, v) = (pair.0.clone(), pair.1.clone());
                 let k = if plain_keys { key_taken(k) } else { k };
-                put_key(&mut pairs, k, v);
+                put_key_indexed(&mut pairs, k, v);
             }
             v => {
                 let key = next_key(&pairs);
-                pairs.push((Value::Small(key), v));
+                Rc::make_mut(&mut pairs).push((Value::Small(key), v));
             }
         }
     }
-    Value::Map(Rc::new(pairs.into()))
+    Value::Map(pairs)
 }
 
 /// One past the highest whole-number key, or zero when there is none.
@@ -12343,7 +12694,50 @@ fn next_key(pairs: &[(Value, Value)]) -> i64 {
         .max(0)
 }
 
-/// Write a key: over the value it already holds, or at the end.
+/// Write a key: over the value it already holds, or at the end. The
+/// store's own text-keyed index answers first, for a key of plain
+/// worth text names, and only a key its own text cannot place — an
+/// array, a map, a changeable set, a thing — falls to the plain walk
+/// this always took, exactly as it always took it.
+fn put_key_indexed(pairs: &mut Rc<KeyedPairs>, key: Value, value: Value) {
+    if let Ok(keytext) = key.member_key() {
+        match pairs.locate(&keytext) {
+            Placement::AtRow(at) => return write_row_or_bond(pairs, at, value),
+            Placement::NotThere => return store_insert_new(pairs, key, value),
+            Placement::Uncertain => {}
+        }
+    }
+    match pairs.as_ref().iter().position(|(k, _): &(Value, Value)| k.equals(&key)) {
+        Some(at) => write_row_or_bond(pairs, at, value),
+        None => { Rc::make_mut(pairs).push((key, value)); }
+    }
+}
+
+/// A row written over, or a place holding a cell that names share
+/// written through instead, not written over.
+fn write_row_or_bond(pairs: &mut Rc<KeyedPairs>, at: usize, value: Value) {
+    if let Value::Bond(shared) = &pairs[at].1 {
+        let shared = shared.clone();
+        *shared.borrow_mut() = value;
+    } else {
+        Rc::make_mut(pairs).overwrite_row(at, value);
+    }
+}
+
+/// A key already known to be absent, added to a store-backed map's
+/// rows and, where its own text names it, to the store's index
+/// alongside them, so the next key finds it there without a walk.
+fn store_insert_new(pairs: &mut Rc<KeyedPairs>, key: Value, value: Value) {
+    match key.member_key() {
+        Ok(keytext) => Rc::make_mut(pairs).insert_proven_absent(key, keytext, value),
+        Err(_) => { Rc::make_mut(pairs).push((key, value)); }
+    }
+}
+
+/// Write a key over the value it already holds, or at the end, in
+/// pairs held apart from any store: `replace_item`'s own road for a
+/// language whose names are not bound to cells, where a single write
+/// stands alone rather than growing a literal key by key.
 fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
     match pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
         // A place holding a cell that names share is written through,
@@ -12758,7 +13152,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -12809,7 +13203,7 @@ impl Engine<'_> {
             }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
-        let walk = Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0));
+        let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
         Ok(walk)
     }
@@ -12856,6 +13250,40 @@ impl Engine<'_> {
             if state.busy { return Err(self.core_fault("core.unready", "next")); }
             if let Some(value) = state.pending.take() { return Ok(Some(value)); }
             if state.finished { return Ok(None); }
+            // A walk that reaches nothing beyond its own row, its own
+            // count or its own cell -- calling no callable of the
+            // program's and asking no other cursor -- steps in the one
+            // borrow already open on it, since nothing it does could
+            // ever reach this same cursor again meanwhile. The row a
+            // counted walk stands on is a great number even where the
+            // walk itself is small, and cloning the whole of the state
+            // to set the walk free, where the walk was never taken up
+            // by anything that needed it free, paid for that number
+            // twice at every single step for nothing gained by it.
+            match &mut state.source {
+                CursorSource::Items(values, place) => {
+                    let found = values.get(*place).cloned();
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Counted(row, place) => {
+                    let found = row.at(place.clone());
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Living(home, place) => {
+                    let found = match home.borrow().contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Viewed(window, place, size) => {
+                    if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                    let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                _ => {}
+            }
             state.busy = true;
             state.source.clone()
         };
@@ -13221,15 +13649,29 @@ impl Engine<'_> {
                 let fresh = self.core_ids.len() + 1;
                 Value::Small(*self.core_ids.entry(filed).or_insert(fresh) as i64)
             }
-            Builtin::Tuple | Builtin::Set => {
+            Builtin::Tuple | Builtin::Set | Builtin::Frozen => {
                 arity(0, 1)?;
+                // A set that cannot be changed, handed to the maker of
+                // its own kind, is handed straight back: nothing may
+                // alter it, so a fresh one would be the same set under
+                // another name, and the reference hands back the one it
+                // was given.
+                if b == Builtin::Frozen {
+                    if let Some(standing) = args.first().filter(|v| matches!(v, Value::Set(_)) && v.set_fixed()) {
+                        return Ok(standing.clone());
+                    }
+                }
                 let items = args.first().map(|v| self.core_members(v)).transpose()?.unwrap_or_default();
-                if b == Builtin::Set {
+                if matches!(b, Builtin::Set | Builtin::Frozen) {
                     // A thing among the members is keyed as the set literal
                     // keys it, by its own hash method and its own equality;
-                    // any other member with no hash is refused.
-                    let word = self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default();
-                    let gathered = Rc::new(RefCell::new(crate::value::Members::empty(word)));
+                    // any other member with no hash is refused. The set
+                    // that cannot be changed is gathered the very same
+                    // way and differs only in the kind it is of.
+                    let fixed = b == Builtin::Frozen;
+                    let label = if fixed { "ext.builtin.frozenset" } else { "ext.builtin.set" };
+                    let word = self.lang.set_words[label].first().cloned().unwrap_or_default();
+                    let gathered = Rc::new(RefCell::new(crate::value::Members::empty(word, fixed)));
                     for v in items {
                         // A member of a builtin kind with no hash of its
                         // own is refused by its kind, as the language has it.
@@ -13258,20 +13700,18 @@ impl Engine<'_> {
                     None => Vec::new(),
                 };
                 pairs.extend(dict_kw);
-                let mut made: Vec<(Value, Value)> = Vec::new();
+                // Grown as one store-backed map throughout, so an
+                // iterable of many pairs is not scanned again in full
+                // for every pair it grows by.
+                let mut made: Rc<KeyedPairs> = Rc::new(Vec::new().into());
                 for (k,v) in pairs {
                     // A thing as a key is keyed by its own hash method, as a
                     // dictionary literal keys it.
                     let k = if matches!(k, Value::Object(_)) { self.special_key(&k)? } else { k };
                     if !matches!(k, Value::Hashed(_)) && k.core_hash().is_none() && !matches!(k, Value::Null | Value::Real(_)) { return Err(self.core_fault("core.unhashable", &k.core_kind())); }
-                    let mut found = None;
-                    for (at, (old, _)) in made.iter().enumerate() {
-                        let same = if matches!(old, Value::Hashed(_)) || matches!(k, Value::Hashed(_)) { self.special_keys_equal(old, &k)? } else { number(old).equals(&number(&k)) };
-                        if same { found = Some(at); break; }
-                    }
-                    match found { Some(at) => made[at].1 = v, None => made.push((k,v)) }
+                    self.store_write(&mut made, k, v)?;
                 }
-                Value::Map(Rc::new(made.into()))
+                Value::Map(made)
             }
             Builtin::Iter => {
                 arity(1, 2)?;
@@ -13317,7 +13757,7 @@ impl Engine<'_> {
                     return self.core_iterator(&Value::Counted(Rc::new(backwards)));
                 }
                 let mut items = self.core_members(&source)?; items.reverse();
-                let walk = Self::core_cursor(CursorSource::Items(items, 0));
+                let walk = Self::core_cursor(CursorSource::Items(Rc::new(items), 0));
                 // A row walked backwards has a word of its own; anything
                 // else walked backwards the reference names after the
                 // builtin that turned it about.
@@ -13375,7 +13815,7 @@ impl Engine<'_> {
                 // must be and the key is asked in the order they come.
                 // The one standing keeps its place against an equal, so
                 // that the first of several alike is the one answered.
-                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(args.clone(), 0)) };
+                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(Rc::new(args.clone()), 0)) };
                 let wanted = if b == Builtin::Maximum { Action::Gt } else { Action::Lt };
                 let mut standing: Option<(Value, Value)> = None;
                 while let Some(value) = self.core_step(&walk)? {
@@ -13577,7 +14017,14 @@ impl Engine<'_> {
                 else { self.lang.builtins.get(name).map_or(Value::Blank, |builtin| Value::Native(*builtin, Rc::from(name.as_str()))) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
-            fields.push((name.clone(), shared));
+            // A name a function or a method kept for its own use took a
+            // slot here too, since every name does, but only a name a
+            // write actually bound at the module's own outermost scope
+            // is one the module carries: the rest never left the frame
+            // that held them.
+            if local.globals.contains(name) {
+                fields.push((name.clone(), shared));
+            }
         }
         for name in &self.lang.module_names {
             if !fields.iter().any(|(key, _)| key == name) { fields.push((name.clone(), Value::text(path))); }
@@ -13831,6 +14278,9 @@ impl Engine<'_> {
     /// dictionary, or inside a routine a fresh dictionary of its own
     /// names; listed in order for dir.
     fn names_about(&mut self, program: &Rc<Routine>, frame: &[Value], kind: Builtin) -> Flow<Value> {
+        if kind == Builtin::ClassLocalsPlace {
+            return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
+        }
         let book = if kind == Builtin::OuterNames || program.body_of_all {
             self.book_here(kind == Builtin::OuterNames)
         } else {
@@ -13916,6 +14366,15 @@ impl Engine<'_> {
             Builtin::OuterNames | Builtin::NearNames => {
                 if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
                 Ok(Value::Bond(self.book_here(builtin == Builtin::OuterNames)))
+            }
+            // A dictionary fresh and empty every time it is asked for,
+            // and never the one the world answers `locals()` with: the
+            // place a write through `locals()[k] = v` in a class body
+            // reaches, thrown away once the write is done rather than
+            // shared with anything the program can read again.
+            Builtin::ClassLocalsPlace => {
+                if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
+                Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))))
             }
             Builtin::Summon => {
                 let Some(Value::Text(path)) = args.first().map(Value::contents) else { return Err(self.source_unready()) };

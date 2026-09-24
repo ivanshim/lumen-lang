@@ -21,7 +21,7 @@ use num_traits::{ToPrimitive, Zero};
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee, Clause};
-use crate::data::{Adornment, Among, Found, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
+use crate::data::{Adornment, Among, Found, IteratorKind, IteratorState, Blueprint, Env, Kind, MapStore, Names, Reach, Thing, Value};
 
 /// Which shell the host keeps, and the switch by which it is handed a
 /// command spelled out instead of a file holding one.
@@ -2316,6 +2316,36 @@ impl<'a> Machine<'a> {
 
     // ---------- bindings
 
+    /// The same load as `fetch`, but the last one a binding gets before
+    /// something else is written there: the value moves out of the
+    /// cell, an unset value left in its place, rather than cloned out
+    /// of it. Used only where the binding is about to be overwritten
+    /// and nothing else can see it meanwhile, so a row grown one member
+    /// at a time by its own gathering place costs what growing it
+    /// costs, not a copy of everything gathered so far on every step.
+    fn take(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
+        let f = ascend(frame, slot.up);
+        if Rc::ptr_eq(f, &self.outermost) {
+            if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
+        }
+        // A cell handed out for names shared across calls is read
+        // through exactly as `fetch` reads it, since some other
+        // binding may hold the very same cell; only a plain local's
+        // own value, or the value a closed-over one keeps, is this
+        // read's alone to move out.
+        if let Value::Shared(cell) = &f.cells.borrow()[slot.at] {
+            if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) {
+                return Ok(Value::Shared(cell.clone()));
+            }
+            if !self.table.flag("ext.stmt.function.closes_over") { return Ok(cell.borrow().clone()); }
+            let taken = cell.replace(Value::Unset);
+            return if matches!(taken, Value::Unset) { self.fetch(slot, frame) } else { Ok(taken) };
+        }
+        let held = std::mem::replace(&mut f.cells.borrow_mut()[slot.at], Value::Unset);
+        if matches!(held, Value::Unset) { return self.fetch(slot, frame); }
+        Ok(held)
+    }
+
     fn fetch(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) {
@@ -2654,15 +2684,18 @@ impl<'a> Machine<'a> {
         Ok(kept)
     }
 
-    /// The words refusing a key no map can hold, naming the kind of what
-    /// was offered: a list, a dict or a set, at any depth inside a tuple.
-    /// Nothing where the key will do, or the table has no such words.
+    /// The words refusing a key no map can hold, naming the kind of
+    /// what was offered: a list, a dict or a set that may be altered,
+    /// at any depth inside a tuple. A sealed set keys a map as its own
+    /// entries let it, so it is no offence. Nothing where the key will
+    /// do, or the table has no such words.
     fn cannot_key(&self, key: &Value) -> Option<String> {
         let words = self.table.strings("ext.syntax.map.unhashable");
         let [head, tail] = words else { return None };
         fn culprit(value: &Value) -> Option<String> {
             match value {
                 Value::Mutable(cell, _) | Value::Shared(cell) => culprit(&cell.borrow()),
+                Value::Set(_) if value.set_sealed() => None,
                 Value::Vector(_) | Value::Dict(_) | Value::Set(_) => Some(value.kind_word()),
                 Value::Tuple(items) | Value::Row(items) => items.iter().find_map(culprit),
                 _ => None,
@@ -3352,6 +3385,7 @@ impl<'a> Machine<'a> {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
             Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
+            Form::Take(slot) => Ok(self.take(slot, frame)?),
             Form::Glance(slot) => {
                 let f = ascend(frame, slot.up);
                 let held = f.cells.borrow()[slot.at].clone();
@@ -4484,6 +4518,22 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() expects {} arguments, got {}", name, want + 1, values.len() + 1).into());
                     }
                     let (f, i) = self.locate(slot, frame)?;
+                    // A name that lives only in a dictionary handed
+                    // over for a text to run in, as exec is handed
+                    // one, has no cell of its own: `locate` answers
+                    // the cell it would have had, empty. What it
+                    // stands for is fetched in and given that cell
+                    // for the write below to reach, and once the
+                    // write is done the dictionary is told what the
+                    // cell came to hold, since that dictionary and
+                    // not the empty cell is where a read of the name
+                    // looks first.
+                    let booked_here = Rc::ptr_eq(&f, &self.outermost) && matches!(f.cells.borrow()[i], Value::Unset);
+                    if booked_here {
+                        if let Some(Ok(found)) = self.booked_read(i, &slot.ident) {
+                            f.cells.borrow_mut()[i] = found;
+                        }
+                    }
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let mut key = values.pop().map(|k| self.as_key_spoken(&k));
@@ -4659,6 +4709,7 @@ impl<'a> Machine<'a> {
                             }
                             _ => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
                         }
+                        if booked_here { self.booked_write(i, &slot.ident, Some(f.cells.borrow()[i].clone())); }
                         return Ok(Value::Nil);
                     }
                     let held = f.cells.borrow()[i].clone();
@@ -4697,6 +4748,7 @@ impl<'a> Machine<'a> {
                             self.grumble("warning", said);
                         }
                     }
+                    if booked_here { self.booked_write(i, &slot.ident, Some(f.cells.borrow()[i].clone())); }
                     Ok(Value::Nil)
                 }
                 // Values put before everything the named array holds.
@@ -4823,6 +4875,77 @@ impl<'a> Machine<'a> {
                         }
                         false => None,
                     };
+                    // A row grown one item at a time by its own literal
+                    // or comprehension keeps the same buffer throughout
+                    // when nothing else holds it, rather than a clone of
+                    // everything gathered so far paid on every item
+                    // added to it. A bound name hands its row back
+                    // wrapped in the very cell it came from, so a write
+                    // through it still reaches every other name sharing
+                    // that cell; a plain row is grown and handed back
+                    // the same way `prim` would have built it.
+                    if let Prim::ExtendLiteral(false, expanded) = *op {
+                        let grown = match values.first() {
+                            Some(Value::Vector(_)) => true,
+                            Some(Value::Shared(cell)) => matches!(&*cell.borrow(), Value::Vector(_)),
+                            _ => false,
+                        };
+                        if grown && values.len() == 2 {
+                            let item = values.pop().expect("literal item");
+                            let source = values.pop().expect("growing literal");
+                            let extra = if expanded { Some(self.gathered_members(&item)?) } else { None };
+                            match source {
+                                Value::Vector(mut prior) => {
+                                    match extra { Some(more) => Rc::make_mut(&mut prior).extend(more), None => Rc::make_mut(&mut prior).push(item) }
+                                    return Ok(Value::Vector(prior));
+                                }
+                                Value::Shared(cell) => {
+                                    if let Value::Vector(prior) = &mut *cell.borrow_mut() {
+                                        match extra { Some(more) => Rc::make_mut(prior).extend(more), None => Rc::make_mut(prior).push(item) }
+                                    }
+                                    return Ok(Value::Shared(cell));
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    // A map grown one key at a time by its own literal or
+                    // comprehension keeps the same store throughout when
+                    // nothing else holds it, so a key written into it
+                    // finds its own place through the store's own
+                    // text-keyed index rather than a scan of every key
+                    // already there, and the store grows in step with the
+                    // pairs instead of being thrown away and rebuilt for
+                    // the next key. A bound name hands its map back
+                    // wrapped in the very cell it came from, so a write
+                    // through it still reaches every other name sharing
+                    // that cell.
+                    if let Prim::ExtendLiteral(true, expanded) = *op {
+                        let grown = match values.first() {
+                            Some(Value::Dict(_)) => true,
+                            Some(Value::Shared(cell)) => matches!(&*cell.borrow(), Value::Dict(_)),
+                            _ => false,
+                        };
+                        if grown && values.len() == 2 {
+                            let item = values.pop().expect("literal item");
+                            let source = values.pop().expect("growing literal");
+                            match source {
+                                Value::Dict(mut prior) => {
+                                    self.extend_dict_grown(&mut prior, &item, expanded)?;
+                                    return Ok(Value::Dict(prior));
+                                }
+                                Value::Shared(cell) => {
+                                    let mut held = cell.borrow_mut();
+                                    if let Value::Dict(prior) = &mut *held {
+                                        self.extend_dict_grown(prior, &item, expanded)?;
+                                    }
+                                    drop(held);
+                                    return Ok(Value::Shared(cell));
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
                     let made = self.prim(*op, name, &values);
                     if let Some(held) = aside { self.text_within = held; }
                     if let Some(away) = self.got_away.take() {
@@ -5045,8 +5168,9 @@ impl<'a> Machine<'a> {
             Prim::Listed => Value::Vector(Rc::new(Vec::new())),
             Prim::Tupling => Value::Tuple(Rc::new(Vec::new())),
             Prim::Dictionary => Value::Dict(Rc::new(Vec::new().into())),
-            Prim::Uniques => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
+            kind @ (Prim::Uniques | Prim::Unchanging) => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word, *kind == Prim::Unchanging)))),
             Prim::Octets(kind) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
+            Prim::SpanOf => Value::Span(Rc::new(vec![Value::Nil, Value::Nil, Value::Nil])),
             _ => return None,
         })
     }
@@ -5057,6 +5181,10 @@ impl<'a> Machine<'a> {
     /// before the method leads to the kind's own maker rather than to a
     /// member of a value, so it is passed over.
     pub(super) fn native_directory(&self, sample: &Value) -> Vec<String> {
+        // A span keeps its bounds and answers to nothing else the mark
+        // mechanism below reckons, its own mark standing for no working
+        // a program writes in the plain way.
+        if let Value::Span(_) = sample { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
         let mut gathered = Vec::new();
         for name in self.table.strings("ext.stmt.class.special") {
@@ -5073,13 +5201,16 @@ impl<'a> Machine<'a> {
                 // text nor how it shows is a method of it, and of the
                 // bytes primitives only those a run of bytes answers to.
                 Prim::Textual(work) => mark == 's' && !matches!(work, crate::text::Work::LENGTH | crate::text::Work::REPR),
-                Prim::SetCall(1..=17) => mark == 'e',
+                Prim::SetCall(code @ 1..=17) => mark == 'e' || mark == 'E' && !Self::set_alters(code),
                 Prim::Octets(3 | 4 | 6..=13) => "bB".contains(mark),
                 _ => false,
             };
             if !wanted { continue; }
             gathered.extend(self.table.strings(label).iter().filter(|word| !word.contains('.')).cloned());
         }
+        // A count of a row keeps its bounds beside the places it answers
+        // through the methods above.
+        if mark == 'p' { gathered.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
         gathered.sort();
         gathered.dedup();
         gathered
@@ -5106,7 +5237,7 @@ impl<'a> Machine<'a> {
             Value::Vector(_) => 'l',
             Value::Tuple(_) | Value::Row(_) => 't',
             Value::Dict(_) => 'd',
-            Value::Set(_) => 'e',
+            Value::Set(ref store) => if store.try_borrow().map_or(false, |held| held.sealed) { 'E' } else { 'e' },
             Value::Progression(_) => 'p',
             _ => return None,
         })
@@ -5123,17 +5254,24 @@ impl<'a> Machine<'a> {
     fn mark_answers(mark: char, at: usize) -> bool {
         let counts = "nrqc".contains(mark);
         let lined = "sbBltp".contains(mark);
-        let holds = lined || "de".contains(mark);
+        let holds = lined || "deE".contains(mark);
         let joins = "sbBlt".contains(mark);
+        // Both set kinds answer for the workings a set is written with;
+        // only the alterable one answers for a write through them, and
+        // only the sealed one for a hash of its own.
+        let uniques = "eE".contains(mark);
         // A walk and a window both stand for something else, which is
         // what reads and compares, so neither answers for itself.
         let alone = !"wWV".contains(mark);
         match at {
             0..=7 => alone,
             8 => alone && !"ldeB".contains(mark),
+            // A sealed set has a hash of its own; the eighth place
+            // above leaves the alterable set out and lets this stand.
+
             9 => counts,
             10 => holds || "WV".contains(mark),
-            11 => holds && mark != 'e',
+            11 => holds && !uniques,
             // A run of bytes is written into place by place and gives
             // a place up again, as a row does.
             12 => "ldB".contains(mark),
@@ -5142,7 +5280,7 @@ impl<'a> Machine<'a> {
             15 => holds || "wWV".contains(mark),
             16 => mark == 'w',
             18 | 20 | 28 => counts || joins,
-            19 => counts || mark == 'e',
+            19 => counts || uniques,
             21 | 24 | 25 | 26 | 27 | 29 | 32 | 38 | 39 | 40 | 41 => counts,
             22 | 30 | 60 | 61 => counts && mark != 'c',
             23 | 31 => counts && mark != 'c' || "sbB".contains(mark),
@@ -5150,14 +5288,21 @@ impl<'a> Machine<'a> {
             47 | 49 => "lB".contains(mark),
             48 | 57 | 59 => mark == 'e',
             58 => "ed".contains(mark),
-            64 | 66 | 69 | 71 => "ne".contains(mark),
-            65 | 70 => "ned".contains(mark),
+            64 | 66 | 69 | 71 => mark == 'n' || uniques,
+            65 | 70 => "nd".contains(mark) || uniques,
             // Every worth is laid out to a specification, the layout
             // having marks of its own for each kind or words against
             // the kinds that take none.
             72 => true,
             _ => false,
         }
+    }
+
+    /// Whether a numbered set working alters the set it is handed. A
+    /// sealed set answers to none of these: the words name no member of
+    /// it whatever, as the reference has it.
+    fn set_alters(code: u8) -> bool {
+        matches!(code, 1..=5 | 7 | 15..=17)
     }
 
     /// Whether a working of the kind marked first takes a value of the
@@ -5173,6 +5318,9 @@ impl<'a> Machine<'a> {
             'q' => "nrq".contains(other),
             'c' => "nrc".contains(other),
             'b' | 'B' => "bB".contains(other),
+            // Either set kind works with either, so that a set and a
+            // sealed one meet under the one sign.
+            'e' | 'E' => "eE".contains(other),
             _ => mark == other,
         }
     }
@@ -5334,10 +5482,14 @@ impl<'a> Machine<'a> {
     /// word names no native kind, or where that kind carries nothing
     /// under the name.
     pub(super) fn carried_by_kind(&self, value: &Value, name: &str) -> Option<Value> {
-        let Value::Intrinsic(_, word) = value else { return None };
-        let stand_in = self.kind_stand_in(word)?;
+        let word: String = match value {
+            Value::Intrinsic(_, word) => word.to_string(),
+            Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
+            _ => return None,
+        };
+        let stand_in = self.kind_stand_in(&word)?;
         if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
-        Some(Value::Wrapped(60, Rc::new(vec![Value::text(word), Value::text(name)])))
+        Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)])))
     }
 
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
@@ -5397,8 +5549,13 @@ impl<'a> Machine<'a> {
         }
         // A set answers some of its methods with primitives that take
         // the receiver first, so the member is the word itself with the
-        // set standing behind it.
-        if matches!((value.settled(), self.table.prims.get(name)), (Value::Set(_), Some(Prim::SetCall(1..=17)))) {
+        // set standing behind it. A sealed set holds no altering working
+        // of its own, so no member of that name is to be found upon it.
+        let setted = match self.table.prims.get(name) {
+            Some(Prim::SetCall(code @ 1..=17)) => matches!(value.settled(), Value::Set(_)) && !(Self::set_alters(*code) && value.set_sealed()),
+            _ => false,
+        };
+        if setted {
             return Some(Value::Wrapped(3, Rc::new(vec![Value::text(name), value.settled()])));
         }
         let class = match value {
@@ -5892,7 +6049,8 @@ impl<'a> Machine<'a> {
             }
         }
         if matches!(receiver.settled(), Value::Set(_)) {
-            let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None };
+            let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None }
+                .filter(|code| !(Self::set_alters(*code) && receiver.set_sealed()));
             if let Some(code) = code {
                 if !keywords.is_empty() { return Err(self.set_complaint("arguments", "").into()); }
                 let mut values = vec![receiver.settled()]; values.extend(arguments);
@@ -5938,6 +6096,27 @@ impl<'a> Machine<'a> {
                 (purpose.to_string(), value)
             }).collect()
         } else { keywords };
+        // A map's own methods that look up a key take the very road the
+        // subscript takes rather than `Request`'s free `same_item`,
+        // which cannot call `__eq__`: the store's own place first, and
+        // the program's own equality only where the place cannot say.
+        // `fromkeys` looks up no place of an existing map, but still
+        // needs that same equality to dedupe the keys it is given, so
+        // it is answered here beside the rest, before a member call
+        // with no receiver of its own reaches `Request` at all.
+        if name == "fromkeys" {
+            if arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
+            let filling = arguments.into_iter().next().unwrap_or(Value::Nil);
+            return self.dict_fromkeys(receiver, filling).map_err(Escape::from);
+        }
+        if matches!(receiver.settled(), Value::Dict(_)) {
+            if matches!(name, "get" | "setdefault" | "pop") {
+                return self.dict_key_method(receiver, name, arguments).map_err(Escape::from);
+            }
+            if name == "update" {
+                return self.dict_update(receiver, arguments, &keywords).map_err(Escape::from);
+            }
+        }
         if name != "sort" {
             let says = |kind: &str| self.method_fault(kind);
             let unanswered = |value: &Value, word: &str| self.member_missing(value, &self.member_spelling(word));
@@ -8013,6 +8192,164 @@ impl<'a> Machine<'a> {
         self.object_truth(&test)
     }
 
+    /// Where a key given to one of a map's own methods stands among
+    /// its pairs, answered exactly as the subscript road answers it:
+    /// the store's own place first, and the program's own equality —
+    /// which `same_item`, a free function, cannot call — only where
+    /// the place itself cannot say. The keyed form of the key comes
+    /// back beside the place, ready to store should the key be new.
+    fn map_locate(&mut self, entries: &[(Value, Value)], store: Option<&crate::data::MapStore>, key: &Value) -> Result<(Option<usize>, Value), String> {
+        let keyed = self.hash_key(key)?;
+        if let (Some(store), Ok(address)) = (store, keyed.hash_address()) {
+            match store.locate(&address) {
+                crate::data::Found::Found(at) => return Ok((Some(at), keyed)),
+                crate::data::Found::Absent => return Ok((None, keyed)),
+                crate::data::Found::Unknown => {}
+            }
+        }
+        for (position, (stored, _)) in entries.iter().enumerate() {
+            if self.keys_agree(stored, &keyed)? { return Ok((Some(position), keyed)); }
+        }
+        Ok((None, keyed))
+    }
+
+    /// A key written into a store-backed map, in place: `map_locate`'s
+    /// own answer, grown into the pairs on a miss, or written over the
+    /// pair on a hit — the very road a single `d[k] = v` already takes
+    /// for a map alone in its own cell, taken here for a map alone in
+    /// the working stack's care instead, so the store's place grows
+    /// one pair at a time rather than being rebuilt from every pair
+    /// for every key.
+    fn store_write(&mut self, pairs: &mut Rc<MapStore>, key: Value, value: Value) -> Result<(), String> {
+        let store: &MapStore = pairs.as_ref();
+        let (found, keyed) = self.map_locate(store, Some(store), &key)?;
+        match found {
+            Some(at) => Rc::make_mut(pairs).overwrite_at(at, value),
+            None => store_insert_new(pairs, keyed, value),
+        }
+        Ok(())
+    }
+
+    /// A literal or comprehension map grown by one more item: a spread
+    /// map's every pair, or the one pair a plain item couples, each
+    /// written into the store-backed map in its turn through
+    /// `store_write`, so a key already there is kept in its first
+    /// place with its value overwritten, and a new key is added last.
+    fn extend_dict_grown(&mut self, prior: &mut Rc<MapStore>, item: &Value, expanded: bool) -> Result<(), String> {
+        let incoming = match (expanded, item.settled()) {
+            (false, Value::Couple(pair)) => vec![pair.as_ref().clone()],
+            (true, Value::Dict(entries)) => entries.to_vec(),
+            _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
+        };
+        for (key, value) in incoming {
+            if let Some(words) = self.cannot_key(&key) { return Err(words); }
+            self.store_write(prior, key, value)?;
+        }
+        Ok(())
+    }
+
+    /// A pair written over the value its key already holds, or added
+    /// last: `enter` in its own words, but able to call `__eq__` for
+    /// a key that needs it, which the free function it replaces here
+    /// could not.
+    fn map_enter(&mut self, entries: &mut Vec<(Value, Value)>, key: Value, value: Value) -> Result<(), String> {
+        let keyed = self.hash_key(&key)?;
+        for entry in entries.iter_mut() {
+            if self.keys_agree(&entry.0, &keyed)? { entry.1 = value; return Ok(()); }
+        }
+        entries.push((keyed, value));
+        Ok(())
+    }
+
+    /// The cell a map method's receiver stands in written over with a
+    /// new set of pairs, exactly as `Request::replace` writes it.
+    fn replace_dict(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>) -> Result<(), String> {
+        let Value::Mutable(cell, _) = receiver else { return Err(self.method_fault("unready")); };
+        let new_value = Value::Dict(Rc::new(pairs.into()));
+        if crate::members::circular(&new_value, cell, 0) { return Err(self.method_fault("unready")); }
+        cell.replace(new_value);
+        Ok(())
+    }
+
+    /// `get`, `setdefault` and `pop`: the one key each is asked about
+    /// is looked for by the road `map_locate` takes, so a Thing with
+    /// its own `__eq__` is found by it and an int subclass by the
+    /// plain int it is worth, exactly as `d[key]` finds them.
+    fn dict_key_method(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>) -> Result<Value, String> {
+        if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments")); }
+        if matches!(arguments[0].settled(), Value::Vector(_) | Value::Dict(_)) { return Err(self.method_fault("arguments")); }
+        let Value::Dict(store) = receiver.settled() else { return Err(self.method_fault("unready")); };
+        let pairs = store.to_vec();
+        let (found, keyed) = self.map_locate(&pairs, Some(store.as_ref()), &arguments[0])?;
+        if let Some(index) = found {
+            let answer = pairs[index].1.clone();
+            if name == "pop" {
+                let mut remaining = pairs;
+                remaining.remove(index);
+                self.replace_dict(receiver, remaining)?;
+            }
+            return Ok(answer);
+        }
+        if name == "pop" && arguments.len() == 1 {
+            return Err(self.method_fault("key") + &arguments[0].repr(&self.wording()));
+        }
+        let answer = arguments.get(1).cloned().unwrap_or(Value::Nil);
+        if name == "setdefault" {
+            let mut grown = pairs;
+            grown.push((keyed, answer.clone()));
+            self.replace_dict(receiver, grown)?;
+        }
+        Ok(answer)
+    }
+
+    /// `update`: each pair goes in as it is met, through `map_enter`,
+    /// so that the pairs read before an ill-shaped one are kept when
+    /// the call stops on it, as they were before, and a key that
+    /// needs `__eq__` to find its place is found by it.
+    fn dict_update(&mut self, receiver: &Value, arguments: Vec<Value>, keywords: &[(String, Value)]) -> Result<Value, String> {
+        if arguments.len() > 1 { return Err(self.method_fault("arguments")); }
+        let Value::Dict(store) = receiver.settled() else { return Err(self.method_fault("unready")); };
+        let mut entries = store.to_vec();
+        let mut stopped = None;
+        if let Some(source) = arguments.first() {
+            match source.settled() {
+                Value::Dict(d) => { for (key, value) in d.iter() { self.map_enter(&mut entries, key.clone(), value.clone())?; } }
+                other => {
+                    let says = |kind: &str| self.method_fault(kind);
+                    for item in crate::members::gather(&other, &says)? {
+                        let says = |kind: &str| self.method_fault(kind);
+                        let values = crate::members::gather(&item, &says)?;
+                        if values.len() != 2 { stopped = Some(self.method_fault("arguments")); break; }
+                        self.map_enter(&mut entries, values[0].clone(), values[1].clone())?;
+                    }
+                }
+            }
+        }
+        if stopped.is_none() { for (key, value) in keywords { self.map_enter(&mut entries, Value::text(key), value.clone())?; } }
+        self.replace_dict(receiver, entries)?;
+        match stopped { Some(words) => Err(words), None => Ok(Value::Nil) }
+    }
+
+    /// `dict.fromkeys`: a new map with a key for each member its
+    /// iterable target gives, every one holding the fill value it was
+    /// given, or nothing — deduplicated through `map_locate`, the
+    /// store's own place first and `keys_agree` (rather than the free
+    /// function `same_item`) only where that leaves things unknown, so
+    /// a Thing with its own `__eq__` still collapses to the one key
+    /// CPython gives it, and a target of many keys is not scanned
+    /// again for every one it grows by.
+    fn dict_fromkeys(&mut self, target: &Value, filling: Value) -> Result<Value, String> {
+        let says = |kind: &str| self.method_fault(kind);
+        let members = crate::members::gather(target, &says)?;
+        let mut entries: Rc<MapStore> = Rc::new(Vec::new().into());
+        for key in members {
+            let store: &MapStore = entries.as_ref();
+            let (found, keyed) = self.map_locate(store, Some(store), &key)?;
+            if found.is_none() { store_insert_new(&mut entries, keyed, filling.clone()); }
+        }
+        Ok(Value::Dict(entries).keep(false))
+    }
+
     fn appointment(&self, subject: &Value, index: usize) -> Option<Value> {
         let names = self.table.strings("ext.stmt.class.special");
         let word = names.get(index)?;
@@ -8084,22 +8421,44 @@ impl<'a> Machine<'a> {
     }
 
     fn carries_instance(value: &Value) -> bool {
-        Self::carries_instance_past(value, &mut Vec::new())
+        Self::carries_instance_past(value, &mut Vec::new(), true)
+    }
+
+    /// Whether an operand must go the thing-aware road of a working.
+    /// A set holding things is written out through each thing's own
+    /// words, but its workings (`&`, `|`, `<=` and the rest) already
+    /// ask each thing for its hash and its equality on the plain road,
+    /// the only one that also takes a set's subclass by its worth; so
+    /// a working does not look into a set's members.
+    fn operand_carries_instance(value: &Value) -> bool {
+        Self::carries_instance_past(value, &mut Vec::new(), false)
     }
 
     /// The scan proper, remembering the cells passed through so that a
     /// collection reaching itself is not looked into without end.
-    fn carries_instance_past(value: &Value, passed: &mut Vec<usize>) -> bool {
+    fn carries_instance_past(value: &Value, passed: &mut Vec<usize>, into_sets: bool) -> bool {
         match value {
             Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => true,
             Value::Shared(cell) | Value::Mutable(cell, _) => {
                 let address = Rc::as_ptr(cell) as usize;
                 if passed.contains(&address) { return false; }
                 passed.push(address);
-                Self::carries_instance_past(&cell.borrow(), passed)
+                Self::carries_instance_past(&cell.borrow(), passed, into_sets)
             }
-            Value::Row(v) | Value::Tuple(v) | Value::Vector(v) => v.iter().any(|item| Self::carries_instance_past(item, passed)),
-            Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(|item| Self::carries_instance_past(item, passed)),
+            Value::Row(v) | Value::Tuple(v) | Value::Vector(v) => v.iter().any(|item| Self::carries_instance_past(item, passed, into_sets)),
+            Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(|item| Self::carries_instance_past(item, passed, into_sets)),
+            // A set cannot hold itself (nothing that may be altered is
+            // hashable), but one set can stand inside many others, a
+            // frozen set of frozen sets most of all; one already looked
+            // into held no thing (the walk would have stopped there), so
+            // it is passed over the next time rather than walked again.
+            Value::Set(store) => {
+                if !into_sets { return false; }
+                let address = Rc::as_ptr(store) as *const () as usize;
+                if passed.contains(&address) { return false; }
+                passed.push(address);
+                store.try_borrow().map_or(false, |held| held.entries.iter().any(|(_, item)| Self::carries_instance_past(item, passed, into_sets)))
+            }
             _ => false,
         }
     }
@@ -8223,6 +8582,19 @@ impl<'a> Machine<'a> {
                     Ok(self.object_words(k, true)? + ": " + &self.object_words(v, true)?)
                 }).collect::<Result<Vec<_>, String>>()?;
                 Ok(String::from("{") + &pieces.join(", ") + "}")
+            }
+            // A set cannot reach itself, so its members need no note
+            // left on them the way a list's or a map's do; each is
+            // asked for its own representation, an instance's own
+            // `__repr__` among them, and not the plain address every
+            // other reader of a set's members is given.
+            Value::Set(store) => {
+                let members = store.borrow().values();
+                if members.is_empty() { return Ok(store.borrow().spelling.clone() + "()"); }
+                let mut pieces = Vec::with_capacity(members.len());
+                for item in &members { pieces.push(self.object_words(item, true)?); }
+                let inner = String::from("{") + &pieces.join(", ") + "}";
+                Ok(if store.borrow().sealed { store.borrow().spelling.clone() + "(" + &inner + ")" } else { inner })
             }
             Value::Text(s) if quoted => {
                 let mut written = String::from("'");
@@ -8362,7 +8734,10 @@ impl<'a> Machine<'a> {
             }
             return Ok(None);
         }
-        if Self::is_core_primitive(operation) && !operands.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) { return Ok(None); }
+        // Writing a value out looks into a set's members for a thing; a
+        // working on values does not (see operand_carries_instance).
+        let writes = matches!(operation, Prim::Quoted | Prim::Asciied | Prim::AsText);
+        if Self::is_core_primitive(operation) && !operands.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) { return Ok(None); }
         if operation == Prim::Belongs { return Ok(None); }
         // Text before the remainder sign lays its own marks out, which
         // is the working the left side's own method names. The value on
@@ -8482,7 +8857,7 @@ impl<'a> Machine<'a> {
                     None => settled.push(operand.clone()),
                 }
             }
-            if changed && !settled.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) {
+            if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
                 let outcome = self.prim(operation, &word, &settled);
                 // A thing built on a native kind is named by its own
@@ -8582,13 +8957,17 @@ impl<'a> Machine<'a> {
             },
             // Formatting, by the builtin or by a field of a formatted
             // string; a conversion asked in the field shows the thing as
-            // text first.
-            (Prim::FormatValue, [item @ Value::Thing(_)]) => Value::text(&self.thing_in_spec(item, "")?),
-            (Prim::FormatValue, [item @ Value::Thing(_), Value::Text(spec)]) => {
+            // text first. A collection carrying a thing among its
+            // members, a set among them, takes the same road: asking
+            // for its own `__format__` answers nothing for anything
+            // that is not itself a thing, so the road falls through to
+            // the thing-aware text below rather than the plain one.
+            (Prim::FormatValue, [item]) if Self::carries_instance(item) => Value::text(&self.thing_in_spec(item, "")?),
+            (Prim::FormatValue, [item, Value::Text(spec)]) if Self::carries_instance(item) => {
                 let spec = spec.to_string();
                 Value::text(&self.thing_in_spec(item, &spec)?)
             }
-            (Prim::RenderField, [item @ Value::Thing(_), spec, conversion]) => {
+            (Prim::RenderField, [item, spec, conversion]) if Self::carries_instance(item) => {
                 let (spec, conversion) = (spec.bare(), conversion.bare());
                 let shown = if conversion.is_empty() { self.thing_in_spec(item, &spec)? } else {
                     let text = Value::text(&self.object_words(item, conversion != "s")?);
@@ -8899,7 +9278,7 @@ impl<'a> Machine<'a> {
     /// though a refusal still names each of them apart.
     fn order_family(value: &Value) -> String {
         let word = value.kind_word();
-        match word.as_str() { "bytearray" => "bytes".to_owned(), _ => word }
+        match word.as_str() { "bytearray" => "bytes".to_owned(), "frozenset" => "set".to_owned(), _ => word }
     }
 
     /// The complaint that two values stand in no order at all, carrying
@@ -8941,6 +9320,30 @@ impl<'a> Machine<'a> {
         one.equals(other)
     }
 
+    /// Whether two maps hold the same pairs, key for key, by the very
+    /// road the subscript takes rather than `equal_contents`'s
+    /// `one_place`/`equals`, which cannot call a key's own `__eq__`:
+    /// same length, and every key of the one found among the other's
+    /// through `keys_agree`, its value equal to the one paired with it
+    /// there. A value that is itself a Thing keeps to `equal_contents`;
+    /// only a map's own keys need the interpreter to compare them.
+    fn dicts_equal(&mut self, one: &crate::data::MapStore, other: &crate::data::MapStore) -> Result<bool, String> {
+        if one.len() != other.len() { return Ok(false); }
+        // Each key of the one is sought among the other's through
+        // `map_locate`, which is the store's own place first and a
+        // walk only where the place cannot say — so a map of plain
+        // keys stays the linear comparison it always was, and only a
+        // map with a Thing among its keys pays for the walk.
+        for (key, value) in one.iter() {
+            let (found, _) = self.map_locate(other, Some(other), key)?;
+            match found {
+                Some(index) if self.equal_contents(value, &other[index].1) => {}
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
     fn dictionary(&mut self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
         let positional: Vec<Value> = positional.iter().map(collection_read).collect();
         if positional.len() > 1 {
@@ -8969,11 +9372,7 @@ impl<'a> Machine<'a> {
             additions.push((Value::text(&name), value));
         }
         for (key, value) in additions {
-            if let Some((_, previous)) = result.iter_mut().find(|(known, _)| known.equals(&key)) {
-                *previous = value;
-            } else {
-                result.push((key, value));
-            }
+            self.map_enter(&mut result, key, value)?;
         }
         Ok(Value::Dict(Rc::new(result.into())))
     }
@@ -9009,7 +9408,12 @@ impl<'a> Machine<'a> {
         // asked for the whole number it stands for before the row is
         // read; a progression sliced is a progression over the places
         // the bounds pick out.
-        if let (Prim::At, [target, Value::Span(bounds)], true) = (op, v, self.table.has_any("ext.builtin.slice")) {
+        // Whether the word is spoken for at all is asked only once the
+        // shape already says this could be a slice: most operations are
+        // no `Prim::At` on a span of bounds, and the table has nothing
+        // to say to them.
+        if let (Prim::At, [target, Value::Span(bounds)]) = (op, v) {
+            if self.table.has_any("ext.builtin.slice") {
             let target = target.settled();
             if !matches!(target, Value::Thing(_) | Value::Dict(_)) {
                 if bounds.iter().any(|bound| matches!(bound, Value::Thing(_))) {
@@ -9022,6 +9426,7 @@ impl<'a> Machine<'a> {
                     let picked = crate::data::Progression { first: &walk.first + &from * &walk.stride, limit: &walk.first + &to * &walk.stride, stride: &walk.stride * by, word: walk.word.clone() };
                     return Ok(Value::Progression(Rc::new(picked)));
                 }
+            }
             }
         }
         // A key handed out with its hash is, for ordering and arithmetic,
@@ -9040,14 +9445,18 @@ impl<'a> Machine<'a> {
         // Kinds that stand in no order to one another are refused with
         // both named, where the table gives the four pieces of words;
         // numbers order among themselves, and texts among themselves.
-        if let ([left, right], [before, between, and, after]) = (v, self.table.strings("ext.op.order.unsupported")) {
-            if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+        // The table is asked for those four pieces only where the
+        // operation is one of the four that order at all: every other
+        // operation reaching here has no use for them.
+        if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+            if let ([left, right], [before, between, and, after]) = (v, self.table.strings("ext.op.order.unsupported")) {
                 let (left, right) = (left.settled(), right.settled());
                 let counts = |x: &Value| matches!(x, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_));
                 let texts = matches!((&left, &right), (Value::Text(_), Value::Text(_)));
                 // Two of one kind may still order themselves, as sets and
                 // rows do; two of different kinds, or of a kind without any
-                // order, cannot.
+                // order, cannot. The two set kinds count as one kind
+                // here, either holding entries the other may hold too.
                 let orderless = Self::order_family(&left) != Self::order_family(&right) || matches!(left, Value::Nil | Value::Dict(_));
                 if orderless && !(counts(&left) && counts(&right)) && !texts && !matches!((&left, &right), (Value::Thing(_), _) | (_, Value::Thing(_))) && math::below(&left, &right).is_none() {
                     let sign = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
@@ -9444,7 +9853,11 @@ impl<'a> Machine<'a> {
                 let ordinary = [Prim::BitsEither, Prim::BitsBoth, Prim::Minus, Prim::BitsOne][operation as usize];
                 let answer = self.prim(ordinary, name, v)?;
                 match (&v[0], &answer) {
-                    (Value::Set(place), Value::Set(updated)) => {
+                    // Nothing is written through a sealed set: the plain
+                    // working stands and what it made is handed back, so
+                    // that the name takes the new set, the reference
+                    // finding no altering member of that name either.
+                    (Value::Set(place), Value::Set(updated)) if !v[0].set_sealed() => {
                         place.replace(updated.borrow().clone());
                         v[0].clone()
                     }
@@ -9454,7 +9867,29 @@ impl<'a> Machine<'a> {
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
             Prim::StartContext | Prim::DistinctObjects => return Err(self.bad_answer()),
-            Prim::Textual(work) => { let values: Vec<Value> = v.iter().map(|x| match x.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect(); crate::text::apply(self.table, work, name, &values, self.wording())? },
+            Prim::Textual(work) => {
+                let values: Vec<Value> = v.iter().map(|x| match x.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect();
+                // A word of the text kind spelled with the method after
+                // a dot, such as `str.upper`, is refused as CPython's
+                // unbound method or descriptor is when it is handed no
+                // receiver at all, or one that is no text. The one
+                // static method of the kind, which builds a table and
+                // takes no text of its own, is let through.
+                if let (Some((word, entry)), false) = (name.split_once('.'), work == crate::text::Work::MAKETRANS) {
+                    match values.first() {
+                        None => {
+                            let words = self.table.strings("ext.stmt.class.detail.descriptor.unbound");
+                            return if words.len() == 3 { Err(format!("{}{word}{}{entry}{}",words[0],words[1],words[2])) } else { Err(crate::text::complaint(self.table, "receiver")) };
+                        }
+                        Some(Value::Text(_)) => {}
+                        Some(other) => {
+                            let words = self.table.strings("ext.stmt.class.detail.descriptor.foreign");
+                            return if words.len() == 4 { Err(format!("{}{entry}{}{word}{}{}{}",words[0],words[1],words[2],other.kind_word(),words[3])) } else { Err(crate::text::complaint(self.table, "receiver")) };
+                        }
+                    }
+                }
+                crate::text::apply(self.table, work, name, &values, self.wording())?
+            },
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -9584,6 +10019,11 @@ impl<'a> Machine<'a> {
                     next.extend(if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] });
                     Value::Vector(Rc::new(next))
                 } else {
+                    // The fast pre-check above the general dispatch takes
+                    // every ordinary literal or comprehension step; a
+                    // call that reaches here instead is handed no more
+                    // than the one map it grows, so paying to clone it
+                    // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
                     let incoming = match &v[1] {
                         Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
@@ -9593,12 +10033,7 @@ impl<'a> Machine<'a> {
                     let mut combined = prior.to_vec();
                     for (key, value) in incoming {
                         if let Some(words) = self.cannot_key(&key) { return Err(words); }
-                        if !self.table.has_any("ext.stmt.class.special") { set_key(&mut combined, key, value); continue; }
-                        let key = self.hash_key(&key)?;
-                        let mut position = 0;
-                        while position < combined.len() && !self.keys_agree(&combined[position].0, &key)? { position += 1; }
-                        if position == combined.len() { combined.push((key, value)); }
-                        else { combined[position].1 = value; }
+                        self.map_enter(&mut combined, key, value)?;
                     }
                     Value::Dict(Rc::new(combined.into()))
                 }
@@ -10942,7 +11377,11 @@ impl<'a> Machine<'a> {
                 Value::Flag((op == Prim::Eq) == alike)
             }
             Prim::Eq | Prim::Ne if self.table.flag("ext.op.eq.maps.unordered") => {
-                Value::Flag(self.equal_contents(&v[0], &v[1]) != (op == Prim::Ne))
+                let alike = match (&v[0], &v[1]) {
+                    (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
+                    _ => self.equal_contents(&v[0], &v[1]),
+                };
+                Value::Flag(alike != (op == Prim::Ne))
             }
             Prim::Membership => {
                 n(2)?;
@@ -11460,7 +11899,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::Tuple(Rc::new(Vec::new())) }
                 else { n(1)?; Value::Tuple(Rc::new(self.gathered_members(&v[0])?)) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -11727,7 +12166,7 @@ impl<'a> Machine<'a> {
                         // What a routine keeps under its names, seen as
                         // a view of the entries, is of the dictionary kind.
                         Value::Attributes(_) => Some(Prim::Dictionary),
-                        Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
+                        Value::Set(_) => Some(if v[0].set_sealed() { Prim::Unchanging } else { Prim::Uniques }), Value::Tuple(_) => Some(Prim::Tupling),
                         Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal),
                         // A progression and a span of bounds are kinds
                         // the table spells, so each answers with the
@@ -12191,7 +12630,7 @@ impl<'a> Machine<'a> {
         let celled = |wanted: fn(&Value) -> bool| matches!(&worth, Value::Mutable(cell, _) if wanted(&cell.borrow()));
         let rows = celled(|held| matches!(held, Value::Vector(_)));
         let pairs = celled(|held| matches!(held, Value::Dict(_)));
-        let uniques = matches!(worth, Value::Set(_));
+        let uniques = matches!(worth, Value::Set(_)) && !worth.set_sealed();
         let writes = match plain {
             Prim::OctetAssign(_) => rows && self.works_sequences(),
             Prim::SetAssign(0) => uniques || pairs && self.table.flag("ext.op.bit.or.maps"),
@@ -12574,6 +13013,17 @@ impl<'a> Machine<'a> {
     /// A value placed in a set at the address it takes there, a thing
     /// kept beside its hash as a map's keys are kept.
     fn set_include(&mut self, store: &Rc<RefCell<crate::data::SetStore>>, item: Value) -> Result<(), String> {
+        // An item addressed by its worth alone has no use for the
+        // entries: its address is what it is whoever else lies there.
+        // Only a thing, whose hash and equality the program answers
+        // for, is placed against the entries, so they are copied out
+        // for that alone and a store is gathered in a single pass
+        // rather than in one pass for every entry it gains.
+        if !matches!(item, Value::Thing(_) | Value::Keyed(..)) {
+            let address = self.hash_for_set(&item)?;
+            store.borrow_mut().put(address, item);
+            return Ok(());
+        }
         let entries = store.borrow().entries.clone();
         let address = self.set_address(&entries, &item)?;
         let kept = if matches!(item, Value::Thing(_)) { self.hash_key(&item)? } else { item };
@@ -12590,7 +13040,7 @@ impl<'a> Machine<'a> {
     }
 
     fn gather_set(&mut self, source: Option<&Value>) -> Result<crate::data::SetStore, String> {
-        let gathered = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""))));
+        let gathered = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""), false)));
         if let Some(source) = source {
             for item in self.gathered_members(source)? { self.set_include(&gathered, item)?; }
         }
@@ -12656,6 +13106,9 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
+            // Copying a sealed set answers with that set: a second
+            // could hold nothing the first does not.
+            6 if values[0].set_sealed() => Ok(values[0].clone()),
             4 => {
                 let first = target.borrow().entries.first().map(|(k, _)| k.clone());
                 match first {
@@ -12912,20 +13365,23 @@ fn assembled(values: Vec<Value>, map_wanted: bool, plain_keys: bool) -> Value {
     if !map_wanted && !values.iter().any(|x| matches!(x, Value::Couple(_))) {
         return Value::Vector(Rc::new(values));
     }
-    let mut entries: Vec<(Value, Value)> = Vec::with_capacity(values.len());
+    // Grown as one store-backed map throughout, so a literal of many
+    // keys writes each one into the pairs it already has rather than
+    // scanning them all again for every key that joins.
+    let mut entries: Rc<MapStore> = Rc::new(Vec::with_capacity(values.len()).into());
     for value in values {
         match value {
             Value::Couple(e) => {
                 let key = if plain_keys { key_as_taken(e.0.clone()) } else { e.0.clone() };
-                set_key(&mut entries, key, e.1.clone())
+                set_key_indexed(&mut entries, key, e.1.clone())
             }
             other => {
-                let key = Value::Small(after_keys(&entries));
-                entries.push((key, other));
+                let key = Value::Small(after_keys(entries.as_ref()));
+                Rc::make_mut(&mut entries).push((key, other));
             }
         }
     }
-    Value::Dict(Rc::new(entries.into()))
+    Value::Dict(entries)
 }
 
 /// One past the highest whole-number key, or nought when there is none.
@@ -12951,6 +13407,47 @@ fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
             _ => entry.1 = value,
         },
         None => entries.push((key, value)),
+    }
+}
+
+/// Write a key into a store-backed map, in place: the store's own
+/// text-keyed address answers first, for a key of plain, scalar
+/// worth its own address names, and only a key its own address
+/// cannot place — a list, a map, a changeable set, a thing — falls
+/// to the plain walk `set_key` always took, exactly as it always
+/// took it.
+fn set_key_indexed(entries: &mut Rc<MapStore>, key: Value, value: Value) {
+    if let Ok(address) = key.hash_address() {
+        match entries.locate(&address) {
+            Found::Found(at) => return overwrite_or_shared(entries, at, value),
+            Found::Absent => return store_insert_new(entries, key, value),
+            Found::Unknown => {}
+        }
+    }
+    match entries.as_ref().iter().position(|(k, _): &(Value, Value)| k.equals(&key)) {
+        Some(at) => overwrite_or_shared(entries, at, value),
+        None => { Rc::make_mut(entries).push((key, value)); }
+    }
+}
+
+/// A pair written over, or a place keeping a cell that names share
+/// written through instead, not written over.
+fn overwrite_or_shared(entries: &mut Rc<MapStore>, at: usize, value: Value) {
+    if let Value::Shared(cell) = &entries[at].1 {
+        let cell = cell.clone();
+        *cell.borrow_mut() = value;
+    } else {
+        Rc::make_mut(entries).overwrite_at(at, value);
+    }
+}
+
+/// A key already known to be absent, added to a store-backed map's
+/// pairs and, where its own address names it, to the store's place
+/// alongside them, so the next key finds it there without a walk.
+fn store_insert_new(entries: &mut Rc<MapStore>, key: Value, value: Value) {
+    match key.hash_address() {
+        Ok(address) => Rc::make_mut(entries).insert_known_absent(key, address, value),
+        Err(_) => { Rc::make_mut(entries).push((key, value)); }
     }
 }
 
@@ -14157,7 +14654,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -14268,6 +14765,44 @@ impl Machine<'_> {
             if held.done { return Ok(None); }
             if let Some(value) = held.peek.take() { return Ok(Some(value)); }
             if matches!(held.kind, IteratorKind::Busy) { return Err(self.core_complaint("core.unready", "next")); }
+            // A walk that reaches nothing beyond its own row, its own
+            // count or its own cell -- calling back to no work of the
+            // program's and asking no other iterator -- steps in the
+            // one borrow already open on it, since nothing it does
+            // could ever reach this same iterator again meanwhile. The
+            // place such a walk stands at is a great number even where
+            // the walk itself is small, and taking the whole of the
+            // kind out to set the walk free, where the walk was never
+            // taken up by anything that needed it free, paid for that
+            // number twice at every single step for nothing gained by
+            // it.
+            match &mut held.kind {
+                IteratorKind::Stored(entries) => {
+                    let item = entries.pop_front();
+                    held.done = item.is_none();
+                    return Ok(item);
+                }
+                IteratorKind::Living(home, at) => {
+                    let item = match home.borrow().settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    if item.is_some() { *at += 1; }
+                    held.done = item.is_none();
+                    return Ok(item);
+                }
+                IteratorKind::Watching { window, at, size } => {
+                    if Self::window_extent(window) != *size { return Err(self.core_complaint("core.dict.changed", "")); }
+                    let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    if item.is_some() { *at += 1; }
+                    held.done = item.is_none();
+                    return Ok(item);
+                }
+                IteratorKind::Stepping(walk, at) => {
+                    let item = walk.item(at);
+                    if item.is_some() { *at += 1; }
+                    held.done = item.is_none();
+                    return Ok(item);
+                }
+                _ => {}
+            }
             std::mem::replace(&mut held.kind, IteratorKind::Busy)
         };
         let result = (|| -> Result<Option<Value>, String> {
@@ -14638,14 +15173,26 @@ impl Machine<'_> {
                 let found = self.identities.iter().position(|old| *old == stamp).unwrap_or_else(|| { self.identities.push(stamp); self.identities.len()-1 });
                 Ok(Value::Small(found as i64 + 1))
             }
-            Tupling | Uniques => {
+            Tupling | Uniques | Unchanging => {
                 require(0, 1)?;
+                // A sealed set given to the maker of its own kind comes
+                // straight back: nothing may alter it, so a second
+                // would be the first under another name, and the
+                // reference answers with the very one it was handed.
+                if op == Unchanging {
+                    if let Some(standing) = input.first().filter(|v| matches!(v, Value::Set(_)) && v.set_sealed()) {
+                        return Ok(standing.clone());
+                    }
+                }
                 let entries = match input.first() { Some(v) => self.core_collect(v)?, None => Vec::new() };
                 if op == Tupling { return Ok(Value::Tuple(Rc::new(entries))); }
                 // A thing among the entries goes in as the set literal puts
                 // it in, under its own hash and its own equality; any other
-                // entry with no hash is refused.
-                let store = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""))));
+                // entry with no hash is refused. The sealed kind is
+                // gathered the very same way and differs only in kind.
+                let sealed = op == Unchanging;
+                let tag = if sealed { "ext.builtin.frozenset" } else { "ext.builtin.set" };
+                let store = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single(tag).unwrap_or(""), sealed)));
                 for entry in entries {
                     // An entry of a native kind with no hash of its own is
                     // refused by its kind, as the table has it.
@@ -14673,20 +15220,18 @@ impl Machine<'_> {
                     }
                 }
                 incoming.extend(additions);
-                let mut entries: Vec<(Value, Value)> = Vec::new();
+                // Grown as one store-backed map throughout, so an
+                // iterable of many pairs is not scanned again in full
+                // for every pair it grows by.
+                let mut entries: Rc<MapStore> = Rc::new(Vec::new().into());
                 for (key, item) in incoming {
                     // A thing as a key carries its own hash, as it does in
                     // a dictionary literal.
                     let key = if matches!(key, Value::Thing(_)) { self.hash_key(&key)? } else { key };
                     if !matches!(key, Value::Keyed(..)) && key.hash_number().is_none() && !matches!(key, Value::Nil | Value::Frac(_)) { return Err(self.core_complaint("core.unhashable", &key.kind_word())); }
-                    let mut place = None;
-                    for (index, (old, _)) in entries.iter().enumerate() {
-                        let same = if matches!(old, Value::Keyed(..)) || matches!(key, Value::Keyed(..)) { self.keys_agree(old, &key)? } else { as_number(old).equals(&as_number(&key)) };
-                        if same { place = Some(index); break; }
-                    }
-                    match place { Some(index) => entries[index].1 = item, None => entries.push((key, item)) }
+                    self.store_write(&mut entries, key, item)?;
                 }
-                Ok(Value::Dict(Rc::new(entries.into())))
+                Ok(Value::Dict(entries))
             }
             Iterator => {
                 require(1, 2)?;

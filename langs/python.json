@@ -831,6 +831,9 @@
   "ext.builtin.format": [
     "format"
   ],
+  "ext.builtin.frozenset": [
+    "frozenset"
+  ],
   "ext.builtin.getattr": [
     "getattr"
   ],
@@ -1270,8 +1273,7 @@
     "number"
   ],
   "ext.builtin.set": [
-    "set",
-    "frozenset"
+    "set"
   ],
   "ext.builtin.set.add": [
     "add"
@@ -2440,6 +2442,11 @@
     "' for '",
     "' objects doesn't apply to a '",
     "' object"
+  ],
+  "ext.stmt.class.detail.descriptor.unbound": [
+    "TypeError: unbound method ",
+    ".",
+    "() needs an argument"
   ],
   "ext.stmt.class.detail.descriptor.get": [
     "__get__"

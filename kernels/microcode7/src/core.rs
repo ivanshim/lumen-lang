@@ -22,7 +22,8 @@ impl Value {
             Self::Complex(_) => "complex",
             Self::Thing(thing) => return thing.of.name.to_owned(),
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().kind_word(),
-            Self::Tuple(_) | Self::Row(_) => "tuple", Self::Set(_) => "set", Self::Dict(_) => "dict",
+            Self::Tuple(_) | Self::Row(_) => "tuple", Self::Dict(_) => "dict",
+            Self::Set(_) => if self.set_sealed() { "frozenset" } else { "set" },
             Self::Text(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
             Self::Nil => "NoneType", Self::Progression(_) => "range",
@@ -48,7 +49,16 @@ impl Value {
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
-            Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
+            Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
+            // A method or a data member read off a native kind's own
+            // word, rather than off a value of it, is a descriptor: a
+            // method's own kind, or a data member's, by the same
+            // reckoning the repr gives it.
+            Self::Wrapped(60, parts) => return match parts.as_slice() {
+                [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),
+                _ => "object".to_owned(),
+            },
+            _ => "object",
         };
         word.to_owned()
     }
@@ -162,6 +172,29 @@ impl Value {
                 let positive = if bottom == BigInt::from(0) { 314159 }
                     else { ((parts.above.abs() % &prime) * bottom.modpow(&(&prime-2),&prime) % &prime).to_i64()? };
                 if parts.above.is_negative() { -positive } else { positive }
+            }
+            // A sealed set folds what it holds as the reference folds
+            // it: each entry's own hash is scattered, the scatterings
+            // are taken together by ones and noughts, which no order
+            // among them can tell apart, and the count is mixed in
+            // after. An entry kept beside its hash hands that hash
+            // over, the store having reckoned it when the entry was
+            // put there. A set that may be altered folds to nothing.
+            Self::Set(store) => {
+                let held = store.try_borrow().ok()?;
+                if !held.sealed { return None; }
+                if let Some(worked) = held.reckoned.get() { return Some(worked); }
+                let mut folded: u64 = 0;
+                for (_, entry) in &held.entries {
+                    let lane = match entry { Self::Keyed(_, hash) => hash.hash_number()?, plain => plain.hash_number()? } as u64;
+                    folded ^= ((lane ^ 89_869_747u64) ^ (lane << 16)).wrapping_mul(3_644_798_167u64);
+                }
+                folded ^= (held.entries.len() as u64).wrapping_add(1).wrapping_mul(1_927_868_237u64);
+                folded ^= (folded >> 11) ^ (folded >> 25);
+                folded = folded.wrapping_mul(69_069u64).wrapping_add(907_133_923u64);
+                let entire = if folded == u64::MAX { 590_923_713 } else { folded as i64 };
+                held.reckoned.set(Some(entire));
+                return Some(entire);
             }
             Self::Tuple(parts) => {
                 let mut accum: u64 = 2_870_177_450_012_600_261;

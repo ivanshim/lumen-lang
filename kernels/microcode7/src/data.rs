@@ -255,23 +255,56 @@ pub struct Adornment {
 }
 
 /// Members keep both their hash address and their place in the telling.
+//
+// The membership set is scattered by the same plainer, quicker hash
+// the label table reads by: an address here is already the outcome of
+// `hash_address`, not a program's raw text, and nothing about set
+// membership needs the guard against a chosen-key adversary that the
+// standard scattering pays for on every insertion.
 #[derive(Clone, Debug)]
 pub struct SetStore {
     pub entries: Vec<(String, Value)>,
-    pub keys: std::collections::HashSet<String>,
+    pub keys: HashSet<String, crate::table::FxBuildHasher>,
     pub spelling: String,
+    /// Whether nothing may alter this store. The kind the set is of is
+    /// kept here, beside the entries, so that whoever holds the store
+    /// knows the kind without going back to the table for the word.
+    pub sealed: bool,
+    /// A sealed store's fold, once it has been worked out. Nothing may
+    /// alter such a store, so the fold cannot go stale and is worked
+    /// out once however often it is wanted; a store of stores would
+    /// otherwise fold every level beneath it over again each time.
+    pub reckoned: std::cell::Cell<Option<i64>>,
 }
 
 impl SetStore {
-    pub fn new(spelling: &str) -> SetStore {
-        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into() }
+    pub fn new(spelling: &str, sealed: bool) -> SetStore {
+        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None) }
+    }
+
+    /// The address the whole store takes where a set holds it: the
+    /// addresses of its entries, ordered and then gathered into a
+    /// single number, so that two stores of the same entries take the
+    /// one address however either was gathered. They are gathered
+    /// rather than written end to end because a store of stores would
+    /// double the writing at every level: the numbers built from sets
+    /// alone grow past any length a machine could hold, whereas one
+    /// number stays one number however deep the nesting runs.
+    pub fn whole_address(&self) -> String {
+        let mut places: Vec<&str> = self.entries.iter().map(|(address, _)| address.as_str()).collect();
+        places.sort_unstable();
+        let mut gathering = std::collections::hash_map::DefaultHasher::new();
+        for place in places { std::hash::Hash::hash(place, &mut gathering); }
+        format!("sealed:{:x}", std::hash::Hasher::finish(&gathering))
     }
 
     pub fn put(&mut self, address: String, item: Value) {
+        self.reckoned.set(None);
         if self.keys.insert(address.clone()) { self.entries.push((address, item)); }
     }
 
     pub fn take(&mut self, address: &str) -> Option<Value> {
+        self.reckoned.set(None);
         if !self.keys.remove(address) { return None; }
         let place = self.entries.iter().position(|(k, _)| k == address).unwrap();
         Some(self.entries.remove(place).1)
@@ -285,7 +318,7 @@ impl SetStore {
     }
 
     pub fn merge(&self, rhs: &SetStore, rule: u8) -> SetStore {
-        let mut answer = SetStore::new(&self.spelling);
+        let mut answer = SetStore::new(&self.spelling, self.sealed);
         for (key, item) in self.entries.iter().chain(rhs.entries.iter()) {
             let left = self.keys.contains(key);
             let right = rhs.keys.contains(key);
@@ -295,12 +328,17 @@ impl SetStore {
         answer
     }
 
+    /// The store written out. An empty one names its kind with nothing
+    /// between its brackets; a sealed one names its kind before the
+    /// braces, since no writing in a program stands for such a set and
+    /// braces alone would read as the kind that may be altered.
     pub fn written(&self, item_text: impl Fn(&Value) -> String) -> String {
         match self.entries.len() {
             0 => self.spelling.clone() + "()",
             _ => {
                 let words = self.entries.iter().map(|(_, item)| item_text(item)).collect::<Vec<_>>();
-                "{".to_owned() + &words.join(", ") + "}"
+                let inner = "{".to_owned() + &words.join(", ") + "}";
+                if self.sealed { self.spelling.clone() + "(" + &inner + ")" } else { inner }
             }
         }
     }
@@ -542,6 +580,19 @@ impl Value {
         }
     }
 
+    /// Whether a value is a set nothing may alter, read through the
+    /// cells that may stand between a name and the set itself. A set
+    /// held open whilst its entries are read answers as one that may
+    /// be altered, nothing being askable of it at such a moment.
+    pub fn set_sealed(&self) -> bool {
+        match self {
+            Value::Set(store) => store.try_borrow().map_or(false, |held| held.sealed),
+            Value::SetCursor { source, .. } => source.try_borrow().map_or(false, |held| held.sealed),
+            Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().set_sealed(),
+            _ => false,
+        }
+    }
+
     pub fn hash_address(&self) -> Result<String, &'static str> {
         match self {
             Value::Tuple(items) | Value::Row(items) => {
@@ -551,7 +602,12 @@ impl Value {
             Value::Shared(slot) | Value::Mutable(slot, _) => slot.borrow().hash_address(),
             Value::Vector(_) => Err("list"),
             Value::Dict(_) => Err("dict"),
-            Value::Set(_) => Err("set"),
+            // A sealed set is addressed by what it holds; one that may
+            // be altered has no address at all.
+            Value::Set(store) => match store.try_borrow() {
+                Ok(held) if held.sealed => Ok(held.whole_address()),
+                _ => Err("set"),
+            },
             Value::Text(word) => Ok(format!("text:{word}")),
             // A progression is addressed by the places it names: their
             // count, where they begin and how far apart they stand, so
@@ -1100,10 +1156,15 @@ impl Value {
             Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
-            // A method carried by a native kind and read off the kind's
-            // own word stands loose, and is named with that kind.
+            // A method or a data member carried by a native kind and
+            // read off the kind's own word stands loose, and is named
+            // with that kind, under CPython's own word for the
+            // descriptor that carries it.
             Value::Wrapped(60, parts) => match parts.as_slice() {
-                [Value::Text(kind), Value::Text(word)] => format!("<method '{word}' of '{kind}' objects>"),
+                [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
+                    Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
+                    None => format!("<method '{word}' of '{kind}' objects>"),
+                },
                 _ => "<member wrapper>".into(),
             },
             Value::Wrapped(..) => "<member wrapper>".into(),
@@ -1158,6 +1219,21 @@ impl Value {
 /// merely for something of one: the reference's own name for that
 /// kind. Nothing for a worth that is one of a kind.
 impl Value {
+    /// Whether an entry read off a native kind's own word is a data
+    /// member rather than a method, for the small set of kinds that
+    /// carry one: what CPython calls the descriptor in its repr, and
+    /// the name `type()` gives it. `int`, `bool` and `float` show an
+    /// attribute; `complex`, `range` and `slice` show a member, as
+    /// CPython 3.11 has it.
+    pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        match kind {
+            "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
+            "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),
+            "range" | "slice" if matches!(name, "start" | "stop" | "step") => Some(("member", "member_descriptor")),
+            _ => None,
+        }
+    }
+
     pub fn kind_it_names(&self) -> Option<String> {
         match self {
             Value::Blueprint(b) => Some(b.name.clone()),

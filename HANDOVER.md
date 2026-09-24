@@ -1338,6 +1338,87 @@ with its own `__hash__` shows `<object K>` on microcode7 and refuses
 on stack8; a dict comprehension builds in time square to its size on
 microcode7 where the explicit loop is linear.
 
+### 1v. Batch 13 merged as #500; batch 14 is frozen sets, object keys, class namespaces and linear dict building
+
+Pull request #500 merged into main at b748505 with all six jobs green
+on e072e22. Batch 14 folds seven branches and four fixes of the
+integration's own.
+
+fix/frozenset-kind makes the frozen set a kind of its own on both
+kernels (`type(fz | {1})` is frozenset, a frozen set hashes and is
+hashed apart from a set), scatters set membership by a plainer, quicker
+hash, stops comprehensions and walked rows copying what they need not,
+and builds `itertools.combinations` from indices: test_set's
+test_hash_effectiveness, which had taken most of the file's 2,000 s
+(stack8) and 3,100 s (microcode7), now leaves the whole file at about
+330 s and 720 s on the debug binary. fix/thing-keys lets `.get`,
+`.pop`, `.setdefault`, `.update`, `dict.fromkeys` and `d1 == d2` find a
+key the way the subscript does, through the map store and then the
+key's own `__eq__`. fix/kind-members lets the kinds answer for their
+own members (`hasattr(range, "start")`, `getattr(bytes, "hex")`,
+`<member 'start' of 'range' objects>`) and words a wrong receiver as
+CPython does (`descriptor 'add' for 'set' objects doesn't apply to a
+'int' object`, `unbound method set.add() needs an argument`, a new
+label `ext.stmt.class.detail.descriptor.unbound`). fix/set-things
+shows a set holding things through each thing's own `__repr__`.
+fix/class-namespace gives a class body a namespace of its own on both
+kernels (`locals()` and `eval()` there, a comprehension's first
+iterable), stops a stack8 function's locals leaking into its module,
+and lets microcode7's `exec` write through a subscript into a given
+globals dict; fix/class-namespace-2 found that stack8's store of a
+`globals()[k] = v`, `locals()[k] = v` or `vars()[k] = v` returned early
+and left the compiler's waiting state behind, so the next statement
+read the written value (`globals()['z'] = 3; vals = [1, 2, 3]`
+printed 3) and a `#slice_value` temporary leaked through `exec`.
+fix/dict-comp keeps one uniquely owned store growing in place for a
+dict comprehension, `dict()`, `dict.fromkeys`, `{**a, **b}` and PHP's
+literal builder: 40,000 entries take 0.7 s and 0.9 s, where stack8
+took 85 s and microcode7 more than 300 s.
+
+The integration's own fixes, each found by its checks: marshal writes
+a frozen set under its own tag, since `pickle.dumps(frozenset(...))`
+fell through to the refusal once the frozen set was no longer a set
+(test_set TestFrozenSet.test_pickling had passed); the look for a thing
+inside a value, taught by set-things to go into a set's members,
+remembers each set it has looked into, since nested frozen sets (the
+von Neumann numerals of test_hash_effectiveness) were walked again and
+again and the file ran past its 900 s cap; and that look now has two
+questions on each kernel (microcode7 `carries_instance` and
+`operand_carries_instance`, stack8 `holds_object` and
+`argument_holds_object`): writing a value out (repr, ascii, str, a
+formatted field) looks into a set, every other working does not,
+because the thing-aware road knows no set subclass, and sending
+`set_of_things & SetSubclass(...)` and `len(SetSubclass(things))` down
+it had turned 35 of microcode7's TestBinaryOpsMutating tests and one
+stack8 test into errors. That regression was caught only by comparing
+BOTH kernels' progress lines with the record position by position:
+progcmp's "dot->E/F" counts one kernel against the record, so a record
+now moves only after each kernel's line is checked and the two agree.
+
+The batch-14 count, taken at d88b34b, stands at stack8 1,327 of 2,536
+and microcode7 1,340 of 2,536: test_set 458 to 473, test_dict 71 to 76
+(stack8) and 77 (microcode7), test_listcomps 28 to 41, test_scope 26
+and 27 to 29, and no file lost a pass. Records moved:
+scratch/reader-tail/4.err (test_set) and reader-tail/5.err
+(test_listcomps). Gaps this round records: two sets of the same thing
+objects compare unequal once one was built by removal and re-adding,
+and a thing key read back through `.keys()`/`.items()` is handed out
+still wrapped (a branch is under way); `dict.fromkeys` of a generator
+raises outside the exception road on both kernels (the same branch);
+a class body's `locals()` is not live and writable; microcode7's
+test_scope testScopeOfGlobalStmt and test_listcomps
+test_explicit_global resolve a shadowed global wrongly.
+
+CI's scratch job on #501 found three programs the integration's own
+scratch list had not included: `str.maketrans({...})` was refused as a
+wrong receiver on both kernels (the kind's one static method now
+passes the receiver check), and scratch/unittest-2/regex-warning-
+assertions read `warnings.UserWarning`, which CPython's warnings module
+does not have and stack8 found only through the function-local leak
+the class-namespace fold closed; the program now names `UserWarning`
+as CPython requires. microcode7 still answers a module attribute the
+module does not define from the builtins, a divergence left recorded.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

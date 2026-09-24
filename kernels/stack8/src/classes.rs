@@ -6,7 +6,11 @@ impl<'a> Engine<'a> {
     pub(super) fn class_word(&self, part: &str) -> &str {
         self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str)
     }
-    pub(super) fn fuller_classes(&self) -> bool { !self.class_word("root").is_empty() }
+    // Read once when the language itself was read, since no program
+    // still running can change which words a class stands under: every
+    // step of every program asks this, so it stands as a field on the
+    // language rather than a hashmap looked into afresh each time.
+    pub(super) fn fuller_classes(&self) -> bool { self.lang.fuller_classes }
     fn class_refusal(&self) -> Fault { self.class_word("unready").to_string().into() }
     pub(super) fn root_class(&mut self) -> Rc<Class> {
         if let Some(c) = &self.class_root { return c.clone(); }
@@ -450,10 +454,22 @@ impl<'a> Engine<'a> {
                 // A member a builtin kind carries, standing loose: the
                 // first value it is called with is the one it works
                 // upon, and the rest are what the member itself takes.
-                29 if !args.is_empty() => {
-                    let subject = args.remove(0);
+                // Called with none at all, it names the kind and itself
+                // as CPython's unbound method does; handed a receiver
+                // of the wrong kind, it names the member, the kind and
+                // the receiver's own, as CPython's descriptor does.
+                29 => {
                     let member = w.1[1].plain();
                     let word = w.1[0].plain();
+                    if args.is_empty() {
+                        let pieces = self.lang.class_details.get("descriptor.unbound").cloned().unwrap_or_default();
+                        return if pieces.len() == 3 {
+                            Err(format!("{}{word}{}{member}{}", pieces[0], pieces[1], pieces[2]).into())
+                        } else {
+                            Err(self.class_refusal())
+                        };
+                    }
+                    let subject = args.remove(0);
                     // A thing of a class standing on the very kind this
                     // word names answers as its worth would, since the
                     // loose member is the kind's own and not the
@@ -472,7 +488,14 @@ impl<'a> Engine<'a> {
                     };
                     match self.builtin_member(&receiver,&member)? {
                         Some(bound) => self.class_apply(bound,args),
-                        None => Err(self.missing_member(&subject,&member)),
+                        None => {
+                            let pieces = self.lang.class_details.get("descriptor.foreign").cloned().unwrap_or_default();
+                            if pieces.len() == 4 {
+                                Err(format!("{}{member}{}{word}{}{}{}", pieces[0], pieces[1], pieces[2], Self::shown_kind(&receiver), pieces[3]).into())
+                            } else {
+                                Err(self.missing_member(&subject,&member))
+                            }
+                        }
                     }
                 }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
@@ -940,6 +963,9 @@ impl<'a> Engine<'a> {
             // kind as well; a routine and a method are of kinds the
             // definition does not name, so they take the words for them.
             [Value::Adapter(_)] if self.kind_spelled(&args[0]).is_some()=>Ok(self.kind_maker_word()),
+            // A method or a data member read off a builtin kind's own
+            // word is of the descriptor kind CPython gives it.
+            [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Array(bases),Value::Map(members)] | [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){if let Value::Class(c)=b{parents.push(c.clone());}else{return Err(self.class_refusal());}}
@@ -1027,7 +1053,8 @@ impl<'a> Engine<'a> {
             Builtin::SortOf=>matches!(value,Value::Class(_)|Value::Native(..)|Value::ByteKind(..)|Value::SortOf(_))||self.kind_spelled(value).is_some(),
             Builtin::Dict=>matches!(value,Value::Map(_)),
             Builtin::Tuple=>matches!(value,Value::Tuple(_)),
-            Builtin::Set=>matches!(value,Value::Set(_)),
+            Builtin::Set=>matches!(value,Value::Set(_))&&!value.set_fixed(),
+            Builtin::Frozen=>value.set_fixed(),
             Builtin::Bool=>matches!(value,Value::Flag(_)),
             Builtin::Complex=>matches!(value,Value::Complex(_)),
             Builtin::Span=>matches!(value,Value::Counted(_)),

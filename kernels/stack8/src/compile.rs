@@ -51,6 +51,14 @@ pub struct Registry {
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
     pub program_bound: std::collections::HashSet<String>,
+    /// The names a write has actually bound at the outermost scope,
+    /// whether by a plain assignment standing outside every function
+    /// and block or by a `global`/`static` declaration reaching back
+    /// out to it: a module built from this registry shows only these
+    /// as its own, so a name a function merely keeps for itself, which
+    /// took a slot here too since every name does, is not mistaken for
+    /// one the module carries.
+    pub globals: std::collections::HashSet<String>,
     /// The line the reading had reached when it stopped, for a language
     /// that tells such a stopping in its own words to name.
     pub stopped_at: usize,
@@ -121,10 +129,17 @@ struct BindingPlan {
     names: Vec<String>,
     globals: Vec<(String, String)>,
     nonlocals: Vec<String>,
+    /// Which of those `nonlocals` a class body nested in this unit
+    /// declared, rather than the unit's own statements: naming a
+    /// parameter this way is no conflict, since the class is a scope
+    /// of its own in the reference, unlike here, where it takes no
+    /// unit and its declarations land where the unit's own would.
+    class_nonlocals: Vec<String>,
 }
 
 struct Piece {
     nonlocals: Vec<String>,
+    class_nonlocals: Vec<String>,
     enclosed: Vec<(usize, Cell)>,
     outermost: bool,
     ident: String,
@@ -321,7 +336,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let top = Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
+    let top = Piece { nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -719,6 +734,7 @@ impl<'a> Compiler<'a> {
             }
         }
         if let Some(cell) = self.global_cell(name) {
+            self.registry.globals.insert(name.to_string());
             return cell;
         }
         if self.lang.closes_over && !self.discovering && self.piece().nonlocals.iter().any(|n| n == name) {
@@ -731,6 +747,7 @@ impl<'a> Compiler<'a> {
             if in_program {
                 self.registry.program_bound.insert(name.to_string());
             }
+            self.registry.globals.insert(name.to_string());
             return Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
         }
         let found = match unit.scopes.last() {
@@ -821,6 +838,38 @@ impl<'a> Compiler<'a> {
     /// not a method's within it or the program's around it.
     fn in_class_body(&self) -> bool {
         self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len())
+    }
+
+    /// Whether the current unit already holds this name `global` or
+    /// `nonlocal`, the two declarations that carry a name past a class
+    /// body to the place it named before the body was ever entered.
+    fn declared_outside_class(&self, name: &str) -> bool {
+        let unit = self.pieces.last().expect("a unit");
+        unit.globals.iter().any(|(named, _)| named == name) || unit.nonlocals.iter().any(|named| named == name)
+    }
+
+    /// A map built from the class body's own names, bound so far, each
+    /// read through the place it is kept in: the value `locals()`
+    /// answers with there, and the near dictionary an `eval` reads
+    /// there hands over. A member only a conditional's arm may have
+    /// bound is left out rather than glanced at, since what it would
+    /// show -- nothing written, or what a pass before it left -- is
+    /// never the answer the reference gives.
+    fn class_names_map(&mut self) {
+        self.act(Action::MakeMap, 0);
+        let pairs: Vec<(String, String)> = {
+            let body = self.gathering();
+            let uncertain = body.uncertain.clone();
+            body.order.iter().filter(|named| !uncertain.contains(named))
+                .filter_map(|named| body.shared.iter().find(|(kept, _)| kept == named).cloned())
+                .collect()
+        };
+        for (key, place) in pairs {
+            self.constant(Value::text(&key));
+            self.read(&place);
+            self.act(Action::Tie, 2);
+            self.act(Action::GatherItem { map: true, spread: false }, 2);
+        }
     }
 
     /// What the class body being read has gathered so far.
@@ -1058,7 +1107,7 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        self.pieces.push(Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
+        self.pieces.push(Piece { nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -1075,7 +1124,7 @@ impl<'a> Compiler<'a> {
         });
         if self.lang.closes_over && !self.discovering {
             if let Some(plan) = self.plans.get(&source).cloned() {
-                if plan.nonlocals.iter().any(|name| formals.contains(name)) {
+                if plan.nonlocals.iter().any(|name| formals.contains(name) && !plan.class_nonlocals.contains(name)) {
                     return Err(self.lang.parameters_amiss.first().cloned().unwrap_or_default());
                 }
                 let unit = self.piece();
@@ -1084,6 +1133,7 @@ impl<'a> Compiler<'a> {
                 }
                 unit.globals = plan.globals;
                 unit.nonlocals = plan.nonlocals;
+                unit.class_nonlocals = plan.class_nonlocals;
             }
         }
         let surrounding_names = self.comprehension_names.clone();
@@ -1111,7 +1161,7 @@ impl<'a> Compiler<'a> {
         let unit = self.pieces.pop().expect("the unit");
         if self.discovering {
             let names = unit.idents.iter().filter(|n| !unit.nonlocals.contains(n) && !unit.globals.iter().any(|(g, _)| g == *n)).cloned().collect();
-            self.plans.insert(source, BindingPlan { names, globals: unit.globals.clone(), nonlocals: unit.nonlocals.clone() });
+            self.plans.insert(source, BindingPlan { names, globals: unit.globals.clone(), nonlocals: unit.nonlocals.clone(), class_nonlocals: unit.class_nonlocals.clone() });
         }
         let mut instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
         if unit.generator && self.lang.yield_suspends {
@@ -1357,18 +1407,23 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.nonlocal_words, &w) {
                 if lang.closes_over && self.piece().outermost && self.class_names.is_empty() { return Err(lang.nonlocal_module.clone().unwrap_or_default()); }
-                let class_scope = self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len());
                 self.take();
                 loop {
                     let name = self.want_name("after the nonlocal keyword")?;
-                    if !class_scope { self.piece().nonlocals.push(name.clone()); }
-                    if !class_scope && lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
+                    // A class body pushes no unit of its own, so the
+                    // unit around it is the very one a name declared
+                    // `nonlocal` there means to reach: the declaration
+                    // is kept where any other's is, and a write of the
+                    // name within the body goes there rather than to a
+                    // member, exactly as a name declared `global` does.
+                    self.piece().nonlocals.push(name.clone());
+                    if self.in_class_body() { self.piece().class_nonlocals.push(name.clone()); }
+                    if lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
                         return Err(format!("{}{}{}", lang.nonlocal_amiss.first().map_or("", String::as_str), name, lang.nonlocal_amiss.get(1).map_or("", String::as_str)));
                     }
                     if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
                     self.take();
                 }
-                if class_scope { self.class_cannot_run(); return Ok(()); }
                 if lang.closes_over { return Ok(()); }
                 self.constant(Value::text(lang.nonlocal_unrun.first().map_or("", String::as_str)));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
@@ -3930,9 +3985,16 @@ impl<'a> Compiler<'a> {
                 true => self.expr(0)?,
                 false => self.scope_value()?,
             }
-            let slot = self.member_place(&named, "attribute");
-            self.write(&slot);
-            self.member_kept(&named, &slot);
+            // A name the body has declared `global` or `nonlocal`
+            // means the place beyond it, as it does anywhere else, and
+            // binds no member: the class's own namespace never sees it.
+            if self.declared_outside_class(&named) {
+                self.write(&named);
+            } else {
+                let slot = self.member_place(&named, "attribute");
+                self.write(&slot);
+                self.member_kept(&named, &slot);
+            }
         } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
             // A keyword before the mark (`try:`) heads a statement
@@ -4067,9 +4129,16 @@ impl<'a> Compiler<'a> {
         self.read(&named);
         self.addend()?;
         self.compound_act(op);
-        let place = self.member_place(&named, "attribute");
-        self.write(&place);
-        self.member_kept(&named, &place);
+        // A name the body has declared `global` or `nonlocal` keeps
+        // the working there, as a plain write in the body does, and
+        // becomes no member.
+        if self.declared_outside_class(&named) {
+            self.write(&named);
+        } else {
+            let place = self.member_place(&named, "attribute");
+            self.write(&place);
+            self.member_kept(&named, &place);
+        }
         Ok(())
     }
 
@@ -4085,7 +4154,11 @@ impl<'a> Compiler<'a> {
         let begin = self.pos;
         let word = self.look().clone();
         let harmless = match word.shape == Shape::Instr && lang.keywords.contains(&word.lexeme) {
-            true => [&lang.throw_words, &lang.assert_words, &lang.break_words, &lang.continue_words].iter().any(|words| Lang::spells(words, &word.lexeme)),
+            // `global` and `nonlocal` bind no member: the name they
+            // carry goes on meaning what it always did, a place beyond
+            // the class, so a class body forms around one exactly as
+            // it does around a call made for its effect.
+            true => [&lang.throw_words, &lang.assert_words, &lang.break_words, &lang.continue_words, &lang.global_words, &lang.nonlocal_words].iter().any(|words| Lang::spells(words, &word.lexeme)),
             false => !self.binds_within(begin),
         };
         self.stmt()?;
@@ -5652,7 +5725,7 @@ impl<'a> Compiler<'a> {
         // written back into whatever it stood on.
         // A dictionary of names handed out by a builtin is a footing
         // too, written into where it lives and never written back.
-        let names_handed = matches!(target.first(), Some(Instr::Act(Action::Builtin(Builtin::OuterNames | Builtin::NearNames | Builtin::Vars, _), 0)));
+        let names_handed = matches!(target.first(), Some(Instr::Act(Action::Builtin(Builtin::OuterNames | Builtin::NearNames | Builtin::Vars | Builtin::ClassLocalsPlace, _), 0)));
         let footing: Option<Vec<Instr>> = match key_at.first() {
             Some(at) if *at > from + 1 || names_handed => Some(target[..at - from].to_vec()),
             _ => None,
@@ -5782,17 +5855,26 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
                     self.write(&made);
                 }
-                if names_handed { return Ok(()); }
-                // What it stood on is written back into, read again as
-                // the store it is.
-                let footing_at = self.mark();
-                for w in relocated(base, footing_at as i64 - from as i64) {
-                    self.put(w);
+                // A dictionary of names handed out by a builtin is
+                // written into and never written back -- but this is
+                // still one arm of the outer match, so it falls through
+                // to the footing below that restores `self.waiting` and
+                // any hush/mute marks, rather than returning out of the
+                // whole statement with those left disturbed.
+                if names_handed {
+                    Ok(())
+                } else {
+                    // What it stood on is written back into, read again
+                    // as the store it is.
+                    let footing_at = self.mark();
+                    for w in relocated(base, footing_at as i64 - from as i64) {
+                        self.put(w);
+                    }
+                    let was = self.waiting.replace(made);
+                    let stored = self.store_into(footing_at, None, None, "=");
+                    self.waiting = was;
+                    stored
                 }
-                let was = self.waiting.replace(made);
-                let stored = self.store_into(footing_at, None, None, "=");
-                self.waiting = was;
-                stored
             }
             [Instr::Read(slot), ..]
                 if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && (appending || compound.is_some()))) =>
@@ -8044,6 +8126,40 @@ impl<'a> Compiler<'a> {
     }
 
     fn comprehension(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
+        // A class body is no closure, so a comprehension written
+        // straight in one would see none of its names at all once its
+        // own routine is pushed, where CPython's reference reads the
+        // outermost walk's own source in the body's own reading before
+        // that routine is ever entered. That one source is read here,
+        // in the body's reading, the way `lazy_comprehension` already
+        // reads a generator expression's; what it comes to is handed
+        // to the comprehension's routine as its argument, and every
+        // other clause and the element read back run inside that
+        // routine exactly as they did, seeing nothing of the body's
+        // names, as a method does not either.
+        if self.lang.closes_over && self.in_class_body() {
+            let entry = self.pos;
+            self.pos = clause;
+            while !self.on_any(&self.lang.comprehension_in) && !self.exhausted() { self.take(); }
+            self.take();
+            let source_at = self.pos;
+            self.expr(1)?;
+            let source_end = self.pos;
+            self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
+            let seed = self.gensym("generator_source");
+            let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
+            self.pos = entry;
+            let program = self.routine("<comprehension>", vec![seed], 1, true, |a| {
+                a.comprehension_body(pair, clause, map)?;
+                a.piece().result_touched = true;
+                a.write(RESULT_CELL);
+                Ok(())
+            })?;
+            self.generator_source = prior;
+            self.constant(Value::Routine(program));
+            self.act(Action::Invoke(Rc::from("<comprehension>")), 2);
+            return Ok(());
+        }
         if self.lang.closes_over {
             let program = self.routine("<comprehension>", Vec::new(), 0, true, |a| {
                 a.comprehension_body(pair, clause, map)?;
@@ -8170,7 +8286,12 @@ impl<'a> Compiler<'a> {
         } else {
             let tail = self.pos;
             self.pos = head;
-            if !result.is_empty() { self.read(result); }
+            // The accumulator is a gensym of the comprehension's own,
+            // read here and written back a few steps on with nothing
+            // else able to see it between the two: a taking read lets
+            // the gather that follows grow the one row in place instead
+            // of cloning everything gathered so far on every item.
+            if !result.is_empty() { self.read_taking(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
             if spread { self.take(); }
             let before_yield = self.yield_operand;
@@ -8338,6 +8459,47 @@ impl<'a> Compiler<'a> {
         // of any builtin word spelled the same, where the language says so.
         let bound = self.lang.shadow_builtins && self.registry.program_bound.contains(name);
         match self.lang.builtins.get(name).copied().filter(|b| !b.set_method() && !bound) {
+            // A class body keeps its own names apart from the rest of
+            // the program's, in the places its members already read
+            // and write through, so `locals()` read there answers with
+            // those places' current values instead of the world's. A
+            // member only a conditional's arm may have bound is left
+            // out rather than glanced at, since what it would show --
+            // nothing written, or what a pass before it left -- is
+            // never the answer the reference gives.
+            // A place written through `locals()[k] = v` in a class
+            // body must reach a dictionary of the body's own, never
+            // the world's: the world's own dictionary, what a class
+            // body otherwise has no place of its own to fall back to,
+            // keeps itself in step with every program name both ways
+            // once it exists, so writing into it there would reach a
+            // name of the module's own by the name a member merely
+            // happens to share. `ClassLocalsPlace` stands in for
+            // `locals()` at exactly the one place the assembler
+            // already knows how to write through a builtin's answer
+            // without writing it back anywhere (`names_handed`,
+            // below): each time it is read it answers a dictionary
+            // fresh and empty, thrown away once the write is done.
+            Some(Builtin::NearNames) if argc == 0 && self.in_class_body() && self.writing_place => {
+                self.act(Action::Builtin(Builtin::ClassLocalsPlace, Rc::from(name)), 0);
+                Ok(())
+            }
+            Some(Builtin::NearNames) if argc == 0 && self.in_class_body() => {
+                self.class_names_map();
+                Ok(())
+            }
+            // `eval` read where a class body stands, handed no
+            // dictionaries of its own, reads the body's own names the
+            // way any other read there does, past the world beyond
+            // it -- the same pair `locals()` above is built from,
+            // handed over as the near dictionary, with the outermost
+            // one behind it as the far.
+            Some(Builtin::Eval) if argc == 1 && self.in_class_body() && !self.writing_place => {
+                self.act(Action::Builtin(Builtin::OuterNames, Rc::from("globals")), 0);
+                self.class_names_map();
+                self.act(Action::Builtin(Builtin::Eval, Rc::from(name)), 3);
+                Ok(())
+            }
             Some(Builtin::Text(op)) if op != crate::strings::TextOp::Repr && !name.contains('.') => {
                 self.read_callee(name);
                 self.act(Action::Invoke(Rc::from(name)), argc + 1);
