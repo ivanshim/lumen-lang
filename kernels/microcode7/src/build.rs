@@ -100,6 +100,13 @@ pub struct Builder<'a> {
     within: Option<(String, Option<String>)>,
     receiver: Option<String>,
     class_bindings: Vec<(usize, HashMap<String, Address>)>,
+    /// The names a class body under way has itself declared `global`,
+    /// kept apart from `class_bindings`'s members and from the layer
+    /// around the class: the declaration reaches only the body's own
+    /// statements, standing at this very depth, never a routine nested
+    /// in it nor the layer once the body is behind. Innermost class
+    /// last, as `class_bindings` keeps them.
+    class_globals: Vec<(usize, Vec<String>)>,
     /// The class bodies under way, innermost last: the parts each has
     /// gathered of its class so far.
     under_way: Vec<ClassParts>,
@@ -314,6 +321,39 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
     build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false, value_only, &[])
 }
 
+/// Every name a `global` statement names anywhere in this text, however
+/// deep the routine that says it stands, found by a plain walk of the
+/// tokens rather than a read of the statements themselves: what is
+/// wanted is only which names the text as a whole has ever declared
+/// `global`, not where, so a walk that never enters or leaves a scope
+/// answers it well enough.
+fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
+    let sep = table.single("syntax.call.separator");
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i].shape == Shape::Bare && table.spells("ext.stmt.global", &tokens[i].lexeme) {
+            i += 1;
+            loop {
+                match tokens.get(i) {
+                    Some(t) if t.shape == Shape::Bare => {
+                        if !names.iter().any(|n| n == &t.lexeme) { names.push(t.lexeme.clone()); }
+                        i += 1;
+                    }
+                    _ => break,
+                }
+                match (sep, tokens.get(i)) {
+                    (Some(s), Some(t)) if t.shape == Shape::Sign && t.lexeme == s => i += 1,
+                    _ => break,
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    names
+}
+
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String]) -> Res<Built> {
     let mut beginnings = seeded.to_vec();
     for word in table.strings("ext.builtin.exceptions") {
@@ -333,7 +373,23 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         layers.push(Layer { comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    if read_in && outer_layers > 1 {
+        // Text handed over while the run goes stands one layer short
+        // of the outermost, that layer standing for the frame around
+        // it: a name any routine written in the text declares `global`
+        // means the very outermost binding there too, as it does
+        // anywhere else `global` is said, so the text's own top level
+        // -- reading or writing the name directly, never inside a
+        // routine of its own -- has to reach the same place, exactly
+        // as the reference has the whole of what was handed over
+        // agree on the one binding once any routine in it has said so.
+        for name in text_wide_globals(tokens, table) {
+            if !layers[0].aliases.iter().any(|(n, _)| *n == name) {
+                layers[0].aliases.push((name.clone(), name));
+            }
+        }
+    }
+    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -868,8 +924,20 @@ impl<'a> Builder<'a> {
     }
 
     /// The global a name stands for in the function around, if a
-    /// `global` or `static` statement bound it.
+    /// `global` or `static` statement bound it, or in the class body
+    /// standing here, at this very depth, if one of its own `global`
+    /// statements did: that one reaches no further, so a routine
+    /// nested in the body -- standing one or more layers deeper -- and
+    /// the layer once the body is behind both fall through to whatever
+    /// the function around held before the body was ever entered.
     fn aliased(&mut self, name: &str) -> Option<Address> {
+        if let Some((depth, names)) = self.class_globals.last() {
+            if *depth == self.layers.len() && names.iter().any(|n| n == name) {
+                let mut slot = self.global_address(name);
+                slot.ident = Rc::from(name);
+                return Some(slot);
+            }
+        }
         let owner = self.layers.iter().rev().find(|s| s.holds == Holds::Every)?;
         let target = owner.aliases.iter().rev().find(|(n, _)| n == name)?.1.clone();
         let mut slot = self.global_address(&target);
@@ -1053,6 +1121,9 @@ impl<'a> Builder<'a> {
     /// past a class body to the place it named before the body was
     /// ever entered.
     fn declared_outside_class(&self, name: &str) -> bool {
+        if let Some((depth, names)) = self.class_globals.last() {
+            if *depth == self.layers.len() && names.iter().any(|named| named == name) { return true; }
+        }
         self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)
             .map_or(false, |layer| layer.aliases.iter().any(|(named, _)| named == name) || layer.borrowed.iter().any(|named| named == name))
     }
@@ -2212,8 +2283,22 @@ impl<'a> Builder<'a> {
                 // it is then reading a binding written to.
                 let at = self.global_address(&name);
                 ready.push(Form::Ready(at));
-                let owner = self.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the top layer");
-                owner.aliases.push((name.clone(), name));
+                // A class body pushes no layer of its own, so the
+                // layer around it is not where this belongs: put there,
+                // the declaration would outlive the body, reaching the
+                // rest of the layer's own code and every routine nested
+                // in the body, none of which a class's `global` ever
+                // reaches in the reference. It is kept instead against
+                // the body itself, at the depth that names it, so only
+                // the body's own statements -- standing at that same
+                // depth, never a routine entered from within it -- ever
+                // find it there.
+                if self.in_class_body() {
+                    self.class_globals.last_mut().expect("the class body").1.push(name);
+                } else {
+                    let owner = self.layers.iter_mut().rev().find(|s| s.holds == Holds::Every).expect("the top layer");
+                    owner.aliases.push((name.clone(), name));
+                }
             }
             match &sep {
                 Some(s) if self.sign(s) => self.advance(),
@@ -2754,7 +2839,14 @@ impl<'a> Builder<'a> {
             // the module's included. The write of its address binds it to
             // that frame as the statement runs; the plan's copy is bound
             // to nothing, so the method is handed over from its address.
-            let stands_in_routine = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1;
+            // Text handed over while the run goes stands in a function
+            // this way too, even though the layer for the frame around
+            // it is marked `Fresh` rather than counted here as one of
+            // the routines: a class read there is exactly a class
+            // standing in a function, and its methods need the same
+            // binding to climb out through that frame.
+            let stands_in_routine = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1
+                || (self.read_in && self.outer_layers > 1);
             // A method an arm of a conditional writes belongs among the
             // members the class is handed, not among the methods it
             // always has: the arm holding it may never run.
@@ -3186,6 +3278,7 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
         }
         self.class_bindings.push((self.layers.len(), HashMap::new()));
+        self.class_globals.push((self.layers.len(), Vec::new()));
         self.under_way.push(ClassParts { methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot });
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
@@ -3214,6 +3307,7 @@ impl<'a> Builder<'a> {
             self.advance();
         }
         self.class_bindings.pop();
+        self.class_globals.pop();
         self.within = previous;
         self.named_before = named_outside;
         let ClassParts { methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, .. } = self.under_way.pop().expect("the class body just read");
