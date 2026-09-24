@@ -663,6 +663,15 @@ pub struct Plan {
     /// among attributes: the namespace of the built class is shown in
     /// this order, with any name missing from it shown after them all.
     pub ranking: Vec<String>,
+    /// Whether one more value stands on the stack past every member
+    /// already named above: the class body's own live namespace,
+    /// asked for or written through by `locals()`/`vars()` there. Its
+    /// pairs stand for the members `shared_names` leaves out -- the
+    /// ones the body bound only by writing through that namespace, or
+    /// took back out of it with `del` -- and settle what those become
+    /// on the class formed, last so a member named twice keeps its
+    /// place among `shared_names` but stands on the newer value.
+    pub has_book: bool,
 }
 
 /// An operand of a dyad that is a binding or a
