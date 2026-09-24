@@ -6612,7 +6612,7 @@ impl<'a> Machine<'a> {
                         }
                         Value::Vector(values) | Value::Tuple(values) => positions.extend(values.iter().cloned()),
                         Value::Set(store) => positions.extend(store.borrow().values()),
-                        Value::Dict(entries) => positions.extend(entries.iter().map(|entry| entry.0.clone())),
+                        Value::Dict(entries) => positions.extend(entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() })),
                         Value::Text(text) => {
                             for letter in text.chars() { positions.push(Value::text(&letter.to_string())); }
                         }
@@ -8339,8 +8339,13 @@ impl<'a> Machine<'a> {
     /// CPython gives it, and a target of many keys is not scanned
     /// again for every one it grows by.
     fn dict_fromkeys(&mut self, target: &Value, filling: Value) -> Result<Value, String> {
-        let says = |kind: &str| self.method_fault(kind);
-        let members = crate::members::gather(target, &says)?;
+        // `crate::members::gather` only knows the handful of container
+        // kinds it lists by name and has no interpreter to run a
+        // generator or a thing's own walk with; `gathered_members` is
+        // the general road every other iterable-taking builtin walks,
+        // so a generator expression handed to `fromkeys` is read out
+        // here exactly as a `for` loop over it would read it.
+        let members = self.gathered_members(target)?;
         let mut entries: Rc<MapStore> = Rc::new(Vec::new().into());
         for key in members {
             let store: &MapStore = entries.as_ref();
@@ -9385,6 +9390,18 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// One member added into `sum`'s running total: the exact reckoning
+    /// where the two are numbers, and the plain working of `+`
+    /// otherwise, so a member `+` itself refuses is refused in the
+    /// very words `+` already gives, and one it joins (a row, a tuple)
+    /// joins.
+    fn sum_added(&mut self, total: &Value, item: &Value) -> Result<Value, String> {
+        match math::compute(Calc::Plus, total, item) {
+            Some(answer) => answer,
+            None => self.prim(Prim::Plus, "+", &[total.clone(), item.clone()]),
+        }
+    }
+
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
@@ -9586,6 +9603,34 @@ impl<'a> Machine<'a> {
             }
             return self.prim(op, name, &as_sets);
         }
+        // A view of a map's values reads equal to nothing but the very
+        // view it is, the default the object kind gives a value with
+        // no equality of its own, as CPython leaves it. A view of a
+        // map's keys or its pairs is a set as far as equality goes,
+        // and answers a set or another such view by what it holds;
+        // anything else — a row, a walk, a value alone — it is no
+        // equal of.
+        if matches!(op, Prim::Eq | Prim::Ne) && v.iter().any(|value| matches!(value, Value::Window(..))) {
+            if let [a, b] = v {
+                let is_values = matches!(a, Value::Window(_, 'v')) || matches!(b, Value::Window(_, 'v'));
+                let equal = if is_values {
+                    match (a, b) { (Value::Window(x, xp), Value::Window(y, yp)) => Rc::ptr_eq(x, y) && xp == yp, _ => false }
+                } else {
+                    let set_like = |value: &Value| matches!(value, Value::Window(..)) || matches!(value, Value::Set(_));
+                    if set_like(a) && set_like(b) {
+                        let mut sets = Vec::new();
+                        for value in [a, b] {
+                            sets.push(match value {
+                                Value::Set(_) => value.clone(),
+                                _ => Value::Set(Rc::new(RefCell::new(self.gather_set(Some(&value.settled()))?))),
+                            });
+                        }
+                        matches!(self.prim(Prim::Eq, name, &sets)?, Value::Flag(true))
+                    } else { false }
+                };
+                return Ok(Value::Flag(if op == Prim::Ne { !equal } else { equal }));
+            }
+        }
         if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..)))
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()) {
@@ -9593,6 +9638,15 @@ impl<'a> Machine<'a> {
             return self.prim(op, name, &settled);
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
+        // Two things each standing for a kind, joined by `|`, make the
+        // tuple of them: the very shape `isinstance` and `issubclass`
+        // already read a union of kinds by, so no third shape is
+        // needed to hold one.
+        if let (Prim::BitsEither, [a, b]) = (op, v) {
+            if self.stands_for_a_kind(a) && self.stands_for_a_kind(b) {
+                return Ok(Value::Tuple(Rc::new(vec![a.clone(), b.clone()])));
+            }
+        }
         // Rows, tuples and text as a language of sequences works them.
         // Anything the sequences have no say in falls through to the
         // readings below, as it would were there no such language.
@@ -9735,15 +9789,14 @@ impl<'a> Machine<'a> {
                         self.operands_refused(&self.sign_named(op), &v[0], &v[1])
                     });
                 };
-                let x = x.borrow();
-                let y = y.borrow();
+                let (x, y) = (x.borrow().clone(), y.borrow().clone());
                 return Ok(match rule {
-                    Some(rule) => Value::Set(Rc::new(RefCell::new(x.merge(&y, rule)))),
+                    Some(rule) => Value::Set(Rc::new(RefCell::new(self.set_combine(&x, &y, rule)?))),
                     None => Value::Flag(match op {
-                        Prim::Lt => x.keys.len() < y.keys.len() && x.keys.is_subset(&y.keys),
-                        Prim::Le => x.keys.is_subset(&y.keys),
-                        Prim::Gt => x.keys.len() > y.keys.len() && x.keys.is_superset(&y.keys),
-                        _ => x.keys.is_superset(&y.keys),
+                        Prim::Lt => x.keys.len() < y.keys.len() && self.set_beneath(&x, &y)?,
+                        Prim::Le => self.set_beneath(&x, &y)?,
+                        Prim::Gt => x.keys.len() > y.keys.len() && self.set_beneath(&y, &x)?,
+                        _ => self.set_beneath(&y, &x)?,
                     }),
                 });
             }
@@ -11376,6 +11429,17 @@ impl<'a> Machine<'a> {
                 };
                 Value::Flag((op == Prim::Eq) == alike)
             }
+            // Two sets set against each other by `==` go the road
+            // membership itself takes: `equals`, reached for a plain
+            // set from below, has no interpreter to call a member's
+            // own `__eq__`, nor to tell two things that merely share
+            // a hash apart.
+            Prim::Eq | Prim::Ne if matches!((&v[0], &v[1]), (Value::Set(_), Value::Set(_))) => {
+                let (Value::Set(one), Value::Set(other)) = (&v[0], &v[1]) else { unreachable!() };
+                let (one, other) = (one.borrow().clone(), other.borrow().clone());
+                let alike = self.sets_equal(&one, &other)?;
+                Value::Flag(alike != (op == Prim::Ne))
+            }
             Prim::Eq | Prim::Ne if self.table.flag("ext.op.eq.maps.unordered") => {
                 let alike = match (&v[0], &v[1]) {
                     (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
@@ -11927,33 +11991,49 @@ impl<'a> Machine<'a> {
             }
             Prim::Total => {
                 if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                // A start already text or a row of octets is refused
+                // before a single member is read, in the words naming
+                // the very kind it is, the way CPython refuses summing
+                // any of the three rather than let `+` name what met it.
+                let word_at = match v.get(1) {
+                    Some(Value::Text(_)) => Some(0),
+                    Some(Value::Octets { changeable: false, .. }) => Some(1),
+                    Some(Value::Octets { changeable: true, .. }) => Some(2),
+                    _ => None,
+                };
+                if let Some(at) = word_at {
+                    return Err(self.table.strings("ext.builtin.sum.non_number").get(at).cloned().unwrap_or_default());
+                }
+                // A start that meets nothing to add to itself is
+                // handed back exactly as it was given, a flag among
+                // them: a flag turns to a whole number only where an
+                // addition actually asks that of it, never merely for
+                // standing where a sum might have needed one.
                 // The total of a stepped walk follows from its three
                 // numbers; the places are never laid out, so a walk of
                 // a thousand million adds up as quickly as a short one.
                 if let Value::Progression(walk) = v[0].settled() {
                     let how_many = walk.count();
-                    let added = if how_many == BigInt::from(0) { BigInt::from(0) }
-                        else { (&walk.first + (&walk.first + (&how_many - 1) * &walk.stride)) * &how_many / 2 };
-                    let opening = match v.get(1).cloned() { Some(Value::Flag(flag)) => Value::Small(flag as i64), Some(given) => given, None => Value::Small(0) };
-                    return math::compute(Calc::Plus, &opening, &Value::from_big(added))
-                        .unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or_default().to_string()));
+                    let opening = v.get(1).cloned().unwrap_or(Value::Small(0));
+                    if how_many == BigInt::from(0) { return Ok(opening); }
+                    let added = (&walk.first + (&walk.first + (&how_many - 1) * &walk.stride)) * &how_many / 2;
+                    return self.sum_added(&opening, &Value::from_big(added));
                 }
                 if self.table.flag("ext.stmt.yield.suspends") {
                     let Value::Generator(walk) = self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? else { unreachable!() };
                     let counted = |value| if let Value::Flag(flag) = value { Value::Small(flag as i64) } else { value };
-                    let mut answer = counted(v.get(1).cloned().unwrap_or(Value::Small(0)));
+                    let mut answer = v.get(1).cloned().unwrap_or(Value::Small(0));
                     loop {
                         let item = self.resume(&walk, Value::Nil).map_err(|fault| self.suspension_fault(fault))?;
                         let Some(item) = item else { return Ok(answer) };
-                        answer = math::compute(Calc::Plus, &answer, &counted(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or_default().to_string()))?;
+                        answer = self.sum_added(&answer, &counted(item))?;
                     }
                 }
-                let start = v.get(1).cloned().unwrap_or(Value::Small(0));
                 let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
                 let members = self.gathered_members(&v[0])?;
-                members.into_iter().try_fold(number(start), |prior, item| {
-                    math::compute(Calc::Plus, &prior, &number(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or("Invalid collection argument").into()))
-                })?
+                let mut total = v.get(1).cloned().unwrap_or(Value::Small(0));
+                for item in members { total = self.sum_added(&total, &number(item))?; }
+                total
             }
             Prim::Span if self.table.flag("ext.builtin.range.value") => {
                 let wrong = || self.argument_fault("ext.syntax.call.amiss", None);
@@ -12993,21 +13073,25 @@ impl<'a> Machine<'a> {
     /// hash its class gives it, and where a thing already among the
     /// entries hashes alike the two are asked whether they agree: things
     /// that agree share the one address, and things that do not stand
-    /// apart under the same hash. The entries are copied out before any
-    /// of this, since asking a thing for its hash or its equality runs
-    /// the program's own code, which may reach the set itself.
+    /// apart under the same hash, each by its own identity rather than
+    /// by how many others happen to stand there at the time: a thing
+    /// put back after another beside it was taken out keeps the very
+    /// address it always had, so two sets holding the same things agree
+    /// on their addresses however either was gathered or thinned. The
+    /// entries are copied out before any of this, since asking a thing
+    /// for its hash or its equality runs the program's own code, which
+    /// may reach the set itself.
     fn set_address(&mut self, entries: &[(String, Value)], item: &Value) -> Result<String, String> {
         if !matches!(item, Value::Thing(_) | Value::Keyed(..)) { return self.hash_for_set(item); }
         let keyed = self.hash_key(item)?;
         let hash = match &keyed { Value::Keyed(_, hash) => hash.bare(), _ => String::new() };
         let opening = format!("instance:{hash}:");
-        let mut apart = 0;
         for (address, held) in entries {
             if !address.starts_with(&opening) { continue; }
             if self.keys_agree(held, &keyed)? { return Ok(address.clone()); }
-            apart += 1;
         }
-        Ok(format!("{opening}{apart}"))
+        let identity = match &keyed { Value::Keyed(thing, _) => match thing.as_ref() { Value::Thing(t) => Rc::as_ptr(t) as usize, _ => 0 }, _ => 0 };
+        Ok(format!("{opening}{identity:x}"))
     }
 
     /// A value placed in a set at the address it takes there, a thing
@@ -13037,6 +13121,73 @@ impl<'a> Machine<'a> {
             Err("") => Err(self.set_complaint("unsupported", "")),
             Err(kind) => Err(self.set_complaint("unhashable", kind)),
         }
+    }
+
+    /// Whether a value is found among a set store's entries, sought the
+    /// very way membership itself seeks it: by worth alone for a native
+    /// value, and by a thing's own hash and its own equality for a
+    /// thing, so that two stores built apart still agree on what each
+    /// other holds however their own entries came to be addressed.
+    fn set_member_found(&mut self, item: &Value, other: &crate::data::SetStore) -> Result<bool, String> {
+        if matches!(item, Value::Thing(_) | Value::Keyed(..)) {
+            let keyed = self.hash_key(item)?;
+            for held in other.values() {
+                if self.keys_agree(&held, &keyed)? { return Ok(true); }
+            }
+            return Ok(false);
+        }
+        Ok(other.keys.contains(&self.hash_for_set(item)?))
+    }
+
+    /// Whether every entry of the one store is found among the other's,
+    /// asked of the entries themselves and not of the addresses they
+    /// happen to be kept at: two stores of the very same things agree
+    /// here however either was gathered, thinned, or built back up.
+    fn set_beneath(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore) -> Result<bool, String> {
+        for value in one.values() {
+            if !self.set_member_found(&value, other)? { return Ok(false); }
+        }
+        Ok(true)
+    }
+
+    /// Whether no entry of the one store is found among the other's.
+    fn set_disjoint(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore) -> Result<bool, String> {
+        for value in one.values() {
+            if self.set_member_found(&value, other)? { return Ok(false); }
+        }
+        Ok(true)
+    }
+
+    /// Two stores are equal where each holds the very count of entries
+    /// the other does and every one of the one's is found among the
+    /// other's, each by its own hash and its own equality where it is
+    /// a thing: the plain working's own `==`, reached for a set store
+    /// from below, has no way to call a thing's own `__eq__`.
+    fn sets_equal(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore) -> Result<bool, String> {
+        Ok(one.keys.len() == other.keys.len() && self.set_beneath(one, other)?)
+    }
+
+    /// A store combined from two others by union, intersection,
+    /// difference or symmetric difference, each entry of either side
+    /// sought among the other by its own equality and not by the
+    /// address it happens to be kept at, so that things which agree by
+    /// a custom `__eq__` are told apart from things that merely share
+    /// a hash.
+    fn set_combine(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore, rule: u8) -> Result<crate::data::SetStore, String> {
+        let mut answer = crate::data::SetStore::new(&one.spelling, one.sealed);
+        for (key, item) in &one.entries {
+            let bare = match item { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() };
+            let shared = self.set_member_found(&bare, other)?;
+            let keep = match rule { 0 => true, 1 => shared, _ => !shared };
+            if keep { answer.put(key.clone(), item.clone()); }
+        }
+        if matches!(rule, 0 | 3) {
+            for (key, item) in &other.entries {
+                let bare = match item { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() };
+                if !self.set_member_found(&bare, one)? { answer.put(key.clone(), item.clone()); }
+            }
+        }
+        Ok(answer)
     }
 
     fn gather_set(&mut self, source: Option<&Value>) -> Result<crate::data::SetStore, String> {
@@ -13127,14 +13278,14 @@ impl<'a> Machine<'a> {
                 for source in values.iter().skip(1) {
                     let operand = self.gather_set(Some(source))?;
                     let truth = match which {
-                        12 => Some(answer.keys.is_subset(&operand.keys)),
-                        13 => Some(answer.keys.is_superset(&operand.keys)),
-                        14 => Some(answer.keys.is_disjoint(&operand.keys)),
+                        12 => Some(self.set_beneath(&answer, &operand)?),
+                        13 => Some(self.set_beneath(&operand, &answer)?),
+                        14 => Some(self.set_disjoint(&answer, &operand)?),
                         _ => None,
                     };
                     if let Some(truth) = truth { return Ok(Value::Flag(truth)); }
                     let operation = match which { 9 | 15 => 1, 10 | 16 => 2, 11 | 17 => 3, _ => 0 };
-                    answer = answer.merge(&operand, operation);
+                    answer = self.set_combine(&answer, &operand, operation)?;
                 }
                 if matches!(which, 7 | 15..=17) {
                     *target.borrow_mut() = answer;

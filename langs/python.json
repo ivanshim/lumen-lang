@@ -1385,7 +1385,9 @@
     "sum"
   ],
   "ext.builtin.sum.non_number": [
-    "TypeError: sum needs numbers"
+    "TypeError: sum() can't sum strings [use ''.join(seq) instead]",
+    "TypeError: sum() can't sum bytes [use b''.join(seq) instead]",
+    "TypeError: sum() can't sum bytearray [use b''.join(seq) instead]"
   ],
   "ext.builtin.text.capitalize": [
     "capitalize",

@@ -190,6 +190,13 @@ pub struct Compiler<'a> {
     class_depth: usize,
     method_self: Option<String>,
     class_names: Vec<(usize, HashMap<String, String>)>,
+    /// The names a class body being read has itself declared `global`,
+    /// kept apart from `class_names`'s members and from the unit
+    /// around the class: the declaration reaches only the body's own
+    /// statements, standing at this very depth, never a routine nested
+    /// in it nor the unit once the body is behind. Innermost class
+    /// last, as `class_names` keeps them.
+    class_globals: Vec<(usize, Vec<String>)>,
     /// The class bodies being read, the innermost last: what each has
     /// gathered so far of its members.
     gathered: Vec<ClassBody>,
@@ -320,6 +327,39 @@ pub fn compile_within(
     compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false, wants_value)
 }
 
+/// Every name a `global` statement names anywhere in this text, however
+/// deep the routine that says it stands, found by a plain walk of the
+/// tokens rather than a read of the statements themselves: what is
+/// wanted is only which names the text as a whole has ever declared
+/// `global`, not where, so a walk that never enters or leaves a scope
+/// answers it well enough.
+fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
+    let sep = lang.calling.as_ref().and_then(|c| c.between.clone());
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i].shape == Shape::Instr && Lang::spells(&lang.global_words, &tokens[i].lexeme) {
+            i += 1;
+            loop {
+                match tokens.get(i) {
+                    Some(t) if t.shape == Shape::Instr => {
+                        if !names.iter().any(|n| n == &t.lexeme) { names.push(t.lexeme.clone()); }
+                        i += 1;
+                    }
+                    _ => break,
+                }
+                match (&sep, tokens.get(i)) {
+                    (Some(s), Some(t)) if t.shape == Shape::Sign && &t.lexeme == s => i += 1,
+                    _ => break,
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    names
+}
+
 fn compile_pass(
     tokens: &[Token],
     lang: &Lang,
@@ -336,7 +376,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let top = Piece { nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+    let mut top = Piece { nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -351,6 +391,22 @@ fn compile_pass(
         line: 0,
         instrs: Vec::new(),
     };
+    if read_in && !alone {
+        // Text handed over while the run goes stands in a unit of its
+        // own, one that is not the outermost: a name any routine
+        // written in the text declares `global` means the very
+        // outermost binding there too, as it does anywhere else
+        // `global` is said, so the text's own top level -- reading or
+        // writing the name directly, never inside a routine of its own
+        // -- has to reach the same place, exactly as the reference has
+        // the whole of what was handed over agree on the one binding
+        // once any routine in it has said so.
+        for name in text_wide_globals(tokens, lang) {
+            if !top.globals.iter().any(|(n, _)| *n == name) {
+                top.globals.push((name.clone(), name));
+            }
+        }
+    }
     // Text read as standing inside a routine is a piece of a program
     // already read: what that program declared about cells stands here.
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, lang);
@@ -363,7 +419,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -664,8 +720,19 @@ impl<'a> Compiler<'a> {
     /// Where a name is read: every slot of that name from the innermost
     /// open block outward, then the one outside the blocks, then the
     /// global. A closed block's slot is never found.
-    /// The global a name stands for in this unit, by `global` or `static`.
+    /// The global a name stands for in this unit, by `global` or
+    /// `static`, or in the class body standing here, at this very
+    /// depth, if one of its own `global` statements did: that one
+    /// reaches no further, so a routine nested in the body -- standing
+    /// one or more pieces deeper -- and the unit once the body is
+    /// behind both fall through to whatever the function around held
+    /// before the body was ever entered.
     fn global_cell(&mut self, name: &str) -> Option<Cell> {
+        if let Some((depth, names)) = self.class_globals.last() {
+            if *depth == self.pieces.len() && names.iter().any(|n| n == name) {
+                return Some(Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false });
+            }
+        }
         let unit = self.pieces.last().expect("a unit");
         let target = unit.globals.iter().rev().find(|(n, _)| n == name)?.1.clone();
         Some(Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(&target), moving: false })
@@ -844,6 +911,9 @@ impl<'a> Compiler<'a> {
     /// `nonlocal`, the two declarations that carry a name past a class
     /// body to the place it named before the body was ever entered.
     fn declared_outside_class(&self, name: &str) -> bool {
+        if let Some((depth, names)) = self.class_globals.last() {
+            if *depth == self.pieces.len() && names.iter().any(|named| named == name) { return true; }
+        }
         let unit = self.pieces.last().expect("a unit");
         unit.globals.iter().any(|(named, _)| named == name) || unit.nonlocals.iter().any(|named| named == name)
     }
@@ -2076,7 +2146,20 @@ impl<'a> Compiler<'a> {
             let cell = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
             if !self.lang.bind_names { self.put(Instr::Ready(cell)); }
             if self.pieces.len() == 1 { self.registry.declared_outer.push(name.clone()); }
-            self.piece().globals.push((name.clone(), name));
+            // A class body opens no unit of its own, so the unit
+            // around it is not where this belongs: put there, the
+            // declaration would outlive the body, reaching the rest of
+            // the unit's own code and every routine nested in the body,
+            // none of which a class's `global` ever reaches in the
+            // reference. It is kept instead against the body itself, at
+            // the depth that names it, so only the body's own
+            // statements -- standing at that same depth, never a
+            // routine entered from within it -- ever find it there.
+            if self.in_class_body() {
+                self.class_globals.last_mut().expect("the class body").1.push(name);
+            } else {
+                self.piece().globals.push((name.clone(), name));
+            }
             match &sep {
                 Some(s) if self.at_symbol(s) => {
                     self.take();
@@ -4272,6 +4355,7 @@ impl<'a> Compiler<'a> {
             self.skip_seps();
         }
         self.class_names.push((self.pieces.len(), HashMap::new()));
+        self.class_globals.push((self.pieces.len(), Vec::new()));
         let mut shared: Vec<(String, String)> = carried_words;
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
@@ -4306,6 +4390,7 @@ impl<'a> Compiler<'a> {
         }
         let ClassBody { methods, mut shared, mut order, annotated, uncertain, unready, .. } = self.gathered.pop().expect("the class body just read");
         self.class_names.pop();
+        self.class_globals.pop();
         self.within = outer;
         self.class_depth = outer_depth;
         if unready {
