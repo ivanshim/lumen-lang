@@ -645,8 +645,15 @@ impl Value {
             Value::Collection(cell, _) | Value::Bond(cell) => cell.borrow().contents(),
             Value::View(view) => {
                 let Value::Map(pairs) = view.0.contents() else { return Value::array(Vec::new()); };
-                Value::array(pairs.iter().map(|(k,v)| match view.1.as_str() {
-                    "keys" => k.clone(), "values" => v.clone(), _ => Value::Tuple(Rc::new(vec![k.clone(),v.clone()])),
+                // A key kept beside its hash is handed out as the thing
+                // itself: the hash is the map's own reckoning of where
+                // the thing lies and no part of the key a viewer of the
+                // keys, or of the pairs, should ever see.
+                Value::array(pairs.iter().map(|(k,v)| {
+                    let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+                    match view.1.as_str() {
+                        "keys" => bare, "values" => v.clone(), _ => Value::Tuple(Rc::new(vec![bare,v.clone()])),
+                    }
                 }).collect())
             }
             _ => self.clone(),

@@ -527,9 +527,13 @@ impl Value {
                 // A window upon the pairs shows each of them as a
                 // tuple, which is what it is: a pair written between
                 // round marks, of the kind a pair may be a key by, and
-                // not a row that only reads like one.
+                // not a row that only reads like one. A key kept beside
+                // its hash is handed out as the thing itself: the hash
+                // is the dictionary's own reckoning of where the thing
+                // lies and no part of the key a window upon it shows.
                 for (key,value) in entries.iter() {
-                    items.push(if *portion=='k' {key.clone()} else if *portion=='v' {value.clone()} else {Value::Tuple(Rc::new(vec![key.clone(),value.clone()]))});
+                    let bare = match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
+                    items.push(if *portion=='k' {bare} else if *portion=='v' {value.clone()} else {Value::Tuple(Rc::new(vec![bare,value.clone()]))});
                 }
             }
             return Value::Vector(Rc::new(items));
