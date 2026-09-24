@@ -1419,6 +1419,86 @@ the class-namespace fold closed; the program now names `UserWarning`
 as CPython requires. microcode7 still answers a module attribute the
 module does not define from the builtins, a divergence left recorded.
 
+### 1w. Batch 14 merged as #501; batch 15 is equality of things, small builtins and shadowed globals
+
+Pull request #501 merged into main at b6024a7 with all six jobs green
+on be2aa93. Batch 15 folds three branches and one record of the
+integration's own.
+
+fix/thing-equality makes sets and dicts ask a thing itself whether it
+equals another. A thing's address in a set carried a running count of
+the other things at its hash, so the same object removed and added
+again, or two sets built apart, gave one member two addresses, and
+`==`, `<=`, `<`, `issubset`, `issuperset`, `isdisjoint`, `&`, `|`, `-`
+and `^` compared those addresses as text. The address now carries the
+thing's own identity, and the comparing and combining signs walk the
+members and ask the same `__eq__` road that `in` already used, on both
+kernels. A thing kept as a dict key was handed out still wrapped
+beside its hash through `.keys()`, `.items()`, `.values()`, unpacking,
+a slice assignment and a `*d` spread, so `for k in d.keys(): k.n`
+raised AttributeError; each road now unwraps it. And
+`dict.fromkeys(<generator>)` raised a bare `TypeError: invalid method
+arguments` outside the exception road on both kernels, which silently
+ended test_set's run whenever the unseeded random stream reached it;
+it now takes any iterable through the general iteration road. test_set
+gains thirteen tests on each kernel (test_hash_collision_remove_add on
+TestSet and TestSetSubclass, the eleven TestMethodsMutating_Set_Dict
+tests), and test_do_not_rehash_dict_keys moves from an error to a
+failure on its four classes: a set built from a dict hashes each key
+three times where CPython hashes it once.
+
+fix/small-builtins closes four small gaps on both kernels: a keys or
+items view compares with `==` as a set, asking each element's own
+`__eq__`, and a values view equals only itself; `sum()` words its
+refusals as CPython does (`unsupported operand type(s) for +: 'int'
+and 'dict'`, `sum() can't sum strings [use ''.join(seq) instead]`) and
+keeps the start value itself for an empty sum; a slice hashes from its
+three bounds as 3.12 and later do; and `int | str` builds the union
+`isinstance` and `issubclass` read, while `isinstance(x, [int, str])`
+still refuses. The existing label `ext.builtin.sum.non_number` carries
+CPython's three wordings.
+
+fix/shadowed-global keeps a `global` statement in a class body to that
+body. A class body pushes no frame of its own, so its `global x` was
+put on the frame of the function around the class and stayed there for
+the rest of that function and for every routine built inside the
+class; a registry kept per class depth now holds it, on both kernels.
+Text handed to `exec` inside a function now agrees with itself about a
+name one of its own routines declares global (CPython binds the
+text's top-level assignment of that name to the true globals too), and
+a microcode7 method of a class read in through `exec` counts the frame
+read-in text adds, where a read of a name further out walked past the
+end of the frame chain. test_scope's testScopeOfGlobalStmt now passes
+on both kernels and testClassAndGlobal runs to its assertion on a
+class body's `locals()` (see below); test_listcomps'
+test_in_class_scope_with_global passes.
+
+The integration moved scratch/file-builtin/28.err (test_builtin): with
+`sum()` falling back to the dunder-aware add, test_sum now reaches its
+assertion that `sum([-0.0], -0.0)` is -0.0 (the numbers fast path
+still loses the sign of zero) and fails there instead of erroring;
+both kernels print the same line and no pass is lost.
+
+The batch-15 count, taken at 6e9e774, stands at stack8 1,343 of 2,536
+and microcode7 1,357 of 2,536: test_set 473 to 486 on each kernel,
+test_dict 76 to 77 (stack8) and 77 to 79 (microcode7), test_listcomps
+41 to 42 and test_scope 29 to 30 on each, and no file lost a pass.
+test_set on microcode7 ran past the 900 s cap under the load of the
+workers sharing the machine and was measured alone (1,131 s). Records
+moved: scratch/reader-tail/4.err (test_set), reader-tail/5.err
+(test_listcomps) and file-builtin/28.err (test_builtin).
+
+Gaps this round records: a set built from a dict hashes its keys three
+times (test_do_not_rehash_dict_keys); `sum([-0.0], -0.0)` is 0.0;
+`(int | str) | float` does not chain into a three-way union; a dict's
+views and iterators are lists and generators underneath
+(`type(d.keys()).__name__` is 'list', `d.keys() <= {1, 2}` refuses, a
+branch is under way); a class body's `locals()` is a snapshot, so
+`locals()['x'] = 1` there neither makes a class attribute nor a name
+the body can read (a branch is under way); microcode7 still answers a
+module attribute the module does not define from the builtins (a
+branch is under way).
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
