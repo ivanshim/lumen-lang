@@ -4321,6 +4321,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.ljust` | - | - | `ljust` | - | - | - | - | - | - | - |
 | `ext.builtin.method.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.method.lstrip` | - | - | `lstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.mapping` | - | - | `mapping` | - | - | - | - | - | - | - |
 | `ext.builtin.method.numerator` | - | - | `numerator` | - | - | - | - | - | - | - |
 | `ext.builtin.method.pop` | - | - | `pop` | - | - | - | - | - | - | - |
 | `ext.builtin.method.popitem` | - | - | `popitem` | - | - | - | - | - | - | - |
