@@ -8346,9 +8346,16 @@ impl<'a> Machine<'a> {
             Value::Row(v) | Value::Tuple(v) | Value::Vector(v) => v.iter().any(|item| Self::carries_instance_past(item, passed)),
             Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(|item| Self::carries_instance_past(item, passed)),
             // A set cannot hold itself (nothing that may be altered is
-            // hashable), so its members are looked into with no guard
-            // against coming round again.
-            Value::Set(store) => store.try_borrow().map_or(false, |held| held.entries.iter().any(|(_, item)| Self::carries_instance_past(item, passed))),
+            // hashable), but one set can stand inside many others, a
+            // frozen set of frozen sets most of all; one already looked
+            // into held no thing (the walk would have stopped there), so
+            // it is passed over the next time rather than walked again.
+            Value::Set(store) => {
+                let address = Rc::as_ptr(store) as *const () as usize;
+                if passed.contains(&address) { return false; }
+                passed.push(address);
+                store.try_borrow().map_or(false, |held| held.entries.iter().any(|(_, item)| Self::carries_instance_past(item, passed)))
+            }
             _ => false,
         }
     }

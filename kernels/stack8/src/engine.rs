@@ -4418,10 +4418,16 @@ impl<'a> Engine<'a> {
                 }
                 Value::Tuple(items) | Value::Array(items) => items.iter().any(|item| looked_into(item, seen)),
                 Value::Map(items) => items.iter().any(|(k, v)| looked_into(k, seen) || looked_into(v, seen)),
-                // A set cannot hold itself (nothing that may be altered
-                // is hashable), so its members are looked into with no
-                // guard against coming round again.
-                Value::Set(cell) => cell.try_borrow().map_or(false, |held| held.row.iter().any(|k| looked_into(&held.held[k], seen))),
+                // A set cannot hold itself, but one set may stand inside
+                // many others; one seen already held nothing to find, or
+                // the look would have ended there, so it is not walked
+                // through twice.
+                Value::Set(cell) => {
+                    let mark = Rc::as_ptr(cell) as *const RefCell<Value>;
+                    if seen.contains(&mark) { return false; }
+                    seen.push(mark);
+                    cell.try_borrow().map_or(false, |held| held.row.iter().any(|k| looked_into(&held.held[k], seen)))
+                }
                 _ => false,
             }
         }
