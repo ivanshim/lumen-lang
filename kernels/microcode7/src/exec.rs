@@ -6029,6 +6029,27 @@ impl<'a> Machine<'a> {
                 (purpose.to_string(), value)
             }).collect()
         } else { keywords };
+        // A map's own methods that look up a key take the very road the
+        // subscript takes rather than `Request`'s free `same_item`,
+        // which cannot call `__eq__`: the store's own place first, and
+        // the program's own equality only where the place cannot say.
+        // `fromkeys` looks up no place of an existing map, but still
+        // needs that same equality to dedupe the keys it is given, so
+        // it is answered here beside the rest, before a member call
+        // with no receiver of its own reaches `Request` at all.
+        if name == "fromkeys" {
+            if arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
+            let filling = arguments.into_iter().next().unwrap_or(Value::Nil);
+            return self.dict_fromkeys(receiver, filling).map_err(Escape::from);
+        }
+        if matches!(receiver.settled(), Value::Dict(_)) {
+            if matches!(name, "get" | "setdefault" | "pop") {
+                return self.dict_key_method(receiver, name, arguments).map_err(Escape::from);
+            }
+            if name == "update" {
+                return self.dict_update(receiver, arguments, &keywords).map_err(Escape::from);
+            }
+        }
         if name != "sort" {
             let says = |kind: &str| self.method_fault(kind);
             let unanswered = |value: &Value, word: &str| self.member_missing(value, &self.member_spelling(word));
@@ -8104,6 +8125,127 @@ impl<'a> Machine<'a> {
         self.object_truth(&test)
     }
 
+    /// Where a key given to one of a map's own methods stands among
+    /// its pairs, answered exactly as the subscript road answers it:
+    /// the store's own place first, and the program's own equality —
+    /// which `same_item`, a free function, cannot call — only where
+    /// the place itself cannot say. The keyed form of the key comes
+    /// back beside the place, ready to store should the key be new.
+    fn map_locate(&mut self, entries: &[(Value, Value)], store: Option<&crate::data::MapStore>, key: &Value) -> Result<(Option<usize>, Value), String> {
+        let keyed = self.hash_key(key)?;
+        if let (Some(store), Ok(address)) = (store, keyed.hash_address()) {
+            match store.locate(&address) {
+                crate::data::Found::Found(at) => return Ok((Some(at), keyed)),
+                crate::data::Found::Absent => return Ok((None, keyed)),
+                crate::data::Found::Unknown => {}
+            }
+        }
+        for (position, (stored, _)) in entries.iter().enumerate() {
+            if self.keys_agree(stored, &keyed)? { return Ok((Some(position), keyed)); }
+        }
+        Ok((None, keyed))
+    }
+
+    /// A pair written over the value its key already holds, or added
+    /// last: `enter` in its own words, but able to call `__eq__` for
+    /// a key that needs it, which the free function it replaces here
+    /// could not.
+    fn map_enter(&mut self, entries: &mut Vec<(Value, Value)>, key: Value, value: Value) -> Result<(), String> {
+        let keyed = self.hash_key(&key)?;
+        for entry in entries.iter_mut() {
+            if self.keys_agree(&entry.0, &keyed)? { entry.1 = value; return Ok(()); }
+        }
+        entries.push((keyed, value));
+        Ok(())
+    }
+
+    /// The cell a map method's receiver stands in written over with a
+    /// new set of pairs, exactly as `Request::replace` writes it.
+    fn replace_dict(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>) -> Result<(), String> {
+        let Value::Mutable(cell, _) = receiver else { return Err(self.method_fault("unready")); };
+        let new_value = Value::Dict(Rc::new(pairs.into()));
+        if crate::members::circular(&new_value, cell, 0) { return Err(self.method_fault("unready")); }
+        cell.replace(new_value);
+        Ok(())
+    }
+
+    /// `get`, `setdefault` and `pop`: the one key each is asked about
+    /// is looked for by the road `map_locate` takes, so a Thing with
+    /// its own `__eq__` is found by it and an int subclass by the
+    /// plain int it is worth, exactly as `d[key]` finds them.
+    fn dict_key_method(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>) -> Result<Value, String> {
+        if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments")); }
+        if matches!(arguments[0].settled(), Value::Vector(_) | Value::Dict(_)) { return Err(self.method_fault("arguments")); }
+        let Value::Dict(store) = receiver.settled() else { return Err(self.method_fault("unready")); };
+        let pairs = store.to_vec();
+        let (found, keyed) = self.map_locate(&pairs, Some(store.as_ref()), &arguments[0])?;
+        if let Some(index) = found {
+            let answer = pairs[index].1.clone();
+            if name == "pop" {
+                let mut remaining = pairs;
+                remaining.remove(index);
+                self.replace_dict(receiver, remaining)?;
+            }
+            return Ok(answer);
+        }
+        if name == "pop" && arguments.len() == 1 {
+            return Err(self.method_fault("key") + &arguments[0].repr(&self.wording()));
+        }
+        let answer = arguments.get(1).cloned().unwrap_or(Value::Nil);
+        if name == "setdefault" {
+            let mut grown = pairs;
+            grown.push((keyed, answer.clone()));
+            self.replace_dict(receiver, grown)?;
+        }
+        Ok(answer)
+    }
+
+    /// `update`: each pair goes in as it is met, through `map_enter`,
+    /// so that the pairs read before an ill-shaped one are kept when
+    /// the call stops on it, as they were before, and a key that
+    /// needs `__eq__` to find its place is found by it.
+    fn dict_update(&mut self, receiver: &Value, arguments: Vec<Value>, keywords: &[(String, Value)]) -> Result<Value, String> {
+        if arguments.len() > 1 { return Err(self.method_fault("arguments")); }
+        let Value::Dict(store) = receiver.settled() else { return Err(self.method_fault("unready")); };
+        let mut entries = store.to_vec();
+        let mut stopped = None;
+        if let Some(source) = arguments.first() {
+            match source.settled() {
+                Value::Dict(d) => { for (key, value) in d.iter() { self.map_enter(&mut entries, key.clone(), value.clone())?; } }
+                other => {
+                    let says = |kind: &str| self.method_fault(kind);
+                    for item in crate::members::gather(&other, &says)? {
+                        let says = |kind: &str| self.method_fault(kind);
+                        let values = crate::members::gather(&item, &says)?;
+                        if values.len() != 2 { stopped = Some(self.method_fault("arguments")); break; }
+                        self.map_enter(&mut entries, values[0].clone(), values[1].clone())?;
+                    }
+                }
+            }
+        }
+        if stopped.is_none() { for (key, value) in keywords { self.map_enter(&mut entries, Value::text(key), value.clone())?; } }
+        self.replace_dict(receiver, entries)?;
+        match stopped { Some(words) => Err(words), None => Ok(Value::Nil) }
+    }
+
+    /// `dict.fromkeys`: a new map with a key for each member its
+    /// iterable target gives, every one holding the fill value it was
+    /// given, or nothing — deduplicated through `keys_agree` rather
+    /// than the free function `same_item`, so a Thing with its own
+    /// `__eq__` collapses to the one key CPython gives it.
+    fn dict_fromkeys(&mut self, target: &Value, filling: Value) -> Result<Value, String> {
+        let says = |kind: &str| self.method_fault(kind);
+        let members = crate::members::gather(target, &says)?;
+        let mut entries: Vec<(Value, Value)> = Vec::new();
+        for key in members {
+            let keyed = self.hash_key(&key)?;
+            let mut present = false;
+            for (stored, _) in entries.iter() { if self.keys_agree(stored, &keyed)? { present = true; break; } }
+            if !present { entries.push((keyed, filling.clone())); }
+        }
+        Ok(Value::Dict(Rc::new(entries.into())).keep(false))
+    }
+
     fn appointment(&self, subject: &Value, index: usize) -> Option<Value> {
         let names = self.table.strings("ext.stmt.class.special");
         let word = names.get(index)?;
@@ -9032,6 +9174,30 @@ impl<'a> Machine<'a> {
         one.equals(other)
     }
 
+    /// Whether two maps hold the same pairs, key for key, by the very
+    /// road the subscript takes rather than `equal_contents`'s
+    /// `one_place`/`equals`, which cannot call a key's own `__eq__`:
+    /// same length, and every key of the one found among the other's
+    /// through `keys_agree`, its value equal to the one paired with it
+    /// there. A value that is itself a Thing keeps to `equal_contents`;
+    /// only a map's own keys need the interpreter to compare them.
+    fn dicts_equal(&mut self, one: &crate::data::MapStore, other: &crate::data::MapStore) -> Result<bool, String> {
+        if one.len() != other.len() { return Ok(false); }
+        // Each key of the one is sought among the other's through
+        // `map_locate`, which is the store's own place first and a
+        // walk only where the place cannot say — so a map of plain
+        // keys stays the linear comparison it always was, and only a
+        // map with a Thing among its keys pays for the walk.
+        for (key, value) in one.iter() {
+            let (found, _) = self.map_locate(other, Some(other), key)?;
+            match found {
+                Some(index) if self.equal_contents(value, &other[index].1) => {}
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
     fn dictionary(&mut self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
         let positional: Vec<Value> = positional.iter().map(collection_read).collect();
         if positional.len() > 1 {
@@ -9060,11 +9226,7 @@ impl<'a> Machine<'a> {
             additions.push((Value::text(&name), value));
         }
         for (key, value) in additions {
-            if let Some((_, previous)) = result.iter_mut().find(|(known, _)| known.equals(&key)) {
-                *previous = value;
-            } else {
-                result.push((key, value));
-            }
+            self.map_enter(&mut result, key, value)?;
         }
         Ok(Value::Dict(Rc::new(result.into())))
     }
@@ -11047,7 +11209,11 @@ impl<'a> Machine<'a> {
                 Value::Flag((op == Prim::Eq) == alike)
             }
             Prim::Eq | Prim::Ne if self.table.flag("ext.op.eq.maps.unordered") => {
-                Value::Flag(self.equal_contents(&v[0], &v[1]) != (op == Prim::Ne))
+                let alike = match (&v[0], &v[1]) {
+                    (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
+                    _ => self.equal_contents(&v[0], &v[1]),
+                };
+                Value::Flag(alike != (op == Prim::Ne))
             }
             Prim::Membership => {
                 n(2)?;
