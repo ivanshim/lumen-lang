@@ -8642,7 +8642,10 @@ impl<'a> Machine<'a> {
             }
             return Ok(None);
         }
-        if Self::is_core_primitive(operation) && !operands.iter().any(|v| Self::operand_carries_instance(v) || matches!(v, Value::Cursor(_))) { return Ok(None); }
+        // Writing a value out looks into a set's members for a thing; a
+        // working on values does not (see operand_carries_instance).
+        let writes = matches!(operation, Prim::Quoted | Prim::Asciied | Prim::AsText);
+        if Self::is_core_primitive(operation) && !operands.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) { return Ok(None); }
         if operation == Prim::Belongs { return Ok(None); }
         // Text before the remainder sign lays its own marks out, which
         // is the working the left side's own method names. The value on
@@ -8762,7 +8765,7 @@ impl<'a> Machine<'a> {
                     None => settled.push(operand.clone()),
                 }
             }
-            if changed && !settled.iter().any(|v| Self::operand_carries_instance(v) || matches!(v, Value::Cursor(_))) {
+            if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
                 let outcome = self.prim(operation, &word, &settled);
                 // A thing built on a native kind is named by its own
