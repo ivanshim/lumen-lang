@@ -8345,6 +8345,10 @@ impl<'a> Machine<'a> {
             }
             Value::Row(v) | Value::Tuple(v) | Value::Vector(v) => v.iter().any(|item| Self::carries_instance_past(item, passed)),
             Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(|item| Self::carries_instance_past(item, passed)),
+            // A set cannot hold itself (nothing that may be altered is
+            // hashable), so its members are looked into with no guard
+            // against coming round again.
+            Value::Set(store) => store.try_borrow().map_or(false, |held| held.entries.iter().any(|(_, item)| Self::carries_instance_past(item, passed))),
             _ => false,
         }
     }
@@ -8468,6 +8472,19 @@ impl<'a> Machine<'a> {
                     Ok(self.object_words(k, true)? + ": " + &self.object_words(v, true)?)
                 }).collect::<Result<Vec<_>, String>>()?;
                 Ok(String::from("{") + &pieces.join(", ") + "}")
+            }
+            // A set cannot reach itself, so its members need no note
+            // left on them the way a list's or a map's do; each is
+            // asked for its own representation, an instance's own
+            // `__repr__` among them, and not the plain address every
+            // other reader of a set's members is given.
+            Value::Set(store) => {
+                let members = store.borrow().values();
+                if members.is_empty() { return Ok(store.borrow().spelling.clone() + "()"); }
+                let mut pieces = Vec::with_capacity(members.len());
+                for item in &members { pieces.push(self.object_words(item, true)?); }
+                let inner = String::from("{") + &pieces.join(", ") + "}";
+                Ok(if store.borrow().sealed { store.borrow().spelling.clone() + "(" + &inner + ")" } else { inner })
             }
             Value::Text(s) if quoted => {
                 let mut written = String::from("'");
@@ -8827,13 +8844,17 @@ impl<'a> Machine<'a> {
             },
             // Formatting, by the builtin or by a field of a formatted
             // string; a conversion asked in the field shows the thing as
-            // text first.
-            (Prim::FormatValue, [item @ Value::Thing(_)]) => Value::text(&self.thing_in_spec(item, "")?),
-            (Prim::FormatValue, [item @ Value::Thing(_), Value::Text(spec)]) => {
+            // text first. A collection carrying a thing among its
+            // members, a set among them, takes the same road: asking
+            // for its own `__format__` answers nothing for anything
+            // that is not itself a thing, so the road falls through to
+            // the thing-aware text below rather than the plain one.
+            (Prim::FormatValue, [item]) if Self::carries_instance(item) => Value::text(&self.thing_in_spec(item, "")?),
+            (Prim::FormatValue, [item, Value::Text(spec)]) if Self::carries_instance(item) => {
                 let spec = spec.to_string();
                 Value::text(&self.thing_in_spec(item, &spec)?)
             }
-            (Prim::RenderField, [item @ Value::Thing(_), spec, conversion]) => {
+            (Prim::RenderField, [item, spec, conversion]) if Self::carries_instance(item) => {
                 let (spec, conversion) = (spec.bare(), conversion.bare());
                 let shown = if conversion.is_empty() { self.thing_in_spec(item, &spec)? } else {
                     let text = Value::text(&self.object_words(item, conversion != "s")?);

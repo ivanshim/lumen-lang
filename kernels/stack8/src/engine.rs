@@ -4418,6 +4418,10 @@ impl<'a> Engine<'a> {
                 }
                 Value::Tuple(items) | Value::Array(items) => items.iter().any(|item| looked_into(item, seen)),
                 Value::Map(items) => items.iter().any(|(k, v)| looked_into(k, seen) || looked_into(v, seen)),
+                // A set cannot hold itself (nothing that may be altered
+                // is hashable), so its members are looked into with no
+                // guard against coming round again.
+                Value::Set(cell) => cell.try_borrow().map_or(false, |held| held.row.iter().any(|k| looked_into(&held.held[k], seen))),
                 _ => false,
             }
         }
@@ -4518,6 +4522,19 @@ impl<'a> Engine<'a> {
                 }
                 Ok(format!("{{{}}}", parts.join(", ")))
             }),
+            // A set cannot reach itself, so its members need no note
+            // left on them the way a row's or a map's do; each is asked
+            // for its own representation, a thing's own `__repr__`
+            // among them, and not the plain address every other reader
+            // of a set's members is given.
+            Value::Set(cell) => {
+                let members = cell.borrow().items();
+                if members.is_empty() { return Ok(cell.borrow().word.clone() + "()"); }
+                let mut parts = Vec::with_capacity(members.len());
+                for item in &members { parts.push(self.special_text(item, true)?); }
+                let inner = format!("{{{}}}", parts.join(", "));
+                Ok(if cell.borrow().fixed { format!("{}({})", cell.borrow().word, inner) } else { inner })
+            }
             Value::Text(_) if representation => self.rem_repr(value),
             _ => Ok(value.display(&self.wording())),
         }
@@ -4804,6 +4821,21 @@ impl<'a> Engine<'a> {
             return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
         }
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
+        // A view standing beside a set under a set sign is turned into
+        // a set first, as the plain working does, but through the road
+        // that asks a thing among its members for its own hash and its
+        // own equality: the plain working's own turning is `&self` and
+        // so cannot call either.
+        if matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne | Action::Sub) && (matches!(a, Value::View(_)) || matches!(b, Value::View(_))) {
+            let turned = |engine: &mut Self, v: &Value| -> Res<Value> {
+                if !matches!(v, Value::View(_)) { return Ok(v.clone()); }
+                let items = match v.contents() { Value::Array(items) => items.as_ref().clone(), _ => Vec::new() };
+                Ok(Value::Set(Rc::new(RefCell::new(engine.set_gathered(items)?))))
+            };
+            let left = turned(self, a)?;
+            let right = turned(self, b)?;
+            return self.special_dyad(op, &left, &right);
+        }
         // Two maps set against each other by the sign go the road the
         // subscript takes for their keys — `dyadic`'s own `==`, reached
         // for a plain map from below, is `&self` and so cannot call a
@@ -7321,8 +7353,13 @@ impl<'a> Engine<'a> {
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
                 // A thing in a field is formatted by its own method, or
-                // shown as text first where a conversion was asked.
-                if matches!(value.contents(), Value::Object(_)) && !self.lang.class_special.is_empty() {
+                // shown as text first where a conversion was asked. A
+                // collection carrying a thing among its members takes
+                // the same road, exactly as the template and remainder
+                // fillers already do, so a set of things in a field
+                // shows each by its own `__repr__` rather than the
+                // plain address every other reader of a set is given.
+                if Self::holds_object(&value.contents()) && !self.lang.class_special.is_empty() {
                     let thing = value.contents();
                     let shown = if conversion.is_empty() { self.special_format(&thing, &specification)? } else {
                         let text = Value::text(&self.special_text(&thing, conversion != "s")?);
