@@ -4407,31 +4407,45 @@ impl<'a> Engine<'a> {
     }
 
     fn holds_object(value: &Value) -> bool {
+        Self::holds_object_within(value, true)
+    }
+
+    /// Whether an argument must go the thing-aware road of a builtin.
+    /// A set holding things is written out through each thing's own
+    /// words, but the other builtins (`len`, the set signs' methods and
+    /// the rest) take a set as it is, and only the plain road takes a
+    /// set's subclass by its worth; so they do not look into a set.
+    fn argument_holds_object(value: &Value) -> bool {
+        Self::holds_object_within(value, false)
+    }
+
+    fn holds_object_within(value: &Value, into_sets: bool) -> bool {
         // A cell come round to again holds nothing further to look at.
-        fn looked_into(value: &Value, seen: &mut Vec<*const RefCell<Value>>) -> bool {
+        fn looked_into(value: &Value, seen: &mut Vec<*const RefCell<Value>>, into_sets: bool) -> bool {
             match value {
                 Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Object(_) | Value::Method(..) => true,
                 Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => {
                     if seen.contains(&Rc::as_ptr(c)) { return false; }
                     seen.push(Rc::as_ptr(c));
-                    looked_into(&c.borrow(), seen)
+                    looked_into(&c.borrow(), seen, into_sets)
                 }
-                Value::Tuple(items) | Value::Array(items) => items.iter().any(|item| looked_into(item, seen)),
-                Value::Map(items) => items.iter().any(|(k, v)| looked_into(k, seen) || looked_into(v, seen)),
+                Value::Tuple(items) | Value::Array(items) => items.iter().any(|item| looked_into(item, seen, into_sets)),
+                Value::Map(items) => items.iter().any(|(k, v)| looked_into(k, seen, into_sets) || looked_into(v, seen, into_sets)),
                 // A set cannot hold itself, but one set may stand inside
                 // many others; one seen already held nothing to find, or
                 // the look would have ended there, so it is not walked
                 // through twice.
                 Value::Set(cell) => {
+                    if !into_sets { return false; }
                     let mark = Rc::as_ptr(cell) as *const RefCell<Value>;
                     if seen.contains(&mark) { return false; }
                     seen.push(mark);
-                    cell.try_borrow().map_or(false, |held| held.row.iter().any(|k| looked_into(&held.held[k], seen)))
+                    cell.try_borrow().map_or(false, |held| held.row.iter().any(|k| looked_into(&held.held[k], seen, into_sets)))
                 }
                 _ => false,
             }
         }
-        looked_into(value, &mut Vec::new())
+        looked_into(value, &mut Vec::new(), into_sets)
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
@@ -5115,7 +5129,10 @@ impl<'a> Engine<'a> {
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
         let first = args.first();
-        if Self::core_builtin(op) && !args.iter().any(|v| Self::holds_object(v) || matches!(v, Value::Walk(_))) { return Ok(None); }
+        // Writing a value out looks into a set for a thing; the other
+        // builtins do not (see argument_holds_object).
+        let writes = matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText);
+        if Self::core_builtin(op) && !args.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) { return Ok(None); }
         if op == Builtin::InstanceOf { return Ok(None); }
         // A thing keeping a worth of its kind is written into through
         // that worth, and is that worth for whatever its class does not
@@ -5170,7 +5187,7 @@ impl<'a> Engine<'a> {
                 None => settled.push(value.clone()),
             }
         }
-        if changed && !settled.iter().any(|v| Self::holds_object(v) || matches!(v, Value::Walk(_))) {
+        if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
             let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
             return Ok(Some(self.builtin(op, &word, &mut settled)?));
         }
