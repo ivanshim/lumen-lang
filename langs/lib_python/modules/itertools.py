@@ -78,18 +78,27 @@ def permutations(iterable, r=None):
     return [[values[i] for i in path] for path in paths]
 
 def combinations(iterable, r):
+    # Each combination is built straight from the indices that answer
+    # it, one step from its predecessor in lexicographic order, rather
+    # than as the last of a whole tree of shorter combinations kept
+    # alive beside it: a call asking for r items pays for r items, not
+    # for every shorter prefix a taller call would have wanted too.
     values = list(iterable)
-    paths = [[]]
-    for step in range(r):
-        fresh = []
-        for path in paths:
-            start = 0
-            if len(path) != 0:
-                start = path[len(path) - 1] + 1
-            for i in range(start, len(values)):
-                fresh.append([*path, i])
-        paths = fresh
-    return [[values[i] for i in path] for path in paths]
+    n = len(values)
+    if r > n:
+        return []
+    indices = list(range(r))
+    result = [[values[i] for i in indices]]
+    while True:
+        spot = r - 1
+        while spot >= 0 and indices[spot] == spot + n - r:
+            spot -= 1
+        if spot < 0:
+            return result
+        indices[spot] += 1
+        for j in range(spot + 1, r):
+            indices[j] = indices[j - 1] + 1
+        result.append([values[i] for i in indices])
 
 def zip_longest(*iterables, fillvalue=None):
     rows = [list(it) for it in iterables]

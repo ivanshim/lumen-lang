@@ -291,7 +291,8 @@ enum Kindred {
     Row,
     Tuple,
     Map,
-    Set,
+    /// A set, and whether it is one that cannot be changed.
+    Set(bool),
     Counted,
     View(bool),
 }
@@ -321,6 +322,15 @@ const SET_METHOD_LABELS: &[&str] = &[
     "ext.builtin.set.intersection", "ext.builtin.set.difference", "ext.builtin.set.symmetric_difference",
     "ext.builtin.set.issubset", "ext.builtin.set.issuperset", "ext.builtin.set.isdisjoint",
     "ext.builtin.set.intersection_update", "ext.builtin.set.difference_update", "ext.builtin.set.symmetric_difference_update",
+];
+
+/// The same labels less the ones that change the set: the methods a
+/// set that cannot be changed answers to. Nothing here writes into the
+/// set it is given, so a fixed set has every one of them.
+const SET_STILL_LABELS: &[&str] = &[
+    "ext.builtin.set.copy", "ext.builtin.set.union", "ext.builtin.set.intersection",
+    "ext.builtin.set.difference", "ext.builtin.set.symmetric_difference",
+    "ext.builtin.set.issubset", "ext.builtin.set.issuperset", "ext.builtin.set.isdisjoint",
 ];
 
 /// What parts a group of exceptions: classes its members may stand
@@ -1864,14 +1874,23 @@ impl<'a> Engine<'a> {
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
             if let Value::Binding(shared) = &frame[s] {
-                let value = shared.borrow().clone();
+                // A taking read of a name closed-over locals still box
+                // leaves its cell in the same shape a plain slot's does:
+                // the value moves out and a gap stands where it stood,
+                // rather than a clone of everything held paid for a
+                // read about to be overwritten anyway.
+                let value = if slot.moving { std::mem::replace(&mut *shared.borrow_mut(), Value::Gap) } else { shared.borrow().clone() };
                 if self.lang.closes_over && matches!(value, Value::Blank) {
                     return Err(Self::named_fault(if slot.free { &self.lang.free_unbound } else { &self.lang.local_unbound }, &slot.ident));
                 }
                 return Ok(value);
             }
             if let Value::Bond(shared) = &frame[s] {
-                return Ok(if self.lang.bind_names { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
+                return Ok(match () {
+                    _ if self.lang.bind_names => Value::Bond(shared.clone()),
+                    _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
+                    _ => shared.borrow().clone(),
+                });
             }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
@@ -1884,7 +1903,11 @@ impl<'a> Engine<'a> {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) { return found; }
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
-            return Ok(if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
+            return Ok(match () {
+                _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
+                _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
+                _ => shared.borrow().clone(),
+            });
         }
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
@@ -3751,7 +3774,7 @@ impl<'a> Engine<'a> {
             Builtin::List => Value::array(Vec::new()),
             Builtin::Tuple => Value::Tuple(Rc::new(Vec::new())),
             Builtin::Dict => Value::Map(Rc::new(Vec::new().into())),
-            Builtin::Set => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
+            kind @ (Builtin::Set | Builtin::Frozen) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string(), *kind == Builtin::Frozen)))),
             Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
             Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
                 start: BigInt::from(0), stop: BigInt::from(0), step: BigInt::from(1), name: word.to_string(),
@@ -3776,7 +3799,7 @@ impl<'a> Engine<'a> {
         let (book, labels) = match family {
             Kindred::Text => (&self.lang.text_words, TEXT_METHOD_LABELS),
             Kindred::Bytes(_) => (&self.lang.byte_words, BYTE_METHOD_LABELS),
-            Kindred::Set => (&self.lang.set_words, SET_METHOD_LABELS),
+            Kindred::Set(fixed) => (&self.lang.set_words, if fixed { SET_STILL_LABELS } else { SET_METHOD_LABELS }),
             _ => (&self.lang.text_words, [].as_slice()),
         };
         for label in labels { names.extend(book.get(*label).into_iter().flatten().cloned()); }
@@ -3918,8 +3941,9 @@ impl<'a> Engine<'a> {
         }
         // A set answers some of its methods through builtins that take
         // the receiver first, so the member bound to the value is the
-        // word itself with the value behind it.
-        if matches!((&held, self.lang.builtins.get(name)), (Value::Set(_), Some(word)) if word.set_method()) {
+        // word itself with the value behind it. A set that cannot be
+        // changed answers none of the methods that would alter it.
+        if matches!((&held, self.lang.builtins.get(name)), (Value::Set(_), Some(word)) if word.set_method() && !(word.set_alters() && held.set_fixed())) {
             return Ok(Some(Value::Adapter(Rc::new((3, vec![Value::text(name), held])))));
         }
         let Some(operation) = self.lang.value_methods.get(name).cloned() else { return Ok(None) };
@@ -3948,7 +3972,7 @@ impl<'a> Engine<'a> {
             Value::Array(_) => Kindred::Row,
             Value::Tuple(_) => Kindred::Tuple,
             Value::Map(_) => Kindred::Map,
-            Value::Set(_) => Kindred::Set,
+            Value::Set(ref members) => Kindred::Set(members.try_borrow().map_or(false, |held| held.fixed)),
             Value::Counted(_) => Kindred::Counted,
             // A window upon a map is read before its contents, which
             // stand as a plain row and would lose the ways a window has.
@@ -3968,7 +3992,11 @@ impl<'a> Engine<'a> {
     fn family_answers(family: Kindred, place: usize) -> bool {
         let number = matches!(family, Kindred::Whole | Kindred::Real | Kindred::Ratio | Kindred::Complex);
         let ordered = matches!(family, Kindred::Text | Kindred::Bytes(_) | Kindred::Row | Kindred::Tuple | Kindred::Counted);
-        let holds = ordered || matches!(family, Kindred::Map | Kindred::Set);
+        let holds = ordered || matches!(family, Kindred::Map | Kindred::Set(_));
+        // Both kinds of set answer for the workings a set is written
+        // with; only the changeable one answers for writing through
+        // them, and only the fixed one for its own hash.
+        let setted = matches!(family, Kindred::Set(_));
         let joined = matches!(family, Kindred::Text | Kindred::Bytes(_) | Kindred::Row | Kindred::Tuple);
         // A walk and a window stand for something else and are read and
         // compared as that thing is, so neither answers for itself here.
@@ -3979,26 +4007,26 @@ impl<'a> Engine<'a> {
         let emptied = matches!(family, Kindred::Row | Kindred::Map | Kindred::Bytes(true));
         match place {
             0..=7 => standing,
-            8 => standing && !matches!(family, Kindred::Row | Kindred::Map | Kindred::Set | Kindred::Bytes(true)),
+            8 => standing && !matches!(family, Kindred::Row | Kindred::Map | Kindred::Set(false) | Kindred::Bytes(true)),
             9 => number,
             10 => holds || matches!(family, Kindred::View(_)),
-            11 => holds && !matches!(family, Kindred::Set),
+            11 => holds && !setted,
             12 => written,
             13 => emptied,
             14 => holds || matches!(family, Kindred::View(false)),
             15 => holds || matches!(family, Kindred::Walk | Kindred::View(_)),
             16 => matches!(family, Kindred::Walk),
             18 | 20 | 28 => number || joined,
-            19 => number || matches!(family, Kindred::Set),
+            19 => number || setted,
             23 | 31 => number && !matches!(family, Kindred::Complex) || matches!(family, Kindred::Text | Kindred::Bytes(_)),
             21 | 24 | 25 | 26 | 27 | 29 | 32 | 38 | 39 | 40 | 41 => number,
             22 | 30 | 60 | 61 => number && !matches!(family, Kindred::Complex),
             43 | 44 | 62 | 63 | 67 | 68 => matches!(family, Kindred::Whole),
             47 | 49 => matches!(family, Kindred::Row | Kindred::Bytes(true)),
-            48 | 57 | 59 => matches!(family, Kindred::Set),
-            58 => matches!(family, Kindred::Set | Kindred::Map),
-            64 | 66 | 69 | 71 => matches!(family, Kindred::Whole | Kindred::Set),
-            65 | 70 => matches!(family, Kindred::Whole | Kindred::Set | Kindred::Map),
+            48 | 57 | 59 => matches!(family, Kindred::Set(false)),
+            58 => matches!(family, Kindred::Set(false) | Kindred::Map),
+            64 | 66 | 69 | 71 => matches!(family, Kindred::Whole) || setted,
+            65 | 70 => matches!(family, Kindred::Whole | Kindred::Map) || setted,
             // Every value is written to a specification, the writer
             // having marks of its own for each kind or words against
             // the kinds that take none.
@@ -4019,6 +4047,9 @@ impl<'a> Engine<'a> {
             Kindred::Ratio => matches!(other, Kindred::Whole | Kindred::Real | Kindred::Ratio),
             Kindred::Complex => matches!(other, Kindred::Whole | Kindred::Real | Kindred::Complex),
             Kindred::Bytes(_) => matches!(other, Kindred::Bytes(_)),
+            // Either kind of set works with either, so that a set and
+            // one that cannot be changed meet under one sign.
+            Kindred::Set(_) => matches!(other, Kindred::Set(_)),
             _ => family == other,
         }
     }
@@ -4867,7 +4898,7 @@ impl<'a> Engine<'a> {
     /// other, though a refusal still names each of them apart.
     fn order_family(value: &Value) -> String {
         let kind = value.core_kind();
-        match kind.as_str() { "bytearray" => "bytes".to_string(), _ => kind }
+        match kind.as_str() { "bytearray" => "bytes".to_string(), "frozenset" => "set".to_string(), _ => kind }
     }
 
     /// The complaint that two values stand in no order, with the sign
@@ -4920,7 +4951,7 @@ impl<'a> Engine<'a> {
             Builtin::Fetch | Builtin::Replace | Builtin::Erase => &[usize::MAX],
             Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
             Builtin::ToText => &[0, 1], Builtin::Repr | Builtin::Ascii => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
-            Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
+            Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
             Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
             _ => &[usize::MAX],
         };
@@ -5960,9 +5991,13 @@ impl<'a> Engine<'a> {
                     }
                     Value::Map(Rc::new(pairs))
                 } else {
-                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a.as_ref().clone(), _ => unreachable!() };
-                    if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
-                    Value::array(items)
+                    // A literal grown one item at a time keeps the same
+                    // row throughout when nothing else shares it, so an
+                    // item joins in one push rather than a clone of
+                    // everything gathered so far for every item added.
+                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a, _ => unreachable!() };
+                    if *spread { Rc::make_mut(&mut items).extend(self.comprehension_items(&next)?); } else { Rc::make_mut(&mut items).push(next); }
+                    Value::Array(items)
                 }
             }
             Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
@@ -7399,13 +7434,16 @@ impl<'a> Engine<'a> {
     }
 
     /// The complaint for a value that cannot key a map, naming its kind:
-    /// a list, a map or a set, however deep inside a tuple. Nothing
-    /// where the value may key one, or the definition has no words.
+    /// a list, a map or a changeable set, however deep inside a tuple.
+    /// A set that cannot be changed keys a map as its members have it,
+    /// so it is no offence here. Nothing where the value may key one,
+    /// or the definition has no words.
     fn unkeyable(&self, key: &Value) -> Option<String> {
         let [before, after] = self.lang.map_unhashable.as_slice() else { return None };
         fn offending(value: &Value) -> Option<String> {
             match value {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => offending(&cell.borrow()),
+                Value::Set(_) if value.set_fixed() => None,
                 Value::Array(_) | Value::Map(_) | Value::Set(_) => Some(value.core_kind()),
                 Value::Tuple(items) => items.iter().find_map(offending),
                 _ => None,
@@ -7722,7 +7760,8 @@ impl<'a> Engine<'a> {
             let numeric = |v: &Value| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
             // Two of one kind may order themselves further on, as sets and
             // rows do; two of different kinds, or of a kind with no order
-            // at all, cannot.
+            // at all, cannot. The two kinds of set are one kind here,
+            // since either holds members the other may hold as well.
             let orderless = Self::order_family(a) != Self::order_family(b) || matches!(a, Value::Null | Value::Map(_));
             if orderless && !(numeric(a) && numeric(b)) && !matches!((a, b), (Value::Text(_), Value::Text(_))) && arith::order_values(a, b).is_none() {
                 let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", _ => ">=" };
@@ -7777,7 +7816,12 @@ impl<'a> Engine<'a> {
         if let Action::SetWrite(how) = op {
             let plain = match how { 0 => Action::BitEither, 1 => Action::BitBoth, 2 => Action::Sub, _ => Action::BitOne };
             let answer = self.dyadic(&plain, a, b)?;
+            // A set that cannot be changed is not written through: the
+            // plain working stands, and what it made is handed back so
+            // that the name takes the new set, as the reference does
+            // where no writing member of that name is to be found.
             if let (Value::Set(cell), Value::Set(result)) = (a, &answer) {
+                if a.set_fixed() { return Ok(answer); }
                 *cell.borrow_mut() = result.borrow().clone();
                 return Ok(a.clone());
             }
@@ -9019,6 +9063,17 @@ impl<'a> Engine<'a> {
     /// A value put into a set at the address it takes there. A thing is
     /// kept beside its hash, as a map's keys are.
     fn set_put(&mut self, cell: &Rc<RefCell<crate::value::Members>>, value: Value) -> Res<()> {
+        // A value addressed by its worth alone wants none of the
+        // members: its address is the same whoever else is there. Only
+        // a thing, whose hash and equality the program itself answers,
+        // is placed against the members, so the members are taken out
+        // for it alone and a set is gathered in one pass and not in as
+        // many passes as it has members.
+        if !matches!(value, Value::Object(_) | Value::Hashed(_)) {
+            let key = self.set_key(&value)?;
+            cell.borrow_mut().insert(key, value);
+            return Ok(());
+        }
         let members = Self::set_pairs(cell);
         let key = self.set_place(&members, &value)?;
         let kept = if matches!(value, Value::Object(_)) { self.special_key(&value)? } else { value };
@@ -9027,7 +9082,7 @@ impl<'a> Engine<'a> {
     }
 
     fn set_from(&self, items: Vec<Value>) -> Res<crate::value::Members> {
-        let mut set = crate::value::Members::empty(self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default());
+        let mut set = crate::value::Members::empty(self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default(), false);
         for item in items { set.insert(self.set_key(&item)?, item); }
         Ok(set)
     }
@@ -9037,7 +9092,7 @@ impl<'a> Engine<'a> {
     /// hash and its own equality wherever it is gathered.
     fn set_gathered(&mut self, items: Vec<Value>) -> Res<crate::value::Members> {
         let word = self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default();
-        let cell = Rc::new(RefCell::new(crate::value::Members::empty(word)));
+        let cell = Rc::new(RefCell::new(crate::value::Members::empty(word, false)));
         for item in items { self.set_put(&cell, item)?; }
         let gathered = cell.borrow().clone();
         Ok(gathered)
@@ -9090,6 +9145,9 @@ impl<'a> Engine<'a> {
             }
             return Ok(Value::Null);
         }
+        // Copying a set that cannot be changed answers with the set
+        // itself, there being nothing a second one could hold apart.
+        if op == SetCopy && args[0].set_fixed() { return Ok(args[0].clone()); }
         if op == SetPop {
             let key = cell.borrow().row.first().cloned().ok_or_else(|| self.set_said(".empty", ""))?;
             return Ok(cell.borrow_mut().remove(&key).unwrap());
@@ -9637,7 +9695,10 @@ impl<'a> Engine<'a> {
         }
         if matches!(receiver.contents(), Value::Set(_)) {
             let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None }
-                .or_else(|| self.lang.builtins.get(operation).copied().filter(|word| word.set_method()));
+                .or_else(|| self.lang.builtins.get(operation).copied().filter(|word| word.set_method()))
+                // A set that cannot be changed has no changing word of
+                // its own, so the call finds no member of that name.
+                .filter(|word| !(word.set_alters() && receiver.set_fixed()));
             if let Some(method) = method {
                 if !named.is_empty() { return Err(self.set_said(".arguments", "")); }
                 let mut given = vec![receiver.contents()]; given.extend(args);
@@ -11609,7 +11670,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
-            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
+            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -11814,7 +11875,7 @@ impl<'a> Engine<'a> {
                         Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
                         Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
-                        Value::Set(_) => Some(Builtin::Set), Value::Map(_) => Some(Builtin::Dict),
+                        Value::Set(_) => Some(if args[0].set_fixed() { Builtin::Frozen } else { Builtin::Set }), Value::Map(_) => Some(Builtin::Dict),
                         // A counted row and a span of bounds are kinds
                         // the definition spells, so each answers with
                         // the builtin word that makes one.
@@ -12758,7 +12819,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -12809,7 +12870,7 @@ impl Engine<'_> {
             }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
-        let walk = Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0));
+        let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
         Ok(walk)
     }
@@ -12856,6 +12917,40 @@ impl Engine<'_> {
             if state.busy { return Err(self.core_fault("core.unready", "next")); }
             if let Some(value) = state.pending.take() { return Ok(Some(value)); }
             if state.finished { return Ok(None); }
+            // A walk that reaches nothing beyond its own row, its own
+            // count or its own cell -- calling no callable of the
+            // program's and asking no other cursor -- steps in the one
+            // borrow already open on it, since nothing it does could
+            // ever reach this same cursor again meanwhile. The row a
+            // counted walk stands on is a great number even where the
+            // walk itself is small, and cloning the whole of the state
+            // to set the walk free, where the walk was never taken up
+            // by anything that needed it free, paid for that number
+            // twice at every single step for nothing gained by it.
+            match &mut state.source {
+                CursorSource::Items(values, place) => {
+                    let found = values.get(*place).cloned();
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Counted(row, place) => {
+                    let found = row.at(place.clone());
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Living(home, place) => {
+                    let found = match home.borrow().contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Viewed(window, place, size) => {
+                    if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                    let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                _ => {}
+            }
             state.busy = true;
             state.source.clone()
         };
@@ -13221,15 +13316,29 @@ impl Engine<'_> {
                 let fresh = self.core_ids.len() + 1;
                 Value::Small(*self.core_ids.entry(filed).or_insert(fresh) as i64)
             }
-            Builtin::Tuple | Builtin::Set => {
+            Builtin::Tuple | Builtin::Set | Builtin::Frozen => {
                 arity(0, 1)?;
+                // A set that cannot be changed, handed to the maker of
+                // its own kind, is handed straight back: nothing may
+                // alter it, so a fresh one would be the same set under
+                // another name, and the reference hands back the one it
+                // was given.
+                if b == Builtin::Frozen {
+                    if let Some(standing) = args.first().filter(|v| matches!(v, Value::Set(_)) && v.set_fixed()) {
+                        return Ok(standing.clone());
+                    }
+                }
                 let items = args.first().map(|v| self.core_members(v)).transpose()?.unwrap_or_default();
-                if b == Builtin::Set {
+                if matches!(b, Builtin::Set | Builtin::Frozen) {
                     // A thing among the members is keyed as the set literal
                     // keys it, by its own hash method and its own equality;
-                    // any other member with no hash is refused.
-                    let word = self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default();
-                    let gathered = Rc::new(RefCell::new(crate::value::Members::empty(word)));
+                    // any other member with no hash is refused. The set
+                    // that cannot be changed is gathered the very same
+                    // way and differs only in the kind it is of.
+                    let fixed = b == Builtin::Frozen;
+                    let label = if fixed { "ext.builtin.frozenset" } else { "ext.builtin.set" };
+                    let word = self.lang.set_words[label].first().cloned().unwrap_or_default();
+                    let gathered = Rc::new(RefCell::new(crate::value::Members::empty(word, fixed)));
                     for v in items {
                         // A member of a builtin kind with no hash of its
                         // own is refused by its kind, as the language has it.
@@ -13317,7 +13426,7 @@ impl Engine<'_> {
                     return self.core_iterator(&Value::Counted(Rc::new(backwards)));
                 }
                 let mut items = self.core_members(&source)?; items.reverse();
-                let walk = Self::core_cursor(CursorSource::Items(items, 0));
+                let walk = Self::core_cursor(CursorSource::Items(Rc::new(items), 0));
                 // A row walked backwards has a word of its own; anything
                 // else walked backwards the reference names after the
                 // builtin that turned it about.
@@ -13375,7 +13484,7 @@ impl Engine<'_> {
                 // must be and the key is asked in the order they come.
                 // The one standing keeps its place against an equal, so
                 // that the first of several alike is the one answered.
-                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(args.clone(), 0)) };
+                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(Rc::new(args.clone()), 0)) };
                 let wanted = if b == Builtin::Maximum { Action::Gt } else { Action::Lt };
                 let mut standing: Option<(Value, Value)> = None;
                 while let Some(value) = self.core_step(&walk)? {

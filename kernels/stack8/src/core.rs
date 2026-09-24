@@ -28,7 +28,7 @@ impl Value {
             Value::Null => "NoneType",
             Value::Array(_) => "list",
             Value::Tuple(_) => "tuple",
-            Value::Set(_) => "set",
+            Value::Set(_) => if self.set_fixed() { "frozenset" } else { "set" },
             Value::Map(_) => "dict",
             Value::Counted(_) => "range",
             Value::Bytes(_, mutable, _) => if *mutable { "bytearray" } else { "bytes" },
@@ -147,6 +147,31 @@ impl Value {
                 let mut h = ((r.p.abs() % &modulus) * inverse % &modulus).to_i64()?;
                 if r.p.is_negative() { h = -h; }
                 Some(finish(h))
+            }
+            // A set that cannot be changed folds what it holds the way
+            // the reference folds it: each member's own hash is
+            // scattered and the scatterings taken together by ones and
+            // noughts, which no order among them can tell apart, and
+            // the count of them is mixed in at the end. A member kept
+            // beside its hash hands over that hash, since the set
+            // reckoned it when the member was put there. A changeable
+            // set has no hash whatever.
+            Value::Set(members) => {
+                let held = members.try_borrow().ok()?;
+                if !held.fixed { return None; }
+                if let Some(already) = held.folded.get() { return Some(already); }
+                let mut folded = 0u64;
+                for place in &held.row {
+                    let member = &held.held[place];
+                    let one = match member { Value::Hashed(pair) => pair.1.core_hash()?, plain => plain.core_hash()? } as u64;
+                    folded ^= ((one ^ 89869747u64) ^ (one << 16)).wrapping_mul(3644798167u64);
+                }
+                folded ^= (held.row.len() as u64).wrapping_add(1).wrapping_mul(1927868237u64);
+                folded ^= (folded >> 11) ^ (folded >> 25);
+                folded = folded.wrapping_mul(69069u64).wrapping_add(907133923u64);
+                let whole = if folded == u64::MAX { 590923713 } else { folded as i64 };
+                held.folded.set(Some(whole));
+                Some(whole)
             }
             Value::Tuple(items) => {
                 let mut h = 2870177450012600261u64;

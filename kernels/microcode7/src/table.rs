@@ -30,12 +30,60 @@ pub struct Infix {
     pub right_assoc: bool,
 }
 
+/// A stand-in for the standard library's own scattering, which guards
+/// against an adversary choosing keys on purpose -- a guard this label
+/// roster, read once from the language's own definition and never
+/// written from outside it, has no need of. Every value a program reads
+/// asks after some label here, so the scattering is asked for many
+/// times over for every one time a key is written, and a plainer
+/// scattering, quicker for it, costs nothing this roster does not
+/// already pay for safety it does not need.
+#[derive(Default)]
+pub struct FxHasher {
+    hash: usize,
+}
+
+impl FxHasher {
+    const SEED: usize = 0x51_7c_c1_b7_27_22_0a_95;
+    #[inline]
+    fn add(&mut self, word: usize) {
+        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn write(&mut self, mut bytes: &[u8]) {
+        while bytes.len() >= 8 {
+            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
+            bytes = &bytes[8..];
+        }
+        if bytes.len() >= 4 {
+            self.add(u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize);
+            bytes = &bytes[4..];
+        }
+        if bytes.len() >= 2 {
+            self.add(u16::from_ne_bytes(bytes[..2].try_into().unwrap()) as usize);
+            bytes = &bytes[2..];
+        }
+        if let Some(&last) = bytes.first() {
+            self.add(last as usize);
+        }
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash as u64
+    }
+}
+
+pub(crate) type FxBuildHasher = std::hash::BuildHasherDefault<FxHasher>;
+
 pub struct Table {
     pub ident: String,
     pub blocks: Blocks,
     /// Reverse Polish: words over one stack, no expressions.
     pub rpn: bool,
-    cells: HashMap<&'static str, Entry>,
+    cells: HashMap<&'static str, Entry, FxBuildHasher>,
     pub dyadic: HashMap<String, Infix>,
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
@@ -50,6 +98,12 @@ pub struct Table {
     given: HashSet<String>,
     pub keywords: HashSet<String>,
     pub signs: Vec<String>,
+    /// Whether classes stand fuller than the plain kinds alone: reckoned
+    /// once here from the very word `detail("root")` reads, since that
+    /// word never changes once the roster is read. Every value read
+    /// asks this, so it is a field rather than a name built afresh and
+    /// looked into at each one.
+    pub has_class_order: bool,
 }
 
 // Label shapes: L list of words, B boolean, N count or null, W word, O word or null, T tiers.
@@ -118,17 +172,30 @@ ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complain
 ext.builtin.file.exists:L ext.builtin.file.kind:L ext.builtin.host.info:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.print.redirect:L ext.builtin.input:L ext.builtin.input.reader:L ext.builtin.stream.write:L ext.builtin.stream.read:L ext.builtin.stream.amiss:L ext.builtin.stream.failed:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.output.begun:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.builtin.calls:L ext.system.kind.object:L ext.system.kind.loose:L ext.builtin.uncaught:L ext.builtin.classes:L ext.builtin.routines:L ext.builtin.spelled:L ext.builtin.class.beneath:L ext.builtin.math:L ext.builtin.class.methods:L ext.builtin.class.properties:L ext.builtin.clock:L ext.builtin.clock.parts:B ext.builtin.room.used:L ext.builtin.room.most:L ext.builtin.room.most.forget:L ext.builtin.room.limit:L ext.builtin.write.operator:B ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.op.index.text.first:L ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L ext.lexical.string.long:L ext.lexical.string.prefix.raw:L ext.lexical.string.prefix.bytes:L ext.lexical.string.prefix.plain:L ext.lexical.string.prefix.format:L ext.lexical.string.adjacent:B ext.lexical.string.amiss:L ext.lexical.escape.byte.digits:N ext.lexical.escape.codepoint.digits:N ext.lexical.escape.codepoint.wide:L ext.lexical.escape.codepoint.wide.digits:N ext.lexical.escape.named:L ext.lexical.escape.unavailable:L ext.lexical.escape.continued:B ext.lexical.escape.controls:L ext.lexical.escape.codepoint:L ext.lexical.escape.codepoint.open:L ext.lexical.escape.codepoint.close:L ext.lexical.escape.codepoint.amiss:L ext.lexical.escape.codepoint.beyond:L ext.lexical.number.amiss:L ext.stmt.separator:L ext.op.tuple:L ext.stmt.unpack.rest:L ext.stmt.assign.chain:B ext.stmt.unpack.short:L ext.stmt.unpack.long:L ext.stmt.unpack.unwalkable:L ext.stmt.unpack.amiss:L ext.stmt.class.bases.open:L ext.stmt.class.bases.close:L ext.stmt.class.unready:L ext.op.member.pipes:B ext.stmt.with:L ext.stmt.with.as:L ext.stmt.with.unready:L ext.op.tuple.unready:L ext.op.identical.negated:L ext.op.identical.unsupported:L ext.builtin.range.zero_start:B ext.lexical.string.value.unready:L ext.lexical.line_continuation:L ext.lexical.string.bytes.unavailable:L ext.lexical.string.format.unavailable:L ext.lexical.string.unready:L ext.builtin.exceptions:L ext.builtin.exceptions.args:L ext.builtin.exceptions.cause:L ext.builtin.class.name:L ext.builtin.iter:L ext.builtin.next:L ext.builtin.repr:L ext.system.fault.class.index:L ext.system.fault.class.key:L ext.system.source.marked:B ext.system.fault.current:L ext.system.module.getattr:L ext.stmt.class.annotations:L ext.stmt.class.called:L ext.op.order.text:B ext.op.logical.operand:B ext.builtin.slice:L ext.builtin.slice.start:L ext.builtin.slice.stop:L ext.builtin.slice.step:L ext.builtin.slice.arity:L ext.builtin.slice.length:L ext.op.index.integer:L ext.op.index.slice.amiss:L ext.builtin.method.indices:L ext.builtin.method.slice_hash:L ext.stmt.class.walked:L ext.system.fault.class.name:L ext.system.fault.class.attribute:L ext.system.fault.class.stop:L ext.system.fault.division:L ext.system.fault.index:L ext.system.fault.index.assign:L ext.system.fault.name:L ext.system.fault.attribute:L ext.system.fault.kind:L ext.builtin.exceptions.unready:L ext.builtin.exceptions.context:L ext.builtin.exceptions.suppress:L ext.builtin.exceptions.traceback:L ext.stmt.throw.invalid:L ext.stmt.with.invalid:L ext.system.recursion.limit:N ext.system.recursion.exceeded:L ext.builtin.exceptions.note:L ext.builtin.exceptions.notes:L ext.builtin.exceptions.note.invalid:L ext.builtin.exceptions.traceback.member:L ext.builtin.exceptions.traceback.with:L ext.builtin.exceptions.name:L ext.builtin.exceptions.object:L ext.builtin.exceptions.value:L ext.builtin.exceptions.os:L ext.builtin.exceptions.os.message:L ext.builtin.exceptions.group.message:L ext.builtin.exceptions.group.members:L ext.builtin.exceptions.group.split:L ext.builtin.exceptions.group.subgroup:L ext.builtin.exceptions.group.derive:L ext.builtin.exceptions.group.summary:L ext.builtin.exceptions.group.invalid:L ext.system.fault.held:L ext.stmt.catch.amiss:L ext.stmt.yield.escaped:L \
 ext.builtin.shell:L ext.builtin.wait:L ext.builtin.net.ask:L ext.builtin.run.begin:L ext.builtin.run.end:L ext.lexical.escape.byte:L ext.lexical.escape.octal:B ext.system.text.bytes:B ext.lexical.prologue.brief:L ext.lexical.prologue.brief.setting:L ext.lexical.interpolating.index.amiss:L ext.builtin.eval.place:L \
 ext.system.reading.unexpected:L ext.system.reading.unexpected.character:L ext.system.fault.class.reading:L \
-ext.system.reading.unclosed:L ext.system.reading.unclosed.line:L ext.system.reading.unclosed.mismatch:L ext.system.reading.unmatched:L \
-ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
-ext.lexical.number.separator:L ext.lexical.number.separator.after_prefix:B ext.op.bit.whole:B ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N \
-ext.system.real.figures:L ext.system.real.figures.shown:L \
-ext.stmt.function.closes_over:B ext.stmt.function.local.unbound:L ext.stmt.function.free.unbound:L ext.stmt.nonlocal.amiss:L ext.stmt.nonlocal.module:L ext.stmt.function.own_names:B ext.stmt.static.read_in:B \
-ext.system.complaint.markup.setting:L ext.system.complaint.markup.kind:L ext.system.complaint.markup.place:L ext.system.complaint.markup.line:L ext.system.complaint.markup.reference:L \
+ext.system.reading.unclosed:L ext.system.reading.unclosed.line:L ext.system.reading.unclosed.mismatch:L \
+ext.system.reading.unmatched:L ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L \
+ext.lexical.number.octal_lead:B ext.lexical.number.separator:L ext.lexical.number.separator.after_prefix:B ext.op.bit.whole:B \
+ext.system.integer.bits:N ext.system.real.bits:N ext.system.real.digits:N ext.system.real.figures:L \
+ext.system.real.figures.shown:L ext.stmt.function.closes_over:B ext.stmt.function.local.unbound:L \
+ext.stmt.function.free.unbound:L ext.stmt.nonlocal.amiss:L ext.stmt.nonlocal.module:L ext.stmt.function.own_names:B \
+ext.stmt.static.read_in:B ext.system.complaint.markup.setting:L ext.system.complaint.markup.kind:L \
+ext.system.complaint.markup.place:L ext.system.complaint.markup.line:L ext.system.complaint.markup.reference:L \
 ext.system.complaint.reference.setting:L ext.system.complaint.reference.page:L ext.system.complaint.reference.mark:L \
-ext.builtin.include.demanded:L ext.builtin.include.demanded.missing:L \
- ext.stmt.with.unready:L ext.op.member.pipes:B ext.op.tuple.unready:L ext.lexical.string.prefix.bytes.unready:L ext.lexical.string.prefix.format.unready:L ext.stmt.assign.chain:B ext.lexical.escape.deferred:L  ext.builtin.complex:L ext.builtin.complex.real:L ext.builtin.complex.imag:L ext.builtin.method.conjugate:L ext.builtin.complex.invalid:L ext.builtin.complex.integer:L ext.builtin.complex.order:L ext.builtin.complex.floor:L ext.builtin.complex.zero:L ext.builtin.complex.power.zero:L ext.builtin.complex.unready:L \
- ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B ext.stmt.class.index.amiss:L ext.stmt.class.binary.amiss:L ext.stmt.class.format.amiss:L ext.stmt.class.metaclass:L ext.op.sequence.values:B ext.op.sequence.concat:L ext.op.sequence.repeat:L ext.op.sequence.index:L ext.op.sequence.delete:L ext.op.sequence.subscript:L ext.op.sequence.missing:L ext.op.sequence.assign:L \
- ext.builtin.globals:L ext.builtin.locals:L ext.builtin.exec:L ext.builtin.compile:L ext.builtin.compile.modes:L ext.builtin.compile.parameters:L ext.builtin.compile.kind:L ext.builtin.source.syntax:L ext.builtin.source.syntax.place:L ext.builtin.source.unready:L ext.builtin.import:L ext.system.module.doc:L ext.system.module.builtins:L ext.system.names.module:L  ext.builtin.ascii:L  ext.text.format.complex.zero:L ext.text.format.complex.align:L  ext.op.rem.format.byte:L ";
+ext.builtin.include.demanded:L ext.builtin.include.demanded.missing:L ext.stmt.with.unready:L ext.op.member.pipes:B \
+ext.op.tuple.unready:L ext.lexical.string.prefix.bytes.unready:L ext.lexical.string.prefix.format.unready:L \
+ext.stmt.assign.chain:B ext.lexical.escape.deferred:L ext.builtin.complex:L ext.builtin.complex.real:L \
+ext.builtin.complex.imag:L ext.builtin.method.conjugate:L ext.builtin.complex.invalid:L ext.builtin.complex.integer:L \
+ext.builtin.complex.order:L ext.builtin.complex.floor:L ext.builtin.complex.zero:L ext.builtin.complex.power.zero:L \
+ext.builtin.complex.unready:L ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L \
+ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L \
+ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B \
+ext.stmt.class.index.amiss:L ext.stmt.class.binary.amiss:L ext.stmt.class.format.amiss:L ext.stmt.class.metaclass:L \
+ext.op.sequence.values:B ext.op.sequence.concat:L ext.op.sequence.repeat:L ext.op.sequence.index:L ext.op.sequence.delete:L \
+ext.op.sequence.subscript:L ext.op.sequence.missing:L ext.op.sequence.assign:L ext.builtin.globals:L ext.builtin.locals:L \
+ext.builtin.exec:L ext.builtin.compile:L ext.builtin.compile.modes:L ext.builtin.compile.parameters:L \
+ext.builtin.compile.kind:L ext.builtin.source.syntax:L ext.builtin.source.syntax.place:L ext.builtin.source.unready:L \
+ext.builtin.import:L ext.system.module.doc:L ext.system.module.builtins:L ext.system.names.module:L ext.builtin.ascii:L \
+ext.text.format.complex.zero:L ext.text.format.complex.align:L ext.op.rem.format.byte:L ext.builtin.frozenset:L ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
     table.split_whitespace().map(|e| {
@@ -159,7 +226,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 272] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 273] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -179,6 +246,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 272] = [
             ("ext.builtin.isinstance", Prim::Belongs),
             ("ext.builtin.tuple", Prim::Tupling),
             ("ext.builtin.set", Prim::Uniques),
+            ("ext.builtin.frozenset", Prim::Unchanging),
             ("ext.builtin.dict", Prim::Dictionary),
             ("ext.builtin.sorted", Prim::Ordered),
             ("ext.builtin.reversed", Prim::Backwards),
@@ -420,7 +488,7 @@ fn strings_at(key: &str, json: &Json) -> Result<Vec<String>, String> {
 impl Table {
     pub fn parse(text: &str) -> Result<Table, String> {
         let map = top_object(text)?;
-        let mut cells = HashMap::new();
+        let mut cells: HashMap<&'static str, Entry, FxBuildHasher> = HashMap::default();
         let mut known = tag_shapes(TAGS);
         for (key, shape) in &known {
             let json = map.get(*key).ok_or_else(|| format!("missing label '{key}'"))?;
@@ -454,7 +522,9 @@ impl Table {
             given: map.keys().cloned().collect(),
             keywords: HashSet::new(),
             signs: Vec::new(),
+            has_class_order: false,
         };
+        table.has_class_order = table.single("ext.stmt.class.detail.root").map_or(false, |s| !s.is_empty());
         if !matches!(table.lone("system.real.render"), Some("library" | "shortest")) {
             return Err(String::from("The real rendering is neither 'library' nor 'shortest'"));
         }
@@ -866,8 +936,9 @@ impl Table {
                     return Err(format!("builtin name '{lex}' must begin like an identifier and hold no spaces or quotes"));
                 }
                 // What this primitive answers by when a value is asked
-                // its kind: the word its label writes first, so that
-                // set and frozenset do not take turns.
+                // its kind: the word its label writes first, so that a
+                // primitive a table spells several ways does not take
+                // turns among the spellings.
                 if !self.prim_words.iter().any(|(p, _)| *p == op) { self.prim_words.push((op, lex.clone())); }
                 if self.prims.get(&lex) == Some(&op) { continue; }
                 if let Some(previous) = self.prims.get(&lex).copied() {

@@ -1924,8 +1924,7 @@ only. The extension labels so far, all from PHP:
   braces, in the order their members first came, and an empty set as the
   first word of `ext.builtin.set` followed by empty parentheses.
 - `ext.builtin.set`: gather an iterable into a fresh set, or make an empty
-  one when given nothing. A second spelling may name an immutable set;
-  at present it yields the same mutable value. `ext.builtin.set.add`,
+  one when given nothing. `ext.builtin.set.add`,
   `ext.builtin.set.remove` and `ext.builtin.set.discard` put in or take
   out one member; only remove complains when the member is absent.
   `ext.builtin.set.pop` takes and answers one member, `ext.builtin.set.clear`
@@ -1945,6 +1944,21 @@ only. The extension labels so far, all from PHP:
   the first set, as do compound operators. Other names for that set see
   the writing. The methods accept iterables; union, intersection and
   difference may be given more than one.
+- `ext.builtin.frozenset`: gather an iterable into a set nothing may
+  alter, or make an empty one when given nothing. It is a kind of its
+  own: a value of it is no value of `ext.builtin.set`, and neither kind
+  stands beneath the other. Its members are addressed exactly as a
+  set's are, and the whole of them is addressed and hashed by what it
+  holds, so that two such sets of the same members share one place in a
+  set or under a key, in whatever order either was gathered. It is
+  written as its own word about a brace literal, and empty as its word
+  with empty parentheses. It answers to every set method that leaves the
+  set alone and to none that alters one: the altering words are no
+  members of it, and a compound write with a set sign falls back to the
+  plain sign, whose answer takes the name. Between a set and one of
+  these the answer is of the kind on the left, and members, equality,
+  containment and order hold across the two kinds alike. A class
+  standing on the word keeps the kind.
 - `ext.builtin.set.issubset`, `ext.builtin.set.issuperset` and
   `ext.builtin.set.isdisjoint` ask whether all members lie on the other
   side, all of that side lie here, or none are shared. Ordered comparisons
@@ -4209,6 +4223,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.frozenset` | - | - | `frozenset` | - | - | - | - | - | - | - |
 | `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.globals` | - | - | `globals` | - | - | - | - | - | - | - |
 | `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
@@ -4383,7 +4398,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
-| `ext.builtin.set` | - | - | `set` `frozenset` | - | - | - | - | - | - | - |
+| `ext.builtin.set` | - | - | `set` | - | - | - | - | - | - | - |
 | `ext.builtin.set.add` | - | - | `add` | - | - | - | - | - | - | - |
 | `ext.builtin.set.arguments` | - | - | `TypeError: invalid arguments to set operation` | - | - | - | - | - | - | - |
 | `ext.builtin.set.changed` | - | - | `RuntimeError: Set changed size during iteration` | - | - | - | - | - | - | - |

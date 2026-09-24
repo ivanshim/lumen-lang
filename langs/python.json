@@ -831,6 +831,9 @@
   "ext.builtin.format": [
     "format"
   ],
+  "ext.builtin.frozenset": [
+    "frozenset"
+  ],
   "ext.builtin.getattr": [
     "getattr"
   ],
@@ -1270,8 +1273,7 @@
     "number"
   ],
   "ext.builtin.set": [
-    "set",
-    "frozenset"
+    "set"
   ],
   "ext.builtin.set.add": [
     "add"

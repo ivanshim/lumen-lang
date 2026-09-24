@@ -87,6 +87,8 @@ pub enum Prim {
     BindValueMethod,
     SortedValues,
     Belongs, Tupling, Uniques, Ordered, Backwards, Numbered, Zipped, Mapped, Filtered, EveryTrue, Least, Greatest, Magnitude, Rounded, QuotRem, Powered, Hexadecimal, Octal, Binary, Quoted, Asciied, Truthful, CallableValue, IdentityOf, Hashed, NextItem, HasAttribute, GetMember, SetMember, DropMember, MembersOf,
+    /// The maker of a set nothing may alter: a kind apart from Uniques.
+    Unchanging,
     SetCall(u8),
     /// Gather the parts naming a span within brackets.
     SliceBounds,
@@ -464,7 +466,7 @@ impl Prim {
     /// the kind it stands for rather than as work waiting to be done.
     pub fn names_a_kind(self) -> bool {
         matches!(self, Self::AsInt | Self::AsText | Self::AsReal | Self::SortOf | Self::Listed | Self::Dictionary
-            | Self::Tupling | Self::Uniques | Self::Truthful | Self::ComplexMade | Self::Octets(0 | 1) | Self::Span
+            | Self::Tupling | Self::Uniques | Self::Unchanging | Self::Truthful | Self::ComplexMade | Self::Octets(0 | 1) | Self::Span
             | Self::Numbered | Self::Zipped | Self::Mapped | Self::Filtered | Self::Backwards | Self::SpanOf
             | Self::ClassWork(9..=11))
     }
@@ -520,6 +522,14 @@ pub enum Form {
     Fits { value: Box<Form>, test: Rc<CaseTest>, slots: Vec<(String, Address)>, tuple: bool },
     Const(Value),
     Read(Address),
+    /// The same, but the last look a binding gets before a write of
+    /// the run's own puts something else there: the value moves out,
+    /// leaving the binding unset, rather than a clone of it left to
+    /// stand alongside the one now growing from it. A comprehension's
+    /// own gathering place is read this way between its steps, since
+    /// nothing else can see that place, and cloning what it held would
+    /// cost a copy of everything gathered so far on every step.
+    Take(Address),
     /// The same, read as it stands and with nothing said about it: a
     /// binding that holds nothing at all reads as nothing at all, so
     /// that writing it elsewhere leaves that place unwritten too.

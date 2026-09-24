@@ -4,7 +4,11 @@ use super::*;
 
 impl<'a> Machine<'a> {
     pub(super) fn detail(&self,key:&str)->&str {self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or("")}
-    pub(super) fn has_class_order(&self)->bool {!self.detail("root").is_empty()}
+    // Read once when the roster itself was read, since no program still
+    // running can change which words a class stands under: every value
+    // read asks this, so it is a field on the table rather than a name
+    // built afresh and looked into at each one.
+    pub(super) fn has_class_order(&self)->bool {self.table.has_class_order}
     fn class_unready(&self)->Escape {self.detail("unready").to_owned().into()}
     pub(super) fn common_ancestor(&mut self)->Rc<Blueprint> {
         if self.ancestor.is_none() {
@@ -1026,7 +1030,8 @@ impl<'a> Machine<'a> {
             Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
             Prim::Dictionary=>matches!(value,Value::Dict(_)),
             Prim::Tupling=>matches!(value,Value::Tuple(_)),
-            Prim::Uniques=>matches!(value,Value::Set(_)),
+            Prim::Uniques=>matches!(value,Value::Set(_))&&!value.set_sealed(),
+            Prim::Unchanging=>value.set_sealed(),
             Prim::Truthful=>matches!(value,Value::Flag(_)),
             Prim::ComplexMade=>matches!(value,Value::Complex(_)),
             Prim::Span=>matches!(value,Value::Progression(_)),
