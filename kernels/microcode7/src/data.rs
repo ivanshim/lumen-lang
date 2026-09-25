@@ -174,6 +174,10 @@ pub enum IteratorKind {
     Watching { window: Value, at: usize, size: usize },
     /// A thing read place by place from nought, until the reading fails.
     Placed(Value, BigInt),
+    /// A thing read place by place from its last down to nought, for
+    /// one that answers `__getitem__` and `__len__` but keeps no
+    /// `__reversed__` of its own.
+    PlacedBack(Value, BigInt),
     /// A callable summoned for each member until it answers the sentinel.
     Summoned { work: Value, stop: Value },
     /// A thing of the program's own, asked for each member the way a

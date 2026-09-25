@@ -722,6 +722,20 @@
   "ext.builtin.enumerate": [
     "enumerate"
   ],
+  "ext.builtin.iterable": [
+    "iterable"
+  ],
+  "ext.builtin.enumerate.missing": [
+    "TypeError: enumerate() missing required argument 'iterable'"
+  ],
+  "ext.builtin.enumerate.too_many": [
+    "TypeError: enumerate() takes at most 2 arguments (",
+    " given)"
+  ],
+  "ext.builtin.enumerate.keyword": [
+    "TypeError: '",
+    "' is an invalid keyword argument for enumerate()"
+  ],
   "ext.builtin.exit": [
     "__finish"
   ],
@@ -2620,7 +2634,8 @@
     "__complex__",
     "__dir__",
     "__instancecheck__",
-    "__subclasscheck__"
+    "__subclasscheck__",
+    "__length_hint__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"

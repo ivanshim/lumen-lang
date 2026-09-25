@@ -80,6 +80,16 @@ impl<'a> Engine<'a> {
             (a, b) => a.or(b),
         })
     }
+    /// The reference's own docstring for a builtin kind's word, where
+    /// this runtime keeps one. Nothing for a word left undocumented,
+    /// which reads as the kind having no attribute of that name.
+    pub(super) fn builtin_kind_doc(word: &str) -> Option<&'static str> {
+        match word {
+            "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
+            "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
+            _ => None,
+        }
+    }
     /// The builtin kind a class itself stands for, if it is one.
     fn own_kind(c: &Class) -> Option<String> {
         c.constants.iter().find(|(n, _)| n == "\0kind").map(|(_, v)| v.plain())
@@ -694,6 +704,9 @@ impl<'a> Engine<'a> {
             Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word) => {
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
+                if name==self.class_word("doc") {
+                    if let Some(doc) = Self::builtin_kind_doc(word) { return Ok(Value::text(doc)); }
+                }
                 // The kind read as a class stands on the root and on
                 // nothing else, so that is the whole of its line.
                 if name==self.class_word("mro") || name==self.class_word("order") {

@@ -5391,6 +5391,9 @@ impl<'a> Machine<'a> {
             // having marks of its own for each kind or words against
             // the kinds that take none.
             72 => true,
+            // A walk answers a guess at how many members it has left,
+            // where the table keeps one for a walk of its own kind.
+            78 => mark == 'w',
             _ => false,
         }
     }
@@ -5488,6 +5491,39 @@ impl<'a> Machine<'a> {
             40 => Some(Prim::Magnitude), 41 => Some(Prim::Positive), 44 => Some(Prim::BitsOver),
             _ => None,
         } { return self.native_working(work, name, vec![receiver.clone()]); }
+        // A guess at how many members a walk has left, for the kinds
+        // of walk this kernel can answer that of without asking
+        // anything further of what it walks: a stored row and a
+        // progression read the guess straight from the place they
+        // stand at, and a walk taken by place from a thing's own
+        // `__getitem__` from how far its last place still stands
+        // above nought.
+        if at == 78 {
+            let Value::Iterator(cell) = receiver else { return Ok(Value::Small(0)); };
+            let placed_back = { let held = cell.borrow(); match &held.kind {
+                IteratorKind::Stored(entries) => return Ok(Value::Small(entries.len() as i64)),
+                IteratorKind::Stepping(walk, at) => {
+                    let left = walk.count() - at;
+                    return Ok(Value::from_big(if left > BigInt::from(0) { left } else { BigInt::from(0) }));
+                }
+                IteratorKind::PlacedBack(thing, at) => {
+                    if held.done || *at < BigInt::from(0) { return Ok(Value::Small(0)); }
+                    Some((thing.clone(), at.clone()))
+                }
+                _ => None,
+            }};
+            // A walk taken by place from a thing's own `__getitem__`
+            // asks that thing's `__len__` afresh each time, exactly as
+            // the reference does, rather than trusting the length the
+            // walk itself was given when it began.
+            if let Some((thing, at)) = placed_back {
+                let length = self.prim(Prim::Length, "len", &[thing]).map_err(Escape::Error)?;
+                let size = match &length { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => length.as_big(), _ => Err(self.core_complaint("core.integer", &length.kind_word())) }?;
+                let hint = at + BigInt::from(1);
+                return Ok(Value::from_big(if size < hint { size } else { hint }));
+            }
+            return Ok(Value::Small(0));
+        }
         // The specification a worth is laid out to, asked for under the
         // name the protocol gives it. The layout is the one a field of
         // a template is given, and so are the refusals.
@@ -5621,6 +5657,11 @@ impl<'a> Machine<'a> {
             // Either octet kind is a worth of its own rather than an
             // intrinsic word, so it answers for its name here.
             if let Value::OctetKind { changeable, .. } = value { return Some(Value::text(self.octet_kind_word(*changeable))); }
+        }
+        if name == self.detail("doc") {
+            if let Value::Intrinsic(_, word) = value {
+                if let Some(doc) = Self::builtin_kind_doc(word) { return Some(Value::text(doc)); }
+            }
         }
         if let (Value::Text(subject), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
             return Some(Value::TextCall { subject: subject.clone(), work: *work, name: Rc::from(name) });
@@ -10527,6 +10568,10 @@ impl<'a> Machine<'a> {
                     let lined = word == self.detail("mro") || word == self.detail("order");
                     if self.table.spells("ext.stmt.class.builtin", kind) && (lined || word == self.detail("allocate") || word == self.detail("name") || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
                 }
+                // A native kind the reference keeps a docstring for
+                // answers to the member that reads it, whether or not
+                // the kind is one a class may stand on.
+                if word == self.detail("doc") && matches!(&v[0], Value::Intrinsic(_, kind) if Self::builtin_kind_doc(kind).is_some()) { return Ok(Value::Flag(true)); }
                 let (class, own) = match &v[0] {
                     Value::Complex(_) => (None, self.table.spells("ext.builtin.complex.real", &word) || self.table.spells("ext.builtin.complex.imag", &word)),
                     Value::Span(_) => (None, self.span_bound_named(&word).is_some()),
@@ -15303,6 +15348,19 @@ impl Machine<'_> {
                     if item.is_some() { *at += 1; }
                     Ok(item)
                 }
+                // The place asked for counts down rather than up, and
+                // the walk is done outright once it would go below
+                // nought, without a further place ever being asked for.
+                IteratorKind::PlacedBack(thing, at) => {
+                    if *at < BigInt::from(0) { return Ok(None); }
+                    let Some((reader, scope)) = self.appointed_within(thing, 11) else { return Ok(None) };
+                    match self.invoke(reader, scope, vec![thing.clone(), Value::from_big(at.clone())]) {
+                        Ok(item) => { *at -= 1; Ok(Some(item)) }
+                        Err(Escape::Thrown(Value::Thing(thrown))) if self.ends_places(&thrown) => Ok(None),
+                        Err(Escape::Error(complaint)) => if self.places_spent(&complaint) { Ok(None) } else { Err(complaint) },
+                        Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
+                    }
+                }
                 // A thing of the program's own is asked for its next
                 // member the way a loop asks it, so a walk taken from it
                 // hands out one member at a time and asks for no more
@@ -15536,6 +15594,14 @@ impl Machine<'_> {
         use num_traits::{Signed, Zero};
         use num_integer::Integer;
         use Prim::*;
+        // `enumerate` counts every positional and keyword argument
+        // together before it looks at any of them by name, exactly as
+        // the reference does, so a call with too many of either kind
+        // is refused the same way regardless of which are spelled right.
+        if op == Prim::Numbered && input.len() + keywords.len() > 2 {
+            let total = (input.len() + keywords.len()).to_string();
+            return Err(self.argument_fault("ext.builtin.enumerate.too_many", Some(&total)));
+        }
         let mut ordering = None;
         let mut descending = false;
         let mut fallback = None;
@@ -15554,7 +15620,11 @@ impl Machine<'_> {
                 Zipped if is("zip.strict") => { exact = self.stands_true(&value); continue; }
                 _ => (),
             }
+            if op == Numbered && !is("iterable") && !is("start") {
+                return Err(self.argument_fault("ext.builtin.enumerate.keyword", Some(&label)));
+            }
             let slot = match (op, ()) {
+                (Numbered, _) if is("iterable") => 0,
                 (Numbered, _) if is("start") => 1,
                 (Rounded, _) if is("round.ndigits") => 1,
                 (Rounded, _) if is("round.number") => 0,
@@ -15750,7 +15820,22 @@ impl Machine<'_> {
                 // Octets run backwards as well. A run forwards over them
                 // gives up the numbers they keep rather than any letters,
                 // so running the other way gives up those same numbers.
-                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_) | Value::Dict(_) | Value::Octets { .. }) { return Err(self.core_complaint("core.unready", name)); }
+                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_) | Value::Dict(_) | Value::Octets { .. }) {
+                    // A thing with no kind of its own that the table
+                    // runs backwards directly is asked instead by its
+                    // `__getitem__`, place by place from its last down
+                    // to its first, where it has that and a `__len__`
+                    // to learn how many places it holds -- the fallback
+                    // the reference itself falls to for any such thing.
+                    if matches!(&input[0], Value::Thing(_)) && self.appointed(&input[0], 11).is_some() {
+                        let length = self.prim(Prim::Length, "len", &[input[0].clone()])?;
+                        let at = match &length { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => length.as_big(), _ => Err(self.core_complaint("core.integer", &length.kind_word())) }? - BigInt::from(1);
+                        let walk = Self::cursor_value(IteratorKind::PlacedBack(input[0].clone(), at));
+                        if let Value::Iterator(state) = &walk { state.borrow_mut().walks = Some(Rc::from(name)); }
+                        return Ok(walk);
+                    }
+                    return Err(self.core_complaint("core.uniterable", &input[0].kind_word()));
+                }
                 // A progression runs backwards as a progression, last
                 // place first, never gathered into the row it stands for.
                 if let Value::Progression(walk) = &input[0] {
@@ -15770,6 +15855,9 @@ impl Machine<'_> {
                 Ok(backwards)
             }
             Numbered => {
+                if input.first().map_or(true, |v| matches!(v, Value::Unset)) {
+                    return Err(self.table.single("ext.builtin.enumerate.missing").unwrap_or_default().to_owned());
+                }
                 require(1, 2)?;
                 let first = input.get(1).map(whole).transpose()?.unwrap_or_default();
                 let source = self.iterated_value(&input[0])?;

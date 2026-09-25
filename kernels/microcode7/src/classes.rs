@@ -672,6 +672,16 @@ impl<'a> Machine<'a> {
     /// reading hook having said so, or a property's getter, or nothing
     /// found -- goes to the fallback reader before it is reported. A
     /// direct read, the root's own, has none.
+    /// The reference's own docstring for a native kind's word, where
+    /// this runtime keeps one. Nothing for a word left undocumented,
+    /// which reads as the kind having no attribute of that name.
+    pub(super) fn builtin_kind_doc(word:&str)->Option<&'static str> {
+        match word {
+            "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
+            "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
+            _ => None,
+        }
+    }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         let sought=self.seek_class_member(value.clone(),key,direct);
         if direct{return sought;}
@@ -698,6 +708,9 @@ impl<'a> Machine<'a> {
             if self.table.spells("ext.stmt.class.builtin",word) {
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
+                if key==self.detail("doc") {
+                    if let Some(doc)=Self::builtin_kind_doc(word) { return Ok(Value::text(doc)); }
+                }
                 // Read as a class the kind stands on the root and on
                 // nothing further, which is the whole of its line.
                 if key==self.detail("mro")||key==self.detail("order"){
