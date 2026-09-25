@@ -2168,6 +2168,9 @@ only. The extension labels so far, all from PHP:
   that ended first or went on longest, the close for a second source
   measured against the first alone, and the close for a later source
   measured against all before it, whose last number follows.
+  `ext.builtin.map.short` and `.long` hold the same three pieces for
+  the map builtin, told under the map builtin's own name in the
+  opening piece, and read under the same switch, `ext.builtin.zip.strict`.
 - `ext.builtin.hasattr`, `.getattr`, `.setattr` and `.delattr` ask of,
   read, write and remove an instance's named fields. `ext.builtin.vars`
   is read but refuses to run until a live map of fields can be handed out.
@@ -4265,7 +4268,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
+| `ext.builtin.map.long` | - | - | `ValueError: map() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
+| `ext.builtin.map.short` | - | - | `ValueError: map() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |

@@ -1767,6 +1767,16 @@
   "ext.builtin.zip.strict": [
     "strict"
   ],
+  "ext.builtin.map.short": [
+    "ValueError: map() argument ",
+    " is shorter than argument 1",
+    " is shorter than arguments 1-"
+  ],
+  "ext.builtin.map.long": [
+    "ValueError: map() argument ",
+    " is longer than argument 1",
+    " is longer than arguments 1-"
+  ],
   "ext.builtin.globals": [
     "globals"
   ],

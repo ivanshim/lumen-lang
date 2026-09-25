@@ -13775,9 +13775,10 @@ impl Engine<'_> {
                         // first has ended is too long.
                         None => {
                             if *exact {
-                                if at > 0 { return Err(self.uneven_zip("zip.short", at)); }
+                                let (short, long) = if work.is_some() { ("map.short", "map.long") } else { ("zip.short", "zip.long") };
+                                if at > 0 { return Err(self.uneven_zip(short, at)); }
                                 for (later, other) in walks.iter().enumerate().skip(1) {
-                                    if self.core_step(other)?.is_some() { return Err(self.uneven_zip("zip.long", later)); }
+                                    if self.core_step(other)?.is_some() { return Err(self.uneven_zip(long, later)); }
                                 }
                             }
                             return Ok(None);
@@ -14011,7 +14012,7 @@ impl Engine<'_> {
                 reverse = self.truth(&value); continue;
             }
             if matches!(b, Builtin::Minimum | Builtin::Maximum) && spells("default") { default = Some(value); continue; }
-            if b == Builtin::Zip && spells("zip.strict") { exact = self.truth(&value); continue; }
+            if matches!(b, Builtin::Zip | Builtin::Map) && spells("zip.strict") { exact = self.truth(&value); continue; }
             let place = match b {
                 Builtin::Enumerate if spells("start") => 1,
                 Builtin::Round if spells("round.number") => 0,

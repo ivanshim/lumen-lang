@@ -15386,9 +15386,10 @@ impl Machine<'_> {
                             // ending first is short, and any input still
                             // giving once the first has ended is long.
                             if *exact {
-                                if which > 0 { return Err(self.unequal_zip("zip.short", which)); }
+                                let (short, long) = if mapper.is_some() { ("map.short", "map.long") } else { ("zip.short", "zip.long") };
+                                if which > 0 { return Err(self.unequal_zip(short, which)); }
                                 for (later, other) in inputs.iter().enumerate().skip(1) {
-                                    if self.next_value(other)?.is_some() { return Err(self.unequal_zip("zip.long", later)); }
+                                    if self.next_value(other)?.is_some() { return Err(self.unequal_zip(long, later)); }
                                 }
                             }
                             return Ok(None);
@@ -15612,7 +15613,7 @@ impl Machine<'_> {
                     descending = self.stands_true(&value); continue;
                 }
                 Least | Greatest if is("default") => { fallback = Some(value); continue; }
-                Zipped if is("zip.strict") => { exact = self.stands_true(&value); continue; }
+                Zipped | Mapped if is("zip.strict") => { exact = self.stands_true(&value); continue; }
                 _ => (),
             }
             let slot = match (op, ()) {
