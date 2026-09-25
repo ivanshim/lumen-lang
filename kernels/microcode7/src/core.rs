@@ -154,6 +154,12 @@ impl Value {
                 chars.hash(&mut state);
                 state.finish() as i64
             }
+            Self::Octets { cell, changeable: false, .. } => {
+                cell.borrow().iter().fold(0i64, |total, octet| total.wrapping_mul(1_000_003) ^ i64::from(*octet))
+            }
+            Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
+            Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
+            Self::Method(program, receiver) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
             // The bounds folded one after another, as a tuple's parts are,

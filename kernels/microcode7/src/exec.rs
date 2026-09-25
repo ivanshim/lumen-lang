@@ -2810,6 +2810,7 @@ impl<'a> Machine<'a> {
             match value {
                 Value::Mutable(cell, _) | Value::Shared(cell) => culprit(&cell.borrow()),
                 Value::Set(_) if value.set_sealed() => None,
+                Value::Octets { changeable: true, .. } => Some("bytearray".into()),
                 Value::Vector(_) | Value::Dict(_) | Value::Set(_) => Some(value.kind_word()),
                 Value::Tuple(items) | Value::Row(items) => items.iter().find_map(culprit),
                 _ => None,
@@ -9010,6 +9011,9 @@ impl<'a> Machine<'a> {
     }
 
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
+        if let (Prim::Hashed, [method @ Value::Method(..)]) = (operation, operands) {
+            return Ok(method.hash_number().map(Value::Small));
+        }
         if self.table.strings("ext.stmt.class.special").is_empty() { return Ok(None); }
         // A compound write asks the thing it lands on for its in-place
         // answer first; declined or absent, the plain working runs.

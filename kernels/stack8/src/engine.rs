@@ -5375,6 +5375,9 @@ impl<'a> Engine<'a> {
 
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
+        if op == Builtin::Hash && args.len() == 1 && matches!(args[0], Value::Method(..)) {
+            return Ok(args[0].core_hash().map(Value::Small));
+        }
         let first = args.first();
         // Writing a value out looks into a set for a thing; the other
         // builtins do not (see argument_holds_object).
@@ -8014,6 +8017,7 @@ impl<'a> Engine<'a> {
             match value {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => offending(&cell.borrow()),
                 Value::Set(_) if value.set_fixed() => None,
+                Value::Bytes(_, true, _) => Some(value.core_kind()),
                 Value::Array(_) | Value::Map(_) | Value::Set(_) => Some(value.core_kind()),
                 Value::Tuple(items) => items.iter().find_map(offending),
                 _ => None,
