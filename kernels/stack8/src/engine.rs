@@ -8860,11 +8860,15 @@ impl<'a> Engine<'a> {
         let (a, b) = (as_number(a), as_number(b));
         let (Some(x), Some(y)) = (arith::Exact::from_value(&a), arith::Exact::from_value(&b)) else { return Ok(None) };
         if x.places.is_none() && y.places.is_none() && y.p >= BigInt::from(0) { return Ok(None); }
-        let binary = |v: &Value, e: &arith::Exact| {
-            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { -0.0 }
-            else { crate::value::as_binary(&e.p, &e.q) }
+        let binary = |v: &Value, e: &arith::Exact| -> Result<f64, String> {
+            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { return Ok(-0.0); }
+            let bound = crate::value::as_binary(&e.p, &e.q);
+            if e.places.is_none() && !e.p.is_zero() && bound.is_infinite() {
+                return Err("OverflowError: int too large to convert to float".to_string());
+            }
+            Ok(bound)
         };
-        let (left, right) = (binary(&a, &x), binary(&b, &y));
+        let (left, right) = (binary(&a, &x)?, binary(&b, &y)?);
         if left == 0.0 && right < 0.0 { return Err(self.lang.power_zero[0].clone()); }
         if left.is_finite() && left < 0.0 && right.is_finite() && right.fract() != 0.0 {
             return Err(self.lang.power_nonreal[0].clone());
@@ -8931,11 +8935,28 @@ impl<'a> Engine<'a> {
         }
         if self.lang.real_bits.is_some() && (real_here(a) || real_here(b)) {
             let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
-            let widened = |v: &Value| match arith::to_real(v, places) {
-                Some(real) => self.at_real_width(real),
-                None => v.clone(),
+            // A value not already real is carried to the width here,
+            // the same carrying `float()` itself does, and is stopped
+            // the same way where it cannot be carried: the width has
+            // nothing of that size to answer with, and a real which
+            // only happens to overflow the working stays quiet, as it
+            // was already at the width before this was asked.
+            let widened = |v: &Value| -> Res<Value> {
+                match arith::to_real(v, places) {
+                    Some(real) => {
+                        if !matches!(v, Value::Real(_)) {
+                            if let Value::Real(r) = &real {
+                                if !r.p.is_zero() && crate::value::as_binary(&r.p, &r.q).is_infinite() {
+                                    return Err("OverflowError: int too large to convert to float".to_string());
+                                }
+                            }
+                        }
+                        Ok(self.at_real_width(real))
+                    }
+                    None => Ok(v.clone()),
+                }
             };
-            let (a, b) = (widened(a), widened(b));
+            let (a, b) = (widened(a)?, widened(b)?);
             return Ok(self.within_width(self.dyadic_exact(op, &a, &b)?));
         }
         Ok(self.within_width(self.dyadic_exact(op, a, b)?))
@@ -12200,28 +12221,47 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 let wants = match working.as_str() {
-                    "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" => 2,
+                    "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+                    "fma" => 3,
                     _ => 1,
                 };
                 if args.len() != wants + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, wants, args.len() - 1));
                 }
-                let given = |at: usize| -> f64 {
+                let given = |at: usize| -> Result<f64, String> {
                     let worth = self.as_number(&args[at]);
                     // The nought below nought is a nought of its own at
                     // the width, and some of these answer differently
                     // for it, so the minus is put back on.
                     if let Value::Real(r) = &worth {
                         if r.below && num_traits::Zero::is_zero(&r.p) {
-                            return -0.0;
+                            return Ok(-0.0);
                         }
                     }
                     match arith::Exact::from_value(&worth) {
-                        Some(e) => crate::value::as_binary(&e.p, &e.q),
-                        None => f64::NAN,
+                        Some(e) => {
+                            let bound = crate::value::as_binary(&e.p, &e.q);
+                            // A whole number too great for any real of
+                            // the width to hold cannot be carried to
+                            // one here, and this is stopped rather than
+                            // let the width's own standing-outside-the-
+                            // numbers answer for a number that is not.
+                            if e.places.is_none() && !e.p.is_zero() && bound.is_infinite() {
+                                return Err("OverflowError: int too large to convert to float".to_string());
+                            }
+                            Ok(bound)
+                        }
+                        None => Ok(f64::NAN),
                     }
                 };
-                let (x, y) = (given(1), if wants == 2 { given(2) } else { 0.0 });
+                let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
+                if working == "fma" {
+                    let z = given(3)?;
+                    let got = arith::fused(x, y, z)?;
+                    let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    return Ok(value);
+                }
                 let got = match working.as_str() {
                     "sqrt" => x.sqrt(),
                     "exp" => x.exp(),
@@ -12271,8 +12311,39 @@ impl<'a> Engine<'a> {
                         let x = x.abs();
                         if x == f64::MAX { x - f64::from_bits(x.to_bits() - 1) } else { f64::from_bits(x.to_bits() + 1) - x }
                     },
+                    "cbrt" => x.cbrt(),
+                    // Neither ever answers with the one nothing is
+                    // equal to unless both sides do; whichever side is
+                    // left, standing alone, is what is answered.
+                    "fmin" => match (x.is_nan(), y.is_nan()) {
+                        (true, true) => f64::NAN,
+                        (true, false) => y,
+                        (false, true) => x,
+                        (false, false) => if x < y { x } else { y },
+                    },
+                    "fmax" => match (x.is_nan(), y.is_nan()) {
+                        (true, true) => f64::NAN,
+                        (true, false) => y,
+                        (false, true) => x,
+                        (false, false) => if x > y { x } else { y },
+                    },
+                    // These three answer as a mark of one or nought,
+                    // there being no other way for a working named by
+                    // word to hand back a truth of its own; the tongue
+                    // above reads the mark apart again.
+                    "signbit" => if x.is_sign_negative() { 1.0 } else { 0.0 },
+                    "isnormal" => if x.is_normal() { 1.0 } else { 0.0 },
+                    "issubnormal" => if matches!(x.classify(), std::num::FpCategory::Subnormal) { 1.0 } else { 0.0 },
                     _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 };
+                // A working handed only reals of the width already, and
+                // answering past every number of it, has overflowed the
+                // width; a few workings stand outside numbers on their
+                // own account, and are left to answer as they answer.
+                let bounded = x.is_finite() && (wants < 2 || y.is_finite());
+                if got.is_infinite() && bounded && !matches!(working.as_str(), "fdiv" | "nextafter" | "ulp") {
+                    return Err("OverflowError: math range error".to_string());
+                }
                 let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
                 if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
                 value
@@ -12525,7 +12596,15 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     v @ Value::Real(_) => v.clone(),
-                    v => self.at_real_width(arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?),
+                    v => {
+                        let exact = arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                        if let Value::Real(r) = &exact {
+                            if !r.p.is_zero() && crate::value::as_binary(&r.p, &r.q).is_infinite() {
+                                return Err("OverflowError: int too large to convert to float".to_string());
+                            }
+                        }
+                        self.at_real_width(exact)
+                    }
                 }
             }
             Builtin::Length => {
