@@ -486,7 +486,18 @@ impl<'a> Engine<'a> {
                         }
                         _ => subject.clone(),
                     };
-                    match self.builtin_member(&receiver,&member)? {
+                    // A loose member is the kind's own alone, so a
+                    // receiver of some other kind is refused before the
+                    // member is even looked up, even where it happens
+                    // to answer to a member of the same name some other
+                    // kind carries (`list.count`, `tuple.count`); a
+                    // receiver of the kind itself, or standing under it
+                    // the way a flag stands under the whole-number kind,
+                    // still reaches the member as before.
+                    let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
+                        .map_or(true, |op| self.kind_holds(&op, &word, &receiver.contents()));
+                    let found = if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
+                    match found {
                         Some(bound) => self.class_apply(bound,args),
                         None => {
                             let pieces = self.lang.class_details.get("descriptor.foreign").cloned().unwrap_or_default();

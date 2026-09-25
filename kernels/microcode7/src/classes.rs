@@ -490,7 +490,19 @@ impl<'a> Machine<'a> {
                                 Self::underlying(&subject).unwrap_or_else(||subject.clone()),
                             _=>subject.clone(),
                         };
-                        match self.attribute(&receiver,&entry) {
+                        // A loose entry is the kind's own alone, so a
+                        // receiver of some other kind is refused before
+                        // the entry is even looked up, even where it
+                        // happens to answer to an entry of the same
+                        // name some other kind carries (`list.count`,
+                        // `tuple.count`); a receiver of the kind itself,
+                        // or standing under it the way a flag stands
+                        // under the whole-number kind, still reaches
+                        // the entry as before.
+                        let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
+                            .map_or(true,|op|self.kind_covers(&op,&word,&receiver.settled()));
+                        let found=if of_own_kind{self.attribute(&receiver,&entry)}else{None};
+                        match found {
                             Some(bound)=>self.apply_class_member(bound,values),
                             None=>{
                                 let words=self.table.strings("ext.stmt.class.detail.descriptor.foreign");
