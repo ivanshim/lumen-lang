@@ -1,5 +1,10 @@
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
+# Where a name that is `import`ed is looked for: a directory put here
+# is searched, in order, before the library carried inside this run.
+# Nothing stands here by default, since nothing outside the library
+# this run carries is on the way until a program puts it there.
+path = []
 maxsize = 9223372036854775807
 version_info = (3, 14, 0, 'final', 0)
 platform = 'linux'
