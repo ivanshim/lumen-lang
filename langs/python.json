@@ -2721,6 +2721,7 @@
   ],
   "ext.stmt.import.member.missing": [
     "ImportError: cannot import name '",
+    "' from '",
     "'"
   ],
   "ext.stmt.import.missing": [
