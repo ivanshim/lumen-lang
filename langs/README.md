@@ -4188,6 +4188,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.unindexable` | - | - | `TypeError: '` `' object is not subscriptable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uniterable` | - | - | `TypeError: '` `' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unready` | - | - | `NotImplementedError: ` `() is not supported for these values` | - | - | - | - | - | - | - |
+| `ext.builtin.core.unreversible` | - | - | `TypeError: '` `' object is not reversible` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unsized` | - | - | `TypeError: object of type '` `' has no len()` | - | - | - | - | - | - | - |
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
 | `ext.builtin.core.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |

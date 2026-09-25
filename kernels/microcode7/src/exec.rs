@@ -15924,7 +15924,7 @@ impl Machine<'_> {
                         if let Value::Iterator(state) = &walk { state.borrow_mut().walks = Some(Rc::from(name)); }
                         return Ok(walk);
                     }
-                    return Err(self.core_complaint("core.uniterable", &input[0].kind_word()));
+                    return Err(self.core_complaint("core.unreversible", &input[0].kind_word()));
                 }
                 // A progression runs backwards as a progression, last
                 // place first, never gathered into the row it stands for.

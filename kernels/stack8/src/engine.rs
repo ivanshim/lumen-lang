@@ -14347,7 +14347,7 @@ impl Engine<'_> {
                         if let Value::Cursor(state) = &walk { state.borrow_mut().walked = Some(Rc::from(name)); }
                         return Ok(walk);
                     }
-                    return Err(self.core_fault("core.uniterable", &args[0].core_kind()));
+                    return Err(self.core_fault("core.unreversible", &args[0].core_kind()));
                 }
                 // A counted row is walked backwards as a counted row,
                 // from its last place to its first, without ever being

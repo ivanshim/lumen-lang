@@ -690,6 +690,10 @@
     "TypeError: '",
     "' object is not iterable"
   ],
+  "ext.builtin.core.unreversible": [
+    "TypeError: '",
+    "' object is not reversible"
+  ],
   "ext.builtin.core.unready": [
     "NotImplementedError: ",
     "() is not supported for these values"
