@@ -464,6 +464,8 @@ def check_free_after_iterating(test, iter, cls, args=()):
 
 def collision_stats(nbins, nballs):
     n, k = nbins, nballs
+    if n > 0 and k == 1:
+        return 0.0, 0.0
     # prob a bin empty after k trials = (1 - 1/n)**k
     # mean # empty is then n * (1 - 1/n)**k
     # so mean # occupied is n - n * (1 - 1/n)**k
@@ -523,7 +525,7 @@ class catch_unraisable_exception:
 
 def wait_process(pid, *, exitcode, timeout=None):
     if not hasattr(os, 'waitpid'):
-        raise unittest.SkipTest('subprocesses are not supported')
+        raise unittest.SkipTest('requires subprocess support')
     if os.name != "nt":
         import signal
 
