@@ -1071,10 +1071,16 @@ only. The extension labels so far, all from PHP:
   this one, as the system knows it, for a program that wants to find
   itself again. It stands beside `ext.system.source.file` and comes the
   same way, from the request the host carried in.
+- `ext.builtin.to_int.digits.state`: two words naming a loaded module and
+  its mutable digit-limit field. Integer conversions read that field when
+  present, otherwise using `ext.builtin.to_int.digits` as the startup limit.
 - `ext.builtin.clock.parts`: a switch; the clock builtin below, handed
   one flag, answers a real of seconds and their parts rather than whole
   seconds: since the run's own start, on a clock that never steps back,
   when the flag holds, and since the epoch when it does not.
+  On Linux, a second true flag requests the selected host clock's resolution
+  in seconds, as queried with `clock_getres`.
+
 - `ext.builtin.clock`: a builtin answering with how many seconds have
   passed since the start of the year the system counts from. Turning that
   into a date, and a date back into it, is arithmetic and belongs in a
@@ -4580,6 +4586,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits` | - | - | `4300` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits.state` | - | - | `sys` `_int_max_str_digits` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int()` | - | - | - | - | - | - | - |

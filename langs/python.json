@@ -1728,6 +1728,7 @@
     "str.zfill"
   ],
   "ext.builtin.to_int.digits": 4300,
+  "ext.builtin.to_int.digits.state": ["sys", "_int_max_str_digits"],
   "ext.builtin.to_int.digits.amiss": [
     "ValueError: Exceeds the limit (",
     " digits) for integer string conversion"
