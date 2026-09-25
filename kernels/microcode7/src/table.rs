@@ -187,7 +187,7 @@ ext.stmt.assign.chain:B ext.lexical.escape.deferred:L ext.builtin.complex:L ext.
 ext.builtin.complex.imag:L ext.builtin.method.conjugate:L ext.builtin.complex.invalid:L ext.builtin.complex.integer:L \
 ext.builtin.complex.order:L ext.builtin.complex.floor:L ext.builtin.complex.zero:L ext.builtin.complex.power.zero:L \
 ext.builtin.complex.unready:L ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L \
-ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L \
+ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.map.short:L ext.builtin.map.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L \
 ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B \
 ext.stmt.class.index.amiss:L ext.stmt.class.binary.amiss:L ext.stmt.class.format.amiss:L ext.stmt.class.metaclass:L \
 ext.op.sequence.values:B ext.op.sequence.concat:L ext.op.sequence.repeat:L ext.op.sequence.index:L ext.op.sequence.delete:L \

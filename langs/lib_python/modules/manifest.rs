@@ -40,6 +40,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("operator", include_str!("operator.py")),
     ("os.path", include_str!("os/path.py")),
     ("os", include_str!("os.py")),
+    ("pdb", include_str!("pdb.py")),
     ("pickle", include_str!("pickle.py")),
     ("platform", include_str!("platform.py")),
     ("pprint", include_str!("pprint.py")),
