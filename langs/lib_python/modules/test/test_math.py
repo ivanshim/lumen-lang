@@ -3,9 +3,9 @@
 # class it subclasses. The rest of the math test is a test file, not a
 # library, and stays in tests/python.
 #
-# The vector file itself is not carried here, so opening test_file raises
-# OSError. The name still says where CPython keeps it, beside the module in
-# mathdata, which is what a caller that has the file would look for.
+# The vector files themselves are carried here, beside this module, in
+# mathdata/ -- so test_dir is where this module itself lives, not the
+# caller's working directory.
 import math
 import os
 import unittest
@@ -15,7 +15,7 @@ NNAN = float('-nan')
 INF = float('inf')
 NINF = float('-inf')
 
-test_dir = os.curdir
+test_dir = os.path.dirname(__file__)
 math_testcases = os.path.join(test_dir, 'mathdata', 'math_testcases.txt')
 test_file = os.path.join(test_dir, 'mathdata', 'cmath_testcases.txt')
 

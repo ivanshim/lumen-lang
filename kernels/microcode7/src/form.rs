@@ -185,6 +185,12 @@ pub enum Prim {
     Spill,
     There,
     Gone,
+    /// A directory's own entries, by name; a fresh directory made
+    /// uniquely under one already there; and a directory taken away
+    /// with everything under it (ext.builtin.dir.*).
+    DirEntries,
+    DirFresh,
+    DirWhole,
     /// The fault in hand, as the name of its kind and its words.
     FaultHeld,
     /// The value the innermost clause holds as raised, whole, or nil

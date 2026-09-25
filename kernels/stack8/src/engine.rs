@@ -62,6 +62,12 @@ pub struct Engine<'a> {
     fresh_routines: bool,
     pub module_sources: HashMap<String, String>,
     modules: HashMap<String, Value>,
+    /// Names now under construction: a module reading its own name back
+    /// out of the loader before its top level has finished running --
+    /// `builtins` asks for itself this way -- is handed the instance
+    /// already standing, not read as stale for want of a place in
+    /// `sys.modules` that only the finished import will write.
+    importing: std::collections::HashSet<String>,
     /// Whether the module of unbound names is being loaded just now, so
     /// that a name missed inside it does not send the loader round again.
     fetching_names: bool,
@@ -333,6 +339,20 @@ const SET_STILL_LABELS: &[&str] = &[
     "ext.builtin.set.issubset", "ext.builtin.set.issuperset", "ext.builtin.set.isdisjoint",
 ];
 
+/// A number written in base 36, lowercase, with no leading zeroes kept
+/// bare: short, and safe inside a file name on every host this runs on.
+fn to_radix36(mut n: u64) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if n == 0 { return "0".to_string(); }
+    let mut out = Vec::new();
+    while n > 0 {
+        out.push(DIGITS[(n % 36) as usize]);
+        n /= 36;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap()
+}
+
 /// What parts a group of exceptions: classes its members may stand
 /// beneath, or a routine asked of each member in turn.
 enum Chooser {
@@ -342,7 +362,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -361,6 +381,20 @@ impl<'a> Engine<'a> {
             }));
         }
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
+    }
+
+    /// Letters this run has a fair chance of never having spelled
+    /// before, for naming a fresh temporary directory: the moment down
+    /// to the nanosecond, mixed with a counter this process alone
+    /// advances, both written out in a radix wide enough to keep the
+    /// name short.
+    fn unique_name() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let moment = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let mixed = (moment as u64) ^ (std::process::id() as u64).wrapping_mul(0x9E3779B97F4A7C15) ^ count.wrapping_mul(2654435761);
+        to_radix36(mixed)
     }
 
     /// The furnished class standing at a place in the roster, and
@@ -399,8 +433,12 @@ impl<'a> Engine<'a> {
             for (at, name) in self.lang.os_members.iter().enumerate() {
                 fields.push((name.clone(), if numbered { args.get(at).cloned().unwrap_or(Value::Null) } else { Value::Null }));
             }
-            if let ([before, between], true) = (self.lang.os_message.as_slice(), numbered) {
-                fields.push(("\0shown".into(), Value::text(&format!("{before}{}{between}{}", args[0].display(&sp), args[1].display(&sp)))));
+            if let ([before, between, colon, quote], true) = (self.lang.os_message.as_slice(), numbered) {
+                let mut shown = format!("{before}{}{between}{}", args[0].display(&sp), args[1].display(&sp));
+                if let Some(named) = args.get(2) {
+                    if !matches!(named, Value::Null) { shown = format!("{shown}{colon}{}{quote}", named.display(&sp)); }
+                }
+                fields.push(("\0shown".into(), Value::text(&shown)));
             }
         }
         let args = Value::Tuple(Rc::new(args));
@@ -849,6 +887,7 @@ impl<'a> Engine<'a> {
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
             modules: HashMap::new(),
+            importing: std::collections::HashSet::new(),
             fetching_names: false,
             registry,
         };
@@ -11632,6 +11671,52 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
             }
+            // A directory's own entries, in no particular order but
+            // sorted here for a run to answer the same way twice: the
+            // bare name of each, with no directory before it. False
+            // where the path is not a directory this run can list.
+            Builtin::DirList => {
+                arity(1)?;
+                let sp = self.wording();
+                match std::fs::read_dir(args[0].display(&sp)) {
+                    Ok(entries) => {
+                        let mut names: Vec<Value> = entries.filter_map(|e| e.ok()).map(|e| Value::text(&e.file_name().to_string_lossy())).collect();
+                        names.sort_by(|a, b| a.display(&sp).cmp(&b.display(&sp)));
+                        Value::array(names)
+                    }
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            // A fresh, empty directory made under an already-standing
+            // one, its name built from a prefix and a suffix around
+            // letters this run has not used there before. False where
+            // the standing directory itself is not one a directory can
+            // be made under.
+            Builtin::DirMake => {
+                arity(3)?;
+                let sp = self.wording();
+                let (parent, prefix, suffix) = (args[0].display(&sp), args[1].display(&sp), args[2].display(&sp));
+                let mut tried = None;
+                for _ in 0..100 {
+                    let unique = Self::unique_name();
+                    let candidate = std::path::Path::new(&parent).join(format!("{prefix}{unique}{suffix}"));
+                    match std::fs::create_dir(&candidate) {
+                        Ok(()) => { tried = Some(candidate); break; }
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                        Err(_) => break,
+                    }
+                }
+                match tried {
+                    Some(made) => Value::text(&made.to_string_lossy()),
+                    None => Value::Flag(false),
+                }
+            }
+            // A directory taken away along with everything under it.
+            Builtin::DirGone => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::remove_dir_all(args[0].display(&sp)).is_ok())
+            }
             // The fault in hand: its kind's name and its words, or the
             // pair of nothing when none is being handled. Given a fault,
             // that one is told of instead.
@@ -14311,9 +14396,29 @@ impl Engine<'_> {
     /// spell. Its routines keep those addresses after the reader returns.
     fn import_module(&mut self, path: &str) -> Flow<Value> {
         if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
-        if let Some(held) = self.modules.get(path) { return Ok(held.clone()); }
-        let Some(source) = self.module_sources.get(path).cloned() else {
-            return Err(Self::named_fault(&self.lang.import_missing, path).into());
+        // A name a program's own code took out of `sys.modules` is
+        // read in again rather than handed the standing instance: that
+        // dictionary is where CPython keeps such a cache, and a program
+        // that empties a name out of it means the next import to run
+        // the module afresh, as a name written into a directory on
+        // `sys.path` under a name used before this run needs to.
+        if let Some(held) = self.modules.get(path) {
+            if self.module_cache_names(path) { return Ok(held.clone()); }
+        }
+        // A directory the program itself put on `sys.path` is looked
+        // in, in the order it stands there, ahead of the library: a
+        // name found there is read straight off the disk instead.
+        let from_disk = self.sys_path_source(path);
+        let source = match &from_disk {
+            Some((_, source)) => source.clone(),
+            None => match self.module_sources.get(path).cloned() {
+                Some(source) => source,
+                None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
+            },
+        };
+        let own_file = match &from_disk {
+            Some((file, _)) => Some(file.clone()),
+            None => self.library_module_file(path),
         };
         let parent = path.rsplit_once('.');
         if let Some((above, _)) = parent { self.import_module(above)?; }
@@ -14325,9 +14430,14 @@ impl Engine<'_> {
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0module:{offset}:{path}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
+        // The word this language spells a module's own file under, if
+        // any: the same word the running program's own file is bound
+        // to, carried here for a module read in besides it.
+        let file_word = self.lang.source_bindings.iter().find(|(part, _)| part == "file").map(|(_, w)| w.clone());
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
             let initial = if self.lang.module_names.contains(name) { Value::text(path) }
+                else if file_word.as_ref() == Some(name) { own_file.as_deref().map_or(Value::Null, Value::text) }
                 else if let Some(value) = self.native_exceptions.get(name) { value.clone() }
                 else { self.lang.builtins.get(name).map_or(Value::Blank, |builtin| Value::Native(*builtin, Rc::from(name.as_str()))) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
@@ -14351,9 +14461,11 @@ impl Engine<'_> {
         });
         let module = Value::Object(object);
         self.modules.insert(path.to_string(), module.clone());
+        self.importing.insert(path.to_string());
         let saved_depth = self.data.len();
         let result = self.invoke(&program, Vec::new());
         self.data.truncate(saved_depth);
+        self.importing.remove(path);
         if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(); return Err(fault); }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
@@ -14367,6 +14479,45 @@ impl Engine<'_> {
         }
         self.refresh_module_cache();
         Ok(module)
+    }
+
+    /// A module written into a directory `sys.path` names, found there
+    /// ahead of the library. Only a plain, undotted name is looked for
+    /// this way, since a directory a program builds for itself holds no
+    /// packages of its own; the file and what it holds come back
+    /// together, the file's place kept for `__file__` to answer with.
+    fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
+        if path.contains('.') { return None; }
+        let Value::Object(sys) = self.modules.get("sys")? else { return None };
+        let held = sys.fields.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
+        let mut value = held;
+        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value {
+            value = cell.borrow().clone();
+        }
+        let Value::Array(items) = value else { return None };
+        for item in items.iter() {
+            let Value::Text(dir) = item else { continue };
+            if dir.is_empty() { continue; }
+            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
+            if let Ok(source) = std::fs::read_to_string(&file) {
+                return Some((file, source));
+            }
+        }
+        None
+    }
+
+    /// Where a library module's own text lives on disk, if this run
+    /// carries the library there to be found: the plain file first, and
+    /// a package's own file failing that. Nothing here reads the file
+    /// again; the text the module runs from was read in once already,
+    /// when the library was gathered into the program.
+    fn library_module_file(&self, path: &str) -> Option<String> {
+        let stem = path.replace('.', "/");
+        let flat = format!("langs/lib_python/modules/{stem}.py");
+        if std::path::Path::new(&flat).is_file() { return Some(flat); }
+        let package = format!("langs/lib_python/modules/{stem}/__init__.py");
+        if std::path::Path::new(&package).is_file() { return Some(package); }
+        None
     }
 
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
@@ -14938,6 +15089,22 @@ fn duplicate_value(value: &Value, deep: bool, seen: &mut HashMap<usize, Value>, 
 }
 
 impl Engine<'_> {
+    /// Whether the language's own cache of modules still names this
+    /// one: true wherever that cache has yet to be written at all (an
+    /// import too soon for it to hold anything, or a language with no
+    /// such name), so an ordinary run is never slowed by looking.
+    fn module_cache_names(&self, path: &str) -> bool {
+        if self.importing.contains(path) { return true; }
+        let [owner, member] = self.lang.module_cache.as_slice() else { return true };
+        let Some(Value::Object(module)) = self.modules.get(owner) else { return true };
+        let Some((_, held)) = module.fields.borrow().iter().find(|(name, _)| name == member).cloned() else { return true };
+        let cache = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
+        match cache {
+            Value::Map(pairs) => pairs.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
+            _ => true,
+        }
+    }
+
     fn refresh_module_cache(&self) {
         let [owner, member] = self.lang.module_cache.as_slice() else { return };
         let Some(Value::Object(module)) = self.modules.get(owner) else { return };

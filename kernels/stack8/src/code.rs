@@ -572,6 +572,13 @@ pub enum Builtin {
     FileWrite,
     FileThere,
     FileGone,
+    /// A directory's own entries, by name alone; a fresh directory made
+    /// under one already there, named uniquely from a prefix and a
+    /// suffix; and a directory taken away along with everything under
+    /// it (ext.builtin.dir.*).
+    DirList,
+    DirMake,
+    DirGone,
     /// The fault being handled, as its kind's name and its words.
     FaultInHand,
     /// The raised value the innermost clause is holding, itself and
