@@ -14666,6 +14666,13 @@ impl Engine<'_> {
                     return Ok(crate::complex::real(length));
                 }
                 let x = number(&args[0]);
+                if let Value::Real(r) = &x {
+                    // Non-finite reals have no rational parts; their
+                    // magnitude still exists, including for NaN.
+                    if r.q == BigInt::from(0) {
+                        return Ok(crate::complex::real(crate::value::as_binary(&r.p, &r.q).abs()));
+                    }
+                }
                 let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
                 arith::shape_number(p.abs(), q, if matches!(x, Value::Real(_)) { Some(arith::DEFAULT_PLACES) } else { None })
             }
