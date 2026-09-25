@@ -1188,7 +1188,9 @@ impl<'a> Cursor<'a> {
                     let origin = (self.row, self.column);
                     if let Err(mut said) = self.rich_string(prefix, &mark, raw, format, 0) {
                         if !format && !lang.syntax_members.is_empty() && said.starts_with("SyntaxError: unterminated ") { said.push_str(&format!(" (detected at line {})", self.row)); }
-                        if !format { (self.row, self.column) = origin; }
+                        let missing_quote = lang.fstring_unterminated.as_deref() == Some(said.as_str())
+                            || lang.fstring_unterminated_triple.as_deref() == Some(said.as_str());
+                        if !format || missing_quote { (self.row, self.column) = origin; }
                         return Err(said);
                     }
                     continue;
