@@ -675,9 +675,9 @@ impl Quotation<'_> {
                         saved.push(ch);
                         self.forward(2);
                     } else {
-                        if ch == '}' { return Err(self.bad()); }
+                        if ch == '}' { return Err(self.field_fault(1, &[])); }
                         self.flush(&mut saved, &mut missing);
-                        self.field(raw, depth)?;
+                        self.field(raw, depth, end)?;
                     }
                 }
                 _ => { saved.push(ch); self.forward(1); }
@@ -780,13 +780,19 @@ impl Quotation<'_> {
         }
         whitespace
     }
-    fn field(&mut self, raw: bool, depth: u32) -> Result<(), String> {
+    fn field_fault(&self, index: usize, inserts: &[String]) -> String {
+        let mut words = self.table.strings("ext.lexical.string.format.errors").get(index)
+            .cloned().unwrap_or_else(|| self.bad());
+        for insert in inserts { words = words.replacen("{}", insert, 1); }
+        words
+    }
+    fn field(&mut self, raw: bool, depth: u32, delimiter: &[char]) -> Result<(), String> {
         self.forward(1);
         let origin = self.next;
         let mut nesting = Vec::new();
         let mut comments = Vec::new();
         loop {
-            let ch = self.here().ok_or_else(|| self.bad())?;
+            let ch = self.here().ok_or_else(|| self.field_fault(0, &[]))?;
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
@@ -798,7 +804,15 @@ impl Quotation<'_> {
             }
             if let Some((body, end, bare, woven)) = quoted_start(self.source, self.next, self.table) {
                 let previous = self.made.len();
-                self.literal(body, &end, bare, woven, depth + 1)?;
+                let possible_end = body == self.next + end.len() && end == delimiter && nesting.is_empty();
+                match self.literal(body, &end, bare, woven, depth + 1) {
+                    Ok(()) => {}
+                    Err(said) => {
+                        let unclosed = ["ext.lexical.string.unterminated", "ext.lexical.string.unterminated.triple"]
+                            .iter().any(|label| self.table.single(label) == Some(said.as_str()));
+                        return Err(if possible_end && unclosed { self.field_fault(0, &[]) } else { said });
+                    }
+                }
                 self.made.truncate(previous);
                 continue;
             }
@@ -807,7 +821,31 @@ impl Quotation<'_> {
                 let begins = self.next;
                 while self.here().map_or(false, |c| c != '\n') { self.forward(1); }
                 comments.push(begins..self.next);
+                if self.here().is_none() { return Err(self.field_fault(14, &[])); }
                 continue;
+            }
+            if ch == '\u{00a0}' { return Err(self.field_fault(15, &[])); }
+            if !nesting.is_empty() && [';', '/', '>'].contains(&ch) {
+                let prior = self.source[origin..self.next].iter().rev().find(|c| !c.is_whitespace());
+                if prior.map_or(false, |c| ['{', '[', '('].contains(c)) { return Err(self.field_fault(3, &[])); }
+            }
+            if nesting.is_empty() {
+                let leading: String = (origin..self.next).filter(|i| !comments.iter().any(|r| r.contains(i)))
+                    .map(|i| self.source[i]).collect();
+                let needs_value = leading.chars().all(|c| c.is_whitespace() || ['+', '-', '~'].contains(&c));
+                let following = self.source.get(self.next + 1).copied();
+                let forbidden = [';', '$'].contains(&ch) || needs_value && (
+                    [',', '/', '>', '<', '%'].contains(&ch)
+                    || ch == '*' && following == Some('*')
+                    || ch == '.' && !following.map_or(false, |c| c == '.' || c.is_ascii_digit()));
+                if forbidden { return Err(self.field_fault(if needs_value { 3 } else { 8 }, &[])); }
+                let word: String = self.source[self.next..].iter().take_while(|c| c.is_alphanumeric() || **c == '_').collect();
+                if !word.is_empty() && !self.source.get(self.next.wrapping_sub(1)).map_or(false, |c| c.is_alphanumeric() || *c == '_')
+                    && self.table.spells("ext.op.lambda", &word) {
+                    let after_comma = leading.rsplit(',').next().unwrap_or("").trim();
+                    let issue = if after_comma.is_empty() { 4 } else { 3 };
+                    return Err(self.field_fault(issue, &[]));
+                }
             }
             let after = self.source.get(self.next + 1).copied();
             let before = self.next.checked_sub(1).and_then(|i| self.source.get(i)).copied();
@@ -817,11 +855,19 @@ impl Quotation<'_> {
             }
             if let Some(index) = ['(', '[', '{'].iter().position(|&c| c == ch) {
                 nesting.push([')', ']', '}'][index]);
-            } else if [')', ']', '}'].contains(&ch) && nesting.pop() != Some(ch) { return Err(self.bad()); }
+            } else if [')', ']', '}'].contains(&ch) {
+                let Some(wanted) = nesting.pop() else { return Err(self.field_fault(12, &[ch.to_string()])); };
+                if wanted != ch {
+                    let opener = ['(', '[', '{'][[')', ']', '}'].iter().position(|c| *c == wanted).unwrap()];
+                    return Err(self.field_fault(13, &[ch.to_string(), opener.to_string()]));
+                }
+            }
             self.forward(1);
         }
         let code: String = (origin..self.next).filter(|i| !comments.iter().any(|r| r.contains(i))).map(|i| self.source[i]).collect();
-        if code.trim().is_empty() { return Err(self.bad()); }
+        if code.trim().is_empty() { return Err(self.field_fault(2, &[self.here().unwrap().to_string()])); }
+        let stripped = code.trim_start();
+        if stripped.starts_with('*') && !stripped.contains(',') { return Err(self.field_fault(16, &[])); }
         let debugging = self.here() == Some('=');
         if debugging {
             self.forward(1);
@@ -832,11 +878,29 @@ impl Quotation<'_> {
         }
         let convert = if self.here() == Some('!') {
             self.forward(1);
-            let ch = self.here().filter(|c| ['a', 'r', 's'].contains(c)).ok_or_else(|| self.bad())?;
-            self.forward(1);
+            if self.here().is_none() || self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[])); }
+            let first = self.here().unwrap();
+            let problem = match first {
+                '}' | ':' => Some(5),
+                c if c.is_whitespace() => Some(7),
+                c if !c.is_alphabetic() && c != '_' => Some(6),
+                _ => None,
+            };
+            if let Some(problem) = problem { return Err(self.field_fault(problem, &[])); }
+            let mut name = String::new();
+            while let Some(c) = self.here().filter(|c| c.is_alphanumeric() || *c == '_') {
+                name.push(c);
+                self.forward(1);
+            }
+            if !["a", "r", "s"].contains(&name.as_str()) { return Err(self.field_fault(11, &[name])); }
             self.between_field_marks();
-            ch.to_string()
+            name
         } else if debugging && self.here() != Some(':') { "r".to_owned() } else { String::new() };
+        if self.source[self.next..].starts_with(delimiter) || self.here().is_none() { return Err(self.field_fault(0, &[])); }
+        if !matches!(self.here(), Some('}' | ':')) {
+            let issue = if debugging || convert.is_empty() { 9 } else { 10 };
+            return Err(self.field_fault(issue, &[]));
+        }
         self.token(Shape::Field, convert);
         let left = self.table.single("syntax.group.open").ok_or_else(|| self.bad())?.to_owned();
         let right = self.table.single("syntax.group.close").ok_or_else(|| self.bad())?.to_owned();
@@ -850,14 +914,16 @@ impl Quotation<'_> {
         if self.here() == Some(':') {
             self.forward(1);
             while self.here() != Some('}') {
-                match self.here().ok_or_else(|| self.bad())? {
-                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw, depth)?; }
+                if self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[])); }
+                match self.here().ok_or_else(|| self.field_fault(0, &[]))? {
+                    '\n' | '\r' if delimiter.len() == 1 => return Err(self.field_fault(17, &[])),
+                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw, depth, delimiter)?; }
                     '\\' => self.slash(raw, true, false, &mut specification, &mut missing)?,
                     c => { specification.push(c); self.forward(1); }
                 }
             }
         }
-        if self.here() != Some('}') { return Err(self.bad()); }
+        if self.here() != Some('}') { return Err(self.field_fault(0, &[])); }
         self.forward(1);
         self.flush(&mut specification, &mut missing);
         self.token(Shape::WovenEnd, String::new());

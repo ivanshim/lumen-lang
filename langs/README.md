@@ -630,6 +630,15 @@ only. The extension labels so far, all from PHP:
   implementations that cannot hold byte text or render a field. The
   current kernels hold distinct byte values and use the following
   label when a field presentation is unsupported.
+- `ext.lexical.string.format.errors`: ordered reader diagnostics for replacement
+  fields: missing closing brace, lone closing brace, empty expression (the `{}`
+  slot names its delimiter), invalid expression start, unparenthesized lambda,
+  missing conversion, invalid conversion, spaced conversion, unexpected text
+  after an expression, after debug `=`, and after conversion, invalid conversion
+  name, unmatched closer, mismatched brackets (closer then opener), unclosed
+  comment field, nonbreaking space, a bare starred expression, and a newline
+  in a single-quoted format specification. `{}` slots
+  in conversion and bracket diagnostics name the offending text.
 - `ext.lexical.string.format.unavailable`: what is said when a field's
   value or specification asks for a rendering the run has no rule for.
   The field and its specification are read and worked out before this
@@ -4659,6 +4668,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.bytes.mixed` | - | - | `SyntaxError: cannot mix bytes and nonbytes literals` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.string.format.errors` | - | - | `SyntaxError: f-string: expecting '}'` `SyntaxError: f-string: single '}' is not allowed` `SyntaxError: f-string: valid expression required before '{}'` `SyntaxError: f-string: expecting a valid expression after '{'` `SyntaxError: f-string: lambda expressions are not allowed without parentheses` `SyntaxError: f-string: missing conversion character` `SyntaxError: f-string: invalid conversion character` `SyntaxError: f-string: conversion type must come right after the exclamation mark` `SyntaxError: f-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: f-string: expecting '!', or ':', or '}'` `SyntaxError: f-string: expecting ':' or '}'` `SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: f-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: f-string: newlines are not allowed in format specifiers` | - | - | - | - | - | - | - |
 | `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
