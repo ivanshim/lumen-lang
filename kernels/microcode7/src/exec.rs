@@ -9641,9 +9641,13 @@ impl<'a> Machine<'a> {
         // Two things each standing for a kind, joined by `|`, make the
         // tuple of them: the very shape `isinstance` and `issubclass`
         // already read a union of kinds by, so no third shape is
-        // needed to hold one.
+        // needed to hold one. Either side may itself already be such
+        // a tuple, so a union chains with a further kind, with `Nil`,
+        // and with another union; but at least one side must itself
+        // be a kind or an already-built union; `Nil` on both sides is
+        // no union.
         if let (Prim::BitsEither, [a, b]) = (op, v) {
-            if self.stands_for_a_kind(a) && self.stands_for_a_kind(b) {
+            if self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
                 return Ok(Value::Tuple(Rc::new(vec![a.clone(), b.clone()])));
             }
         }
@@ -15170,6 +15174,11 @@ impl Machine<'_> {
                 Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false)))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
+            // A union built by `|` carries a bare `Nil` for the
+            // `NoneType` member, the very value `None` itself is, so
+            // a chained union reads it back this way rather than
+            // needing `type(None)`.
+            Value::Nil => Ok(matches!(item, Value::Nil)),
             // A kind is asked after by the word naming it, whether the
             // word arrived as an intrinsic of its own or as the plain
             // reading of the name; nothing else names a kind.

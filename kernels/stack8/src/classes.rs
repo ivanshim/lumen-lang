@@ -1021,6 +1021,25 @@ impl<'a> Engine<'a> {
             ||matches!(value,Value::Native(op,_) if Self::kind_builtin(op))
             ||self.kind_spelled(value).is_some()
     }
+    /// Whether a value may stand as one member of a union built by
+    /// `|`: a kind itself, `None` (which the sign reads as the kind
+    /// `None` alone is of), or a tuple of further such members, the
+    /// shape a union already takes once built. A tuple built some
+    /// other way, holding a value that is none of these, is not one.
+    pub(super) fn union_member(&self,value:&Value)->bool {
+        matches!(value,Value::Null)
+            ||self.stands_for_kind(value)
+            ||matches!(value,Value::Tuple(items) if items.iter().all(|v|self.union_member(v)))
+    }
+    /// Whether a value is enough on its own to tell `|` a union is
+    /// meant rather than some other working: a kind by itself, or a
+    /// tuple already built as one (non-empty, every member a union
+    /// member). `None` alone answers to neither, the way CPython's
+    /// own `NoneType` defines no `__or__`/`__ror__` of its own.
+    pub(super) fn union_anchor(&self,value:&Value)->bool {
+        self.stands_for_kind(value)
+            ||matches!(value,Value::Tuple(items) if !items.is_empty()&&items.iter().all(|v|self.union_member(v)))
+    }
     /// The kind builtin read as a value: what the kind of a kind is.
     pub(super) fn kind_maker_word(&self)->Value {
         match self.lang.builtins.iter().find(|(_,b)|**b==Builtin::SortOf) {
@@ -1091,6 +1110,12 @@ impl<'a> Engine<'a> {
         if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
         if let Value::Native(_, word) = wanted { return self.beneath(value, &Self::adapter(8, vec![Value::text(word)]), subclass); }
         if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
+        // A union built by `|` carries a bare `None` for the `NoneType`
+        // member, the very value `None` itself is, so a chained union
+        // reads it back this way rather than needing `type(None)`.
+        if matches!(wanted,Value::Null) {
+            return Ok(if subclass{matches!(value,Value::SortOf(Sort::Null))}else{matches!(value,Value::Null)});
+        }
         // Whatever is asked about must be a class where a class is asked
         // about, and the kind asked after must be one wherever it is
         // asked: each has its own words, as the reference has.

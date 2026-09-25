@@ -8130,8 +8130,11 @@ impl<'a> Engine<'a> {
         // Two things each standing for a kind, joined by `|`, make the
         // tuple of them: the very shape `isinstance` and `issubclass`
         // already read a union of kinds by, so no third shape is needed
-        // to hold one.
-        if matches!(op, Action::BitEither) && self.stands_for_kind(a) && self.stands_for_kind(b) {
+        // to hold one. Either side may itself already be such a tuple,
+        // so a union chains with a further kind, with `None`, and with
+        // another union; but at least one side must itself be a kind or
+        // an already-built union; `None` on both sides is no union.
+        if matches!(op, Action::BitEither) && self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
             return Ok(Value::Tuple(Rc::new(vec![a.clone(), b.clone()])));
         }
         // Rows, tuples and text as a language of sequences works them:
@@ -13671,6 +13674,10 @@ impl Engine<'_> {
             for t in types.iter() { if self.core_isinstance(value, t)? { return Ok(true); } }
             return Ok(false);
         }
+        // A union built by `|` carries a bare `None` for the `NoneType`
+        // member, the very value `None` itself is, so a chained union
+        // reads it back this way rather than needing `type(None)`.
+        if matches!(kind, Value::Null) { return Ok(matches!(value, Value::Null)); }
         if let Value::Class(class) = kind {
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
