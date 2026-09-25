@@ -318,6 +318,12 @@ pub enum Prim {
     AsInt,
     AsReal,
     Length,
+    /// A descriptor of how to write a value this kernel keeps no
+    /// built-in writing for out to bytes and read it back: nothing
+    /// where the value keeps none, else the pieces marshal writes and
+    /// its opposite number reads back into the very value again.
+    ReduceNative,
+    RebuildNative,
     CharAtIndex,
     CodeOf,
     CharOf,

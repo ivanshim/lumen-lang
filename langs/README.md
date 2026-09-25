@@ -4211,6 +4211,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.unindexable` | - | - | `TypeError: '` `' object is not subscriptable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uniterable` | - | - | `TypeError: '` `' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unready` | - | - | `NotImplementedError: ` `() is not supported for these values` | - | - | - | - | - | - | - |
+| `ext.builtin.core.unreversible` | - | - | `TypeError: '` `' object is not reversible` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unsized` | - | - | `TypeError: object of type '` `' has no len()` | - | - | - | - | - | - | - |
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
 | `ext.builtin.core.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
@@ -4227,6 +4228,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
 | `ext.builtin.enumerate` | - | - | `enumerate` | - | - | - | - | - | - | - |
+| `ext.builtin.enumerate.keyword` | - | - | `TypeError: '` `' is an invalid keyword argument for enumerate()` | - | - | - | - | - | - | - |
+| `ext.builtin.enumerate.missing` | - | - | `TypeError: enumerate() missing required argument 'iterable'` | - | - | - | - | - | - | - |
+| `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
 | `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` | - | - | - | - | - | - | - |
@@ -4283,6 +4287,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.issubclass` | - | - | `issubclass` | - | - | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
+| `ext.builtin.iterable` | - | - | `iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
@@ -4429,6 +4434,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.rebuild_native` | - | - | `__rebuild_native__` | - | - | - | - | - | - | - |
+| `ext.builtin.reduce_native` | - | - | `__reduce_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
 | `ext.builtin.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
 | `ext.builtin.reversed` | - | - | `reversed` | - | - | - | - | - | - | - |
@@ -4920,7 +4927,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |

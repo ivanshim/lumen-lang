@@ -690,6 +690,10 @@
     "TypeError: '",
     "' object is not iterable"
   ],
+  "ext.builtin.core.unreversible": [
+    "TypeError: '",
+    "' object is not reversible"
+  ],
   "ext.builtin.core.unready": [
     "NotImplementedError: ",
     "() is not supported for these values"
@@ -721,6 +725,26 @@
   ],
   "ext.builtin.enumerate": [
     "enumerate"
+  ],
+  "ext.builtin.iterable": [
+    "iterable"
+  ],
+  "ext.builtin.reduce_native": [
+    "__reduce_native__"
+  ],
+  "ext.builtin.rebuild_native": [
+    "__rebuild_native__"
+  ],
+  "ext.builtin.enumerate.missing": [
+    "TypeError: enumerate() missing required argument 'iterable'"
+  ],
+  "ext.builtin.enumerate.too_many": [
+    "TypeError: enumerate() takes at most 2 arguments (",
+    " given)"
+  ],
+  "ext.builtin.enumerate.keyword": [
+    "TypeError: '",
+    "' is an invalid keyword argument for enumerate()"
   ],
   "ext.builtin.exit": [
     "__finish"
@@ -2671,7 +2695,8 @@
     "__complex__",
     "__dir__",
     "__instancecheck__",
-    "__subclasscheck__"
+    "__subclasscheck__",
+    "__length_hint__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
