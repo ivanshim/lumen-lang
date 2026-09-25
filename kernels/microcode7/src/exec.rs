@@ -202,6 +202,12 @@ impl Suspension {
 pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
+    /// Names now under construction: a module reading its own name back
+    /// out of the loader before its top level has finished running --
+    /// `builtins` asks for itself this way -- is handed the instance
+    /// already standing, not read as stale for want of a place in
+    /// `sys.modules` that only the finished import will write.
+    importing: std::collections::HashSet<String>,
     /// Set while the namespace that answers for unbound names is being
     /// read, so that a name missing inside it stops there instead of
     /// asking for the same namespace over again.
@@ -391,6 +397,27 @@ pub struct Machine<'a> {
     pending: Vec<Value>,
 }
 
+/// Letters this run has a fair chance of never having spelled before,
+/// for naming a fresh temporary directory: the moment down to the
+/// nanosecond, mixed with a counter this process alone advances, both
+/// folded into base 36 to keep the name short.
+fn unique_directory_name() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let moment = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let mut mixed = (moment as u64) ^ (std::process::id() as u64).wrapping_mul(0x9E3779B97F4A7C15) ^ count.wrapping_mul(2654435761);
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if mixed == 0 { return "0".to_string(); }
+    let mut out = Vec::new();
+    while mixed > 0 {
+        out.push(DIGITS[(mixed % 36) as usize]);
+        mixed /= 36;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap()
+}
+
 fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
     let mut f = frame;
     for _ in 0..depth {
@@ -431,7 +458,7 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), _ => Some(1),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 => Some(20), 42 => Some(19), _ => Some(1),
             };
             let mut seed = Vec::new();
             match number {
@@ -495,8 +522,11 @@ impl<'a> Machine<'a> {
             for (at, key) in self.table.strings("ext.builtin.exceptions.os").iter().enumerate() {
                 holds.push((key.clone(), if numbered { row.get(at).cloned().unwrap_or(Value::Nil) } else { Value::Nil }));
             }
-            if let ([opening, middle], true) = (self.table.strings("ext.builtin.exceptions.os.message"), numbered) {
-                let told = format!("{opening}{}{middle}{}", row[0].render(self.wording()), row[1].render(self.wording()));
+            if let ([opening, middle, colon, quote], true) = (self.table.strings("ext.builtin.exceptions.os.message"), numbered) {
+                let mut told = format!("{opening}{}{middle}{}", row[0].render(self.wording()), row[1].render(self.wording()));
+                if let Some(named) = row.get(2) {
+                    if !matches!(named, Value::Nil) { told = format!("{told}{colon}{}{quote}", named.render(self.wording())); }
+                }
                 holds.push(("\0told-as".to_string(), Value::text(&told)));
             }
         }
@@ -831,6 +861,7 @@ impl<'a> Machine<'a> {
         Machine {
             fault_kinds,
             library_sources: HashMap::new(),
+            importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
             within_spare: false,
             world_book: None,
@@ -10831,6 +10862,48 @@ impl<'a> Machine<'a> {
                 let w = self.wording();
                 Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
             }
+            // A directory's own entries, sorted so a run answers the
+            // same way twice: the bare name of each, nothing before it.
+            Prim::DirEntries => {
+                n(1)?;
+                let w = self.wording();
+                match std::fs::read_dir(v[0].render(w)) {
+                    Ok(entries) => {
+                        let mut names: Vec<Value> = entries.filter_map(|e| e.ok()).map(|e| Value::text(&e.file_name().to_string_lossy())).collect();
+                        names.sort_by(|a, b| a.render(w).cmp(&b.render(w)));
+                        Value::Vector(Rc::new(names))
+                    }
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            // A fresh, empty directory made under one already standing,
+            // its name built from a prefix and a suffix around letters
+            // this run has not used there before.
+            Prim::DirFresh => {
+                n(3)?;
+                let w = self.wording();
+                let (parent, prefix, suffix) = (v[0].render(w), v[1].render(w), v[2].render(w));
+                let mut made = None;
+                for _ in 0..100 {
+                    let unique = unique_directory_name();
+                    let candidate = std::path::Path::new(&parent).join(format!("{prefix}{unique}{suffix}"));
+                    match std::fs::create_dir(&candidate) {
+                        Ok(()) => { made = Some(candidate); break; }
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                        Err(_) => break,
+                    }
+                }
+                match made {
+                    Some(path) => Value::text(&path.to_string_lossy()),
+                    None => Value::Flag(false),
+                }
+            }
+            // A directory taken away along with everything under it.
+            Prim::DirWhole => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
+            }
             Prim::FaultWhole => {
                 n(0)?;
                 self.holding_fault.last().cloned().unwrap_or(Value::Nil)
@@ -12950,6 +13023,16 @@ impl<'a> Machine<'a> {
             return self.span_written(held, bounds, &contents);
         }
         if let Value::Mutable(cell, _) = held { return self.span_written(&mut cell.borrow_mut(), bounds, handed); }
+        // A place shared with another name -- a module's own global
+        // among them -- is written into through the cell it shares,
+        // exactly as `handed` is unwrapped above: the place taken for
+        // this write may itself already be shared before this call
+        // ever sees it, where the ordinary single-key write below
+        // unwraps such a place itself.
+        if let Value::Shared(cell) = held {
+            let cell = cell.clone();
+            return self.span_written(&mut cell.borrow_mut(), bounds, handed);
+        }
         let settled = handed.settled();
         let handed = &settled;
         if let Value::Octets { cell, changeable, .. } = held {
@@ -14304,14 +14387,32 @@ impl Machine<'_> {
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
-        if let Some(value) = self.imported.get(path) { return Ok(value.clone()); }
+        // A name a program's own code took out of `sys.modules` is read
+        // in again rather than handed the standing instance: that is
+        // where CPython keeps such a cache, and a program that empties
+        // a name out of it means the next import to run the module
+        // afresh, as a name written under a name used before this run
+        // into a directory on `sys.path` needs to.
+        if let Some(value) = self.imported.get(path) {
+            if self.import_cache_names(path) { return Ok(value.clone()); }
+        }
         if path.starts_with('.') {
             return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_string());
         }
-        let text = self.library_sources.get(path).cloned().ok_or_else(|| {
-            let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
-            format!("{before}{path}{after}")
-        })?;
+        // A directory the program itself put on `sys.path` is looked in,
+        // in the order it stands there, ahead of the library.
+        let from_disk = self.sys_path_source(path);
+        let text = match &from_disk {
+            Some((_, text)) => text.clone(),
+            None => self.library_sources.get(path).cloned().ok_or_else(|| {
+                let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
+                format!("{before}{path}{after}")
+            })?,
+        };
+        let own_file = match &from_disk {
+            Some((file, _)) => Some(file.clone()),
+            None => self.library_module_file(path),
+        };
         let split = path.rsplit_once('.');
         if let Some((owner, _)) = split { self.load_namespace(owner)?; }
         let beginning = self.idents.len();
@@ -14330,15 +14431,19 @@ impl Machine<'_> {
         // never out of the builtins a name might otherwise fall back to.
         let bound: std::collections::HashSet<&str> = built.bound_globally.iter().map(|word| word.as_str()).collect();
         let module_names = self.table.strings("ext.system.module.name");
+        // The word this language spells a module's own file under, if
+        // any: the same word the running program's own file is bound
+        // to, carried here for a module read in besides it.
+        let file_word = self.table.single("ext.system.source.file");
         let mut members = Vec::with_capacity(exported.len());
         {
             let mut world = self.outermost.cells.borrow_mut();
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let is_module_name = module_names.contains(name);
-                let initial = match is_module_name {
-                    true => Value::text(path), false => self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }),
-                };
+                let initial = if is_module_name { Value::text(path) }
+                    else if file_word == Some(name.as_str()) { own_file.as_deref().map_or(Value::Nil, Value::text) }
+                    else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
@@ -14354,8 +14459,11 @@ impl Machine<'_> {
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing { of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
         self.imported.insert(path.into(), value.clone());
+        self.importing.insert(path.into());
         let scope = self.outermost.clone();
-        if let Err(stopped) = self.value_of(&built.program.body, &scope) {
+        let stopped = self.value_of(&built.program.body, &scope);
+        self.importing.remove(path);
+        if let Err(stopped) = stopped {
             self.imported.remove(path);
             self.refresh_import_table();
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
@@ -14371,6 +14479,45 @@ impl Machine<'_> {
         }
         self.refresh_import_table();
         Ok(value)
+    }
+
+    /// A module written into a directory `sys.path` names, found there
+    /// ahead of the library. Only a plain, undotted name is looked for
+    /// this way, since a directory a program builds for itself holds no
+    /// packages of its own; the file and what it holds come back
+    /// together, the file's place kept for `__file__` to answer with.
+    fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
+        if path.contains('.') { return None; }
+        let Value::Thing(sys) = self.imported.get("sys")? else { return None };
+        let held = sys.holds.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
+        let mut value = held;
+        while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
+            value = cell.borrow().clone();
+        }
+        let Value::Vector(items) = value else { return None };
+        for item in items.iter() {
+            let Value::Text(dir) = item else { continue };
+            if dir.is_empty() { continue; }
+            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
+            if let Ok(text) = std::fs::read_to_string(&file) {
+                return Some((file, text));
+            }
+        }
+        None
+    }
+
+    /// Where a library module's own text lives on disk, if this run
+    /// carries the library there to be found: the plain file first, and
+    /// a package's own file failing that. Nothing here reads the file
+    /// again; the text the module runs from was read in once already,
+    /// when the library was gathered into the program.
+    fn library_module_file(&self, path: &str) -> Option<String> {
+        let stem = path.replace('.', "/");
+        let flat = format!("langs/lib_python/modules/{stem}.py");
+        if std::path::Path::new(&flat).is_file() { return Some(flat); }
+        let package = format!("langs/lib_python/modules/{stem}/__init__.py");
+        if std::path::Path::new(&package).is_file() { return Some(package); }
+        None
     }
 
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
@@ -15844,6 +15991,23 @@ impl Machine<'_> {
 }
 
 impl Machine<'_> {
+    /// Whether the language's own cache of modules still names this
+    /// one: true wherever that cache has yet to be written at all (an
+    /// import too soon for it to hold anything, or a language with no
+    /// such name), so an ordinary run is never slowed by looking.
+    fn import_cache_names(&self, path: &str) -> bool {
+        if self.importing.contains(path) { return true; }
+        let names = self.table.strings("ext.system.module.cache");
+        if names.len() != 2 { return true; }
+        let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) else { return true };
+        let Some((_, held)) = namespace.holds.borrow().iter().find(|(key, _)| key == &names[1]).cloned() else { return true };
+        let cache = match held { Value::Shared(cell) => cell.borrow().clone(), other => other };
+        match cache {
+            Value::Dict(entries) => entries.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
+            _ => true,
+        }
+    }
+
     fn refresh_import_table(&self) {
         let names = self.table.strings("ext.system.module.cache");
         if names.len() != 2 { return; }
