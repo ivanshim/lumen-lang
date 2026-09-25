@@ -43,6 +43,9 @@ SystemExit = SystemExit
 TypeError = TypeError
 UnboundLocalError = UnboundLocalError
 UnicodeError = UnicodeError
+UnicodeEncodeError = UnicodeEncodeError
+UnicodeDecodeError = UnicodeDecodeError
+UnicodeTranslateError = UnicodeTranslateError
 ValueError = ValueError
 ZeroDivisionError = ZeroDivisionError
 
@@ -533,8 +536,7 @@ def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None,
 # breakpoint, copyright, credits, exit, help, license, memoryview,
 # quit, __build_class__, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
-# IndentationError, TabError, the three
-# UnicodeError kinds that carry encoding detail, and the OSError kinds
+# IndentationError, TabError, and the OSError kinds
 # the operating system raises besides FileNotFoundError and
 # IsADirectoryError -- BlockingIOError, BrokenPipeError,
 # ChildProcessError, ConnectionError and its four kinds,

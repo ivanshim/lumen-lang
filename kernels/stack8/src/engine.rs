@@ -372,7 +372,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -384,6 +384,12 @@ impl<'a> Engine<'a> {
             if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
             if at == 37 || at == 38 { fields.push(("\0group".into(), Value::Flag(at == 38))); }
             if at == 38 { if let Some(ordinary) = classes.get(1) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
+            // The three Unicode codec faults carry an encoding, the
+            // object worked on, a start and end index and a reason,
+            // and show themselves by those rather than by their args.
+            if at == 43 { fields.push(("\0unicode-encode".into(), Value::Flag(true))); }
+            if at == 44 { fields.push(("\0unicode-decode".into(), Value::Flag(true))); }
+            if at == 45 { fields.push(("\0unicode-translate".into(), Value::Flag(true))); }
             classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
@@ -452,6 +458,22 @@ impl<'a> Engine<'a> {
                 }
                 fields.push(("\0shown".into(), Value::text(&shown)));
             }
+        }
+        // A Unicode codec fault carries its own account of what it
+        // stood on, rather than an args tuple alone, and a decoding
+        // fault holds it as bytes even where a bytearray was given, so
+        // that a copy taken after cannot change what the fault shows.
+        let decode = self.stands_on(&class, 44);
+        if (self.stands_on(&class, 43) || decode) && args.len() == 5 {
+            let object = match &args[1] {
+                Value::Bytes(cell, ..) if decode => self.byte_make(cell.borrow().clone(), false),
+                other => other.clone(),
+            };
+            let values = [args[0].clone(), object, args[2].clone(), args[3].clone(), args[4].clone()];
+            for (name, value) in self.lang.unicode_members.iter().zip(values) { fields.push((name.clone(), value)); }
+        } else if self.stands_on(&class, 45) && args.len() == 4 {
+            let values = [args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone()];
+            for (name, value) in self.lang.unicode_members.iter().skip(1).zip(values) { fields.push((name.clone(), value)); }
         }
         let args = Value::Tuple(Rc::new(args));
         fields.push(("\0arguments".into(), args.clone()));
@@ -552,6 +574,11 @@ impl<'a> Engine<'a> {
         let mut named = Vec::new();
         for (key, value) in self.call_items(given)? {
             match key { Some(key) => named.push((key, value)), None => args.push(value) }
+        }
+        let unicode_arity = if self.stands_on(&class, 43) || self.stands_on(&class, 44) { Some(5) }
+            else if self.stands_on(&class, 45) { Some(4) } else { None };
+        if let Some(wanted) = unicode_arity {
+            if args.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", class.name, wanted, args.len()).into()); }
         }
         let made = if class.all_fields().iter().any(|(n, _)| n == "\0group") {
             if args.len() != 2 { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()); }

@@ -468,7 +468,8 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 => Some(20), 42 => Some(19), _ => Some(1),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 => Some(20), 42 => Some(19),
+                43 | 44 | 45 => Some(22), _ => Some(1),
             };
             let mut seed = Vec::new();
             match number {
@@ -483,6 +484,9 @@ impl<'a> Machine<'a> {
                     seed.push(("\0gathers".to_string(), Value::Flag(true)));
                     if let Some(ordinary) = chain.get(1) { seed.push(("\0also-under".to_string(), Value::Blueprint(ordinary.clone()))); }
                 }
+                43 => seed.push(("\0unicode-encode".to_string(), Value::Flag(true))),
+                44 => seed.push(("\0unicode-decode".to_string(), Value::Flag(true))),
+                45 => seed.push(("\0unicode-translate".to_string(), Value::Flag(true))),
                 _ => {}
             }
             let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
@@ -541,6 +545,23 @@ impl<'a> Machine<'a> {
                 }
                 holds.push(("\0told-as".to_string(), Value::text(&told)));
             }
+        }
+        // A Unicode codec fault carries its own account of what it
+        // stood on, rather than an args tuple alone, and a decoding
+        // fault holds it as octets even where a changeable row of them
+        // was given, so a copy taken after cannot change what it shows.
+        let decoding = self.stands_under(&kind, 44);
+        let members = self.table.strings("ext.builtin.exceptions.unicode");
+        if (self.stands_under(&kind, 43) || decoding) && row.len() == 5 {
+            let object = match &row[1] {
+                Value::Octets { cell, .. } if decoding => self.octets(cell.borrow().clone(), false),
+                other => other.clone(),
+            };
+            let values = [row[0].clone(), object, row[2].clone(), row[3].clone(), row[4].clone()];
+            for (key, value) in members.iter().zip(values) { holds.push((key.clone(), value)); }
+        } else if self.stands_under(&kind, 45) && row.len() == 4 {
+            let values = [row[0].clone(), row[1].clone(), row[2].clone(), row[3].clone()];
+            for (key, value) in members.iter().skip(1).zip(values) { holds.push((key.clone(), value)); }
         }
         let values = Value::Arguments(Rc::new(row));
         let seeded = [
@@ -639,6 +660,11 @@ impl<'a> Machine<'a> {
     /// call may give only the absent name and the object it was sought on.
     fn fault_from_call(&mut self, kind: Rc<Blueprint>, supplied: Vec<Value>) -> Res<Value> {
         let (row, named) = self.open_arguments(supplied)?;
+        let unicode_arity = if self.stands_under(&kind, 43) || self.stands_under(&kind, 44) { Some(5) }
+            else if self.stands_under(&kind, 45) { Some(4) } else { None };
+        if let Some(wanted) = unicode_arity {
+            if row.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", kind.name, wanted, row.len()).into()); }
+        }
         let made = if kind.every_field().iter().any(|(key, _)| key == "\0gathers") {
             if row.len() != 2 { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()); }
             let members = match row[1].settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
@@ -3389,6 +3415,10 @@ impl<'a> Machine<'a> {
         };
         let preceding = self.holding_fault.len();
         if let Some(value) = raised { self.holding_fault.push(value.clone()); }
+        // What got away from an earlier, unrelated call must not be
+        // mistaken for what this one raises: only a fault this very
+        // call sets belongs to it.
+        self.got_away = None;
         let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
         let asked = self.raised_if_error(asked);
         self.holding_fault.truncate(preceding);
@@ -4039,6 +4069,10 @@ impl<'a> Machine<'a> {
                     // as context; and what the leaving raises comes back
                     // as raised rather than as a wrong answer.
                     if let Err(Escape::Thrown(value)) = &body_result { self.holding_fault.push(value.clone()); }
+                    // What got away from an earlier, unrelated call must
+                    // not be mistaken for what this one raises: only a
+                    // fault this very call sets belongs to it.
+                    self.got_away = None;
                     let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
                     let asked = self.raised_if_error(asked);
                     self.holding_fault.truncate(preceding);
