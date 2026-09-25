@@ -15406,7 +15406,8 @@ impl Engine<'_> {
                 return String::new();
             }
             if row == 0 {
-                let details = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(0), Value::Small(-1), Value::Null]));
+                let bom_conflict = message.starts_with("encoding problem:") && message.ends_with(" with BOM");
+                let details = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(if bom_conflict { 1 } else { 0 }), Value::Small(if bom_conflict { 0 } else { -1 }), Value::Null]));
                 let raised = self.exception_instance(class, vec![Value::text(message), details], Value::Null);
                 self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
                 return String::new();
@@ -15545,7 +15546,7 @@ impl Engine<'_> {
     fn source_bytes(&mut self, bytes: &[u8], filename: &str) -> Res<Rc<str>> {
         let bom = bytes.starts_with(&[239, 187, 191]);
         let bytes = bytes.strip_prefix(&[239, 187, 191]).unwrap_or(bytes);
-        let mut spelling = "utf8".to_string();
+        let mut spelling = "utf-8".to_string();
         for line in bytes.split(|b| *b == b'\n').take(2) {
             let line = String::from_utf8_lossy(line);
             if !line.trim_start().starts_with('#') { continue; }
@@ -15557,7 +15558,8 @@ impl Engine<'_> {
             }
         }
         let encoding = spelling.to_ascii_lowercase().replace(['-', '_'], "");
-        if bom && !matches!(encoding.as_str(), "utf8" | "utf8sig") {
+        let declared = spelling.to_ascii_lowercase().replace('_', "-");
+        if bom && declared != "utf-8" && !declared.starts_with("utf-8-") {
             return Err(self.text_syntax(0, format!("SyntaxError: encoding problem: {spelling} with BOM"), filename, 0, 0, None, ""));
         }
         let decoded = match encoding.as_str() {

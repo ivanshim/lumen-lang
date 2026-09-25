@@ -15321,7 +15321,11 @@ impl<'a> Machine<'a> {
                     return String::new();
                 }
                 if row == 0 {
-                    let origin = vec![Value::text(file), Value::Small(0), Value::Small(-1), Value::Nil];
+                    let (line, at) = match message.strip_prefix("encoding problem:") {
+                        Some(detail) if detail.ends_with(" with BOM") => (1, 0),
+                        _ => (0, -1),
+                    };
+                    let origin = vec![Value::text(file), Value::Small(line), Value::Small(at), Value::Nil];
                     let fault = self.make_fault(kind, vec![Value::text(message), Value::Tuple(Rc::new(origin))], Value::Nil);
                     self.keep_context(&fault);
                     self.got_away = Some(Escape::Thrown(fault));
@@ -15440,9 +15444,10 @@ impl<'a> Machine<'a> {
             let (_, suffix) = ascii.split_once("coding")?;
             let suffix = suffix.strip_prefix('=').or_else(|| suffix.strip_prefix(':'))?;
             Some(suffix.trim_start().chars().take_while(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect::<String>())
-        }).unwrap_or_else(|| "utf8".into());
+        }).unwrap_or_else(|| "utf-8".into());
         let cookie: String = written.chars().filter(|c| !"-_".contains(*c)).flat_map(char::to_lowercase).collect();
-        if has_bom && !["utf8", "utf8sig"].contains(&cookie.as_str()) {
+        let normalized = written.to_lowercase().replace('_', "-");
+        if has_bom && !(normalized == "utf-8" || normalized.starts_with("utf-8-")) {
             let why = format!("SyntaxError: encoding problem: {written} with BOM");
             return Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""));
         }
