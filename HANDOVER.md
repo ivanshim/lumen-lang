@@ -1499,6 +1499,67 @@ the body can read (a branch is under way); microcode7 still answers a
 module attribute the module does not define from the builtins (a
 branch is under way).
 
+### 1x. Batch 15 merged as #502; batch 16 is module attributes, class-body locals() and dict views
+
+Pull request #502 merged into main at c536fac with all six jobs green
+on cbfbf63. Batch 16 folds three branches.
+
+fix/module-attr stops microcode7 answering a module attribute the
+module never defined. Each imported module is compiled with every
+builtin exception name reachable from its top level, and every name
+the module's code referred to was filed into the module's own members,
+so `warnings.UserWarning`, `getattr(math, "ValueError")` and
+`hasattr(math, "ValueError")` found the builtin class. A compiled unit
+now reports the names its own top level binds (assignment, import,
+def, class), and only those, with the reserved module names, become
+members; a bare builtin name inside the module still resolves.
+stack8 already answered as CPython does.
+
+fix/class-locals makes a class body's `locals()` and `vars()` the
+class namespace itself on both kernels. The first read or write
+through either makes one mutable map for the body, seeded from what
+the body has bound so far; later calls answer the same map (`ns is
+locals()`), a write through it is a name the body can read and becomes
+a class attribute, a delete removes it, and every plain binding in the
+body mirrors into it. A class body that never spells `locals` or
+`vars` pays nothing, and a function's `locals()` stays a snapshot as
+CPython keeps it. test_scope's testClassAndGlobal and
+testClassNamespaceOverridesClosure pass on both kernels.
+
+fix/dict-view-kinds lets a dict's views be kinds of their own. Both
+kernels already carried a live view underneath, but `type()`,
+`isinstance()` and `==` opened it into a list first, so
+`type(d.keys()).__name__` was 'list' and `isinstance(d.keys(),
+KeysView)` False. The view now stays whole at those points:
+dict_keys, dict_values and dict_items, their iterators and reversed
+iterators under CPython's names, `<=`, `<`, `>=`, `>` and `isdisjoint`
+between a keys or items view and a set, `.mapping` as a read-only
+mappingproxy, unpacking a view, and collections.abc registering the
+three view kinds (a new label, `ext.builtin.method.mapping`).
+test_dict gains two tests on stack8 and one on microcode7.
+
+The batch-16 count, taken at 4ee6d98, stands at stack8 1,347 of 2,536
+and microcode7 1,360 of 2,536: test_dict 77 to 79 (stack8) and 79 to 80
+(microcode7), test_scope 30 to 32 on each kernel, and no file lost a
+pass. test_set on microcode7 ran past the 900 s cap under the load of
+the workers sharing the machine and was measured alone (914 s); run
+alone, scratch/reader-tail/4 (test_set) left its recorded line on both
+kernels. No record moved.
+
+Gaps this round records: `from warnings import UserWarning` says
+`cannot import name 'UserWarning'` without CPython's `from 'warnings'
+(<path>)`; `sum([-0.0], -0.0)` is 0.0; `(int | str) | float` raises
+outside the exception road; a kind's member called with another kind's
+value (`tuple.count([], 1)`) succeeds when that kind has a member of
+the name (a branch is under way for these four); there is no `open()`
+and no `sys.path`, which leaves test_cmath (every setUp opens CPython's
+vector file) and test_string_literals (every setUp reads sys.path)
+failing almost whole (a branch is under way); test_math and
+test_exceptions never finish (fixed in the next batch); `type.__dict__`
+is not a mappingproxy (test_dict test_views_mapping); `del f()[k]` is
+refused on stack8; a metaclass `__prepare__` mapping is not used as the
+class namespace.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
