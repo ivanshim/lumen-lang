@@ -8796,7 +8796,14 @@ impl<'a> Machine<'a> {
             Value::Cursor(c) => Ok(c.borrow_mut().pop_front()),
             _ => {
                 let (routine, scope) = self.appointed_within(source, 16).ok_or_else(|| self.bad_answer())?;
-                match self.invoke(routine, scope, vec![source.clone()]) {
+                // A walk the method itself steps on through another
+                // thing's own method parks what that one raised and says
+                // so in words; the parked value is what the method raised.
+                let stepped = match self.invoke(routine, scope, vec![source.clone()]) {
+                    Err(Escape::Error(_)) if self.got_away.is_some() => Err(self.got_away.take().expect("what got away")),
+                    other => other,
+                };
+                match stepped {
                     Ok(v) => Ok(Some(v)),
                     Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| t.of.goes_by(name, false)) => Ok(None),
                     // The kernel says a walk is over in words of its own,
