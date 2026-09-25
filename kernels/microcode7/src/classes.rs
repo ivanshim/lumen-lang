@@ -829,7 +829,11 @@ impl<'a> Machine<'a> {
             if let Some(v)=own{return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.of.clone());}
             // The worth a thing keeps answers for the methods of its kind.
-            if let Some(under)=Self::underlying(&value) {
+            let native=Self::underlying(&value);
+            if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
+                if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
+            }
+            if let Some(under)=native.filter(|v|!matches!(v.settled(),Value::Set(_))) {
                 if let Some(operation)=Self::kind_method_named(self.table,key){
                     // The parts of a complex number are members read and
                     // not methods called, as on the number itself.

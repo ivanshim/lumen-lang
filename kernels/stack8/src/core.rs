@@ -138,6 +138,13 @@ impl Value {
                 s.hash(&mut h);
                 Some(finish(h.finish() as i64))
             }
+            Value::Bytes(bytes, false, _) => {
+                let mut hash = 0i64;
+                for &byte in bytes.borrow().iter() { hash = hash.wrapping_mul(1000003) ^ i64::from(byte); }
+                Some(finish(hash))
+            }
+            Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
+            Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
             Value::Null => Some(0x9e3779b9),
             Value::Ellipsis => Some(0x9e3779ba),
             // The three bounds, folded as a tuple's items are, without a

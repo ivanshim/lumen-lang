@@ -872,6 +872,11 @@ impl Value {
         match self {
             Value::Flag(b) => Ok(format!("n{}/1", u8::from(*b))),
             Value::Text(s) => Ok(format!("s{}", s)),
+            Value::Bytes(bytes, false, _) => Ok(format!("bytes:{:?}", bytes.borrow())),
+            Value::Bytes(_, true, _) => Err("bytearray"),
+            Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
+            Value::Method(owner, code) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
+
             Value::Null => Ok("nil".into()),
             Value::Ellipsis => Ok("dots".into()),
             Value::Array(_) => Err("list"),

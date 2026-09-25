@@ -641,6 +641,12 @@ impl Value {
                 _ => Err("set"),
             },
             Value::Text(word) => Ok(format!("text:{word}")),
+            Value::Octets { changeable: true, .. } => Err("bytearray"),
+            Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
+            Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
+            Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
+            Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
+
             // A progression is addressed by the places it names: their
             // count, where they begin and how far apart they stand, so
             // that two naming the same places share one address. One of

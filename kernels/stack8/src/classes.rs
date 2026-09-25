@@ -828,7 +828,10 @@ impl<'a> Engine<'a> {
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class.clone());}
                 // The worth a thing keeps answers for the methods of its kind.
-                if let Some(worth)=Self::worth_of(&subject) {
+                if let Some(worth)=Self::worth_of(&subject).filter(|v|matches!(v.contents(),Value::Set(_))) {
+                    if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }
+                }
+                if let Some(worth)=Self::worth_of(&subject).filter(|v|!matches!(v.contents(),Value::Set(_))) {
                     if let Some(op)=self.lang.value_methods.get(name).cloned() {
                         // The parts of a complex number are read rather
                         // than called, as they are on the number itself.
