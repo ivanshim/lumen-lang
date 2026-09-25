@@ -600,8 +600,8 @@ impl<'a> Cursor<'a> {
                     self.step(); self.step(); text.push(c);
                 } else if c == '{' {
                     self.string_text(&mut text, &mut fault, line, col);
-                    self.string_field(raw, depth)?;
-                } else { return Err(self.string_words()); }
+                    self.string_field(raw, depth, mark)?;
+                } else { return Err(self.field_error(1)); }
             } else if c == '\\' {
                 self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
             } else { text.push(self.step()); }
@@ -687,13 +687,17 @@ impl<'a> Cursor<'a> {
         kept
     }
 
-    fn string_field(&mut self, raw: bool, depth: u32) -> Result<(), String> {
+    fn field_error(&self, number: usize) -> String {
+        self.lang.field_errors.get(number).cloned().unwrap_or_else(|| self.string_words())
+    }
+
+    fn string_field(&mut self, raw: bool, depth: u32, outer: &str) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         self.step();
         let mut expression = String::new();
         let mut brackets = Vec::new();
         loop {
-            let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            let Some(c) = self.look(0) else { return Err(self.field_error(0)); };
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
@@ -705,7 +709,14 @@ impl<'a> Cursor<'a> {
             if let Some((prefix, mark, is_raw, format)) = self.string_open() {
                 let saved = self.out.len();
                 let began = self.at;
-                self.rich_string(prefix, &mark, is_raw, format, depth + 1)?;
+                let closes_outer = prefix == 0 && mark == outer && brackets.is_empty();
+                if let Err(error) = self.rich_string(prefix, &mark, is_raw, format, depth + 1) {
+                    if closes_outer && (self.lang.string_unterminated.as_ref() == Some(&error)
+                        || self.lang.string_unterminated_triple.as_ref() == Some(&error)) {
+                        return Err(self.field_error(0));
+                    }
+                    return Err(error);
+                }
                 self.out.truncate(saved);
                 expression.extend(self.text[began..self.at].iter());
                 continue;
@@ -713,18 +724,51 @@ impl<'a> Cursor<'a> {
             if let Some(said) = self.prefix_conflict() { return Err(said); }
             if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
                 while self.look(0).map_or(false, |x| x != '\n') { self.step(); }
+                if self.look(0).is_none() { return Err(self.field_error(14)); }
                 continue;
+            }
+            if c == '\u{a0}' { return Err(self.field_error(15)); }
+            if !brackets.is_empty() && expression.trim_end().ends_with(['(', '[', '{'])
+                && matches!(c, '>' | '/' | ';') { return Err(self.field_error(3)); }
+            if brackets.is_empty() {
+                let start = expression.trim();
+                let operand_missing = start.chars().all(|x| x.is_whitespace() || matches!(x, '+' | '-' | '~'));
+                if matches!(c, ';' | '$') || operand_missing && (matches!(c, ',' | '/' | '>' | '<' | '%')
+                    || c == '.' && !self.look(1).map_or(false, |x| x.is_ascii_digit() || x == '.')
+                    || c == '*' && self.look(1) == Some('*')) {
+                    return Err(self.field_error(if operand_missing { 3 } else { 8 }));
+                }
+                if !self.text.get(self.at.wrapping_sub(1)).map_or(false, |x| self.lang.extends_name(*x))
+                    && self.lang.lambda_words.iter().any(|word| at_word(&self.text, self.at, word)
+                    && !self.look(word.chars().count()).map_or(false, |x| self.lang.extends_name(x))) {
+                    let previous = start.rsplit(',').next().unwrap_or(start).trim();
+                    return Err(self.field_error(if previous.is_empty() { 4 } else { 3 }));
+                }
             }
             if brackets.is_empty() && (matches!(c, '}' | ':') || c == '!' && self.look(1) != Some('=')
                 || c == '=' && self.look(1) != Some('=') && !matches!(self.text.get(self.at.wrapping_sub(1)), Some('!' | '<' | '>' | '='))) { break; }
             match c {
                 '(' => brackets.push(')'), '[' => brackets.push(']'), '{' => brackets.push('}'),
-                ')' | ']' | '}' => { if brackets.pop() != Some(c) { return Err(self.string_words()); } }
+                ')' | ']' | '}' => {
+                    match brackets.pop() {
+                        Some(expected) if expected == c => {}
+                        Some(expected) => {
+                            let open = match expected { ')' => '(', ']' => '[', _ => '{' };
+                            return Err(self.field_error(13).replacen("{}", &c.to_string(), 1).replacen("{}", &open.to_string(), 1));
+                        }
+                        None => return Err(self.field_error(12).replace("{}", &c.to_string())),
+                    }
+                }
                 _ => {}
             }
             expression.push(self.step());
         }
-        if expression.trim().is_empty() { return Err(self.string_words()); }
+        if expression.trim().is_empty() {
+            return Err(self.field_error(2).replace("{}", &self.look(0).unwrap().to_string()));
+        }
+        if expression.trim_start().starts_with('*') && !expression.contains(',') {
+            return Err(self.field_error(16));
+        }
         let debug = self.look(0) == Some('=');
         if debug {
             self.step();
@@ -734,10 +778,21 @@ impl<'a> Cursor<'a> {
         let mut conversion = String::new();
         if self.look(0) == Some('!') {
             self.step();
-            let Some(c @ ('r' | 's' | 'a')) = self.look(0) else { return Err(self.string_words()); };
-            conversion.push(c); self.step();
+            if self.look(0).is_none() || at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+            let c = self.look(0).unwrap();
+            if matches!(c, '}' | ':') { return Err(self.field_error(5)); }
+            if c.is_whitespace() { return Err(self.field_error(7)); }
+            if !self.lang.begins_name(c) { return Err(self.field_error(6)); }
+            while self.look(0).map_or(false, |c| self.lang.extends_name(c)) { conversion.push(self.step()); }
+            if !matches!(conversion.as_str(), "r" | "s" | "a") {
+                return Err(self.field_error(11).replace("{}", &conversion));
+            }
             self.field_space();
         } else if debug && self.look(0) != Some(':') { conversion.push('r'); }
+        if self.look(0).is_none() || at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+        if !matches!(self.look(0), Some(':' | '}')) {
+            return Err(self.field_error(if conversion.is_empty() || debug { 9 } else { 10 }));
+        }
         self.push(Shape::StringField, conversion, 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
@@ -750,16 +805,18 @@ impl<'a> Cursor<'a> {
         if self.look(0) == Some(':') {
             self.step();
             loop {
+                if at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
                 match self.look(0) {
                     Some('}') => break,
-                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth)?; }
+                    Some('\n' | '\r') if outer.len() == 1 => return Err(self.field_error(17)),
+                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth, outer)?; }
                     Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault)?,
                     Some(_) => text.push(self.step()),
-                    None => return Err(self.string_words()),
+                    None => return Err(self.field_error(0)),
                 }
             }
         }
-        if self.look(0) != Some('}') { return Err(self.string_words()); }
+        if self.look(0) != Some('}') { return Err(self.field_error(0)); }
         self.step();
         self.string_text(&mut text, &mut fault, line, col);
         self.push(Shape::StringEnd, String::new(), 0, line, col);
