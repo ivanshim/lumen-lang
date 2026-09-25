@@ -426,12 +426,24 @@ impl<'a> Engine<'a> {
         if Rc::ptr_eq(&handling, &object) { return; }
         let behind = |link: &Rc<Instance>| link.fields.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.contents());
         let mut link = handling.clone();
+        // A chain already standing behind `handling` may loop back on
+        // itself without ever passing through the value being raised
+        // (a program may set `__context__` to whatever it likes). A
+        // hare run beside the walk, advanced every other step, meets
+        // the walk again if that is so, so the search still ends.
+        let mut hare = handling.clone();
+        let mut alternate = false;
         while let Some(Value::Object(further)) = behind(&link) {
             if Rc::ptr_eq(&further, &object) {
                 if let Some((_, held)) = link.fields.borrow_mut().iter_mut().find(|(n, _)| n == name) { *held = Value::Null; }
                 break;
             }
             link = further;
+            if Rc::ptr_eq(&link, &hare) { break; }
+            if alternate {
+                if let Some(Value::Object(ahead)) = behind(&hare) { hare = ahead; }
+            }
+            alternate = !alternate;
         }
         let mut fields = object.fields.borrow_mut();
         match fields.iter_mut().find(|(n, _)| n == name) {
