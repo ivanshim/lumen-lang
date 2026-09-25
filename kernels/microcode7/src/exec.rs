@@ -3605,7 +3605,7 @@ impl<'a> Machine<'a> {
         if self.active_trace.is_none() {
             let program = self.frames_named.last();
             let name = program.filter(|p| p.ident != "<program>").map_or(keys[10].as_str(), |p| p.ident.as_str());
-            let first = program.map_or(1, |p| p.declared_on);
+            let first = program.map_or(1, |p| p.declared_on.max(1));
             let code_members = vec![(keys[6].clone(), Value::text(name)), (keys[7].clone(), Value::Text(self.written_in.clone())), (keys[8].clone(), Value::Small(first as i64))];
             let of = self.code_blueprint();
             self.made += 1;
@@ -15301,6 +15301,8 @@ impl<'a> Machine<'a> {
     /// it cannot read; any other words are that complaint instead, since
     /// they are the builder's and not the language's.
     fn text_unreadable_at(&mut self, mode: usize, said: String, file: &str, row: u32, column: usize, end: Option<(u32, usize)>, source: &str) -> String {
+        let clean_text = source.contains('\r').then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
+        let source = clean_text.as_deref().unwrap_or(source);
         let default = self.source_unreadable();
         let parts = said.split_once(": ").filter(|(name, _)| self.fault_kinds.contains_key(*name))
             .or_else(|| default.split_once(": "));
@@ -15376,7 +15378,7 @@ impl<'a> Machine<'a> {
                 }
                 let source_line = match (omit, if omit { std::fs::read_to_string(file).ok() } else { None }) {
                     (false, _) => Value::text(&text),
-                    (true, Some(contents)) => contents.split_inclusive('\n').nth(line as usize - 1).map(Value::text).unwrap_or(Value::Nil),
+                    (true, Some(contents)) => contents.replace("\r\n", "\n").replace('\r', "\n").split_inclusive('\n').nth(line as usize - 1).map(Value::text).unwrap_or(Value::Nil),
                     _ => Value::Nil,
                 };
                 let details = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(line as i64), Value::Small(offset), source_line, Value::Small(ending_line as i64), Value::Small(end_offset)]));

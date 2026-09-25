@@ -671,7 +671,12 @@ impl Quotation<'_> {
                 return Err(self.table.single("ext.lexical.string.bytes.ascii").unwrap_or("").to_owned());
             }
             match ch {
-                '\n' if end.len() == 1 => return Err(self.bad()),
+                '\n' if end.len() == 1 => {
+                    let complaint = if !fields && depth == 0 && self.table.has_any("ext.builtin.exceptions.syntax") {
+                        self.table.single("ext.lexical.string.unterminated").map(str::to_owned)
+                    } else { None };
+                    return Err(complaint.unwrap_or_else(|| self.bad()));
+                },
                 '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing)?,
                 '{' | '}' if fields => {
                     if self.source.get(self.next + 1) == Some(&ch) {
@@ -869,6 +874,10 @@ impl Quotation<'_> {
 }
 
 fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usize)) -> Result<Vec<Token>, String> {
+    let input = if table.has_any("ext.builtin.exceptions.syntax") && source.contains('\r') {
+        std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
+    } else { std::borrow::Cow::Borrowed(source) };
+    let source = input.as_ref();
     let text = drop_comments(source, table);
     let src: Vec<char> = text.chars().collect();
     let quotes = table.letters("lexical.string_quotes");

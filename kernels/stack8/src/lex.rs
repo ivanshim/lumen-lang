@@ -597,7 +597,12 @@ impl<'a> Cursor<'a> {
             if bytes && (!c.is_ascii() || c == '\\' && self.look(1).map_or(false, |c| !c.is_ascii())) {
                 return Err(self.lang.byte_words["ext.lexical.string.bytes.ascii"][0].clone());
             }
-            if c == '\n' && mark.chars().count() == 1 { return Err(self.string_words()); }
+            if c == '\n' && mark.chars().count() == 1 {
+                if !format && depth == 0 && !self.lang.syntax_members.is_empty() {
+                    if let Some(said) = &self.lang.string_unterminated { return Err(said.clone()); }
+                }
+                return Err(self.string_words());
+            }
             if format && (c == '{' || c == '}') {
                 if self.look(1) == Some(c) {
                     self.step(); self.step(); text.push(c);
@@ -1267,6 +1272,9 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
 }
 
 pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
+    let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
+        .then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
+    let source = normalized.as_deref().unwrap_or(source);
     if !lang.syntax_members.is_empty() && source.contains('\0') { return Err(("SyntaxError: source code string cannot contain null bytes".into(), 0, 0)); }
     let mut out = match lang.template {
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,

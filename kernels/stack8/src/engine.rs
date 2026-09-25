@@ -15387,6 +15387,8 @@ impl Engine<'_> {
     /// text it cannot read; any other words are that complaint instead,
     /// since they are the assembler's and not the language's.
     fn text_syntax(&mut self, mode: usize, said: String, file: &str, row: usize, column: usize, end: Option<(usize, usize)>, source: &str) -> String {
+        let lines = if source.contains('\r') { std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n")) } else { std::borrow::Cow::Borrowed(source) };
+        let source = lines.as_ref();
         let generic = self.lang.source_syntax.clone().unwrap_or_default();
         let fallback = generic.split_once(':').map(|(kind, _)| kind).unwrap_or("");
         let (kind, message) = said.split_once(": ").filter(|(kind, _)| self.native_exceptions.contains_key(*kind))
@@ -15462,7 +15464,7 @@ impl Engine<'_> {
                 }
             }
             let line_text = if compiler_only {
-                std::fs::read_to_string(file).ok().and_then(|contents| contents.split_inclusive('\n').nth(row - 1).map(Value::text)).unwrap_or(Value::Null)
+                std::fs::read_to_string(file).ok().and_then(|contents| contents.replace("\r\n", "\n").replace('\r', "\n").split_inclusive('\n').nth(row - 1).map(Value::text)).unwrap_or(Value::Null)
             } else { Value::text(&text) };
             let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(col), line_text, Value::Small(end_row as i64), Value::Small(finish)];
             let raised = self.exception_instance(class, vec![Value::text(&message), Value::Tuple(Rc::new(details))], Value::Null);
