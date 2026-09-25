@@ -8,6 +8,9 @@ pardir = '..'
 pathsep = ':'
 environ = __host_info()[3]
 
+def getenv(key, default=None):
+    return environ.get(key, default)
+
 def getcwd():
     directory = __host_info()[0]
     if directory is None:

@@ -257,9 +257,34 @@ class _Patch:
 
 _TAKEN = ('wraps', 'return_value', 'side_effect')
 
+# A dotted name is split at its last dot: what comes before is a chain
+# of modules and, where a plain attribute lookup does not reach that
+# far, packages imported one more level at a time; what comes after is
+# the attribute patch.object would have been given directly.
+def _get_target(target):
+    if not isinstance(target, str):
+        raise TypeError('Need a valid target to patch. You supplied: ' + repr(target))
+    modpath, sep, attribute = target.rpartition('.')
+    if not sep:
+        raise TypeError('Need a valid target to patch. You supplied: ' + repr(target))
+    components = modpath.split('.')
+    import_path = components[0]
+    thing = __import__(import_path)
+    for comp in components[1:]:
+        import_path += '.' + comp
+        if hasattr(thing, comp):
+            thing = getattr(thing, comp)
+        else:
+            thing = __import__(import_path)
+    return thing, attribute
+
 class _Patcher:
-    def __call__(self, target, new=DEFAULT, **extra):
-        raise 'NotImplementedError: patch by dotted name needs a lookup this runtime has not; name the thing itself with patch.object'
+    def __call__(self, target, new=DEFAULT, create=False, **extra):
+        for word in extra:
+            if word not in _TAKEN:
+                raise 'NotImplementedError: patch does not take ' + word
+        thing, attribute = _get_target(target)
+        return _Patch(thing, attribute, new, create, extra)
 
     def object(self, target, attribute, new=DEFAULT, create=False, **extra):
         for word in extra:
