@@ -97,8 +97,8 @@ def setrecursionlimit(limit):
     raise 'NotImplementedError: setting the recursion limit is not supported'
 
 # The limit CPython puts on the digits an integer may be written with
-# or read from. Conversions here are not held to it; the value is kept
-# so a program may read and set it.
+# or read from. The conversion builtins read this field before doing
+# decimal conversion work.
 _int_max_str_digits = 4300
 
 def get_int_max_str_digits():
@@ -233,3 +233,19 @@ def getsizeof(value, default=None):
     if isinstance(value, float):
         return 24
     return 16
+
+# The public hook can also be called by libraries reporting a failure
+# which cannot propagate to their caller. Finalization must invoke it
+# with the same five fields.
+def unraisablehook(unraisable):
+    if unraisable.err_msg is None:
+        heading = 'Exception ignored in'
+    else:
+        heading = unraisable.err_msg
+    if unraisable.object is not None:
+        print(heading + ': ' + repr(unraisable.object), file=stderr)
+    else:
+        print(heading + ':', file=stderr)
+    print(unraisable.exc_type.__name__ + ': ' + str(unraisable.exc_value), file=stderr)
+
+__unraisablehook__ = unraisablehook
