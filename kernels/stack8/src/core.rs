@@ -32,7 +32,11 @@ impl Value {
             Value::Map(_) => "dict",
             Value::Counted(_) => "range",
             Value::Bytes(_, mutable, _) => if *mutable { "bytearray" } else { "bytes" },
-            Value::Generator(_) => "generator",
+            // A generator the program wrote is a generator; a walk this
+            // kernel made of its own, such as a map walked backwards,
+            // carries the word the reference gives that walk instead.
+            Value::Generator(state) => return state.try_borrow().ok().and_then(|g| g.walked.clone()).map_or_else(|| "generator".to_string(), |w| w.to_string()),
+            Value::View(view) => crate::value::view_kind(&view.1),
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",
             Value::Declined(_) => "NotImplementedType",

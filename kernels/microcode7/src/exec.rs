@@ -184,6 +184,10 @@ pub struct Suspension {
     /// The faults the body itself is handling, kept while it sleeps so
     /// that what is raised next stands behind them.
     holding: Vec<Value>,
+    /// The word the reference gives a walk of the very thing this one
+    /// was made from, where that walk is not a program's own: a map
+    /// walked backwards, say. Nothing for a generator the program wrote.
+    pub(crate) walked: Option<&'static str>,
 }
 
 impl Suspension {
@@ -191,7 +195,7 @@ impl Suspension {
         Self { frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
-            holding: Vec::new() }
+            holding: Vec::new(), walked: None }
     }
 }
 
@@ -2634,7 +2638,17 @@ impl<'a> Machine<'a> {
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: Some(members.into_iter()), ready: None, overseen, of: None,
+            walked: None,
         })))
+    }
+
+    /// A walk over a map's keys, values or pairs, taken backwards, named
+    /// the way the reference names such a walk.
+    fn walk_over_backwards(&self, source: &Value, members: Vec<Value>) -> Value {
+        let walk = self.walk_over(source, members);
+        let word = match source { Value::Window(_, portion) => crate::data::reversed_window_kind(*portion), _ => "dict_reversekeyiterator" };
+        if let Value::Generator(state) = &walk { state.borrow_mut().walked = Some(word); }
+        walk
     }
 
     /// The cell a map lives in, given the cell, a name for it, or a view
@@ -4104,6 +4118,25 @@ impl<'a> Machine<'a> {
                 if self.has_class_order() {
                     let mut entries=shared;
                     entries.extend(plan.methods.iter().map(|(key,p)|(key.clone(),Value::Routine(p.clone()))));
+                    // The body's own live namespace, where it made one,
+                    // stands last and settles every member it governs:
+                    // its current pairs replace whatever a place of the
+                    // same name still holds, and a member `del` took out
+                    // of it -- the name itself, or through `locals()` --
+                    // never lands among the class's own at all.
+                    if plan.has_book {
+                        if let Some(book) = given.next() {
+                            if let Value::Dict(pairs) = book.settled() {
+                                for (key, value) in pairs.iter() {
+                                    if matches!(key, Value::Text(_)) {
+                                        let named = key.bare();
+                                        entries.retain(|(old, _)| old != &named);
+                                        entries.push((named, value.clone()));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Written in the order of the writing, the methods
                     // behind the rest; the class is to hold them in the
                     // order in which the body named them.
@@ -5835,6 +5868,17 @@ impl<'a> Machine<'a> {
     /// bound to the value, save that the parts of a number are members
     /// read rather than methods left standing to be called.
     fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
+        // A view of a map's keys, values or pairs keeps a reading of
+        // the map itself under this name: a fresh view of its own,
+        // read-only, and equal to the map for as long as it stands.
+        if operation == "mapping" {
+            let raw = match &receiver {
+                Value::Window(owner, _) => Some(owner.clone()),
+                Value::Mutable(cell, _) | Value::Shared(cell) => match &*cell.borrow() { Value::Window(owner, _) => Some(owner.clone()), _ => None },
+                _ => None,
+            };
+            if let Some(owner) = raw { return Ok(Value::Window(owner, 'm')); }
+        }
         if ["numerator", "denominator", "real", "imag"].contains(&operation) {
             match receiver.settled() {
                 Value::Complex(pair) => return Ok(crate::complex::decimal_value(if operation == "real" { pair.0 } else { pair.1 })),
@@ -6427,7 +6471,7 @@ impl<'a> Machine<'a> {
             if let Some(source) = positional.first().filter(|source| Self::dict_cell(source).is_some()) {
                 let mut keys = self.gathered_members(source)?;
                 keys.reverse();
-                return Ok(Some(self.walk_over(source, keys)));
+                return Ok(Some(self.walk_over_backwards(source, keys)));
             }
         }
         if Self::is_core_primitive(op) {
@@ -9283,7 +9327,14 @@ impl<'a> Machine<'a> {
     /// though a refusal still names each of them apart.
     fn order_family(value: &Value) -> String {
         let word = value.kind_word();
-        match word.as_str() { "bytearray" => "bytes".to_owned(), "frozenset" => "set".to_owned(), _ => word }
+        match word.as_str() {
+            "bytearray" => "bytes".to_owned(),
+            // A view of a map's keys or its pairs orders itself beside
+            // a set the way a set does; a view of its values takes no
+            // order at all, as CPython leaves it.
+            "frozenset" | "dict_keys" | "dict_items" => "set".to_owned(),
+            _ => word,
+        }
     }
 
     /// The complaint that two values stand in no order at all, carrying
@@ -9467,14 +9518,18 @@ impl<'a> Machine<'a> {
         // operation reaching here has no use for them.
         if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
             if let ([left, right], [before, between, and, after]) = (v, self.table.strings("ext.op.order.unsupported")) {
-                let (left, right) = (left.settled(), right.settled());
-                let counts = |x: &Value| matches!(x, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_));
-                let texts = matches!((&left, &right), (Value::Text(_), Value::Text(_)));
+                // A view of a map's keys or its pairs is asked after by
+                // its own kind, not the row its members would settle
+                // to, so that it orders itself beside a set.
+                let family_of = |value: &Value| if matches!(value, Value::Window(..)) { Self::order_family(value) } else { Self::order_family(&value.settled()) };
                 // Two of one kind may still order themselves, as sets and
                 // rows do; two of different kinds, or of a kind without any
                 // order, cannot. The two set kinds count as one kind
                 // here, either holding entries the other may hold too.
-                let orderless = Self::order_family(&left) != Self::order_family(&right) || matches!(left, Value::Nil | Value::Dict(_));
+                let orderless = family_of(left) != family_of(right) || matches!(left.settled(), Value::Nil | Value::Dict(_));
+                let (left, right) = (left.settled(), right.settled());
+                let counts = |x: &Value| matches!(x, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_));
+                let texts = matches!((&left, &right), (Value::Text(_), Value::Text(_)));
                 if orderless && !(counts(&left) && counts(&right)) && !texts && !matches!((&left, &right), (Value::Thing(_), _) | (_, Value::Thing(_))) && math::below(&left, &right).is_none() {
                     let sign = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
                     return Err(format!("{before}{sign}{between}{}{and}{}{after}", left.kind_word(), right.kind_word()));
@@ -9587,13 +9642,20 @@ impl<'a> Machine<'a> {
         if let (Prim::Iterated | Prim::Backwards, [source]) = (op, v) {
             if self.table.flag("ext.stmt.yield.suspends") && self.table.has_any("ext.syntax.map.resized") && Self::dict_cell(source).is_some() {
                 let mut keys = self.gathered_members(source)?;
-                if op == Prim::Backwards { keys.reverse(); }
+                if op == Prim::Backwards {
+                    keys.reverse();
+                    return Ok(self.walk_over_backwards(source, keys));
+                }
                 return Ok(self.walk_over(source, keys));
             }
         }
         // A view of a map's keys or pairs meets a set, or another view,
-        // as a set would under the set signs.
-        if matches!(op, Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::Minus) && v.iter().any(|value| matches!(value, Value::Window(..))) {
+        // as a set would under the set signs, or ordered against one; the
+        // reading of the map itself is no set of anything and takes
+        // none of these signs.
+        let not_mapping = |value: &Value| !matches!(value, Value::Window(_, 'm'));
+        if matches!(op, Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::Minus | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge)
+            && v.iter().any(|value| matches!(value, Value::Window(..))) && v.iter().all(not_mapping) {
             let mut as_sets = Vec::new();
             for value in v {
                 as_sets.push(match value {
@@ -9609,9 +9671,29 @@ impl<'a> Machine<'a> {
         // map's keys or its pairs is a set as far as equality goes,
         // and answers a set or another such view by what it holds;
         // anything else — a row, a walk, a value alone — it is no
-        // equal of.
+        // equal of. The reading of the map itself answers `==` as the
+        // map does: every key with its very value.
         if matches!(op, Prim::Eq | Prim::Ne) && v.iter().any(|value| matches!(value, Value::Window(..))) {
             if let [a, b] = v {
+                let is_mapping = matches!(a, Value::Window(_, 'm')) || matches!(b, Value::Window(_, 'm'));
+                if is_mapping {
+                    let pairs_of = |value: &Value| -> Option<Vec<(Value, Value)>> {
+                        match value {
+                            Value::Dict(pairs) => Some(pairs.to_vec()),
+                            Value::Window(owner, 'm') => match owner.settled() { Value::Dict(pairs) => Some(pairs.to_vec()), _ => None },
+                            _ => None,
+                        }
+                    };
+                    let equal = match (pairs_of(a), pairs_of(b)) {
+                        (Some(one), Some(other)) => one.len() == other.len() && one.iter().all(|(k, val)| {
+                            let bare = |k: &Value| match k { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
+                            let want = bare(k);
+                            other.iter().any(|(k2, v2)| bare(k2).equals(&want) && val.equals(v2))
+                        }),
+                        _ => false,
+                    };
+                    return Ok(Value::Flag(if op == Prim::Ne { !equal } else { equal }));
+                }
                 let is_values = matches!(a, Value::Window(_, 'v')) || matches!(b, Value::Window(_, 'v'));
                 let equal = if is_values {
                     match (a, b) { (Value::Window(x, xp), Value::Window(y, yp)) => Rc::ptr_eq(x, y) && xp == yp, _ => false }
@@ -9631,10 +9713,20 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Flag(if op == Prim::Ne { !equal } else { equal }));
             }
         }
-        if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..)))
+        // `type` and `isinstance` ask after a view itself, keys or
+        // values or pairs, not after the row its members would stand
+        // as, so a view settles no further for either.
+        // `isdisjoint`, which a view of a map's keys or its pairs
+        // answers to as a set does, needs the view whole to tell that
+        // apart from a view of its values, which answers to no set
+        // working at all.
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14));
+        if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()) {
-            let settled: Vec<Value> = v.iter().map(Value::settled).collect();
+            let settled: Vec<Value> = v.iter().map(|value| {
+                if view_kept && matches!(value, Value::Window(..)) { value.clone() } else { value.settled() }
+            }).collect();
             return self.prim(op, name, &settled);
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
@@ -13200,6 +13292,14 @@ impl<'a> Machine<'a> {
     }
 
     fn work_set(&mut self, which: u8, values: &[Value]) -> Result<Value, String> {
+        // A view of a map's keys or its pairs answers `isdisjoint` as a
+        // set does, being turned into one first; a view of its values
+        // is no set and falls to the plain complaint below.
+        let turned;
+        let values = if which == 14 && matches!(values.first(), Some(Value::Window(_, portion)) if *portion != 'v' && *portion != 'm') {
+            turned = std::iter::once(Value::Set(Rc::new(RefCell::new(self.gather_set(values.first())?)))).chain(values[1..].iter().cloned()).collect::<Vec<_>>();
+            turned.as_slice()
+        } else { values };
         let wrong = || self.set_complaint("arguments", "");
         if which == 0 {
             if values.len() > 1 { return Err(wrong()); }
@@ -14221,16 +14321,26 @@ impl Machine<'_> {
         let built = crate::build::build(&ready, self.table, &hidden, HashMap::new(), false, 0)?;
         let exported = &built.globals[beginning..];
         self.idents.extend(exported.iter().map(|name| format!("\0import/{path}/{name}")));
+        // Every name the text can reach at its own top level gets a slot
+        // in the world, a builtin read by its bare word among them, so
+        // the text still finds one that way. Only a name the text itself
+        // bound — by writing to it, not merely reading it — is filed as
+        // one of the module's own members: CPython's module answers an
+        // attribute lookup from outside out of its own `__dict__` alone,
+        // never out of the builtins a name might otherwise fall back to.
+        let bound: std::collections::HashSet<&str> = built.bound_globally.iter().map(|word| word.as_str()).collect();
+        let module_names = self.table.strings("ext.system.module.name");
         let mut members = Vec::with_capacity(exported.len());
         {
             let mut world = self.outermost.cells.borrow_mut();
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
-                let initial = match self.table.strings("ext.system.module.name").contains(name) {
+                let is_module_name = module_names.contains(name);
+                let initial = match is_module_name {
                     true => Value::text(path), false => self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }),
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
-                members.push((name.clone(), link.clone()));
+                if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
             }
         }
@@ -15185,11 +15295,20 @@ impl Machine<'_> {
         // iter is handed is looked at before it is settled into a copy.
         let live = if op == Prim::Iterator && input.len() == 1 { Self::live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
+        let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some(owner.settled()), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
         // one; the value is kept before it settles into a copy.
         let standing = if op == Prim::GetMember { input.first().cloned() } else { None };
-        if op != Prim::IdentityOf { for item in &mut input { *item = item.settled(); } }
+        if op != Prim::IdentityOf {
+            for item in &mut input {
+                // `isinstance` asks after a view itself, not after the
+                // row its members would stand as, so that a claim made
+                // for its very kind is honoured.
+                if op == Prim::Belongs && matches!(item, Value::Window(..)) { continue; }
+                *item = item.settled();
+            }
+        }
         if keywords.is_empty() {
             if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }
             if op == Prim::Belongs && matches!(input.get(1), Some(Value::OctetKind { .. })) { return self.octet_routine(16, &input); }
@@ -15257,10 +15376,18 @@ impl Machine<'_> {
             Quoted => {
                 require(1, 1)?;
                 // An iterator is quoted by its kind and its identity, and
-                // the quoting does not advance it.
-                if matches!(input[0], Value::Iterator(_)) {
+                // the quoting does not advance it; so is a walk this
+                // kernel made of its own, such as a map walked
+                // backwards, which the reference words the same way.
+                let walk_named = matches!(&input[0], Value::Generator(state) if state.try_borrow().map_or(false, |g| g.walked.is_some()));
+                if matches!(input[0], Value::Iterator(_)) || walk_named {
                     let Value::Small(mark) = self.core_primitive(Prim::IdentityOf, name, vec![input[0].clone()], Vec::new())? else { return Err(self.core_complaint("core.unready", name)) };
                     return Ok(Value::text(&format!("<{} object at 0x{:x}>", input[0].kind_word(), mark)));
+                }
+                // A reading of the map itself is quoted as the map is,
+                // under the name CPython gives it.
+                if let Some(owner) = &window_owner {
+                    return Ok(Value::text(&format!("mappingproxy({})", owner.quoted(self.table.lone("system.real.render") == Some("shortest")))));
                 }
                 let quoted = input[0].quoted(self.table.lone("system.real.render") == Some("shortest"));
                 // A window upon a dictionary is quoted under its own name.
@@ -15311,6 +15438,7 @@ impl Machine<'_> {
                     Value::Thing(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Iterator(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Generator(p) => Rc::as_ptr(p) as usize as u64,
                     // A routine bound where it was defined is that
                     // definition reached that time: two reachings of the
                     // one definition are two routines.

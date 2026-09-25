@@ -1074,6 +1074,9 @@
   "ext.builtin.method.lstrip": [
     "lstrip"
   ],
+  "ext.builtin.method.mapping": [
+    "mapping"
+  ],
   "ext.builtin.method.pop": [
     "pop"
   ],

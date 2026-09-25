@@ -214,6 +214,10 @@ pub struct Generator {
     pub held: Vec<Value>,
     /// A value to raise where the body left off, rather than hand in.
     pub hurled: Option<Value>,
+    /// The word the reference gives a walk of the very thing this one
+    /// was made from, where that walk is not a program's own: a map
+    /// walked backwards, say. Nothing for a generator the program wrote.
+    pub walked: Option<Rc<str>>,
 }
 
 impl Generator {
@@ -221,7 +225,7 @@ impl Generator {
         Self { program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
-            resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None }
+            resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
     }
 }
 
@@ -622,6 +626,18 @@ pub struct Wording<'a> {
     pub value_keys: bool,
 }
 
+/// The word CPython gives a view of a map's keys, values or pairs, or
+/// the read-only reading of the map itself a view keeps beside it.
+pub fn view_kind(tag: &str) -> &'static str {
+    match tag { "keys" => "dict_keys", "values" => "dict_values", "mapping" => "mappingproxy", _ => "dict_items" }
+}
+
+/// The word CPython gives a walk taken backwards over a map's keys,
+/// values or pairs.
+pub fn reversed_view_kind(tag: &str) -> &'static str {
+    match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+}
+
 impl Value {
     pub fn keeps_point(&self) -> bool {
         match self {
@@ -652,7 +668,10 @@ impl Value {
                 Value::array(pairs.iter().map(|(k,v)| {
                     let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
                     match view.1.as_str() {
-                        "keys" => bare, "values" => v.clone(), _ => Value::Tuple(Rc::new(vec![bare,v.clone()])),
+                        // A reading of the map itself walks, and is
+                        // measured, the very way its keys are: the map
+                        // read only is asked after by key alone.
+                        "keys" | "mapping" => bare, "values" => v.clone(), _ => Value::Tuple(Rc::new(vec![bare,v.clone()])),
                     }
                 }).collect())
             }
@@ -1073,6 +1092,7 @@ impl Value {
         if let Some(told) = self.exception_message(sp) { return told; }
         match self {
             Value::Collection(cell, quote) => shown_once(cell, "[...]", |held| if *quote { held.representation(sp) } else { held.display(sp) }),
+            Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.contents().representation(sp)),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
@@ -1218,6 +1238,7 @@ impl Value {
             // read from the kind itself is bound to no thing at all and
             // is named with the kind it belongs to instead.
             Value::ValueMethod(pair) => method_written(&pair.0, &pair.1, Rc::as_ptr(pair) as *const u8 as usize),
+            Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.contents().plain()),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             // A builtin word naming a kind stands for the kind itself,
             // and is written as the reference writes a class; every

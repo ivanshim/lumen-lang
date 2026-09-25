@@ -893,4 +893,13 @@ pub struct Plan {
     /// methods among the rest. The namespace the class shows follows
     /// this; a name left out of it comes after those named here.
     pub member_order: Vec<String>,
+    /// Whether one more value stands on the stack past every member
+    /// already named above: the class body's own live namespace,
+    /// asked for or written through by `locals()`/`vars()` there. Its
+    /// pairs stand for the members `shared_names` leaves out -- the
+    /// ones the body bound only by writing through that namespace, or
+    /// took back out of it with `del` -- and settle what those become
+    /// on the class formed, last so a member named twice keeps its
+    /// place among `shared_names` but stands on the newer value.
+    pub has_book: bool,
 }
