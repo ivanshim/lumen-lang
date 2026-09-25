@@ -536,6 +536,7 @@ pub struct Lang {
     pub exception_suppress: Option<String>,
     /// The name of the kind of a trace, where the language has one.
     pub exception_traceback: Option<String>,
+    pub trace_fields: Vec<String>,
     /// The fuller account of an exception: the method that adds a note
     /// and the list the notes stand in, the member holding a traceback
     /// and the method that would set one, the members naming an absent
@@ -2452,6 +2453,7 @@ impl Lang {
             exception_context: r.head("ext.builtin.exceptions.context")?,
             exception_suppress: r.head("ext.builtin.exceptions.suppress")?,
             exception_traceback: r.head("ext.builtin.exceptions.traceback")?,
+            trace_fields: r.strings("ext.builtin.exceptions.traceback").unwrap_or_default(),
             note_method: r.head("ext.builtin.exceptions.note")?,
             notes_member: r.head("ext.builtin.exceptions.notes")?,
             note_invalid: r.head("ext.builtin.exceptions.note.invalid")?,

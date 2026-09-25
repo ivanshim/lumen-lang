@@ -736,6 +736,14 @@ impl<'a> Engine<'a> {
         self.class_apply(bound, vec![Value::text(name)])
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if let Value::Trace(trace) = &subject {
+            return match self.lang.trace_fields.iter().position(|key| key == name) {
+                Some(1) => Ok(Value::Small(trace.line as i64)),
+                Some(2) => Ok(trace.next.clone()),
+                Some(3) => Ok(Value::Object(trace.frame.clone())),
+                _ => Err(self.missing_member(&subject, name)),
+            };
+        }
         if let Value::Adapter(property) = &subject {
             if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
         }
@@ -822,6 +830,9 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Fields(o.clone()));
                 }
                 let member=self.class_value(&o.class,name);
+                if member.is_none() && self.exception_class(&o.class) && self.exception_method_named(name) {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                }
                 // A member that takes writes speaks before the thing's own
                 // fields; any other member speaks after them.
                 if member.as_ref().map_or(false,|m|self.takes_writes(m)) {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class.clone());}
@@ -911,6 +922,13 @@ impl<'a> Engine<'a> {
     }
     fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().map(|(n,v)|(Value::text(n),v.clone())).collect()))}
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        if self.lang.traceback_member.as_deref() == Some(name) && matches!(&subject, Value::Object(o) if self.exception_class(&o.class)) {
+            match &value {
+                Some(Value::Null | Value::Trace(_)) => {},
+                None => return Err("TypeError: __traceback__ may not be deleted".into()),
+                _ => return Err("TypeError: __traceback__ must be a traceback or None".into()),
+            }
+        }
         let absent=self.missing_member(&subject,name);
         match &subject {
             Value::Object(o) => {

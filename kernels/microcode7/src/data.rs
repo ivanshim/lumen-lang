@@ -191,6 +191,13 @@ pub enum IteratorKind {
     Busy,
 }
 
+#[derive(Debug)]
+pub struct TraceLink {
+    pub location: u32,
+    pub activation: Rc<Thing>,
+    pub following: Value,
+}
+
 #[derive(Clone)]
 pub enum Value {
     Mutable(Rc<RefCell<Value>>, bool),
@@ -199,7 +206,7 @@ pub enum Value {
     Row(Rc<Vec<Value>>),
     Intrinsic(Prim, Rc<str>),
     Iterator(Rc<RefCell<IteratorState>>),
-    Backtrace(Rc<str>),
+    Backtrace(Rc<TraceLink>),
     Keyed(Rc<Value>, Rc<Value>),
     Attributes(Rc<Thing>),
     Traversal(Rc<Value>, Rc<RefCell<Option<Value>>>),
@@ -956,6 +963,7 @@ impl Value {
             // when they carry the same name.
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
+            (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
@@ -985,6 +993,7 @@ impl Value {
             (Value::Huge(x), Value::Huge(y)) => Rc::ptr_eq(x, y),
             (Value::Vector(x), Value::Vector(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
             (Value::Dict(x), Value::Dict(y)) => Rc::ptr_eq(x, y),
+            (Value::Backtrace(x), Value::Backtrace(y)) => Rc::ptr_eq(x, y),
             (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Nil, Value::Nil) => true,
@@ -1240,7 +1249,7 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Generator(_) => "<generator>".into(),
             Value::Adorned(_) => String::from("<descriptor>"),
-            Value::Backtrace(words) => words.to_string(),
+            Value::Backtrace(_) => String::from("<traceback object>"),
             Value::Keyed(value, _) => value.bare(),
             Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
             Value::Refusal(word) => word.to_string(),

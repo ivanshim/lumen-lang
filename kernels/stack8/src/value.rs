@@ -189,6 +189,7 @@ pub struct Step {
 /// A walk keeps its own cells and the part of the stack still wanted.
 #[derive(Debug)]
 pub struct Generator {
+    pub trace_frame: Option<Rc<Instance>>,
     pub program: Option<Rc<Routine>>,
     pub frame: Vec<Value>,
     pub stack: Vec<Value>,
@@ -222,7 +223,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
@@ -276,6 +277,13 @@ pub enum CursorSource {
     Selected(Value, Value),
 }
 
+#[derive(Debug)]
+pub struct Traceback {
+    pub line: u32,
+    pub frame: Rc<Instance>,
+    pub next: Value,
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Collection(Rc<RefCell<Value>>, bool),
@@ -283,7 +291,7 @@ pub enum Value {
     View(Rc<(Value, String)>),
     Native(crate::code::Builtin, Rc<str>),
     Cursor(Rc<RefCell<CursorState>>),
-    Trace(Rc<str>),
+    Trace(Rc<Traceback>),
     Hashed(Rc<(Value, Value)>),
     Fields(Rc<Instance>),
     Walking(Rc<RefCell<(Value, Option<Value>)>>),
@@ -1017,6 +1025,7 @@ impl Value {
     /// pointer.
     pub fn same_value(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
             (Value::Counted(x), Value::Counted(y)) => Rc::ptr_eq(x, y),
             (Value::Collection(x, _), Value::Collection(y, _)) => Rc::ptr_eq(x, y),
             (Value::Bond(x), Value::Bond(y)) => Rc::ptr_eq(x, y),
@@ -1093,6 +1102,7 @@ impl Value {
             (Value::Tie(a), Value::Tie(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
             // Two names for one object are the same object; two objects
             // of one class are not.
+            (Value::Trace(a), Value::Trace(b)) => Rc::ptr_eq(a, b),
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
             (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
@@ -1343,7 +1353,7 @@ impl Value {
             Value::Generator(_) => "<generator>".to_string(),
             Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
             Value::Descriptor(_) => "<descriptor>".to_string(),
-            Value::Trace(words) => words.to_string(),
+            Value::Trace(_) => "<traceback object>".to_string(),
             Value::Hashed(pair) => pair.0.plain(),
             Value::Fields(o) => format!("<attributes of {}>", o.class.name),
             Value::Declined(word) => word.to_string(),

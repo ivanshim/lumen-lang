@@ -161,6 +161,7 @@ enum Stepped {
 }
 
 pub struct Suspension {
+    trace_state: Option<Rc<Thing>>,
     frame: Rc<Env>,
     owed: Vec<Owed>,
     found: Vec<Value>,
@@ -192,7 +193,7 @@ pub struct Suspension {
 
 impl Suspension {
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
-        Self { frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
+        Self { trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
             holding: Vec::new(), walked: None }
@@ -200,6 +201,7 @@ impl Suspension {
 }
 
 pub struct Machine<'a> {
+    active_trace: Option<Rc<Thing>>,
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
     /// Names now under construction: a module reading its own name back
@@ -857,7 +859,15 @@ impl<'a> Machine<'a> {
             return Ok(Value::Nil);
         }
         if self.table.single("ext.builtin.exceptions.traceback.with") == Some(word) {
-            return if matches!(given, [Value::Nil]) { Ok(Value::Thing(thing)) } else { Err(unready.into()) };
+            match given {
+                [value @ (Value::Nil | Value::Backtrace(_))] => {
+                    if let Some(key) = self.table.single("ext.builtin.exceptions.traceback.member") {
+                        for (field, target) in thing.holds.borrow_mut().iter_mut() { if field == key { *target = value.clone(); break; } }
+                    }
+                    return Ok(Value::Thing(thing));
+                }
+                _ => return Err(String::from("TypeError: __traceback__ must be a traceback or None").into()),
+            }
         }
         let whole = Value::Thing(thing);
         let Some((kind, heading, _)) = Self::gathered(&whole) else { return Err(unready.into()) };
@@ -1005,6 +1015,7 @@ impl<'a> Machine<'a> {
             pending: Vec::new(),
             made: 0,
             row: 0,
+            active_trace: None,
             holding_fault: Vec::new(),
             holding_below: 0,
             asking_presence: false,
@@ -2279,7 +2290,7 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None) {
             Ok(built) => built,
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
@@ -2352,7 +2363,11 @@ impl<'a> Machine<'a> {
             self.written_in = Rc::from(place.as_str());
         }
         let top = self.outermost.clone();
+        let surrounding = self.active_trace.take();
+        self.frames_named.push(built.program.clone());
         let ran = self.value_of(&built.program.body, &top);
+        self.frames_named.pop();
+        self.active_trace = surrounding;
         self.written_in = was_in;
         self.row = was_on;
         match ran {
@@ -2792,6 +2807,7 @@ impl<'a> Machine<'a> {
             _ => None,
         };
         Value::Generator(Rc::new(RefCell::new(Suspension {
+            trace_state: None,
             holding: Vec::new(),
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
@@ -3122,7 +3138,13 @@ impl<'a> Machine<'a> {
         let held_below = std::mem::replace(&mut self.holding_below, self.holding_fault.len());
         let mut mine = std::mem::take(&mut state.holding);
         self.holding_fault.append(&mut mine);
+        let caller_trace = std::mem::replace(&mut self.active_trace, state.trace_state.take());
+        let caller_source = self.written_in.clone();
+        if let Some(place) = named.as_ref().and_then(|p| p.written_in.as_ref()) { self.written_in = place.clone(); }
         let outcome = self.unfold(&mut state, sent, hurled);
+        let outcome = self.traced_result(outcome);
+        state.trace_state = std::mem::replace(&mut self.active_trace, caller_trace);
+        self.written_in = caller_source;
         let mark = self.holding_below.min(self.holding_fault.len());
         state.holding = self.holding_fault.split_off(mark);
         self.holding_below = held_below;
@@ -3165,7 +3187,11 @@ impl<'a> Machine<'a> {
         {
             match work {
                 Owed::Find(node) => match node {
-                    Form::OnLine(row, body) => { self.row = row; state.owed.push(Owed::Find(*body)); }
+                    Form::OnLine(row, body) => {
+                        self.row = row;
+                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
+                        state.owed.push(Owed::Find(*body));
+                    }
                     Form::Write(place, body) => { state.owed.push(Owed::Store(place)); state.owed.push(Owed::Find(*body)); }
                     Form::Apply(Callee::Prim(Prim::Seq, _), parts) => {
                         if parts.is_empty() { state.found.push(Value::Nil); }
@@ -3433,6 +3459,7 @@ impl<'a> Machine<'a> {
                     };
                     let Escape::Thrown(raised) = &escape else { continue };
                     let raised = raised.clone();
+                    self.save_traceback(&raised, false);
                     if let Some(address) = &plan.context {
                         match self.leaving(&frame, address, Some(&raised)) {
                             Ok(true) => { state.found.push(Value::Nil); return Ok(()); }
@@ -3468,7 +3495,7 @@ impl<'a> Machine<'a> {
         let unready = self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned();
         let arguments = match raised {
             None => vec![Value::Nil; 3],
-            Some(value @ Value::Thing(thing)) => vec![Value::Blueprint(thing.of.clone()), value.clone(), Value::Backtrace(Rc::from(unready.as_str()))],
+            Some(value @ Value::Thing(thing)) => vec![Value::Blueprint(thing.of.clone()), value.clone(), self.traceback_of(value)],
             Some(_) => return Err(unready.into()),
         };
         let preceding = self.holding_fault.len();
@@ -3547,6 +3574,57 @@ impl<'a> Machine<'a> {
                 Err(met) => self.unwind(state, met)?,
             }
         }
+    }
+
+    fn traceback_of(&self, value: &Value) -> Value {
+        let Value::Thing(thing) = value else { return Value::Nil };
+        let Some(key) = self.table.single("ext.builtin.exceptions.traceback.member") else { return Value::Nil };
+        thing.holds.borrow().iter().find_map(|(name, held)| (name == key).then(|| held.clone())).unwrap_or(Value::Nil)
+    }
+
+    fn traced_result<T>(&mut self, result: Result<T, Escape>) -> Result<T, Escape> {
+        if result.is_ok() { return result; }
+        if self.table.strings("ext.builtin.exceptions.traceback").len() < 11 { return result; }
+        let outcome = match result {
+            Err(Escape::Error(text)) => Err(match self.got_away.take() {
+                Some(escape) => escape,
+                None => self.as_raised(&text).map(Escape::Thrown).unwrap_or(Escape::Error(text)),
+            }),
+            rest => rest,
+        };
+        if let Err(Escape::Thrown(value)) = &outcome { self.save_traceback(value, false); }
+        outcome
+    }
+
+    fn save_traceback(&mut self, value: &Value, repeat: bool) {
+        let Value::Thing(raised) = value else { return };
+        let keys = self.table.strings("ext.builtin.exceptions.traceback").to_vec();
+        if keys.len() < 11 { return; }
+        let Some(slot) = self.table.single("ext.builtin.exceptions.traceback.member").map(str::to_owned) else { return };
+        if !raised.holds.borrow().iter().any(|(key, _)| key == &slot) { return; }
+        if self.active_trace.is_none() {
+            let program = self.frames_named.last();
+            let name = program.filter(|p| p.ident != "<program>").map_or(keys[10].as_str(), |p| p.ident.as_str());
+            let first = program.map_or(1, |p| p.declared_on);
+            let code_members = vec![(keys[6].clone(), Value::text(name)), (keys[7].clone(), Value::Text(self.written_in.clone())), (keys[8].clone(), Value::Small(first as i64))];
+            let of = self.code_blueprint();
+            self.made += 1;
+            let code = Value::Thing(Rc::new(Thing { of, holds: RefCell::new(code_members), turn: self.made }));
+            let frame_type = Rc::new(Blueprint { name: keys[9].clone(), under: None, presentation: None,
+                parents: Vec::new(), ancestry: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
+            self.made += 1;
+            self.active_trace = Some(Rc::new(Thing { of: frame_type, turn: self.made, holds: RefCell::new(vec![
+                (keys[4].clone(), Value::Small(self.row as i64)), (keys[5].clone(), code),
+            ]) }));
+        }
+        let activation = self.active_trace.as_ref().unwrap().clone();
+        let following = self.traceback_of(value);
+        if let Value::Backtrace(link) = &following {
+            if !repeat && Rc::ptr_eq(&link.activation, &activation) { return; }
+        }
+        let link = crate::data::TraceLink { location: self.row, activation, following };
+        let mut fields = raised.holds.borrow_mut();
+        if let Some((_, field)) = fields.iter_mut().find(|(key, _)| key == &slot) { *field = Value::Backtrace(Rc::new(link)); }
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
@@ -3655,6 +3733,7 @@ impl<'a> Machine<'a> {
                 }
                 if *row > 0 {
                     self.row = *row;
+                if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(*row as i64); }
                 }
                 match kind {
                     Some(word) => {
@@ -4033,6 +4112,7 @@ impl<'a> Machine<'a> {
             }
             Form::OnLine(row, inner) => {
                 self.row = *row;
+                if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(*row as i64); }
                 // A statement reached is a fault gone by: whatever calls
                 // an earlier one was raised under are none of its
                 // business.
@@ -4047,7 +4127,8 @@ impl<'a> Machine<'a> {
                 if let Some(over) = self.past_its_room() {
                     return Err(over);
                 }
-                self.value_of(inner, frame)
+                let outcome = self.value_of(inner, frame);
+                self.traced_result(outcome)
             }
             Form::Missing(slot) => {
                 let f = ascend(frame, slot.up);
@@ -4098,6 +4179,7 @@ impl<'a> Machine<'a> {
                 Err(Escape::Thrown(raised))
             }
             Form::Attempt { context, body, clauses, last, otherwise } => {
+                let context_line = self.row;
                 if self.table.has_any("ext.stmt.catch.group.unsupported") && clauses.iter().any(|part| part.grouped) {
                     return Err(self.table.single("ext.stmt.catch.group.unsupported").unwrap_or_default().to_string().into());
                 }
@@ -4112,6 +4194,7 @@ impl<'a> Machine<'a> {
                     },
                     result => result,
                 };
+                let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
                     if !matches!(&manager, Value::Thing(_)) { return body_result; }
@@ -4120,7 +4203,7 @@ impl<'a> Machine<'a> {
                     }
                     let arguments = if let Err(Escape::Thrown(v)) = &body_result {
                         let kind = match v { Value::Thing(t) => Value::Blueprint(t.of.clone()), _ => Value::Nil };
-                        vec![kind, v.clone(), Value::Backtrace(Rc::from(self.table.single("ext.stmt.class.special.unready").unwrap_or_default()))]
+                        vec![kind, v.clone(), self.traceback_of(v)]
                     } else { vec![Value::Nil; 3] };
                     // The raised value stays held while the manager lets
                     // the body go, so whatever the leaving raises keeps it
@@ -4131,7 +4214,16 @@ impl<'a> Machine<'a> {
                     // not be mistaken for what this one raises: only a
                     // fault this very call sets belongs to it.
                     self.got_away = None;
+                    let body_line = self.row;
+                    if self.table.has_any("ext.builtin.exceptions.traceback") {
+                        self.row = context_line;
+                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
+                    }
                     let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
+                    if asked.is_ok() && self.table.has_any("ext.builtin.exceptions.traceback") {
+                        self.row = body_line;
+                        if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
+                    }
                     let asked = self.raised_if_error(asked);
                     self.holding_fault.truncate(preceding);
                     let answer = asked?.ok_or_else(|| self.bad_answer())?;
@@ -4155,6 +4247,10 @@ impl<'a> Machine<'a> {
                         self.holding_fault.push(raised.clone());
                         let chosen = (|| {
                             for clause in clauses {
+                                if self.table.has_any("ext.builtin.exceptions.traceback") {
+                                    self.row = clause.source_line;
+                                    if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
+                                }
                                 let accepts = match &clause.choices {
                                     None => match &raised {
                                         Value::Thing(value) => clause.classes.iter().any(|name| value.of.goes_by(name, self.classes_either_way)),
@@ -4563,6 +4659,7 @@ impl<'a> Machine<'a> {
                     }
                     self.keep_context(&raised);
                     self.raised_on = self.row;
+                    self.save_traceback(&raised, true);
                     Err(Escape::Thrown(raised))
                 }
                 // A routine written where a value stands takes names
@@ -7404,6 +7501,7 @@ impl<'a> Machine<'a> {
                 from_library,
             });
         }
+        let caller_trace = if mine { self.active_trace.take() } else { None };
         let outcome: Res = loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
@@ -7501,6 +7599,9 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         };
+        let outcome = self.traced_result(outcome);
+        if mine { self.active_trace = caller_trace; }
+        if self.table.has_any("ext.builtin.exceptions.traceback") { self.row = was_on_row; }
         self.standing -= counted;
         if mine {
             self.frames_named.pop();
@@ -8850,7 +8951,7 @@ impl<'a> Machine<'a> {
             }
             return self.object_words(&inner, quoted || represented);
         }
-        if let Value::Backtrace(words) = subject { return Err(words.to_string()); }
+        if matches!(subject, Value::Backtrace(_)) { return Ok(String::from("<traceback object>")); }
         if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) {
             // A collection standing in no cell of its own is shown the
             // same way, by the walk that stops where it comes round.
@@ -9224,7 +9325,17 @@ impl<'a> Machine<'a> {
             }
         }
         let value = match (operation, operands) {
-            (Prim::Of | Prim::HasMember, [Value::Backtrace(words), _]) => return Err(words.to_string()),
+            (Prim::Of | Prim::HasMember, [Value::Backtrace(link), Value::Text(member)]) => {
+                let roster = self.table.strings("ext.builtin.exceptions.traceback");
+                let at = roster.iter().position(|key| key == member.as_ref());
+                if operation == Prim::HasMember { return Ok(Some(Value::Flag(matches!(at, Some(1..=3))))); }
+                return match at {
+                    Some(1) => Ok(Some(Value::Small(link.location as i64))),
+                    Some(2) => Ok(Some(link.following.clone())),
+                    Some(3) => Ok(Some(Value::Thing(link.activation.clone()))),
+                    _ => Err(format!("AttributeError: 'traceback' object has no attribute '{}'", member)),
+                };
+            },
             // What whole number, real, magnitude, or positive form a thing
             // stands for, by its own methods where it has them.
             (Prim::AsInt | Prim::AsReal | Prim::Magnitude | Prim::Positive | Prim::NumberAlone, [subject @ Value::Thing(_)]) => {
@@ -12036,6 +12147,7 @@ impl<'a> Machine<'a> {
                     // Every read of a method ties it afresh: two reads are never one value.
                     (Value::Method(..), Value::Method(..)) => false,
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
+                    (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -14753,7 +14865,7 @@ impl Machine<'_> {
             Ok(ready) => ready,
             Err((words, line, offset)) => return Err(self.text_unreadable_at(0, words, filename, line, offset, None, &text)),
         };
-        let built = match crate::build::build_module_position(&ready, self.table, &hidden) {
+        let built = match crate::build::build_module_position(&ready, self.table, &hidden, Rc::from(filename)) {
             Ok(built) => built,
             Err((words, line, (column, end_column, end_line))) => return Err(self.text_unreadable_at(0, words, filename, line, column, Some((end_line, end_column)), &text)),
         };
@@ -15491,7 +15603,7 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str()))) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
@@ -15501,7 +15613,9 @@ impl<'a> Machine<'a> {
         let (was_in, was_on) = (self.written_in.clone(), self.row);
         self.written_in = Rc::from(file.as_str());
         self.frames_named.push(built.program.clone());
+        let outer_trace = self.active_trace.take();
         let ran = self.value_of(&built.program.body, &mine);
+        self.active_trace = outer_trace;
         self.frames_named.pop();
         self.written_in = was_in;
         self.row = was_on;
@@ -15563,7 +15677,11 @@ impl<'a> Machine<'a> {
         let (was_in, was_on) = (self.written_in.clone(), self.row);
         self.written_in = Rc::from(file);
         let top = self.outermost.clone();
+        let prior = self.active_trace.take();
+        self.frames_named.push(built.program.clone());
         let ran = self.value_of(&built.program.body, &top);
+        self.frames_named.pop();
+        self.active_trace = prior;
         self.written_in = was_in;
         self.row = was_on;
         let answer = match ran {

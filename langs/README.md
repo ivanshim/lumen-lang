@@ -4253,7 +4253,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` `: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
@@ -5208,3 +5208,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 `ext.builtin.exceptions.syntax` names the message, filename, start line and
 column, source text, end line and column, and print-file flag of a syntax
 exception. Its optional detail argument supplies four or six position values.
+
+The `ext.builtin.exceptions.traceback` roster starts with the traceback class
+name, followed by the line, next and frame members, frame line and code members,
+code name, filename and first-line members, frame class name and module code name.
+Frames are allocated on demand when an exception first records its location.

@@ -206,7 +206,7 @@ def exc_info():
     held = __fault_in_hand()
     if held is None:
         return (None, None, None)
-    return (type(held), held, None)
+    return (type(held), held, held.__traceback__)
 
 # No path to a program that could run this one again is handed to a
 # library here, and the empty string is what a Python says when it

@@ -861,7 +861,7 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback"
+    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"

@@ -311,17 +311,18 @@ pub fn build_within_at(
     before: u32,
     within: Option<(String, Option<String>)>,
     value_only: bool,
+    origin: Option<Rc<str>>,
 ) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only).map_err(|said| (said, at.get(), column.get()))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only).map_err(|said| (said, at.get(), column.get()))
 }
 
-pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String]) -> Result<Built, (String, u32, (usize, usize, u32))> {
+pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String], origin: Rc<str>) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let line = std::cell::Cell::new(0);
     let fatal = std::cell::Cell::new(false);
     let span = std::cell::Cell::new((1, 1, 0));
-    build_marking(tokens, table, seeded, HashMap::new(), false, 0, None, Some((&line, &fatal, &span)), None, None, false, false)
+    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), Some((&line, &fatal, &span)), None, None, false, false)
         .map_err(|message| (message, line.get(), span.get()))
 }
 
@@ -2772,7 +2773,7 @@ impl<'a> Builder<'a> {
                 if !takes_all && !(bracketed && self.on_any("ext.stmt.catch.tuple.close")) {
                     loop {
                         let selector = match self.expr(0)? {
-                            Form::Read(place) => Form::Glance(place),
+                            Form::Read(place) if !table.has_any("ext.builtin.exceptions.syntax") => Form::Glance(place),
                             other => other,
                         };
                         selectors.push(selector);
@@ -2819,7 +2820,7 @@ impl<'a> Builder<'a> {
                     all_end = Some((token.column + token.lexeme.chars().count(), token.row)); break;
                 }
             }
-            clauses.push(Clause { classes, choices, grouped, takes_all, held, body });
+            clauses.push(Clause { source_line: self.tokens[origin].row.saturating_sub(self.before), classes, choices, grouped, takes_all, held, body });
             self.skip_line_ends();
         }
         // Where the table has words for it, grouped clauses may not

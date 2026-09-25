@@ -3804,7 +3804,7 @@ impl<'a> Compiler<'a> {
                     self.expr(0)?;
                     let to = self.mark();
                     // A lone missing name takes nothing, without a complaint.
-                    if to == from + 1 {
+                    if to == from + 1 && lang.syntax_members.is_empty() {
                         if let Instr::Read(cell) = self.piece().instrs[from].clone() {
                             self.piece().instrs[from] = Instr::Glance(cell);
                         }
@@ -3836,7 +3836,7 @@ impl<'a> Compiler<'a> {
                 let last = (clause_at..self.pos).rev().find(|i| !matches!(self.tokens[*i].shape, Shape::LineEnd | Shape::Close | Shape::Open)).unwrap_or(clause_at);
                 default_span = Some((clause_at, last));
             }
-            clauses.push(Taking { kinds, held, body: arm, grouped, bare });
+            clauses.push(Taking { line: self.tokens[clause_at].row.saturating_sub(self.before as usize) as u32, kinds, held, body: arm, grouped, bare });
             self.skip_seps();
         }
         // Grouped clauses go together or not at all, and each names
