@@ -14988,12 +14988,14 @@ impl Engine<'_> {
         format!("{}{}{}{}{}{}", told, words[0], file, words[1], row.max(1), words[2])
     }
 
-    /// The tokens of text handed over to be read, or the language's
-    /// words for text that cannot be read.
-    fn text_tokens(&self, source: &str) -> Res<Vec<crate::lex::Token>> {
+    /// The tokens of text handed over to be read, or the reading's own
+    /// words for why it could not be, with the line it stopped on: the
+    /// same complaint a file being run keeps, so text read through
+    /// `compile`, `eval` or `exec` is told apart the same way a file
+    /// is, through `text_syntax`.
+    fn text_tokens(&self, source: &str) -> Result<Vec<crate::lex::Token>, (String, usize)> {
         crate::lex::lex_at(source, self.lang)
             .and_then(|tokens| crate::layout::layout(tokens, self.lang, 0))
-            .map_err(|_| self.lang.source_syntax.clone().unwrap_or_default())
     }
 
     /// The builtins that read text, hand out names, or fetch a module.
@@ -15049,7 +15051,10 @@ impl Engine<'_> {
         // Flags and inheritance are read and let be; another setting of
         // optimisation than the ordinary is not honoured.
         if args.get(5).map_or(false, |value| !matches!(value, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(self.source_unready()); }
-        let tokens = self.text_tokens(if mode == 1 { source.trim() } else { &source })?;
+        let tokens = match self.text_tokens(if mode == 1 { source.trim() } else { &source }) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+        };
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
@@ -15121,8 +15126,11 @@ impl Engine<'_> {
                 None => self.run_text_booked(source, file, mode, near, None),
             };
         }
-        let tokens = self.text_tokens(source)?;
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+        };
         let (program, shown) = self.text_program(&tokens, &file, mode, None)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
@@ -15136,8 +15144,11 @@ impl Engine<'_> {
     /// makes is gone once the text is done.
     fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>) -> Res<Value> {
         let source = if mode == 1 { source.trim() } else { source };
-        let tokens = self.text_tokens(source)?;
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+        };
         // Text read inside a method is read as standing in that method's
         // class, as text read where a language has no manners of reading
         // already is.
@@ -15175,8 +15186,11 @@ impl Engine<'_> {
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Res<Value> {
-        let tokens = self.text_tokens(source)?;
-        let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+        };
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::default();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }

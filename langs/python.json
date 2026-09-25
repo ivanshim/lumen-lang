@@ -1868,7 +1868,7 @@
     "\\"
   ],
   "ext.lexical.line_continuation.amiss": [
-    "unexpected character after line continuation character"
+    "SyntaxError: unexpected character after line continuation character"
   ],
   "ext.lexical.number.amiss": [
     "invalid numeric literal"
@@ -1928,6 +1928,18 @@
   "ext.lexical.string.amiss": [
     "invalid string literal"
   ],
+  "ext.lexical.string.unterminated": [
+    "SyntaxError: unterminated string literal"
+  ],
+  "ext.lexical.string.unterminated.triple": [
+    "SyntaxError: unterminated triple-quoted string literal"
+  ],
+  "ext.lexical.string.prefix.format.unterminated": [
+    "SyntaxError: unterminated f-string literal"
+  ],
+  "ext.lexical.string.prefix.format.unterminated.triple": [
+    "SyntaxError: unterminated triple-quoted f-string literal"
+  ],
   "ext.lexical.string.bytes.ascii": [
     "SyntaxError: bytes can only contain ASCII literal characters"
   ],
@@ -1960,6 +1972,11 @@
   ],
   "ext.lexical.string.prefix.format.unready": [
     "NotImplementedError: formatted strings are not supported"
+  ],
+  "ext.lexical.string.prefix.incompatible": [
+    "SyntaxError: '",
+    "' and '",
+    "' prefixes are incompatible"
   ],
   "ext.lexical.string.prefix.plain": [
     "u",

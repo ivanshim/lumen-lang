@@ -613,6 +613,17 @@ only. The extension labels so far, all from PHP:
   binary, octal and hexadecimal integer formats are supported. Reals
   retain a decimal point or an exponent with at least two digits.
   Unsupported presentations are evaluated and then refused.
+- `ext.lexical.string.prefix.incompatible`: what the language says of a
+  run of prefix letters that names two kinds that cannot stand
+  together (raw and plain, byte and plain, byte and format), a word on
+  either side of the two letters named, read the way `about_two` reads
+  it.
+- `ext.lexical.string.unterminated`, `.unterminated.triple`,
+  `ext.lexical.string.prefix.format.unterminated` and
+  `.prefix.format.unterminated.triple`: what the language says of a
+  quoted run (plain or formatted, one mark or the tripled one) that
+  reaches the end of the text before its closing mark. Absent, the
+  reading falls back to `ext.lexical.string.amiss`.
 - `ext.lexical.string.bytes.unavailable` and
   `ext.lexical.string.value.unready`: diagnostic words retained for
   implementations that cannot hold byte text or render a field. The
@@ -4590,7 +4601,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
 | `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
-| `ext.lexical.line_continuation.amiss` | - | - | `unexpected character after line continuation character` | - | - | - | - | - | - | - |
+| `ext.lexical.line_continuation.amiss` | - | - | `SyntaxError: unexpected character after line continuation character` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | `invalid numeric literal` | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.amiss.binary` | - | - | `SyntaxError: invalid binary literal` | - | - | - | - | - | - | - |
@@ -4629,9 +4640,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.bytes.unready` | - | - | `NotImplementedError: bytes literals are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.format` | - | - | `f` `F` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.format.unready` | - | - | `NotImplementedError: formatted strings are not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.format.unterminated` | - | - | `SyntaxError: unterminated f-string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.format.unterminated.triple` | - | - | `SyntaxError: unterminated triple-quoted f-string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.incompatible` | - | - | `SyntaxError: '` `' and '` `' prefixes are incompatible` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
+| `ext.lexical.string.unterminated` | - | - | `SyntaxError: unterminated string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.unterminated.triple` | - | - | `SyntaxError: unterminated triple-quoted string literal` | - | - | - | - | - | - | - |
 | `ext.lexical.string.value.unready` | - | - | `NotImplementedError: this string value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.literal.ellipsis` | - | - | `...` `Ellipsis` | - | - | - | - | - | - | - |

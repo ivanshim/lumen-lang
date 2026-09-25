@@ -15006,12 +15006,14 @@ impl<'a> Machine<'a> {
         format!("{}{}{}{}{}{}", told, words[0], file, words[1], row, words[2])
     }
 
-    /// The tokens of text handed over to be read, else the words for
-    /// text that cannot be read.
-    fn text_tokens(&self, source: &str) -> Result<Vec<crate::scan::Token>, String> {
+    /// The tokens of text handed over to be read, else the reading's
+    /// own words for why it could not be, with the line it stopped on:
+    /// the same complaint a file being run keeps, so text read through
+    /// `compile`, `eval` or `exec` is told apart the same way a file
+    /// is, through `text_unreadable_at`.
+    fn text_tokens(&self, source: &str) -> Result<Vec<crate::scan::Token>, (String, u32)> {
         crate::scan::scan_at(source, self.table)
             .and_then(|read| crate::indent::indent(read, self.table, 0))
-            .map_err(|_| self.source_unreadable())
     }
 
     /// The readers of text, the handing out of names, and the fetching
@@ -15041,7 +15043,10 @@ impl<'a> Machine<'a> {
         // Flags and inheritance are read and let be; optimisation beyond
         // the ordinary setting is not honoured.
         if v.get(5).map_or(false, |worth| !matches!(worth, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(self.source_refused()); }
-        let tokens = self.text_tokens(if mode == 1 { source.trim() } else { &source })?;
+        let tokens = match self.text_tokens(if mode == 1 { source.trim() } else { &source }) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+        };
         self.text_built(&tokens, &[], &file, mode, &[])?;
         let kind = self.code_blueprint();
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64))];
@@ -15107,8 +15112,11 @@ impl<'a> Machine<'a> {
                 None => self.perform_booked(source, file, mode, near, None),
             };
         }
-        let tokens = self.text_tokens(source)?;
         let file = file.unwrap_or_else(|| "<string>".to_owned());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+        };
         let seeded = self.idents.clone();
         let (built, shown) = self.text_built(&tokens, &seeded, &file, mode, &[])?;
         self.idents = built.globals.clone();
@@ -15124,8 +15132,11 @@ impl<'a> Machine<'a> {
     /// makes is gone once the text is done.
     fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>) -> Result<Value, String> {
         let source = if mode == 1 { source.trim() } else { source };
-        let tokens = self.text_tokens(source)?;
         let file = file.unwrap_or_else(|| "<string>".to_owned());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+        };
         let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
         // Text read inside a method is read as standing in that
         // method's class, as text read where a language has no manners
@@ -15163,8 +15174,11 @@ impl<'a> Machine<'a> {
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
     fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Result<Value, String> {
-        let tokens = self.text_tokens(source)?;
         let file = file.unwrap_or_else(|| "<string>".to_owned());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+        };
         let beginning = self.idents.len();
         let prior: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
         // Where the outer dictionary names a dictionary of builtins of
