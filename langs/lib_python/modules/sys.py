@@ -112,6 +112,10 @@ def set_int_max_str_digits(maxdigits):
         raise ValueError('maxdigits must be 0 or larger than 640')
     _int_max_str_digits = maxdigits
 
+# None of the three streams a program finds here is ever the far end
+# of a real terminal, whatever the host's own stdio happens to be, so
+# isatty() always answers no and a test that only runs against a tty
+# takes its own skip road instead of finding an attribute missing.
 class _Output:
     def write(self, *args, **keywords):
         if keywords:
@@ -120,6 +124,9 @@ class _Output:
 
     def flush(self):
         pass
+
+    def isatty(self):
+        return False
 
 class _Error:
     def write(self, *args, **keywords):
@@ -130,12 +137,18 @@ class _Error:
     def flush(self):
         pass
 
+    def isatty(self):
+        return False
+
 class _Input:
     def read(self, size=-1):
         return __stream_read(size, False)
 
     def readline(self, size=-1):
         return __stream_read(size, True)
+
+    def isatty(self):
+        return False
 
 stdout = _Output()
 stderr = _Error()
