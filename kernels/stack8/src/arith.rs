@@ -122,7 +122,33 @@ pub fn calculate(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value, 
     }
     let point = a.keeps_point() || b.keeps_point();
     let (a, b) = (Exact::from_value(a)?, Exact::from_value(b)?);
+    if !a.outside() && !b.outside() {
+        if let Some(told) = too_wide_to_meet_a_real(&a, &b) {
+            return Some(Err(told));
+        }
+    }
     Some(precise(calc, &a, &b).map(|v| v.with_point(point)))
+}
+
+/// Where an exact number is met by a real of the width, it is carried to
+/// the width before the two are worked together, the way handing a
+/// whole number to a real-valued working carries it there first. A
+/// whole number too great for any real of the width to hold cannot be
+/// carried, and the meeting is stopped rather than let the width's own
+/// standing-outside-the-numbers answer for a number that is not.
+fn too_wide_to_meet_a_real(a: &Exact, b: &Exact) -> Option<String> {
+    let exact = match (a.places.is_some(), b.places.is_some()) {
+        (false, true) => a,
+        (true, false) => b,
+        _ => return None,
+    };
+    if exact.p.is_zero() {
+        return None;
+    }
+    match crate::value::as_binary(&exact.p, &exact.q).is_infinite() {
+        true => Some("OverflowError: int too large to convert to float".to_string()),
+        false => None,
+    }
 }
 
 fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
@@ -268,6 +294,38 @@ pub fn whole_of(v: &Value) -> Option<BigInt> {
 
 /// Work ordinary real arithmetic at the configured binary width.
 /// Quotient and remainder retain the shared truncating arithmetic.
+/// Three reals joined as `left * right + third`, rounded the one time
+/// C99's fma names it for. Once `third` is itself the value nothing
+/// answers to, no other question about the three is worth asking, and
+/// an answer of the same value is given back straight away. Short of
+/// that, two shapes of the joining are refused outright: a nought met
+/// by an unbounded multiplier, which no working settles a sign for,
+/// and an unbounded product met by an unboundedness of the contrary
+/// sign, which no finite width could hold steady between the two.
+pub fn fused(left: f64, right: f64, third: f64) -> Result<f64, String> {
+    if third.is_nan() {
+        return Ok(f64::NAN);
+    }
+    let plain = left * right;
+    if plain.is_nan() && !left.is_nan() && !right.is_nan() {
+        return Err("ValueError: invalid operation in fma".to_string());
+    }
+    let neither_is_nan = !left.is_nan() && !right.is_nan();
+    let past_bound = neither_is_nan && ((left.is_infinite() && right != 0.0) || (right.is_infinite() && left != 0.0));
+    if past_bound && third.is_infinite() {
+        let joined_sign = left.is_sign_positive() == right.is_sign_positive();
+        if joined_sign != third.is_sign_positive() {
+            return Err("ValueError: invalid operation in fma".to_string());
+        }
+    }
+    let joined = left.mul_add(right, third);
+    let every_side_bounded = left.is_finite() && right.is_finite() && third.is_finite();
+    if joined.is_infinite() && every_side_bounded {
+        return Err("OverflowError: overflow in fma".to_string());
+    }
+    Ok(joined)
+}
+
 pub fn binary_work(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value, String>> {
     let (x, y) = (Exact::from_value(a)?, Exact::from_value(b)?);
     if x.places.is_none() && y.places.is_none() { return None; }

@@ -8205,12 +8205,16 @@ impl<'a> Machine<'a> {
         if base.places.or(exponent.places).is_none() && exponent.above >= BigInt::from(0) {
             return Ok(None);
         }
-        let near = |r: &crate::data::Ratio| {
-            if r.under && r.above == BigInt::from(0) { -0.0 }
-            else { crate::data::nearest_binary(&r.above, &r.beneath) }
+        let near = |r: &crate::data::Ratio| -> Result<f64, String> {
+            if r.under && r.above == BigInt::from(0) { return Ok(-0.0); }
+            let bound = crate::data::nearest_binary(&r.above, &r.beneath);
+            if r.places.is_none() && !r.above.is_zero() && bound.is_infinite() {
+                return Err("OverflowError: int too large to convert to float".to_string());
+            }
+            Ok(bound)
         };
-        let b = near(&base);
-        let e = near(&exponent);
+        let b = near(&base)?;
+        let e = near(&exponent)?;
         let fault = |label| self.table.single(label).unwrap_or_default().to_string();
         if b == 0.0 && e < 0.0 { return Err(fault("ext.op.pow.zero")); }
         if b < 0.0 && b.is_finite() && e.is_finite() && e.trunc() != e {
@@ -11181,27 +11185,57 @@ impl<'a> Machine<'a> {
                 if v.len() != takes + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
                 }
-                let width = |at: usize| -> f64 {
+                let width = |at: usize| -> Result<f64, String> {
                     let worth = self.worth_of(&v[at]);
                     // A nought under nought is a nought of its own at
                     // the width, and some of these workings answer
                     // differently for it, so the minus is put back.
                     if let Value::Frac(e) = &worth {
                         if e.under && num_traits::Zero::is_zero(&e.above) {
-                            return -0.0;
+                            return Ok(-0.0);
                         }
                     }
                     match math::ratio_of(&worth) {
-                        Some(r) => crate::data::nearest_binary(&r.above, &r.beneath),
-                        None => f64::NAN,
+                        Some(r) => {
+                            let bound = crate::data::nearest_binary(&r.above, &r.beneath);
+                            // A whole number too great for any real of
+                            // the width to hold cannot be carried to
+                            // one here, and this is stopped rather than
+                            // let the width's own past-every-number
+                            // answer for a number that is not; a real
+                            // already at the width answers as it is.
+                            if r.places.is_none() && !r.above.is_zero() && bound.is_infinite() {
+                                return Err("OverflowError: int too large to convert to float".to_string());
+                            }
+                            Ok(bound)
+                        }
+                        None => Ok(f64::NAN),
                     }
                 };
                 let two = match takes {
-                    2 => width(2),
+                    2 | 3 => width(2)?,
                     _ => 0.0,
                 };
-                match math::worked(&working, width(1), two) {
+                if working == "fma" {
+                    let one = width(1)?;
+                    let three = width(3)?;
+                    let got = math::fused(one, two, three)?;
+                    let mut result = crate::data::worth_of_binary(got, self.real_figures());
+                    if let Value::Frac(number) = &mut result { Rc::make_mut(number).float_style = self.table.flag("ext.builtin.math.floating"); }
+                    return Ok(result);
+                }
+                let one = width(1)?;
+                match math::worked(&working, one, two) {
                     Some(got) => {
+                        // A working handed only reals of the width
+                        // already, and answering past every number of
+                        // it, has overflowed the width; a few workings
+                        // stand outside numbers on their own account,
+                        // and are left to answer as they answer.
+                        let bounded = one.is_finite() && (takes < 2 || two.is_finite());
+                        if got.is_infinite() && bounded && !matches!(working.as_str(), "fdiv" | "nextafter" | "ulp") {
+                            return Err("OverflowError: math range error".to_string());
+                        }
                         let mut result = crate::data::worth_of_binary(got, self.real_figures());
                         if let Value::Frac(number) = &mut result { Rc::make_mut(number).float_style = self.table.flag("ext.builtin.math.floating"); }
                         result
@@ -11891,8 +11925,27 @@ impl<'a> Machine<'a> {
                 // Where a language holds its reals to a width of bits,
                 // a whole number meeting a real is brought to that
                 // width first, so the two are worked as it works them.
+                // A whole number too great for any real of the width to
+                // hold cannot be carried there, and the meeting is
+                // stopped rather than let the width's own standing-past-
+                // every-number answer for a number that is not; a real
+                // which only happens to overflow the working stays
+                // quiet, being at the width already before this asked.
                 let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
-                    true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
+                    true => {
+                        let carry = |v: &Value| -> Result<Value, String> {
+                            let wide = self.as_wide_real(v);
+                            if !self.a_real(v) {
+                                if let Value::Frac(e) = &wide {
+                                    if !e.above.is_zero() && crate::data::nearest_binary(&e.above, &e.beneath).is_infinite() {
+                                        return Err("OverflowError: int too large to convert to float".to_string());
+                                    }
+                                }
+                            }
+                            Ok(self.at_width(wide))
+                        };
+                        (carry(&v[0])?, carry(&v[1])?)
+                    }
                     false => (v[0].clone(), v[1].clone()),
                 };
                 let binary = if self.table.flag("ext.op.arithmetic.binary") { math::binary_work(sum, &left, &right) } else { None };
@@ -12271,7 +12324,15 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     x @ Value::Frac(e) if e.places.is_some() => x.clone(),
-                    x => self.at_width(math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?),
+                    x => {
+                        let exact = math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                        if let Value::Frac(e) = &exact {
+                            if !e.above.is_zero() && crate::data::nearest_binary(&e.above, &e.beneath).is_infinite() {
+                                return Err("OverflowError: int too large to convert to float".to_string());
+                            }
+                        }
+                        self.at_width(exact)
+                    }
                 }
             }
             Prim::Length => {

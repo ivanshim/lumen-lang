@@ -90,7 +90,31 @@ pub fn compute(op: Calc, a: &Value, b: &Value) -> Option<Result<Value, String>> 
     if x.past_numbers() || y.past_numbers() {
         return Some(at_the_width(op, &x, &y).map(|v| v.keeping_point(x.pointed || y.pointed)));
     }
+    if let Some(told) = too_wide_to_meet_a_real(&x, &y) {
+        return Some(Err(told));
+    }
     Some(precise(op, &x, &y).map(|v| v.keeping_point(x.pointed || y.pointed)))
+}
+
+/// Where an exact number is met by a real of the width, it is carried to
+/// the width before the two are worked together, the way handing a
+/// whole number to a real-valued working carries it there first. A
+/// whole number too great for any real of the width to hold cannot be
+/// carried, and the meeting is stopped rather than let the width's own
+/// standing-past-every-number answer for a number that is not.
+fn too_wide_to_meet_a_real(a: &Ratio, b: &Ratio) -> Option<String> {
+    let exact = match (a.places.is_some(), b.places.is_some()) {
+        (false, true) => a,
+        (true, false) => b,
+        _ => return None,
+    };
+    if exact.above.is_zero() {
+        return None;
+    }
+    match crate::data::nearest_binary(&exact.above, &exact.beneath).is_infinite() {
+        true => Some("OverflowError: int too large to convert to float".to_string()),
+        false => None,
+    }
 }
 
 /// A working done at the width itself, each side brought to the nearest
@@ -260,6 +284,28 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
         "asinh" => one.asinh(),
         "acosh" => one.acosh(),
         "atanh" => one.atanh(),
+        "cbrt" => one.cbrt(),
+        // Neither ever answers with the one nothing is equal to unless
+        // both sides do; whichever side is left, standing alone, is
+        // what is answered.
+        "fmin" => match (one.is_nan(), two.is_nan()) {
+            (true, true) => f64::NAN,
+            (true, false) => two,
+            (false, true) => one,
+            (false, false) => if one < two { one } else { two },
+        },
+        "fmax" => match (one.is_nan(), two.is_nan()) {
+            (true, true) => f64::NAN,
+            (true, false) => two,
+            (false, true) => one,
+            (false, false) => if one > two { one } else { two },
+        },
+        // These three answer as a mark of one or nought, there being no
+        // other way for a working named by word to hand back a truth of
+        // its own; the tongue above reads the mark apart again.
+        "signbit" => if one.is_sign_negative() { 1.0 } else { 0.0 },
+        "isnormal" => if one.is_normal() { 1.0 } else { 0.0 },
+        "issubnormal" => if matches!(one.classify(), std::num::FpCategory::Subnormal) { 1.0 } else { 0.0 },
         _ => return None,
     })
 }
@@ -295,9 +341,40 @@ fn scaled_by_twos(mut real: f64, mut power: i64) -> f64 {
 
 pub fn worked_takes(named: &str) -> usize {
     match named {
-        "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" => 2,
+        "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+        "fma" => 3,
         _ => 1,
     }
+}
+
+/// The fused multiply-add `a*b + c`, rounded once. The two invalid
+/// combinations C99 marks apart -- an infinity times a nought, and an
+/// infinite product met by an infinity of the other sign -- are told
+/// apart from the run of the mill and answered a fault of their own,
+/// unless the third worth is itself the one nothing is equal to, which
+/// settles every question before it is asked.
+pub fn fused(a: f64, b: f64, c: f64) -> Result<f64, String> {
+    if c.is_nan() {
+        return Ok(f64::NAN);
+    }
+    let product = a * b;
+    if product.is_nan() && !(a.is_nan() || b.is_nan()) {
+        return Err("ValueError: invalid operation in fma".to_string());
+    }
+    // Whether the product is truly without limit, which only an
+    // infinite side times a nonzero other side ever makes it: two
+    // finite sides whose product merely overflows the width are not
+    // this, whatever a plain multiply of them would say, since fma
+    // never actually rounds them together to find out.
+    let truly_unbounded = !a.is_nan() && !b.is_nan() && ((a.is_infinite() && b != 0.0) || (b.is_infinite() && a != 0.0));
+    if truly_unbounded && c.is_infinite() && (a.is_sign_positive() == b.is_sign_positive()) != c.is_sign_positive() {
+        return Err("ValueError: invalid operation in fma".to_string());
+    }
+    let got = a.mul_add(b, c);
+    if got.is_infinite() && a.is_finite() && b.is_finite() && c.is_finite() {
+        return Err("OverflowError: overflow in fma".to_string());
+    }
+    Ok(got)
 }
 
 /// Ordinary real operations use binary operands at the configured width.
