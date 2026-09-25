@@ -106,6 +106,18 @@ impl<'a> Engine<'a> {
     /// A thing of a class standing on a builtin kind, its worth made by
     /// the builtin of that kind from the arguments given.
     fn thing_of_kind(&mut self, c: Rc<Class>, word: &str, args: Vec<Value>) -> Flow<Value> {
+        // None, Ellipsis and NotImplemented are singletons no kind
+        // builtin makes twice over: calling the kind itself hands back
+        // the one value there is of it, and any argument at all is
+        // refused, since there is no other one to build from it.
+        if let Some((singleton, shown)) = match word {
+            "NoneType" => Some((Value::Null, "NoneType")),
+            "ellipsis" => Some((Value::Ellipsis, "EllipsisType")),
+            "NotImplementedType" => Some((Value::Declined(Rc::from(self.lang.special_declined.first().map(String::as_str).unwrap_or("NotImplemented"))), "NotImplementedType")),
+            _ => None,
+        } {
+            return if args.is_empty() { Ok(singleton) } else { Err(format!("TypeError: {shown} takes no arguments").into()) };
+        }
         let Some(op) = self.lang.builtins.get(word).copied() else { return Err(self.class_refusal()); };
         let items = self.call_items(args)?;
         let made = self.builtin_call(op, word, items)?;
@@ -234,13 +246,53 @@ impl<'a> Engine<'a> {
         if self.class_word("descriptor.get").is_empty() { return Ok(()); }
         let Some(slots) = Self::own_class_value(c, self.class_word("slots")) else { return Ok(()) };
         let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), single => vec![single] };
+        // Every slot is a name of its own: a string holding a plain
+        // identifier, never another kind of value and never one that
+        // could not be written after `self.`. `__dict__` and
+        // `__weakref__` are written at most once each, since each
+        // stands for one layout a thing may carry, not several.
+        let mut dict_seen = 0u32;
+        let mut weakref_seen = 0u32;
+        for slot in &named {
+            let Value::Text(word) = slot else { return Err("TypeError: __slots__ items must be strings".to_string().into()) };
+            if !Self::valid_slot_name(word) { return Err("TypeError: __slots__ items must be identifiers".to_string().into()); }
+            match word.as_ref() { "__dict__" => dict_seen += 1, "__weakref__" => weakref_seen += 1, _ => {} }
+        }
+        if dict_seen > 1 { return Err("TypeError: __dict__ slot disallowed: we already got one".to_string().into()); }
+        if weakref_seen > 1 { return Err("TypeError: __weakref__ slot disallowed: we already got one".to_string().into()); }
+        // A forebear built of a program's own classes, none of which
+        // named any slots, already carries a dict and a weak reference
+        // wherever it stands, so naming either again here only doubles
+        // what is already had. A forebear standing on a builtin kind
+        // carries neither by itself, no more than the common ancestor
+        // does, so it is passed over exactly as that ancestor is.
+        if dict_seen == 1 || weakref_seen == 1 {
+            let root = self.root_class();
+            let slots_word = self.class_word("slots").to_string();
+            let already = c.lineage.iter().any(|b| !Rc::ptr_eq(b, &root) && Self::own_kind(b).is_none() && Self::own_class_value(b, &slots_word).is_none());
+            if already {
+                let which = if dict_seen == 1 { "__dict__" } else { "__weakref__" };
+                return Err(format!("TypeError: {which} slot disallowed: we already got one").into());
+            }
+        }
         for slot in named {
-            let Value::Text(word) = slot else { return Err(self.class_refusal()) };
+            let Value::Text(word) = slot else { unreachable!() };
             if word.as_ref() == self.class_word("namespace") { continue; }
-            if Self::own_class_value(c, &word).is_some() { return Err(self.class_refusal()); }
+            if Self::own_class_value(c, &word).is_some() { return Err(format!("ValueError: '{word}' in __slots__ conflicts with class variable").into()); }
             c.shared.borrow_mut().push((word.to_string(), Self::adapter(16, vec![Value::Text(word.clone()), Value::Class(c.clone())])));
         }
         Ok(())
+    }
+    /// Whether a slot's own name could follow `self.` in this language:
+    /// not empty, opening on a letter or an underscore, and holding
+    /// nothing after but letters, figures and underscores.
+    fn valid_slot_name(word: &str) -> bool {
+        let mut letters = word.chars();
+        match letters.next() {
+            Some(c) if c == '_' || c.is_alphabetic() => {}
+            _ => return false,
+        }
+        letters.all(|c| c == '_' || c.is_alphanumeric())
     }
     /// Where a slot's value is kept in a thing: under the slot's name and
     /// the class that declared it. A thing not of that class has no such
@@ -1150,22 +1202,35 @@ impl<'a> Engine<'a> {
         let Some(words)=self.lang.core_words.get("core.arity.exact").filter(|w|w.len()>=3) else{return self.class_refusal();};
         format!("{}{}{}{}{}{}",words[0],name,words[1],wanted,words[2],given).into()
     }
+    /// The word this language spells one of the class tools with, the
+    /// one a question handed the wrong number of arguments names itself
+    /// by.
+    fn class_tool_word(&self,which:u8)->String {
+        let target=match which {
+            0=>Builtin::InstanceOf, 2=>Builtin::Callable, 3=>Builtin::GetAttr,
+            4=>Builtin::SetAttr, 5=>Builtin::DelAttr, 6=>Builtin::HasAttr, 7=>Builtin::Vars,
+            other=>Builtin::ClassTool(other),
+        };
+        self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
+    }
     pub(super) fn class_work(&mut self,which:u8,args:Vec<Value>)->Flow<Value> {
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {
             0|1 if args.len()==2=>Ok(Value::Flag(self.beneath(&one,&args[1],which==1)?)),
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
-            0|1=>{
-                let word=self.lang.builtins.iter().find(|(_,b)|**b==Builtin::ClassTool(which)).map(|(n,_)|n.clone()).unwrap_or_default();
-                Err(self.arity_told(&word,2,args.len()))
-            }
+            0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
             2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
-            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
+            // getattr and hasattr want the receiver and a name, and take
+            // a name of any kind but a string only to say so.
+            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
                 if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)])?;return self.drop_top().map_err(|words|Fault::Note(words));}}
                 Err(fault)},Err(e)=>Err(e)}},
-            4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.class_refusal());};self.class_write(one,n,args.get(2).cloned(),false)},
+            3=>Err(self.arity_told(&self.class_tool_word(3),2,args.len())),
+            6=>Err(self.arity_told(&self.class_tool_word(6),2,args.len())),
+            4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};self.class_write(one,n,args.get(2).cloned(),false)},
+            4|5=>Err(self.arity_told(&self.class_tool_word(which),if which==4{3}else{2},args.len())),
             7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
             8 if args.len()==1=>{
                 // A thing with a directory method of its own answers with
@@ -1213,6 +1278,7 @@ impl<'a> Engine<'a> {
                 else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}
                 names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
             }
+            8=>Err(self.arity_told(&self.class_tool_word(8),1,args.len())),
             // A property is a thing of the property class, where the
             // definition spells the protocol; else the older wrapper.
             11 if !self.class_word("descriptor.get").is_empty()=>{let class=self.property_class();self.class_make(class,args)},

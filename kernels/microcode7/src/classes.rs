@@ -109,6 +109,18 @@ impl<'a> Machine<'a> {
     /// A thing of a blueprint standing on a native kind, its worth made
     /// by the primitive of that kind from what was given.
     fn thing_over_native(&mut self,class:Rc<Blueprint>,word:&str,given:Vec<Value>)->Res {
+        // None, Ellipsis and NotImplemented are singletons no native
+        // kind builds twice over: calling the kind itself hands back
+        // the one value there is of it, and any argument at all is
+        // refused, since there is no other one to build from it.
+        if let Some((singleton,shown))=match word {
+            "NoneType"=>Some((Value::Nil,"NoneType")),
+            "ellipsis"=>Some((Value::Ellipsis,"EllipsisType")),
+            "NotImplementedType"=>Some((Value::Refusal(Rc::from(self.table.strings("ext.stmt.class.special.declined").first().map_or("NotImplemented",String::as_str))),"NotImplementedType")),
+            _=>None,
+        } {
+            return if given.is_empty(){Ok(singleton)}else{Err(format!("TypeError: {shown} takes no arguments").into())};
+        }
         let Some(op)=self.table.prims.get(word).copied()else{return Err(self.class_unready());};
         let (positional,named)=self.open_arguments(given)?;
         let made=if named.is_empty(){self.prim(op,word,&positional)?}else{self.core_primitive(op,word,positional,named)?};
@@ -241,14 +253,54 @@ impl<'a> Machine<'a> {
         if !self.protocol_spelled(){return Ok(());}
         let Some(declared)=Self::own_entry(class,self.detail("slots")) else{return Ok(())};
         let words=match declared.settled(){Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),alone=>vec![alone]};
+        // Every slot is a name of its own: a string holding a plain
+        // identifier, never another kind of value and never one that
+        // could not be written after `self.`. `__dict__` and
+        // `__weakref__` are written at most once each, since each
+        // stands for one layout a thing may carry, not several.
+        let mut dict_seen=0u32;
+        let mut weakref_seen=0u32;
+        for word in &words {
+            let Value::Text(name)=word else{return Err("TypeError: __slots__ items must be strings".to_owned().into())};
+            if !Self::valid_slot_name(name){return Err("TypeError: __slots__ items must be identifiers".to_owned().into());}
+            match name.as_ref() {"__dict__"=>dict_seen+=1,"__weakref__"=>weakref_seen+=1,_=>{}}
+        }
+        if dict_seen>1{return Err("TypeError: __dict__ slot disallowed: we already got one".to_owned().into());}
+        if weakref_seen>1{return Err("TypeError: __weakref__ slot disallowed: we already got one".to_owned().into());}
+        // A forebear built of a program's own classes, none of which
+        // named any slots, already carries a dict and a weak reference
+        // wherever it stands, so naming either again here only doubles
+        // what is already had. A forebear standing on a native kind
+        // carries neither by itself, no more than the common ancestor
+        // does, so it is passed over exactly as that ancestor is.
+        if dict_seen==1||weakref_seen==1 {
+            let root=self.common_ancestor();
+            let slots_word=self.detail("slots").to_owned();
+            let already=class.ancestry.iter().any(|b|!Rc::ptr_eq(b,&root)&&Self::native_word(b).is_none()&&Self::own_entry(b,&slots_word).is_none());
+            if already {
+                let which=if dict_seen==1{"__dict__"}else{"__weakref__"};
+                return Err(format!("TypeError: {which} slot disallowed: we already got one").into());
+            }
+        }
         for word in words {
-            let Value::Text(name)=word else{return Err(self.class_unready())};
+            let Value::Text(name)=word else{unreachable!()};
             if name.as_ref()==self.detail("namespace"){continue;}
-            if Self::own_entry(class,&name).is_some(){return Err(self.class_unready());}
+            if Self::own_entry(class,&name).is_some(){return Err(format!("ValueError: '{name}' in __slots__ conflicts with class variable").into());}
             let descriptor=Self::wrap(32,vec![Value::Text(name.clone()),Value::Blueprint(class.clone())]);
             class.shared.borrow_mut().push((name.to_string(),descriptor));
         }
         Ok(())
+    }
+    /// Whether a slot's own name could follow `self.` in this language:
+    /// not empty, opening on a letter or an underscore, and holding
+    /// nothing after but letters, figures and underscores.
+    fn valid_slot_name(word:&str)->bool {
+        let mut letters=word.chars();
+        match letters.next() {
+            Some(c) if c=='_'||c.is_alphabetic() => {}
+            _ => return false,
+        }
+        letters.all(|c|c=='_'||c.is_alphanumeric())
     }
     /// The key a slot's worth is kept under in a thing. A thing not of
     /// the declaring blueprint's line has no such key, and is told so.
@@ -1154,17 +1206,29 @@ impl<'a> Machine<'a> {
         if parts.len()<3 {return self.class_unready();}
         format!("{}{}{}{}{}{}",parts[0],name,parts[1],wanted,parts[2],given).into()
     }
+    /// The word this language spells one of the class tools with, the
+    /// one a question handed the wrong count of arguments names itself
+    /// by.
+    fn class_tool_word(&self,op:u8)->String {
+        let target=match op {
+            0=>Prim::Belongs, 2=>Prim::CallableValue, 3=>Prim::GetMember,
+            4=>Prim::SetMember, 5=>Prim::DropMember, 6=>Prim::HasAttribute, 7=>Prim::MembersOf,
+            other=>Prim::ClassWork(other),
+        };
+        self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
+    }
     pub(super) fn work_on_class(&mut self,op:u8,values:Vec<Value>)->Res {
         if op<=1 && values.len()==2{return Ok(Value::Flag(self.is_beneath(&values[0],&values[1],op==1)?));}
         // Both questions want two arguments and name themselves where
         // they are handed another count of them.
         if op<=1 {
-            let word=self.table.prims.iter().find(|(_,p)|**p==Prim::ClassWork(op)).map(|(w,_)|w.to_string()).unwrap_or_default();
-            return Err(self.wrong_count(&word,2,values.len()));
+            return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
         if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|50..=57|59|60))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
+        // getattr and hasattr want the receiver and a name, and take a
+        // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{
-            let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
+            let Value::Text(key)=&values[1]else{return Err(self.core_complaint("core.attribute.name",&values[1].kind_word()).into());};
             // Asking whether a name is there, or reading it with something
             // to fall back on, does not wake a namespace's own answerer.
             self.asking_presence = op==6 || values.len()==3;
@@ -1180,9 +1244,13 @@ impl<'a> Machine<'a> {
                 failed=>failed,
             };
         }
+        if op==3 {return Err(self.wrong_count(&self.class_tool_word(3),2,values.len()));}
+        if op==6 {return Err(self.wrong_count(&self.class_tool_word(6),2,values.len()));}
         if (op==4&&values.len()==3)||(op==5&&values.len()==2){
-            let Value::Text(key)=&values[1]else{return Err(self.class_unready());};return self.alter_class_member(values[0].clone(),key,values.get(2).cloned(),false);
+            let Value::Text(key)=&values[1]else{return Err(self.core_complaint("core.attribute.name",&values[1].kind_word()).into());};return self.alter_class_member(values[0].clone(),key,values.get(2).cloned(),false);
         }
+        if op==4 {return Err(self.wrong_count(&self.class_tool_word(4),3,values.len()));}
+        if op==5 {return Err(self.wrong_count(&self.class_tool_word(5),2,values.len()));}
         if op==7&&values.len()==1{let key=self.detail("namespace").to_owned();return self.read_class_member(values[0].clone(),&key,true);}
         if op==8&&values.len()==1{
             // A thing with a directory method of its own answers with it,
@@ -1230,6 +1298,7 @@ impl<'a> Machine<'a> {
             else if let Some((_,attrs))=self.routine_members.iter().find(|(f,_)|f.equals(&values[0])){names.extend(attrs.holds.borrow().iter().map(|(k,_)|k.clone()));}
             names.sort_unstable();names.dedup();return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
         }
+        if op==8 {return Err(self.wrong_count(&self.class_tool_word(8),1,values.len()));}
         // With the protocol spelled, a property is a thing of the
         // property blueprint; without it, the older wrapper.
         if op==11&&self.protocol_spelled(){let kind=self.property_blueprint();return self.construct_ordered(kind,values);}
