@@ -26,35 +26,17 @@ class WarningMessage:
         self.source = source
 
 
-def _fold(text):
-    result = ''
-    for index in range(len(text)):
-        letter = text[index]
-        number = ord(letter)
-        if number >= 65 and number <= 90:
-            letter = chr(number + 32)
-        if number > 127:
-            raise NotImplementedError('warning filter case folding outside ASCII cannot run yet')
-        result += letter
-    return result
-
-
 def _matches(pattern, text, folded=False):
+    # CPython compiles a filter's message pattern case-insensitively and
+    # its module pattern case-sensitively, then anchors both with
+    # `match` (not `search`) against the warning's own text -- see
+    # `warnings._filters_mutated`'s `re.compile(message, re.I)` and
+    # `re.compile(module)`.
     if pattern == '':
         return True
-    if folded:
-        pattern = _fold(pattern)
-        text = _fold(text)
-    if pattern[-2:] == '\\z' or pattern[-2:] == '\\Z':
-        pattern = pattern[:-2] + '$'
-    if pattern[:1] == '^':
-        pattern = pattern[1:]
-    for index in range(len(pattern)):
-        letter = pattern[index]
-        if letter in '[](){}|':
-            raise NotImplementedError('grouped warning filter expressions cannot run yet')
-    from unittest import _match_at
-    return _match_at(pattern, text)
+    import re
+    flags = re.IGNORECASE if folded else 0
+    return re.compile(pattern, flags).match(text) is not None
 
 
 def _check(action, category, lineno):
