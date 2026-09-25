@@ -163,8 +163,13 @@ verified branches into one integration branch per batch, runs the full
 verification (§3), writes the batch's section into `HISTORY.md`, pushes
 the batch to the working branch, opens one pull request, and merges it
 when CI is green. Workers are Sonnet sessions spawned by the coordinator,
-each in its own `git worktree` on its own `fix/<subject>` branch, **at
-most two at a time** (the owner's setting, to keep token use down).
+each in its own `git worktree` on its own `fix/<subject>` branch, **up
+to four at a time** on the c8g.4xlarge. The owner raised this from two
+(the limit in the old cloud session, which had 4 cores and a tight token
+budget) when the work moved to the instance. Drop back to two if the
+seven-day rate limit reaches `allowed_warning`, and say so in the
+check-in summary. Each worker's build takes about 1.1 GB of disk and a
+few GB of memory; four fit comfortably in 16 cores and 32 GB.
 
 **A worker's brief** is `scripts/suite/worker-brief.md` with the subject
 paragraph filled in: what fails, which reference tests show it, what
@@ -192,7 +197,32 @@ independence check, before merging.
 - Wait on long runs by running them in the background, not in polling
   loops; check in at most every 40 minutes.
 - A summary at each check-in in Singapore time: what moved, what runs,
-  the count, the pull request, the rate limit.
+  the count, the pull request, the rate limit, and an instance-size
+  recommendation (below).
+
+**Instance size at each check-in.** End every summary with one line:
+*Instance: keep c8g.4xlarge*, *Instance: suggest c8g.8xlarge*, or
+*Instance: suggest c8g.2xlarge*, with the reason in a few words. Base it
+on the last hour, from `sar -q` (load average) and `sar -r` (memory)
+(sysstat, §5), plus what the work was waiting on:
+- **Increase** (c8g.8xlarge, 32 cores, 64 GB, twice the price) when the
+  machine is what holds work up: the 15-minute load average stayed
+  above about 14 for most of the hour, memory available fell below
+  about 4 GB or swap was used, or workers sat waiting on builds and
+  checks rather than on CI or the model. Also when more than four
+  workers are wanted.
+- **Decrease** (c8g.2xlarge, 8 cores, 16 GB, half the price) when the
+  machine mostly idles: the load average stayed below about 4 and memory
+  used below about 12 GB for several check-ins in a row, with at most
+  two workers running.
+- **Keep** otherwise. Recommend a change only after it has held for at
+  least two check-ins, so one busy or quiet hour does not flip it.
+
+The coordinator only recommends; the owner resizes (stop the instance,
+change its type, start it; the disk and all setup are kept). A resize
+stops every process, Claude Code included, so first finish or stop the
+running checks and workers and commit their work, and after the restart
+start `claude remote-control` again (§5 step 6).
 
 **How a scratch record moves.** Each `scratch/<piece>/<n>.py` has either
 an `.out` (the exact stdout, exit 0) or an `.err` (the exact first line
@@ -381,7 +411,8 @@ inbound ports: administration is SSH tunnelled over AWS Systems Manager
 
    ```bash
    sudo dnf groupinstall -y "Development Tools"
-   sudo dnf install -y git tmux
+   sudo dnf install -y git tmux sysstat
+   sudo systemctl enable --now sysstat   # load and memory history for `sar` (§2)
    sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
    sudo dnf install -y gh
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y   # stable, as CI
@@ -414,6 +445,8 @@ inbound ports: administration is SSH tunnelled over AWS Systems Manager
    in the session or a cron job that prompts it.
 8. **Cost:** stop the instance when no work runs (the disk is kept and
    billed at about $6–8 a month); set an AWS budget alert; snapshot the
-   disk before large changes.
+   disk before large changes. Resize only on the check-in
+   recommendation's evidence (§2): stop, change the instance type,
+   start, then restart `claude remote-control`.
 9. **Security:** the instance holds a key that can push to this
    repository and nothing else. Keep it that way.

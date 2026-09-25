@@ -1745,3 +1745,8 @@ The batch-18 count stands at stack8 1,545 of 2,738 (+98) and microcode7
 1,553 of 2,738 (+95), no file losing a pass. `scripts/suite/` now holds
 the checking scripts, and HANDOVER.md was rewritten for the move to an
 AWS instance, this diary moving here.
+
+Pull request #505 merged into main at b5edcd4 on 25 September (all six
+jobs green on 178addd). This was the last batch run from the cloud
+session; from here the coordinator runs on the AWS instance
+(HANDOVER.md §5).
