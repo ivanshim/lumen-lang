@@ -1,5 +1,7 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str)] = &[
+    ("_codec_idna", include_str!("_codec_idna.py")),
+    ("_codec_names", include_str!("_codec_names.py")),
     ("_decimal", include_str!("_decimal.py")),
     ("_pylong", include_str!("_pylong.py")),
     ("_string", include_str!("_string.py")),
