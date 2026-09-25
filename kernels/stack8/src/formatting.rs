@@ -31,6 +31,9 @@ impl Writer<'_> {
             "ext.text.format.unknown" => &self.lang.fmt_text_format_unknown,
             "ext.text.format.kinds" => &self.lang.fmt_text_format_kinds,
             "ext.text.format.unready" => &self.lang.fmt_text_format_unready,
+            "ext.text.format.digits" => &self.lang.fmt_text_format_digits,
+            "ext.text.format.width.big" => &self.lang.fmt_text_format_width_big,
+            "ext.text.format.precision.big" => &self.lang.fmt_text_format_precision_big,
             "ext.text.format.precision.integer" => &self.lang.fmt_text_format_precision_integer,
             "ext.text.format.precision.missing" => &self.lang.fmt_text_format_precision_missing,
             "ext.text.format.sign.string" => &self.lang.fmt_text_format_sign_string,
@@ -298,11 +301,11 @@ impl Writer<'_> {
             rule.zero = true;
             at += 1;
         }
-        rule.width = self.count(&letters, &mut at)?.unwrap_or(0);
+        rule.width = self.count(&letters, &mut at, "ext.text.format.width.big", true)?.unwrap_or(0);
         if letters.get(at).map_or(false, |c| matches!(c, ',' | '_')) { rule.group = letters[at]; at += 1; }
         if letters.get(at) == Some(&'.') {
             at += 1;
-            rule.precision = self.count(&letters, &mut at)?;
+            rule.precision = self.count(&letters, &mut at, "ext.text.format.precision.big", true)?;
             if letters.get(at).map_or(false, |c| matches!(c, ',' | '_')) { rule.fraction_group = letters[at]; at += 1; }
             else if rule.precision.is_none() { return Err(self.fault("ext.text.format.precision.missing", &[])); }
         }
@@ -311,15 +314,24 @@ impl Writer<'_> {
         Ok(rule)
     }
 
-    fn count(&self, chars: &[char], at: &mut usize) -> Result<Option<usize>> {
+    /// A run of decimal digits read as a width or a precision. CPython
+    /// parses these into a machine word first: a run wide enough to
+    /// overflow it (a format mini-language field alone; `%`-style
+    /// formatting parses further before this same complaint is worded)
+    /// is "too many decimal digits" whatever the run means, and a run
+    /// that fits but still names a width or a precision past what the
+    /// field could ever use is worded by which of the two it was.
+    fn count(&self, chars: &[char], at: &mut usize, big_key: &str, strict: bool) -> Result<Option<usize>> {
         let begin = *at;
-        let mut total = 0usize;
+        let mut total = 0u128;
         while let Some(d) = chars.get(*at).and_then(|c| c.to_digit(10)) {
-            total = total.checked_mul(10).and_then(|v| v.checked_add(d as usize))
-                .filter(|n| *n <= 100000).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?;
+            total = total.saturating_mul(10).saturating_add(d as u128);
             *at += 1;
         }
-        Ok((*at != begin).then_some(total))
+        if *at == begin { return Ok(None); }
+        if strict && total >= (1u128 << 63) { return Err(self.fault("ext.text.format.digits", &[])); }
+        if total > i32::MAX as u128 { return Err(self.fault(big_key, &[])); }
+        Ok(Some(total as usize))
     }
 
     /// A template filled field by field. The caller is offered every
@@ -395,6 +407,11 @@ impl Writer<'_> {
         } else if first.chars().all(|c| c.is_ascii_digit()) {
             if *next > 0 { return Err(self.fault("ext.text.format.numbered.manual", &[])); }
             *manual = true;
+            // A run of digits too wide for a machine word overflows the
+            // same way a width or a precision that wide would, whether
+            // it ever names a field the arguments hold or not.
+            let wide: u128 = first.parse().unwrap_or(u128::MAX);
+            if wide >= (1u128 << 63) { return Err(self.fault("ext.text.format.digits", &[])); }
             Some(first.parse().map_err(|_| self.fault("ext.text.format.index", &[first]))?)
         } else { None };
         let mut value = if let Some(n) = position {
@@ -495,13 +512,13 @@ impl Writer<'_> {
                 let n = self.star(&args, &mut used)?;
                 if n < 0 { rule.align = '<'; rule.fill = ' '; }
                 n.unsigned_abs() as usize
-            } else { self.count(&chars, &mut at)?.unwrap_or(0) };
+            } else { self.count(&chars, &mut at, "ext.text.format.width.big", false)?.unwrap_or(0) };
             if chars.get(at) == Some(&'.') {
                 at += 1;
                 rule.precision = Some(if chars.get(at) == Some(&'*') {
                     if keyed.is_some() { return Err(self.fault("ext.text.format.unready", &[])); }
                     at += 1; self.star(&args, &mut used)?.max(0) as usize
-                } else { self.count(&chars, &mut at)?.unwrap_or(0) });
+                } else { self.count(&chars, &mut at, "ext.text.format.precision.big", false)?.unwrap_or(0) });
             }
             if chars.get(at).map_or(false, |c| "hlL".contains(*c)) { at += 1; }
             let code = *chars.get(at).ok_or_else(|| self.fault("ext.op.rem.format.incomplete", &[]))?;
@@ -701,6 +718,9 @@ pub fn names_fault(lang: &Lang, text: &str) -> bool {
         &lang.fmt_text_format_invalid,
         &lang.fmt_text_format_unknown,
         &lang.fmt_text_format_unready,
+        &lang.fmt_text_format_digits,
+        &lang.fmt_text_format_width_big,
+        &lang.fmt_text_format_precision_big,
         &lang.fmt_text_format_precision_integer,
         &lang.fmt_text_format_precision_missing,
         &lang.fmt_text_format_sign_string,

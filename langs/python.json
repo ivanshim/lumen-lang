@@ -690,6 +690,10 @@
     "TypeError: '",
     "' object is not iterable"
   ],
+  "ext.builtin.core.unreversible": [
+    "TypeError: '",
+    "' object is not reversible"
+  ],
   "ext.builtin.core.unready": [
     "NotImplementedError: ",
     "() is not supported for these values"
@@ -721,6 +725,26 @@
   ],
   "ext.builtin.enumerate": [
     "enumerate"
+  ],
+  "ext.builtin.iterable": [
+    "iterable"
+  ],
+  "ext.builtin.reduce_native": [
+    "__reduce_native__"
+  ],
+  "ext.builtin.rebuild_native": [
+    "__rebuild_native__"
+  ],
+  "ext.builtin.enumerate.missing": [
+    "TypeError: enumerate() missing required argument 'iterable'"
+  ],
+  "ext.builtin.enumerate.too_many": [
+    "TypeError: enumerate() takes at most 2 arguments (",
+    " given)"
+  ],
+  "ext.builtin.enumerate.keyword": [
+    "TypeError: '",
+    "' is an invalid keyword argument for enumerate()"
   ],
   "ext.builtin.exit": [
     "__finish"
@@ -1126,6 +1150,9 @@
   "ext.builtin.method.rfind": [
     "rfind"
   ],
+  "ext.builtin.method.rindex": [
+    "rindex"
+  ],
   "ext.builtin.method.rjust": [
     "rjust"
   ],
@@ -1164,6 +1191,9 @@
   ],
   "ext.builtin.method.strip": [
     "strip"
+  ],
+  "ext.builtin.method.swapcase": [
+    "swapcase"
   ],
   "ext.builtin.method.title": [
     "title"
@@ -1462,6 +1492,11 @@
   "ext.builtin.text.fault.arguments": [
     "TypeError: invalid string method arguments"
   ],
+  "ext.builtin.text.fault.arguments.many": [
+    "TypeError: ",
+    "() takes at most 3 arguments (",
+    " given)"
+  ],
   "ext.builtin.text.fault.codepoint": [
     "ValueError: character mapping must be in range(0x110000)"
   ],
@@ -1570,6 +1605,9 @@
   "ext.builtin.text.join": [
     "join",
     "str.join"
+  ],
+  "ext.builtin.text.keyword.count": [
+    "count"
   ],
   "ext.builtin.text.keyword.encoding": [
     "encoding"
@@ -1767,6 +1805,16 @@
   "ext.builtin.zip.strict": [
     "strict"
   ],
+  "ext.builtin.map.short": [
+    "ValueError: map() argument ",
+    " is shorter than argument 1",
+    " is shorter than arguments 1-"
+  ],
+  "ext.builtin.map.long": [
+    "ValueError: map() argument ",
+    " is longer than argument 1",
+    " is longer than arguments 1-"
+  ],
   "ext.builtin.globals": [
     "globals"
   ],
@@ -1868,7 +1916,7 @@
     "\\"
   ],
   "ext.lexical.line_continuation.amiss": [
-    "unexpected character after line continuation character"
+    "SyntaxError: unexpected character after line continuation character"
   ],
   "ext.lexical.number.amiss": [
     "invalid numeric literal"
@@ -1928,6 +1976,18 @@
   "ext.lexical.string.amiss": [
     "invalid string literal"
   ],
+  "ext.lexical.string.unterminated": [
+    "SyntaxError: unterminated string literal"
+  ],
+  "ext.lexical.string.unterminated.triple": [
+    "SyntaxError: unterminated triple-quoted string literal"
+  ],
+  "ext.lexical.string.prefix.format.unterminated": [
+    "SyntaxError: unterminated f-string literal"
+  ],
+  "ext.lexical.string.prefix.format.unterminated.triple": [
+    "SyntaxError: unterminated triple-quoted f-string literal"
+  ],
   "ext.lexical.string.bytes.ascii": [
     "SyntaxError: bytes can only contain ASCII literal characters"
   ],
@@ -1960,6 +2020,11 @@
   ],
   "ext.lexical.string.prefix.format.unready": [
     "NotImplementedError: formatted strings are not supported"
+  ],
+  "ext.lexical.string.prefix.incompatible": [
+    "SyntaxError: '",
+    "' and '",
+    "' prefixes are incompatible"
   ],
   "ext.lexical.string.prefix.plain": [
     "u",
@@ -2630,7 +2695,8 @@
     "__complex__",
     "__dir__",
     "__instancecheck__",
-    "__subclasscheck__"
+    "__subclasscheck__",
+    "__length_hint__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
@@ -3230,6 +3296,15 @@
   ],
   "ext.text.format.unready": [
     "NotImplementedError: this format cannot be represented"
+  ],
+  "ext.text.format.digits": [
+    "ValueError: Too many decimal digits in format string"
+  ],
+  "ext.text.format.width.big": [
+    "ValueError: width too big"
+  ],
+  "ext.text.format.precision.big": [
+    "ValueError: precision too big"
   ],
   "ext.text.format.zero.integer": [
     "ValueError: Negative zero coercion (z) not allowed in integer format specifier"

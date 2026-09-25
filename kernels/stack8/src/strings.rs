@@ -58,6 +58,7 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
             TextOp::Split | TextOp::Rsplit if fits("maxsplit") => 2,
             TextOp::Encode if fits("encoding") => 1,
             TextOp::Encode if fits("errors") => 2,
+            TextOp::Replace if fits("count") => 3,
             _ => return Err(fault(lang, "arguments")),
         };
         if place < initial || used.contains(&place) { return Err(fault(lang, "arguments")); }
@@ -110,7 +111,7 @@ pub fn row(items: &[String], tuple: bool) -> String {
     else { format!("[{joined}]") }
 }
 
-fn repr(v: &Value, words: &Wording) -> String {
+pub(crate) fn repr(v: &Value, words: &Wording) -> String {
     match v {
         Value::Text(s) => quoted(s),
         Value::Words(items, tuple) => row(items, *tuple),
@@ -129,7 +130,7 @@ fn final_sigma(letters: &[char], at: usize) -> bool {
         && !after.map_or(false, |c| unicode::bits(*c) & 16 != 0)
 }
 
-fn recase(s: &str, op: TextOp) -> String {
+pub(crate) fn recase(s: &str, op: TextOp) -> String {
     let letters: Vec<char> = s.chars().collect();
     let mut prior = false;
     let mut answer = String::new();
@@ -201,7 +202,19 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         Count | Find | Rfind | Index | Rindex | Startswith | Endswith => (1,3),
         Replace => (2,3), _ => (0,0),
     };
-    if params.len() < least || params.len() > most { return Err(fault(lang,"arguments")); }
+    if params.len() < least || params.len() > most {
+        // These seven answer for their own count of arguments by name,
+        // as CPython's do, rather than by the one complaint every other
+        // text working shares.
+        if params.len() > most && matches!(op, Count | Find | Rfind | Index | Rindex | Startswith | Endswith) {
+            let pieces = &lang.text_words["ext.builtin.text.fault.arguments.many"];
+            if pieces.len() == 3 {
+                let word = match op { Find=>"find", Rfind=>"rfind", Index=>"index", Rindex=>"rindex", Count=>"count", Startswith=>"startswith", _=>"endswith" };
+                return Err(format!("{}{word}{}{}{}", pieces[0], pieces[1], params.len(), pieces[2]));
+            }
+        }
+        return Err(fault(lang,"arguments"));
+    }
     let s: &str = source;
     let number = |at: usize, default: i64| -> Result<i64,String> {
         params.get(at).map_or(Ok(default), |v| integer(v,lang))

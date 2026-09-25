@@ -244,6 +244,11 @@ struct Cursor<'a> {
     out: Vec<Token>,
 }
 
+/// How many fields deep a string may nest and still be named
+/// unterminated by its own word rather than the language's plain one:
+/// see the note on `Cursor::rich_string`.
+const NESTED_UNTERMINATED_DEPTH: u32 = 8;
+
 impl<'a> Cursor<'a> {
     fn look(&self, ahead: usize) -> Option<char> {
         self.text.get(self.at + ahead).copied()
@@ -485,6 +490,54 @@ impl<'a> Cursor<'a> {
         Some((count, mark, raw, format))
     }
 
+    /// What the language says of a run of letters before a quote that
+    /// spells no valid string prefix (`string_open` has already said
+    /// no): nothing where the run is not made only of prefix letters,
+    /// or a quote does not follow it, since that is an ordinary word
+    /// and not an attempted prefix at all. A repeated letter of the
+    /// same kind (`bb''`) names no two kinds to blame, so it reads as
+    /// the language's plain word for text it cannot read; two
+    /// differing kinds that do not belong together (raw and plain,
+    /// byte and plain, byte and format) are named the way `about_two`
+    /// reads `ext.lexical.string.prefix.incompatible`, 'u' picked
+    /// first among a plain letter's conflicts and 'b' first among the
+    /// rest, matching the reference reading the letters together
+    /// rather than the first pair it meets.
+    fn prefix_conflict(&self) -> Option<String> {
+        let lang = self.lang;
+        let mut flags: u8 = 0;
+        let mut repeated = false;
+        let mut count = 0usize;
+        loop {
+            let c = self.look(count)?;
+            if lang.quotes.contains(&c) { break; }
+            let kind = if lang.raw_prefixes.contains(&c) { 0 }
+                else if lang.byte_prefixes.contains(&c) { 1 }
+                else if lang.plain_prefixes.contains(&c) { 2 }
+                else if lang.format_prefixes.contains(&c) { 3 }
+                else { return None; };
+            let bit = 1u8 << kind;
+            if flags & bit != 0 { repeated = true; }
+            flags |= bit;
+            count += 1;
+            if count > 4 { return None; }
+        }
+        if count == 0 || !lang.quotes.contains(&self.look(count)?) { return None; }
+        let valid = matches!(flags, 0b0001 | 0b0010 | 0b0100 | 0b1000 | 0b0011 | 0b1001);
+        if valid && !repeated { return None; }
+        if repeated { return Some(lang.source_syntax.clone().unwrap_or_default()); }
+        let has = |kind: u8| flags & (1 << kind) != 0;
+        let pair = if has(2) {
+            if has(1) { ('u', 'b') } else if has(0) { ('u', 'r') } else { ('u', 'f') }
+        } else {
+            ('b', 'f')
+        };
+        Some(match &lang.prefix_incompatible {
+            Some((before, between, after)) => format!("{before}{}{between}{}{after}", pair.0, pair.1),
+            None => lang.source_syntax.clone().unwrap_or_default(),
+        })
+    }
+
     fn string_words(&self) -> String {
         self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())
     }
@@ -500,8 +553,20 @@ impl<'a> Cursor<'a> {
     }
 
     /// A prefixed or long string, with each field kept apart from its
-    /// text until the assembler has read the expression it holds.
-    fn rich_string(&mut self, prefix: usize, mark: &str, raw: bool, format: bool) -> Result<(), String> {
+    /// text until the assembler has read the expression it holds. Named
+    /// unterminated only under `NESTED_UNTERMINATED_DEPTH`: a string
+    /// nested a level or two inside a field, such as a plain string
+    /// quoted inside an f-string's expression, is still named exactly
+    /// this way by the reference. Past that shallow nesting, the
+    /// reference tokenizes and parses together and can meet a syntax
+    /// fault inside the nesting before ever meeting the end of the
+    /// text (see test_syntax_error_in_nested_fstring, which nests an
+    /// already-invalid expression, `1 1`, some 199 fields deep and is
+    /// told only `invalid syntax`), a pass this reader does not make,
+    /// so past a depth no ordinary program reaches it keeps its more
+    /// generic word instead of naming text unterminated that a fault
+    /// far short of its end may be the truer complaint about.
+    fn rich_string(&mut self, prefix: usize, mark: &str, raw: bool, format: bool, depth: u32) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
         for _ in 0..prefix + mark.chars().count() { self.step(); }
@@ -513,7 +578,18 @@ impl<'a> Cursor<'a> {
                 break;
             }
             let Some(c) = self.look(0) else {
-                return Err(if mark.chars().count() > 1 && !format { format!("Unterminated {} string", mark.chars().next().unwrap()) } else { self.string_words() });
+                let triple = mark.chars().count() > 1;
+                let named = match (triple, format) {
+                    (false, false) => &self.lang.string_unterminated,
+                    (true, false) => &self.lang.string_unterminated_triple,
+                    (false, true) => &self.lang.fstring_unterminated,
+                    (true, true) => &self.lang.fstring_unterminated_triple,
+                };
+                return Err(match named {
+                    Some(said) if depth < NESTED_UNTERMINATED_DEPTH => said.clone(),
+                    None if triple && !format => format!("Unterminated {} string", mark.chars().next().unwrap()),
+                    _ => self.string_words(),
+                });
             };
             if bytes && (!c.is_ascii() || c == '\\' && self.look(1).map_or(false, |c| !c.is_ascii())) {
                 return Err(self.lang.byte_words["ext.lexical.string.bytes.ascii"][0].clone());
@@ -524,7 +600,7 @@ impl<'a> Cursor<'a> {
                     self.step(); self.step(); text.push(c);
                 } else if c == '{' {
                     self.string_text(&mut text, &mut fault, line, col);
-                    self.string_field(raw)?;
+                    self.string_field(raw, depth)?;
                 } else { return Err(self.string_words()); }
             } else if c == '\\' {
                 self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
@@ -611,21 +687,30 @@ impl<'a> Cursor<'a> {
         kept
     }
 
-    fn string_field(&mut self, raw: bool) -> Result<(), String> {
+    fn string_field(&mut self, raw: bool, depth: u32) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         self.step();
         let mut expression = String::new();
         let mut brackets = Vec::new();
         loop {
             let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            // A field is code, so a backslash in it stands exactly as one
+            // written outside of any string does: it joins a line ending
+            // right after it, and names nothing else. Caught here, before
+            // `string_open`, so a quote following a bad backslash is
+            // never mistaken for a nested string's opening mark.
+            if c == '\\' && !matches!(self.look(1), Some('\n') | Some('\r')) {
+                return Err(self.lang.continuation_amiss.first().cloned().unwrap_or_else(|| self.string_words()));
+            }
             if let Some((prefix, mark, is_raw, format)) = self.string_open() {
                 let saved = self.out.len();
                 let began = self.at;
-                self.rich_string(prefix, &mark, is_raw, format)?;
+                self.rich_string(prefix, &mark, is_raw, format, depth + 1)?;
                 self.out.truncate(saved);
                 expression.extend(self.text[began..self.at].iter());
                 continue;
             }
+            if let Some(said) = self.prefix_conflict() { return Err(said); }
             if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
                 while self.look(0).map_or(false, |x| x != '\n') { self.step(); }
                 continue;
@@ -667,7 +752,7 @@ impl<'a> Cursor<'a> {
             loop {
                 match self.look(0) {
                     Some('}') => break,
-                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw)?; }
+                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth)?; }
                     Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault)?,
                     Some(_) => text.push(self.step()),
                     None => return Err(self.string_words()),
@@ -1083,9 +1168,10 @@ impl<'a> Cursor<'a> {
                     continue;
                 }
                 if let Some((prefix, mark, raw, format)) = self.string_open() {
-                    self.rich_string(prefix, &mark, raw, format)?;
+                    self.rich_string(prefix, &mark, raw, format, 0)?;
                     continue;
                 }
+                if let Some(said) = self.prefix_conflict() { return Err(said); }
                 if lang.adjacent_strings && self.look(0) == Some('\\') && self.look(1) == Some('\n') {
                     self.step(); self.step();
                     continue;

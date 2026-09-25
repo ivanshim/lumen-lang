@@ -112,6 +112,10 @@ def set_int_max_str_digits(maxdigits):
         raise ValueError('maxdigits must be 0 or larger than 640')
     _int_max_str_digits = maxdigits
 
+# None of the three streams a program finds here is ever the far end
+# of a real terminal, whatever the host's own stdio happens to be, so
+# isatty() always answers no and a test that only runs against a tty
+# takes its own skip road instead of finding an attribute missing.
 class _Output:
     def write(self, *args, **keywords):
         if keywords:
@@ -120,6 +124,9 @@ class _Output:
 
     def flush(self):
         pass
+
+    def isatty(self):
+        return False
 
 class _Error:
     def write(self, *args, **keywords):
@@ -130,12 +137,18 @@ class _Error:
     def flush(self):
         pass
 
+    def isatty(self):
+        return False
+
 class _Input:
     def read(self, size=-1):
         return __stream_read(size, False)
 
     def readline(self, size=-1):
         return __stream_read(size, True)
+
+    def isatty(self):
+        return False
 
 stdout = _Output()
 stderr = _Error()
@@ -155,6 +168,34 @@ def _input(prompt=''):
 
 def exit(status=None):
     raise SystemExit(status)
+
+# The default answer to breakpoint(): a name in $PYTHONBREAKPOINT picks
+# what runs in its place, '0' turns it off, and an unset or empty name
+# means the reference debugger. A name that cannot be imported or found
+# is warned about, once, and treated as '0' for that call.
+def breakpointhook(*args, **kws):
+    import os
+    value = os.environ.get('PYTHONBREAKPOINT')
+    if value is None or value == '':
+        import pdb
+        return pdb.set_trace(*args, **kws)
+    if value == '0':
+        return None
+    modname, dot, attrname = value.rpartition('.')
+    if not dot:
+        modname = 'builtins'
+    try:
+        module = __import__(modname)
+        hook = getattr(module, attrname)
+    except Exception:
+        import warnings
+        warnings.warn(
+            'Ignoring unimportable $PYTHONBREAKPOINT: "' + value + '"',
+            RuntimeWarning)
+        return None
+    return hook(*args, **kws)
+
+__breakpointhook__ = breakpointhook
 
 # The exception a clause is holding, whole, or None outside every
 # clause; and the older three-part account of the same.

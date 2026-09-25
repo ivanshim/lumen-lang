@@ -86,6 +86,12 @@ def _ratio(value):
         # where a subnormal exponent would otherwise double a bignum
         # denominator on the order of a thousand times over.
         return value.as_integer_ratio()
+    # Anything else offering its own exact ratio is asked for it
+    # directly, the way a value out of decimal is; doubling towards a
+    # whole number is no working at all where a fifth stands in the
+    # denominator to begin with, and never comes out even that way.
+    if hasattr(value, 'as_integer_ratio'):
+        return value.as_integer_ratio()
     if value != value:
         raise 'ValueError: cannot convert NaN to integer ratio'
     if value == inf or value == -inf:

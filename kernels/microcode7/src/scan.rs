@@ -547,6 +547,53 @@ fn quoted_start(src: &[char], offset: usize, table: &Table) -> Option<(usize, Ve
     Some((begin + ending.len(), ending, flags & 1 != 0, flags & 8 != 0))
 }
 
+/// What the language says of a run of letters before a quote that
+/// spells no valid string prefix (`quoted_start` has already said
+/// no): nothing where the run is not made only of prefix letters, or
+/// no quote follows it, since that is an ordinary word and not an
+/// attempted prefix at all. A repeated letter of the same kind
+/// (`bb''`) names no two kinds to blame, so it reads as the
+/// language's plain word for text it cannot read; two differing
+/// kinds that do not belong together (raw and plain, byte and plain,
+/// byte and format) are named by ext.lexical.string.prefix.incompatible,
+/// 'u' picked first among a plain letter's conflicts and 'b' first
+/// among the rest, reading the letters together rather than the
+/// first pair met.
+fn prefix_conflict(src: &[char], offset: usize, table: &Table) -> Option<String> {
+    let quotes = table.letters("lexical.string_quotes");
+    let mut flags = 0u8;
+    let mut repeated = false;
+    let mut at = offset;
+    loop {
+        let c = *src.get(at)?;
+        if quotes.contains(&c) { break; }
+        let letter = c.to_string();
+        let kind = ["raw", "bytes", "plain", "format"].iter().position(|part|
+            table.spells(&format!("ext.lexical.string.prefix.{part}"), &letter))?;
+        let bit = 1u8 << kind;
+        if flags & bit != 0 { repeated = true; }
+        flags |= bit;
+        at += 1;
+        if at - offset > 4 { return None; }
+    }
+    if at == offset || !quotes.contains(src.get(at)?) { return None; }
+    let valid = matches!(flags, 0b0001 | 0b0010 | 0b0100 | 0b1000 | 0b0011 | 0b1001);
+    if valid && !repeated { return None; }
+    let generic = || table.single("ext.builtin.source.syntax").unwrap_or_default().to_owned();
+    if repeated { return Some(generic()); }
+    let has = |kind: u8| flags & (1 << kind) != 0;
+    let pair = if has(2) {
+        if has(1) { ('u', 'b') } else if has(0) { ('u', 'r') } else { ('u', 'f') }
+    } else {
+        ('b', 'f')
+    };
+    let pieces = table.strings("ext.lexical.string.prefix.incompatible");
+    Some(match pieces {
+        [before, between, after] => format!("{before}{}{between}{}{after}", pair.0, pair.1),
+        _ => generic(),
+    })
+}
+
 struct Quotation<'a> {
     source: &'a [char],
     next: usize,
@@ -554,6 +601,19 @@ struct Quotation<'a> {
     row: u32,
     made: Vec<Token>,
 }
+
+/// How many fields deep a string may nest and still be named
+/// unterminated by its own word rather than the language's plain one:
+/// a string nested a level or two inside a field, such as a plain
+/// string quoted inside an f-string's expression, is still named this
+/// way by the reference. Past shallow nesting, the reference
+/// tokenizes and parses together and can meet a syntax fault inside
+/// the nesting before ever meeting the end of the text (see
+/// test_syntax_error_in_nested_fstring, which nests an already-invalid
+/// expression, `1 1`, some 199 fields deep and is told only `invalid
+/// syntax`), a pass this reader does not make, so past a depth no
+/// ordinary program reaches it keeps its more generic word instead.
+const NESTED_UNTERMINATED_DEPTH: u32 = 8;
 
 impl Quotation<'_> {
     fn here(&self) -> Option<char> { self.source.get(self.next).copied() }
@@ -577,7 +637,13 @@ impl Quotation<'_> {
         text.clear();
         *missing = false;
     }
-    fn literal(&mut self, body: usize, end: &[char], raw: bool, fields: bool) -> Result<(), String> {
+    /// Named unterminated only at `depth` zero: a string nested inside
+    /// a field is one more piece of an outer string already read this
+    /// way, and the reference, tokenizing and parsing together, can
+    /// meet a syntax fault inside that nesting before ever meeting the
+    /// end of the text, so it does not keep this word for text so
+    /// deeply nested that it is likelier to hold some other fault.
+    fn literal(&mut self, body: usize, end: &[char], raw: bool, fields: bool, depth: u32) -> Result<(), String> {
         let bytes = self.source[self.next..body - end.len()].iter().any(|c|
             self.table.spells("ext.lexical.string.prefix.bytes", &c.to_string()));
         self.forward(body - self.next);
@@ -586,7 +652,17 @@ impl Quotation<'_> {
         let mut missing = false;
         while !self.source[self.next..].starts_with(end) {
             let ch = self.here().ok_or_else(|| {
-                if end.len() > 1 && !fields { format!("Unterminated {} string", end[0]) } else { self.bad() }
+                let key = match (end.len() > 1, fields) {
+                    (false, false) => "ext.lexical.string.unterminated",
+                    (true, false) => "ext.lexical.string.unterminated.triple",
+                    (false, true) => "ext.lexical.string.prefix.format.unterminated",
+                    (true, true) => "ext.lexical.string.prefix.format.unterminated.triple",
+                };
+                match self.table.single(key) {
+                    Some(said) if depth < NESTED_UNTERMINATED_DEPTH => said.to_owned(),
+                    None if end.len() > 1 && !fields => format!("Unterminated {} string", end[0]),
+                    _ => self.bad(),
+                }
             })?;
             if bytes && (!ch.is_ascii() || ch == '\\' && self.source.get(self.next + 1).map_or(false, |c| !c.is_ascii())) {
                 return Err(self.table.single("ext.lexical.string.bytes.ascii").unwrap_or("").to_owned());
@@ -601,7 +677,7 @@ impl Quotation<'_> {
                     } else {
                         if ch == '}' { return Err(self.bad()); }
                         self.flush(&mut saved, &mut missing);
-                        self.field(raw)?;
+                        self.field(raw, depth)?;
                     }
                 }
                 _ => { saved.push(ch); self.forward(1); }
@@ -704,19 +780,29 @@ impl Quotation<'_> {
         }
         whitespace
     }
-    fn field(&mut self, raw: bool) -> Result<(), String> {
+    fn field(&mut self, raw: bool, depth: u32) -> Result<(), String> {
         self.forward(1);
         let origin = self.next;
         let mut nesting = Vec::new();
         let mut comments = Vec::new();
         loop {
             let ch = self.here().ok_or_else(|| self.bad())?;
+            // A field is code, so a backslash in it stands exactly as one
+            // written outside of any string does: it joins a line ending
+            // right after it, and names nothing else. Caught here, before
+            // `quoted_start`, so a quote following a bad backslash is
+            // never mistaken for a nested string's opening mark.
+            if ch == '\\' && !matches!(self.source.get(self.next + 1), Some('\n') | Some('\r')) {
+                let said = self.table.single("ext.lexical.line_continuation.amiss").unwrap_or_default().to_owned();
+                return Err(said);
+            }
             if let Some((body, end, bare, woven)) = quoted_start(self.source, self.next, self.table) {
                 let previous = self.made.len();
-                self.literal(body, &end, bare, woven)?;
+                self.literal(body, &end, bare, woven, depth + 1)?;
                 self.made.truncate(previous);
                 continue;
             }
+            if let Some(said) = prefix_conflict(self.source, self.next, self.table) { return Err(said); }
             if self.table.strings("lexical.comment_line").iter().any(|s| self.source[self.next..].starts_with(&s.chars().collect::<Vec<_>>())) {
                 let begins = self.next;
                 while self.here().map_or(false, |c| c != '\n') { self.forward(1); }
@@ -765,7 +851,7 @@ impl Quotation<'_> {
             self.forward(1);
             while self.here() != Some('}') {
                 match self.here().ok_or_else(|| self.bad())? {
-                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw)?; }
+                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw, depth)?; }
                     '\\' => self.slash(raw, true, false, &mut specification, &mut missing)?,
                     c => { specification.push(c); self.forward(1); }
                 }
@@ -865,12 +951,13 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             }
             if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
                 let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new() };
-                quote.literal(body, &end, raw, fields)?;
+                quote.literal(body, &end, raw, fields, 0)?;
                 pos = quote.next;
                 row = quote.row;
                 tokens.extend(quote.made);
                 continue;
             }
+            if let Some(said) = prefix_conflict(&src, pos, table) { return Err(said); }
             if table.flag("ext.lexical.string.adjacent") && src[pos] == '\\' && src.get(pos + 1) == Some(&'\n') {
                 pos += 2;
                 row += 1;

@@ -260,6 +260,10 @@ pub enum CursorSource {
     Viewed(Value, usize, usize),
     /// A thing walked by reading its places from nought upward.
     Indexed(Value, BigInt),
+    /// A thing walked by reading its places from its last down to
+    /// nought, for one that answers `__getitem__` and `__len__` but
+    /// keeps no `__reversed__` of its own.
+    IndexedBack(Value, BigInt),
     /// A callable asked again and again until it answers the sentinel.
     Called(Value, Value),
     /// A thing of the program's own, asked for each member the way a

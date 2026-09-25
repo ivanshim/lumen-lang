@@ -93,8 +93,8 @@ fn bound(n: i64, length: usize) -> usize {
 /// each stands for. A kind answers its own alone: a list appends, a
 /// tuple does not.
 pub fn answered(value: &Value, operation: &str) -> bool {
-    const TEXT: &[&str] = &["upper", "lower", "title", "capitalize", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace",
-        "find", "rfind", "index", "count", "startswith", "endswith", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper",
+    const TEXT: &[&str] = &["upper", "lower", "title", "capitalize", "swapcase", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace",
+        "find", "rfind", "index", "rindex", "count", "startswith", "endswith", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper",
         "center", "ljust", "rjust", "zfill", "format", "encode"];
     const ROW: &[&str] = &["append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "index", "count"];
     const PAIRS: &[&str] = &["get", "keys", "values", "items", "setdefault", "update", "pop", "popitem", "copy", "clear", "fromkeys"];
@@ -156,15 +156,21 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             if op == "format" { return format_fields(s, a, names, words, fault).map(|s| Value::text(&s)); }
             let answer = match op {
                 "upper" | "lower" => { arity(0, 0)?; if op == "upper" { s.to_uppercase() } else { s.to_lowercase() } }
-                "title" | "capitalize" => {
+                // Capitalize's own titlecase-then-lowercase walk is the
+                // one the text kind's other case changes already share,
+                // so a letter outside ASCII is cased exactly as it would
+                // be reached through the text kind directly.
+                "capitalize" => { arity(0, 0)?; crate::strings::recase(s, crate::strings::TextOp::Capitalize) }
+                "title" => {
                     arity(0, 0)?;
                     if !s.is_ascii() { return Err(fault("unicode")); }
                     let mut begin = true;
-                    s.chars().enumerate().map(|(i,c)| {
-                        let next = if (op == "capitalize" && i == 0) || (op == "title" && begin) { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
+                    s.chars().map(|c| {
+                        let next = if begin { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
                         begin = !c.is_ascii_alphabetic(); next
                     }).collect()
                 }
+                "swapcase" => { arity(0, 0)?; crate::strings::recase(s, crate::strings::TextOp::Swapcase) }
                 "strip" | "lstrip" | "rstrip" => {
                     arity(0,1)?;
                     let chars = a.first().filter(|v| !matches!(v, Value::Null)).map(|v| text(v,fault)).transpose()?;
@@ -212,7 +218,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     gathered
                 }
                 "replace" => { arity(2,3)?; let n = a.get(2).map(|v| integer(v,fault)).transpose()?.unwrap_or(-1); s.replacen(&text(&a[0],fault)?, &text(&a[1],fault)?, if n < 0 { usize::MAX } else { n as usize }) }
-                "find" | "rfind" | "index" | "count" | "startswith" | "endswith" => {
+                "find" | "rfind" | "index" | "rindex" | "count" | "startswith" | "endswith" => {
                     arity(1,3)?;
                     let chars: Vec<char> = s.chars().collect();
                     let raw = a.get(1).filter(|v| !matches!(v,Value::Null)).map(|v| integer(v,fault)).transpose()?.unwrap_or(0);
@@ -227,18 +233,25 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     }
                     let needle = text(&a[0],fault)?;
                     if op == "count" { return Ok(Value::Small(if !valid {0} else if needle.is_empty() {piece.chars().count() as i64+1} else {piece.matches(&needle).count() as i64})); }
-                    let found = if !valid { None } else if op == "rfind" { piece.rfind(&needle) } else { piece.find(&needle) };
-                    if op == "index" && found.is_none() { return Err(fault("substring")); }
+                    let found = if !valid { None } else if op == "rfind" || op == "rindex" { piece.rfind(&needle) } else { piece.find(&needle) };
+                    if (op == "index" || op == "rindex") && found.is_none() { return Err(fault("substring")); }
                     return Ok(Value::Small(found.map_or(-1,|i| (start+piece[..i].chars().count()) as i64)));
                 }
                 "isdigit" | "isalpha" | "isalnum" | "isspace" | "islower" | "isupper" => {
                     arity(0,0)?;
-                    if !s.is_ascii() { return Err(fault("unicode")); }
+                    // Alphabetic, Digit (Numeric_Type Digit or Decimal) and
+                    // White_Space are read from the same character property
+                    // table `capitalize` and the others already draw upon,
+                    // so a letter or a digit outside ASCII answers exactly
+                    // as CPython's own tables say it should.
+                    let space = |c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c);
                     let valid = !s.is_empty() && match op {
-                        "isdigit" => s.chars().all(|c| c.is_ascii_digit()), "isalpha" => s.chars().all(|c| c.is_ascii_alphabetic()),
-                        "isalnum" => s.chars().all(|c| c.is_ascii_alphanumeric()), "isspace" => s.chars().all(|c| c.is_ascii_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)),
-                        "islower" => s.chars().any(|c| c.is_ascii_lowercase()) && !s.chars().any(|c| c.is_ascii_uppercase()),
-                        _ => s.chars().any(|c| c.is_ascii_uppercase()) && !s.chars().any(|c| c.is_ascii_lowercase()),
+                        "isdigit" => s.chars().all(|c| crate::unicode::bits(c) & 1024 != 0),
+                        "isalpha" => s.chars().all(|c| crate::unicode::bits(c) & 2048 != 0),
+                        "isalnum" => s.chars().all(|c| crate::unicode::bits(c) & (2048|2|512|1024) != 0),
+                        "isspace" => s.chars().all(space),
+                        "islower" => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&128!=0 } else { true } }) && seen }
+                        _ => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&64!=0 } else { true } }) && seen }
                     };
                     return Ok(Value::Flag(valid));
                 }

@@ -521,6 +521,15 @@ class _HostFile:
         return "<_io.TextIOWrapper name='" + self.name + "' mode='" + self.mode + "'>"
 
 
+def breakpoint(*args, **kws):
+    import sys
+    try:
+        hook = sys.breakpointhook
+    except AttributeError:
+        raise RuntimeError('lost sys.breakpointhook')
+    return hook(*args, **kws)
+
+
 def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
     if not isinstance(file, str):
         raise TypeError("expected str, bytes or os.PathLike object, not " + type(file).__name__)
@@ -533,7 +542,7 @@ def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None,
 # What CPython's builtins holds and this one does not, so that a reader
 # looking for a missing name learns it is missing rather than broken.
 # There is no object behind any of these here: aiter, anext, ascii,
-# breakpoint, copyright, credits, exit, help, license, memoryview,
+# copyright, credits, exit, help, license, memoryview,
 # quit, __build_class__, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
 # IndentationError, TabError, and the OSError kinds

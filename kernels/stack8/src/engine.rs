@@ -4336,6 +4336,9 @@ impl<'a> Engine<'a> {
             // having marks of its own for each kind or words against
             // the kinds that take none.
             72 => true,
+            // A walk answers a guess at how many members it has left,
+            // where the reference keeps one for a walk of its kind.
+            78 => matches!(family, Kindred::Walk),
             _ => false,
         }
     }
@@ -4427,6 +4430,39 @@ impl<'a> Engine<'a> {
         // The specification a value is written to, asked for under the
         // name the protocol gives it. The writing is the one a field of
         // a template is given, and so are the refusals.
+        // A guess at how many members a walk has left, for the kinds
+        // of walk this kernel can answer that of without asking
+        // anything further of what it walks: a snapshot row and a
+        // counted row read the guess straight from the place they
+        // stand at, and a walk taken by place from a sequence's own
+        // `__getitem__` from how far its last place still stands
+        // above nought.
+        if place == 78 {
+            let Value::Cursor(cell) = receiver else { return Ok(Value::Small(0)); };
+            let indexed_back = { let held = cell.borrow(); match &held.source {
+                CursorSource::Items(items, at) => return Ok(Value::Small(items.len().saturating_sub(*at) as i64)),
+                CursorSource::Counted(row, at) => {
+                    let left = row.length() - at;
+                    return Ok(Value::of_big(if left > BigInt::from(0) { left } else { BigInt::from(0) }));
+                }
+                CursorSource::IndexedBack(thing, at) => {
+                    if held.finished || *at < BigInt::from(0) { return Ok(Value::Small(0)); }
+                    Some((thing.clone(), at.clone()))
+                }
+                _ => None,
+            }};
+            // A walk taken by place from a sequence's own `__getitem__`
+            // asks that sequence's `__len__` afresh each time, exactly
+            // as the reference does, rather than trusting the length
+            // the walk itself was given when it began.
+            if let Some((thing, at)) = indexed_back {
+                let length = self.builtin_call(Builtin::Length, "len", vec![(None, thing)])?;
+                let size = match &length { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => length.as_big(), _ => Err(self.core_fault("core.integer", &length.core_kind())) }?;
+                let hint = at + BigInt::from(1);
+                return Ok(Value::of_big(if size < hint { size } else { hint }));
+            }
+            return Ok(Value::Small(0));
+        }
         if place == 72 {
             let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
             let given = args[0].contents();
@@ -6739,6 +6775,11 @@ impl<'a> Engine<'a> {
                 let kind_maker = matches!(&held, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))
                     && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref())
                         || name.as_ref() == self.class_word("mro") || name.as_ref() == self.class_word("order"));
+                // A builtin kind the reference keeps a docstring for
+                // answers to the member that reads it, whether or not
+                // the kind is one a class may stand on.
+                let kind_doc = name.as_ref() == self.class_word("doc")
+                    && matches!(&held, Value::Native(_, word) if Self::builtin_kind_doc(word).is_some());
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
@@ -6747,7 +6788,7 @@ impl<'a> Engine<'a> {
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
                 let generator_running = matches!(&held, Value::Generator(_)) && self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref());
-                Value::Flag(kind_named || kind_maker || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(kind_named || kind_maker || kind_doc || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -6789,6 +6830,9 @@ impl<'a> Engine<'a> {
                 }
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
+                Value::Native(_, word) if name.as_ref() == self.class_word("doc") && Self::builtin_kind_doc(&word).is_some() => {
+                    Value::text(Self::builtin_kind_doc(&word).expect("checked"))
+                }
                 Value::SortOf(sort) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(Value::sort_called(sort)),
                 // Either bytes kind stands as a value of its own rather
                 // than as a builtin word, so it answers for its name here.
@@ -7757,6 +7801,75 @@ impl<'a> Engine<'a> {
             inner.field(&said, spec, "").map(Some)
         };
         writer.template(text, args, &mut offered)
+    }
+
+    /// `str.format_map` fills named fields from a mapping read key by
+    /// key, each key taken the very way a subscript takes it: a plain
+    /// mapping's own pairs, a program's own class through whatever
+    /// `__getitem__` it carries, and a dict subclass's `__missing__`
+    /// standing in for a key the mapping does not hold. A path after
+    /// the key reads an attribute or a further place the same way a
+    /// plain field of `.format` does.
+    fn mapping_format(&mut self, s: &str, mapping: &Value, depth: usize) -> Res<String> {
+        if depth > 2 { return Err(crate::strings::fault(self.lang, "format")); }
+        let mut out = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if (c == '{' || c == '}') && chars.peek() == Some(&c) { chars.next(); out.push(c); continue; }
+            if c == '}' { return Err(crate::strings::fault(self.lang, "format.brace")); }
+            if c != '{' { out.push(c); continue; }
+            let mut field = String::new();
+            let mut nested = 0;
+            let mut closed = false;
+            for c in chars.by_ref() {
+                if c == '}' && nested == 0 { closed = true; break; }
+                if c == '{' { nested += 1; }
+                if c == '}' { nested -= 1; }
+                field.push(c);
+            }
+            if !closed { return Err(crate::strings::fault(self.lang, "format.brace")); }
+            let (head, spec) = field.split_once(':').unwrap_or((&field, ""));
+            let (path, conversion) = head.split_once('!').unwrap_or((head, ""));
+            let first_end = path.find(['.', '[']).unwrap_or(path.len());
+            let key = &path[..first_end];
+            if key.is_empty() || key.chars().next().unwrap().is_ascii_digit() {
+                return Err(crate::strings::fault(self.lang, "format.positional"));
+            }
+            let mut value = self.special_dyad(&Action::At, mapping, &Value::text(key))?;
+            let mut rest = &path[first_end..];
+            while !rest.is_empty() {
+                value = value.contents();
+                if let Some(tail) = rest.strip_prefix('.') {
+                    let end = tail.find(['.', '[']).unwrap_or(tail.len());
+                    let member = &tail[..end];
+                    value = match &value {
+                        Value::Object(o) => o.fields.borrow().iter().find(|(k, _)| k == member).map(|(_, v)| v.clone()),
+                        _ => None,
+                    }.ok_or_else(|| crate::strings::fault(self.lang, "format"))?;
+                    rest = &tail[end..];
+                } else if let Some(tail) = rest.strip_prefix('[') {
+                    let end = tail.find(']').ok_or_else(|| crate::strings::fault(self.lang, "format"))?;
+                    let asked = &tail[..end];
+                    let index = asked.parse::<i64>().map_or_else(|_| Value::text(asked), Value::Small);
+                    value = self.special_dyad(&Action::At, &value, &index)?;
+                    rest = &tail[end + 1..];
+                } else { return Err(crate::strings::fault(self.lang, "format")); }
+            }
+            let spec = self.mapping_format(spec, mapping, depth + 1)?;
+            let words = self.wording();
+            let shown = if conversion == "r" || conversion == "a" {
+                let mut shown = crate::strings::repr(&value, &words);
+                if conversion == "a" {
+                    shown = shown.chars().map(|c| if c.is_ascii() { c.to_string() }
+                        else if c as u32 <= 255 { format!("\\x{:02x}", c as u32) }
+                        else if c as u32 <= 65535 { format!("\\u{:04x}", c as u32) }
+                        else { format!("\\U{:08x}", c as u32) }).collect();
+                }
+                Value::text(&shown).string_field(&words, &spec, "")
+            } else { value.string_field(&words, &spec, conversion) };
+            out.push_str(&shown.ok_or_else(|| crate::strings::fault(self.lang, "format"))?);
+        }
+        Ok(out)
     }
 
     /// Text on the left of the remainder sign, filled mark by mark. A
@@ -8860,11 +8973,15 @@ impl<'a> Engine<'a> {
         let (a, b) = (as_number(a), as_number(b));
         let (Some(x), Some(y)) = (arith::Exact::from_value(&a), arith::Exact::from_value(&b)) else { return Ok(None) };
         if x.places.is_none() && y.places.is_none() && y.p >= BigInt::from(0) { return Ok(None); }
-        let binary = |v: &Value, e: &arith::Exact| {
-            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { -0.0 }
-            else { crate::value::as_binary(&e.p, &e.q) }
+        let binary = |v: &Value, e: &arith::Exact| -> Result<f64, String> {
+            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { return Ok(-0.0); }
+            let bound = crate::value::as_binary(&e.p, &e.q);
+            if e.places.is_none() && !e.p.is_zero() && bound.is_infinite() {
+                return Err("OverflowError: int too large to convert to float".to_string());
+            }
+            Ok(bound)
         };
-        let (left, right) = (binary(&a, &x), binary(&b, &y));
+        let (left, right) = (binary(&a, &x)?, binary(&b, &y)?);
         if left == 0.0 && right < 0.0 { return Err(self.lang.power_zero[0].clone()); }
         if left.is_finite() && left < 0.0 && right.is_finite() && right.fract() != 0.0 {
             return Err(self.lang.power_nonreal[0].clone());
@@ -8931,11 +9048,28 @@ impl<'a> Engine<'a> {
         }
         if self.lang.real_bits.is_some() && (real_here(a) || real_here(b)) {
             let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
-            let widened = |v: &Value| match arith::to_real(v, places) {
-                Some(real) => self.at_real_width(real),
-                None => v.clone(),
+            // A value not already real is carried to the width here,
+            // the same carrying `float()` itself does, and is stopped
+            // the same way where it cannot be carried: the width has
+            // nothing of that size to answer with, and a real which
+            // only happens to overflow the working stays quiet, as it
+            // was already at the width before this was asked.
+            let widened = |v: &Value| -> Res<Value> {
+                match arith::to_real(v, places) {
+                    Some(real) => {
+                        if !matches!(v, Value::Real(_)) {
+                            if let Value::Real(r) = &real {
+                                if !r.p.is_zero() && crate::value::as_binary(&r.p, &r.q).is_infinite() {
+                                    return Err("OverflowError: int too large to convert to float".to_string());
+                                }
+                            }
+                        }
+                        Ok(self.at_real_width(real))
+                    }
+                    None => Ok(v.clone()),
+                }
             };
-            let (a, b) = (widened(a), widened(b));
+            let (a, b) = (widened(a)?, widened(b)?);
             return Ok(self.within_width(self.dyadic_exact(op, &a, &b)?));
         }
         Ok(self.within_width(self.dyadic_exact(op, a, b)?))
@@ -10284,7 +10418,7 @@ impl<'a> Engine<'a> {
         if matches!(&contents, Value::Text(_)) {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
-                let operation = match operation { "split"=>Some(crate::strings::TextOp::Split), "rsplit"=>Some(crate::strings::TextOp::Rsplit), "join"=>Some(crate::strings::TextOp::Join), "strip"=>Some(crate::strings::TextOp::Strip), "lstrip"=>Some(crate::strings::TextOp::Lstrip), "rstrip"=>Some(crate::strings::TextOp::Rstrip), "replace"=>Some(crate::strings::TextOp::Replace), "startswith"=>Some(crate::strings::TextOp::Startswith), "endswith"=>Some(crate::strings::TextOp::Endswith), "find"=>Some(crate::strings::TextOp::Find), "rfind"=>Some(crate::strings::TextOp::Rfind), "index"=>Some(crate::strings::TextOp::Index), "count"=>Some(crate::strings::TextOp::Count), "upper"=>Some(crate::strings::TextOp::Upper), "lower"=>Some(crate::strings::TextOp::Lower), _=>None };
+                let operation = match operation { "split"=>Some(crate::strings::TextOp::Split), "rsplit"=>Some(crate::strings::TextOp::Rsplit), "join"=>Some(crate::strings::TextOp::Join), "strip"=>Some(crate::strings::TextOp::Strip), "lstrip"=>Some(crate::strings::TextOp::Lstrip), "rstrip"=>Some(crate::strings::TextOp::Rstrip), "replace"=>Some(crate::strings::TextOp::Replace), "startswith"=>Some(crate::strings::TextOp::Startswith), "endswith"=>Some(crate::strings::TextOp::Endswith), "find"=>Some(crate::strings::TextOp::Find), "rfind"=>Some(crate::strings::TextOp::Rfind), "index"=>Some(crate::strings::TextOp::Index), "rindex"=>Some(crate::strings::TextOp::Rindex), "count"=>Some(crate::strings::TextOp::Count), "upper"=>Some(crate::strings::TextOp::Upper), "lower"=>Some(crate::strings::TextOp::Lower), "swapcase"=>Some(crate::strings::TextOp::Swapcase), _=>None };
                 if let Some(op) = operation {
                     let mut given = vec![contents]; given.extend(args.into_iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }));
                     if op == crate::strings::TextOp::Join && given.len() == 2 { given[1] = Value::array(self.comprehension_items(&given[1])?); }
@@ -11583,9 +11717,20 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                // A mapping handed to format_map is read the way a
+                // subscript reads it, key by key: a plain mapping, one
+                // of the program's own classes with its own `__getitem__`,
+                // or a dict subclass whose `__missing__` stands in for a
+                // key it does not hold, all answer exactly as `[]` would.
+                if op == crate::strings::TextOp::FormatMap {
+                    if normalized.len() != 2 { return Err(crate::strings::fault(self.lang, "arguments")); }
+                    let Value::Text(s) = &normalized[0] else { return Err(crate::strings::fault(self.lang, "receiver")); };
+                    let s = s.clone();
+                    return Ok(Value::text(&self.mapping_format(&s, &normalized[1], 0)?));
+                }
                 crate::strings::run(op, name, &normalized, self.lang, &sp)?
             },
-            Builtin::ClassTool(work) => return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
+            Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -12200,28 +12345,47 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 let wants = match working.as_str() {
-                    "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" => 2,
+                    "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+                    "fma" => 3,
                     _ => 1,
                 };
                 if args.len() != wants + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, wants, args.len() - 1));
                 }
-                let given = |at: usize| -> f64 {
+                let given = |at: usize| -> Result<f64, String> {
                     let worth = self.as_number(&args[at]);
                     // The nought below nought is a nought of its own at
                     // the width, and some of these answer differently
                     // for it, so the minus is put back on.
                     if let Value::Real(r) = &worth {
                         if r.below && num_traits::Zero::is_zero(&r.p) {
-                            return -0.0;
+                            return Ok(-0.0);
                         }
                     }
                     match arith::Exact::from_value(&worth) {
-                        Some(e) => crate::value::as_binary(&e.p, &e.q),
-                        None => f64::NAN,
+                        Some(e) => {
+                            let bound = crate::value::as_binary(&e.p, &e.q);
+                            // A whole number too great for any real of
+                            // the width to hold cannot be carried to
+                            // one here, and this is stopped rather than
+                            // let the width's own standing-outside-the-
+                            // numbers answer for a number that is not.
+                            if e.places.is_none() && !e.p.is_zero() && bound.is_infinite() {
+                                return Err("OverflowError: int too large to convert to float".to_string());
+                            }
+                            Ok(bound)
+                        }
+                        None => Ok(f64::NAN),
                     }
                 };
-                let (x, y) = (given(1), if wants == 2 { given(2) } else { 0.0 });
+                let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
+                if working == "fma" {
+                    let z = given(3)?;
+                    let got = arith::fused(x, y, z)?;
+                    let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    return Ok(value);
+                }
                 let got = match working.as_str() {
                     "sqrt" => x.sqrt(),
                     "exp" => x.exp(),
@@ -12271,8 +12435,39 @@ impl<'a> Engine<'a> {
                         let x = x.abs();
                         if x == f64::MAX { x - f64::from_bits(x.to_bits() - 1) } else { f64::from_bits(x.to_bits() + 1) - x }
                     },
+                    "cbrt" => x.cbrt(),
+                    // Neither ever answers with the one nothing is
+                    // equal to unless both sides do; whichever side is
+                    // left, standing alone, is what is answered.
+                    "fmin" => match (x.is_nan(), y.is_nan()) {
+                        (true, true) => f64::NAN,
+                        (true, false) => y,
+                        (false, true) => x,
+                        (false, false) => if x < y { x } else { y },
+                    },
+                    "fmax" => match (x.is_nan(), y.is_nan()) {
+                        (true, true) => f64::NAN,
+                        (true, false) => y,
+                        (false, true) => x,
+                        (false, false) => if x > y { x } else { y },
+                    },
+                    // These three answer as a mark of one or nought,
+                    // there being no other way for a working named by
+                    // word to hand back a truth of its own; the tongue
+                    // above reads the mark apart again.
+                    "signbit" => if x.is_sign_negative() { 1.0 } else { 0.0 },
+                    "isnormal" => if x.is_normal() { 1.0 } else { 0.0 },
+                    "issubnormal" => if matches!(x.classify(), std::num::FpCategory::Subnormal) { 1.0 } else { 0.0 },
                     _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 };
+                // A working handed only reals of the width already, and
+                // answering past every number of it, has overflowed the
+                // width; a few workings stand outside numbers on their
+                // own account, and are left to answer as they answer.
+                let bounded = x.is_finite() && (wants < 2 || y.is_finite());
+                if got.is_infinite() && bounded && !matches!(working.as_str(), "fdiv" | "nextafter" | "ulp") {
+                    return Err("OverflowError: math range error".to_string());
+                }
                 let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
                 if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
                 value
@@ -12525,7 +12720,15 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     v @ Value::Real(_) => v.clone(),
-                    v => self.at_real_width(arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?),
+                    v => {
+                        let exact = arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                        if let Value::Real(r) = &exact {
+                            if !r.p.is_zero() && crate::value::as_binary(&r.p, &r.q).is_infinite() {
+                                return Err("OverflowError: int too large to convert to float".to_string());
+                            }
+                        }
+                        self.at_real_width(exact)
+                    }
                 }
             }
             Builtin::Length => {
@@ -12904,6 +13107,9 @@ impl<'a> Engine<'a> {
             // it is either nothing at all or a plain write, and is
             // settled before the builtins are reached.
             Builtin::Restore => unreachable!(),
+            // These two are read only where a language binds names,
+            // which reaches them through `core_call` instead.
+            Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -13588,7 +13794,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -13597,6 +13803,94 @@ impl Engine<'_> {
 
     fn core_cursor(source: CursorSource) -> Value {
         Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false, walked: None })))
+    }
+
+    fn core_cursor_walked(source: CursorSource, walked: Option<Rc<str>>) -> Value {
+        let walk = Self::core_cursor(source);
+        if let (Value::Cursor(state), Some(word)) = (&walk, walked) { state.borrow_mut().walked = Some(word); }
+        walk
+    }
+
+    /// What a value keeps no built-in writing for reduces to, for the
+    /// module that writes values out to bytes: nothing for a value
+    /// with no such reduction, else the pieces that opposite number
+    /// reads back into a value the very same as this one -- the same
+    /// kind, and, for a walk, standing at the very place this one
+    /// does, so that a value already stepped some way into keeps
+    /// standing there once it is written out and read back.
+    fn native_reduce(&self, value: &Value) -> Value {
+        if let Value::Class(c) = value {
+            return Value::Tuple(Rc::new(vec![Value::text("class"), Value::text(&c.name)]));
+        }
+        if let Value::Object(o) = value {
+            let Some(Value::Cursor(cell)) = Self::worth_of(value) else { return Value::Null };
+            let CursorSource::Numbered(walk, n) = &cell.borrow().source else { return Value::Null };
+            return Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Class(o.class.clone()), walk.clone(), Value::of_big(n.clone())]));
+        }
+        let Value::Cursor(cell) = value else { return Value::Null };
+        let held = cell.borrow();
+        let walked = held.walked.clone().map_or(Value::Null, |w| Value::text(&w));
+        match &held.source {
+            CursorSource::Items(items, at) => {
+                let remaining: Vec<Value> = items.get(*at..).map(<[Value]>::to_vec).unwrap_or_default();
+                Value::Tuple(Rc::new(vec![Value::text("items"), walked, Value::Tuple(Rc::new(remaining))]))
+            }
+            CursorSource::Counted(row, at) => Value::Tuple(Rc::new(vec![
+                Value::text("counted"), walked,
+                Value::of_big(row.start.clone()), Value::of_big(row.stop.clone()), Value::of_big(row.step.clone()),
+                Value::text(&row.name), Value::of_big(at.clone()),
+            ])),
+            CursorSource::IndexedBack(thing, at) => Value::Tuple(Rc::new(vec![Value::text("back"), walked, thing.clone(), Value::of_big(at.clone())])),
+            CursorSource::Numbered(walk, n) => Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Null, walk.clone(), Value::of_big(n.clone())])),
+            _ => Value::Null,
+        }
+    }
+
+    /// The value a reduction written out by `native_reduce` reads back
+    /// into, standing exactly where the value written out stood.
+    fn native_rebuild(&mut self, value: &Value) -> Res<Value> {
+        let malformed = || "TypeError: a written value cannot be read back".to_string();
+        let Value::Tuple(parts) = value else { return Err(malformed()) };
+        let Some(Value::Text(tag)) = parts.first() else { return Err(malformed()) };
+        let text_at = |i: usize| -> Option<Rc<str>> { match parts.get(i) { Some(Value::Text(t)) => Some(t.clone()), _ => None } };
+        let big_at = |i: usize| -> Res<BigInt> { match parts.get(i) { Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => v.as_big(), _ => Err(malformed()) } };
+        match tag.as_ref() {
+            "class" => {
+                let Some(name) = text_at(1) else { return Err(malformed()) };
+                self.lookup(&name).cloned().ok_or_else(malformed)
+            }
+            "items" => {
+                let walked = text_at(1);
+                let Some(Value::Tuple(items)) = parts.get(2) else { return Err(malformed()) };
+                Ok(Self::core_cursor_walked(CursorSource::Items(Rc::new(items.to_vec()), 0), walked))
+            }
+            "counted" => {
+                let walked = text_at(1);
+                let (start, stop, step, at) = (big_at(2)?, big_at(3)?, big_at(4)?, big_at(6)?);
+                let Some(name) = text_at(5) else { return Err(malformed()) };
+                let row = crate::value::Counted { start, stop, step, name: name.to_string() };
+                Ok(Self::core_cursor_walked(CursorSource::Counted(Rc::new(row), at), walked))
+            }
+            "back" => {
+                let walked = text_at(1);
+                let Some(thing) = parts.get(2).cloned() else { return Err(malformed()) };
+                let at = big_at(3)?;
+                Ok(Self::core_cursor_walked(CursorSource::IndexedBack(thing, at), walked))
+            }
+            "numbered" => {
+                let Some(walk) = parts.get(2).cloned() else { return Err(malformed()) };
+                let n = big_at(3)?;
+                let cursor = Self::core_cursor(CursorSource::Numbered(walk, n));
+                match parts.get(1) {
+                    Some(Value::Class(c)) => {
+                        self.made += 1;
+                        Ok(Value::Object(Rc::new(Instance { class: c.clone(), fields: RefCell::new(vec![("\0worth".to_string(), cursor)]), mark: self.made })))
+                    }
+                    _ => Ok(cursor),
+                }
+            }
+            _ => Err(malformed()),
+        }
     }
 
     /// The word the reference gives a walk of a thing, where gathering
@@ -13752,6 +14046,17 @@ impl Engine<'_> {
                 Ok(None) => Ok(None),
                 Err(words) => if self.places_over(&words) { Ok(None) } else { Err(words) },
             },
+            // The place asked for counts down rather than up, and the
+            // walk is done outright once it would go below nought,
+            // without a further place ever being asked for.
+            CursorSource::IndexedBack(thing, place) => {
+                if *place < BigInt::from(0) { return Ok(None); }
+                match self.special_call(thing, 11, vec![Value::of_big(place.clone())]) {
+                    Ok(Some(item)) => { *place -= 1; Ok(Some(item)) }
+                    Ok(None) => Ok(None),
+                    Err(words) => if self.places_over(&words) { Ok(None) } else { Err(words) },
+                }
+            }
             // A thing of the program's own is asked for its next member
             // the way a loop asks it, so a walk taken from it hands out
             // one member at a time and asks for no more than it is
@@ -13775,9 +14080,10 @@ impl Engine<'_> {
                         // first has ended is too long.
                         None => {
                             if *exact {
-                                if at > 0 { return Err(self.uneven_zip("zip.short", at)); }
+                                let (short, long) = if work.is_some() { ("map.short", "map.long") } else { ("zip.short", "zip.long") };
+                                if at > 0 { return Err(self.uneven_zip(short, at)); }
                                 for (later, other) in walks.iter().enumerate().skip(1) {
-                                    if self.core_step(other)?.is_some() { return Err(self.uneven_zip("zip.long", later)); }
+                                    if self.core_step(other)?.is_some() { return Err(self.uneven_zip(long, later)); }
                                 }
                             }
                             return Ok(None);
@@ -13997,6 +14303,14 @@ impl Engine<'_> {
         }
         if named.is_empty() { if let Some(value) = self.special_builtin(b, &args)? { return Ok(value); } }
         if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
+        // `enumerate` counts every positional and keyword argument
+        // together before it looks at any of them by name, exactly as
+        // the reference does, so a call with too many of either kind
+        // is refused the same way regardless of which are spelled right.
+        if b == Builtin::Enumerate && args.len() + named.len() > 2 {
+            let words = &self.lang.core_words["enumerate.too_many"];
+            return Err(format!("{}{}{}", words.first().map_or("", String::as_str), args.len() + named.len(), words.get(1).map_or("", String::as_str)));
+        }
         let mut key = Value::Null;
         let mut reverse = false;
         let mut default = None;
@@ -14011,8 +14325,12 @@ impl Engine<'_> {
                 reverse = self.truth(&value); continue;
             }
             if matches!(b, Builtin::Minimum | Builtin::Maximum) && spells("default") { default = Some(value); continue; }
-            if b == Builtin::Zip && spells("zip.strict") { exact = self.truth(&value); continue; }
+            if matches!(b, Builtin::Zip | Builtin::Map) && spells("zip.strict") { exact = self.truth(&value); continue; }
+            if b == Builtin::Enumerate && !spells("iterable") && !spells("start") {
+                return Err(Self::named_fault(&self.lang.core_words["enumerate.keyword"], &word));
+            }
             let place = match b {
+                Builtin::Enumerate if spells("iterable") => 0,
                 Builtin::Enumerate if spells("start") => 1,
                 Builtin::Round if spells("round.number") => 0,
                 Builtin::Round if spells("round.ndigits") => 1,
@@ -14069,6 +14387,8 @@ impl Engine<'_> {
                 Value::text(&crate::strings::ascii_escaped(&written.plain()))
             }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &Self::unhashable_named(&args[0])))?) }
+            Builtin::ReduceNative => { arity(1, 1)?; self.native_reduce(&args[0]) }
+            Builtin::RebuildNative => { arity(1, 1)?; self.native_rebuild(&args[0])? }
             Builtin::Identity => {
                 arity(1, 1)?;
                 // A collection kept in a cell is known by the cell, which
@@ -14210,7 +14530,22 @@ impl Engine<'_> {
                 // holds are numbers, and a walk backwards hands them over
                 // last to first, exactly the members a walk forwards has.
                 let source = args[0].contents();
-                if !matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_) | Value::Map(_) | Value::Bytes(..)) { return Err(self.core_fault("core.unready", name)); }
+                if !matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_) | Value::Map(_) | Value::Bytes(..)) {
+                    // A thing with no kind of its own that the reference
+                    // walks backwards directly is asked instead by its
+                    // `__getitem__`, place by place from its last down to
+                    // its first, where it has that and a `__len__` to
+                    // learn how many places it holds -- the fallback the
+                    // reference itself falls to for any such sequence.
+                    if matches!(&args[0], Value::Object(_)) && self.special_value(&args[0], 11).is_some() {
+                        let length = self.builtin_call(Builtin::Length, "len", vec![(None, args[0].clone())])?;
+                        let place = match &length { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => length.as_big(), _ => Err(self.core_fault("core.integer", &length.core_kind())) }? - BigInt::from(1);
+                        let walk = Self::core_cursor(CursorSource::IndexedBack(args[0].clone(), place));
+                        if let Value::Cursor(state) = &walk { state.borrow_mut().walked = Some(Rc::from(name)); }
+                        return Ok(walk);
+                    }
+                    return Err(self.core_fault("core.unreversible", &args[0].core_kind()));
+                }
                 // A counted row is walked backwards as a counted row,
                 // from its last place to its first, without ever being
                 // made into the row it counts.
@@ -14232,6 +14567,9 @@ impl Engine<'_> {
                 walk
             }
             Builtin::Enumerate => {
+                if args.first().map_or(true, |v| matches!(v, Value::Gap)) {
+                    return Err(self.lang.core_words["enumerate.missing"].first().cloned().unwrap_or_default());
+                }
                 arity(1, 2)?;
                 let n = args.get(1).map(integer).transpose()?.unwrap_or_else(|| BigInt::from(0));
                 let walk = self.core_iterator(&args[0])?;
@@ -14909,12 +15247,14 @@ impl Engine<'_> {
         format!("{}{}{}{}{}{}", told, words[0], file, words[1], row.max(1), words[2])
     }
 
-    /// The tokens of text handed over to be read, or the language's
-    /// words for text that cannot be read.
-    fn text_tokens(&self, source: &str) -> Res<Vec<crate::lex::Token>> {
+    /// The tokens of text handed over to be read, or the reading's own
+    /// words for why it could not be, with the line it stopped on: the
+    /// same complaint a file being run keeps, so text read through
+    /// `compile`, `eval` or `exec` is told apart the same way a file
+    /// is, through `text_syntax`.
+    fn text_tokens(&self, source: &str) -> Result<Vec<crate::lex::Token>, (String, usize)> {
         crate::lex::lex_at(source, self.lang)
             .and_then(|tokens| crate::layout::layout(tokens, self.lang, 0))
-            .map_err(|_| self.lang.source_syntax.clone().unwrap_or_default())
     }
 
     /// The builtins that read text, hand out names, or fetch a module.
@@ -14970,7 +15310,10 @@ impl Engine<'_> {
         // Flags and inheritance are read and let be; another setting of
         // optimisation than the ordinary is not honoured.
         if args.get(5).map_or(false, |value| !matches!(value, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(self.source_unready()); }
-        let tokens = self.text_tokens(if mode == 1 { source.trim() } else { &source })?;
+        let tokens = match self.text_tokens(if mode == 1 { source.trim() } else { &source }) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+        };
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
@@ -15042,8 +15385,11 @@ impl Engine<'_> {
                 None => self.run_text_booked(source, file, mode, near, None),
             };
         }
-        let tokens = self.text_tokens(source)?;
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+        };
         let (program, shown) = self.text_program(&tokens, &file, mode, None)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
@@ -15057,8 +15403,11 @@ impl Engine<'_> {
     /// makes is gone once the text is done.
     fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>) -> Res<Value> {
         let source = if mode == 1 { source.trim() } else { source };
-        let tokens = self.text_tokens(source)?;
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+        };
         // Text read inside a method is read as standing in that method's
         // class, as text read where a language has no manners of reading
         // already is.
@@ -15096,8 +15445,11 @@ impl Engine<'_> {
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Res<Value> {
-        let tokens = self.text_tokens(source)?;
-        let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let tokens = match self.text_tokens(source) {
+            Ok(tokens) => tokens,
+            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+        };
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::default();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }

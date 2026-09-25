@@ -194,10 +194,21 @@ def indexOf(sequence, value):
     raise 'ValueError: sequence.index(x): x not in sequence'
 
 def length_hint(value, default=0):
-    if type(value) == type([]) or type(value) == type({}) or type(value) == type(''):
+    try:
         return len(value)
-    # A user iterator's length hint cannot yet be consulted.
-    raise 'NotImplementedError: length hints need iterator methods'
+    except TypeError:
+        pass
+    try:
+        hint = value.__length_hint__()
+    except AttributeError:
+        return default
+    if hint is NotImplemented:
+        return default
+    if not isinstance(hint, int):
+        raise TypeError('Length hint must be an integer, not ' + type(hint).__name__)
+    if hint < 0:
+        raise ValueError('__length_hint__() should return >= 0')
+    return hint
 
 def setitem(sequence, key, value):
     raise 'NotImplementedError: setitem needs shared mutable sequence storage'

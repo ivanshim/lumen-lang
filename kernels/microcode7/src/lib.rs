@@ -520,7 +520,7 @@ fn protocol_complaint_named(table: &Table, words: &str) -> bool {
     if let [opening, sign_end, joining, closing] = table.strings("ext.stmt.class.binary.amiss") {
         if !opening.is_empty() && words.starts_with(opening.as_str()) && words.contains(sign_end.as_str()) && words.contains(joining.as_str()) && words.ends_with(closing.as_str()) { return true; }
     }
-    for label in ["ext.builtin.zip.short", "ext.builtin.zip.long"] {
+    for label in ["ext.builtin.zip.short", "ext.builtin.zip.long", "ext.builtin.map.short", "ext.builtin.map.long"] {
         if let [opening, alone, span] = table.strings(label) { if !opening.is_empty() && words.starts_with(opening.as_str()) && (words.ends_with(alone.as_str()) || words.contains(span.as_str())) { return true; } }
     }
     match table.strings("ext.op.order.unsupported") {
