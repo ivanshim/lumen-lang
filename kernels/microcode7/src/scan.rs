@@ -873,6 +873,21 @@ impl Quotation<'_> {
     }
 }
 
+fn continued_past_end(tokens: &[Token], position: &mut (u32, usize)) -> String {
+    let mut nesting: Vec<&Token> = Vec::new();
+    for item in tokens.iter().filter(|item| item.shape == Shape::Sign) {
+        if ["(", "[", "{"].contains(&item.lexeme.as_str()) { nesting.push(item); }
+        else if [")", "]", "}"].contains(&item.lexeme.as_str()) { nesting.pop(); }
+    }
+    match nesting.last() {
+        Some(begin) => {
+            *position = (begin.row, begin.column);
+            format!("SyntaxError: '{}' was never closed", begin.lexeme)
+        }
+        None => "SyntaxError: unexpected EOF while parsing".to_owned(),
+    }
+}
+
 fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usize)) -> Result<Vec<Token>, String> {
     let input = if table.has_any("ext.builtin.exceptions.syntax") && source.contains('\r') {
         std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
@@ -990,7 +1005,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             }
             if let Some(said) = prefix_conflict(&src, pos, table) { return Err(said); }
             if table.flag("ext.lexical.string.adjacent") && src[pos] == '\\' && src.get(pos + 1) == Some(&'\n') {
-                if pos + 2 == src.len() && table.has_any("ext.builtin.exceptions.syntax") { ended.1 += 1; return Err("SyntaxError: unexpected EOF while parsing".to_owned()); }
+                if pos + 2 == src.len() && table.has_any("ext.builtin.exceptions.syntax") { ended.1 += 1; return Err(continued_past_end(&tokens, ended)); }
                 pos += 2;
                 row += 1;
                 continue;
@@ -1005,7 +1020,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                     end += 1;
                 }
                 if src.get(end) == Some(&'\n') {
-                    if end + 1 == src.len() && table.has_any("ext.builtin.exceptions.syntax") { ended.1 = at_column(end); return Err("SyntaxError: unexpected EOF while parsing".to_owned()); }
+                    if end + 1 == src.len() && table.has_any("ext.builtin.exceptions.syntax") { ended.1 = at_column(end); return Err(continued_past_end(&tokens, ended)); }
                     pos = end + 1;
                     row += 1;
                     carried = true;
@@ -1032,7 +1047,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             if src.get(pos) == Some(&'\r') { pos += 1; }
             if src.get(pos) != Some(&'\n') {
                 ended.1 = at_column(pos);
-                if pos == src.len() && table.has_any("ext.builtin.exceptions.syntax") { return Err("SyntaxError: unexpected EOF while parsing".to_owned()); }
+                if pos == src.len() && table.has_any("ext.builtin.exceptions.syntax") { return Err(continued_past_end(&tokens, ended)); }
                 return Err(table.single("ext.lexical.line_continuation.amiss").unwrap_or_default().to_string());
             }
             row += 1;

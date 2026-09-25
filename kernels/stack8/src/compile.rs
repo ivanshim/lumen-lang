@@ -3143,15 +3143,19 @@ impl<'a> Compiler<'a> {
             if self.at_symbol(&map.open) {
                 self.take();
                 let mut items = Vec::new();
-                let mut rest = false;
+                let mut rest = None;
                 while !self.at_symbol(&map.close) {
-                    if rest { return Err(self.pattern_fault()); }
+                    if let Some(capture_at) = rest {
+                        self.pos = capture_at;
+                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: invalid syntax".into() });
+                    }
                     if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Power)) {
                         self.take();
+                        let capture_at = self.pos;
                         let capture = self.pattern_capture()?;
                         if !matches!(capture, Pattern::Capture(_)) { return Err(self.pattern_fault()); }
                         items.push(capture);
-                        rest = true;
+                        rest = Some(capture_at);
                     } else {
                         let key = self.pattern_atom()?;
                         if !matches!(key, Pattern::Literal(_) | Pattern::Unready(_)) { return Err(self.pattern_fault()); }

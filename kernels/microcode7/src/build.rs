@@ -4553,15 +4553,19 @@ impl<'a> Builder<'a> {
         if self.on_any("syntax.map.open") {
             self.advance();
             let mut values = Vec::new();
-            let mut ended = false;
+            let mut rest_name = None;
             while !self.on_any("syntax.map.close") {
-                if ended { return Err(self.bad_case()); }
+                if let Some(start) = rest_name {
+                    self.pos = start;
+                    let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: invalid syntax".to_owned() } else { self.bad_case() };
+                    return Err(words);
+                }
                 if self.on_any("op.pow") {
                     self.advance();
+                    rest_name = Some(self.pos);
                     let capture = self.pattern_name()?;
                     if !matches!(capture, CaseTest::Keep(_)) { return Err(self.bad_case()); }
                     values.push(capture);
-                    ended = true;
                 } else {
                     match self.pattern_single()? {
                         CaseTest::Equal(_) | CaseTest::Pending(_) => {}

@@ -1282,6 +1282,20 @@ pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, us
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
             let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new() };
             if let Err(said) = cur.run(true) {
+                if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
+                    let mut opens = Vec::new();
+                    for token in &cur.out {
+                        if token.shape != Shape::Sign { continue; }
+                        match token.lexeme.as_str() {
+                            "(" | "[" | "{" => opens.push(token),
+                            ")" | "]" | "}" => { opens.pop(); }
+                            _ => {}
+                        }
+                    }
+                    if let Some(token) = opens.last() {
+                        return Err((format!("SyntaxError: '{}' was never closed", token.lexeme), token.row, token.column));
+                    }
+                }
                 return Err((said, cur.row, cur.column));
             }
             cur.out
