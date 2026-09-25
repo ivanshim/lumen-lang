@@ -60,11 +60,12 @@ def format_exception_only(exc, value=None):
                         padding += ch if ch.isspace() else ' '
                     result.append('    ' + padding + '^' * (end - exc.offset) + '\n')
         message = str(exc.msg or '<no detail available>') + suffix
-    result.append(prefix + message + '\n')
+    result.append((prefix + message if message else kind) + '\n')
     notes = getattr(exc, '__notes__', None)
     if isinstance(notes, (list, tuple)):
         for note in notes:
-            result.append(str(note) + '\n')
+            for line in str(note).split('\n'):
+                result.append(line + '\n')
     return result
 
 
@@ -83,8 +84,10 @@ def _format_exception(exc, tb, limit, chain, seen):
             result.extend(_format_exception(context, context.__traceback__, limit, chain, seen))
             result.append('\nDuring handling of the above exception, another exception occurred:\n\n')
     if tb is not None:
-        result.append('Traceback (most recent call last):\n')
-        result.extend(format_tb(tb, limit))
+        frames = format_tb(tb, limit)
+        if frames:
+            result.append('Traceback (most recent call last):\n')
+            result.extend(frames)
     result.extend(format_exception_only(exc))
     return result
 
