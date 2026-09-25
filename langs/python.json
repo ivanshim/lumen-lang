@@ -1406,8 +1406,9 @@
     "symmetric_difference_update"
   ],
   "ext.builtin.set.unhashable": [
-    "TypeError: unhashable type: '",
-    "'"
+    "TypeError: cannot use '",
+    "' as a set element (unhashable type: '",
+    "')"
   ],
   "ext.builtin.set.union": [
     "union"

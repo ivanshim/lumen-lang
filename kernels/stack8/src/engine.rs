@@ -5174,6 +5174,10 @@ impl<'a> Engine<'a> {
             // is: by its own hash and its own equality, the members
             // standing in the set as the gathering put them there.
             if let (Value::Object(_) | Value::Hashed(_), Value::Set(cell)) = (a, b) {
+                if let Value::Set(needle) = self.set_lookup_value(a) {
+                    let found = cell.borrow().held.contains_key(&needle.borrow().address());
+                    return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+                }
                 let wanted = self.special_key(a)?;
                 let members = cell.borrow().items();
                 let mut found = false;
@@ -8644,7 +8648,13 @@ impl<'a> Engine<'a> {
                             None => items.iter().any(|(key, _)| Self::member_matches(a, key) || self.keys_alike(key, a)),
                         }
                     }
-                    Value::Set(s) => s.borrow().held.contains_key(&self.set_key(a)?),
+                    Value::Set(s) => {
+                        let key = match self.set_lookup_value(a) {
+                            Value::Set(needle) => needle.borrow().address(),
+                            _ => self.set_key(a)?,
+                        };
+                        s.borrow().held.contains_key(&key)
+                    },
                     Value::Bytes(row, ..) => {
                         let row = row.borrow();
                         match a {
@@ -9686,7 +9696,18 @@ impl<'a> Engine<'a> {
 
     fn set_said(&self, label: &str, piece: &str) -> String {
         let words = &self.lang.set_words[&format!("ext.builtin.set{}", label)];
+        if label == ".unhashable" && words.len() == 3 { return words.join(piece); }
         format!("{}{}{}", words.first().map_or("", String::as_str), piece, words.get(1).map_or("", String::as_str))
+    }
+
+    fn set_lookup_value(&self, value: &Value) -> Value {
+        let bare = value.contents();
+        if self.special_method(&bare, 8).is_none() {
+            if let Some(worth) = Self::worth_of(&bare) {
+                if matches!(worth.contents(), Value::Set(_)) { return worth.contents(); }
+            }
+        }
+        bare
     }
 
     fn set_key(&self, value: &Value) -> Res<String> {
@@ -9883,7 +9904,10 @@ impl<'a> Engine<'a> {
         if matches!(op, SetAdd | SetRemove | SetDiscard) {
             if op == SetAdd { self.set_put(&cell.clone(), args[1].clone())?; return Ok(Value::Null); }
             let members = Self::set_pairs(cell);
-            let key = self.set_place(&members, &args[1])?;
+            let key = match self.set_lookup_value(&args[1]) {
+                Value::Set(needle) => needle.borrow().address(),
+                _ => self.set_place(&members, &args[1])?,
+            };
             if cell.borrow_mut().remove(&key).is_none() && op == SetRemove {
                 // A member a set has not is told of as a map tells of a
                 // key it has not, so a number is named as the number it

@@ -5674,7 +5674,7 @@ impl<'a> Machine<'a> {
         Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)])))
     }
 
-    fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+    pub(super) fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
         if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
         // A walk over a routine's own body answers whether it is on the
         // way through the machine at this very moment: exactly when the
@@ -9115,6 +9115,10 @@ impl<'a> Machine<'a> {
         // asked for an address of its own kind and have none.
         if let (Prim::Contains | Prim::Absent, [needle @ (Value::Thing(_) | Value::Keyed(..)), haystack]) = (operation, operands) {
             if let Value::Set(store) = haystack.settled() {
+                if let Value::Set(candidate) = self.set_search_item(needle) {
+                    let present = store.borrow().keys.contains(&candidate.borrow().whole_address());
+                    return Ok(Some(Value::Flag(if operation == Prim::Absent { !present } else { present })));
+                }
                 let keyed = self.hash_key(needle)?;
                 let members = store.borrow().values();
                 let mut found = false;
@@ -11915,7 +11919,9 @@ impl<'a> Machine<'a> {
                     // here as it is wherever the set was grown.
                     (item, Value::Set(hay)) => {
                         let entries = hay.borrow().entries.clone();
-                        let address = self.set_address(&entries, item)?;
+                        let address = if let Value::Set(candidate) = self.set_search_item(item) {
+                            candidate.borrow().whole_address()
+                        } else { self.set_address(&entries, item)? };
                         hay.borrow().keys.contains(&address)
                     }
                     (item, Value::Octets { cell, .. }) => {
@@ -13514,6 +13520,9 @@ impl<'a> Machine<'a> {
     fn set_complaint(&self, suffix: &str, insert: &str) -> String {
         let label = format!("ext.builtin.set.{suffix}");
         let parts = self.table.strings(&label);
+        if suffix == "unhashable" {
+            if let [lead, middle, end] = parts { return format!("{lead}{insert}{middle}{insert}{end}"); }
+        }
         let mut words = parts.first().cloned().unwrap_or_default();
         words.push_str(insert);
         if let Some(end) = parts.get(1) { words.push_str(end); }
@@ -13565,6 +13574,18 @@ impl<'a> Machine<'a> {
         let kept = if matches!(item, Value::Thing(_)) { self.hash_key(&item)? } else { item };
         store.borrow_mut().put(address, kept);
         Ok(())
+    }
+
+    fn set_search_item(&self, item: &Value) -> Value {
+        let settled = item.settled();
+        match Self::underlying(&settled) {
+            Some(inner) if self.appointment(&settled, 8).map_or(true, |v| matches!(v, Value::Nil)) => {
+                let contents = inner.settled();
+                if let Value::Set(_) = contents { return contents; }
+            }
+            _ => {}
+        }
+        settled
     }
 
     fn hash_for_set(&self, item: &Value) -> Result<String, String> {
@@ -13701,7 +13722,9 @@ impl<'a> Machine<'a> {
             1..=3 => {
                 if which == 1 { let held = target.clone(); self.set_include(&held, values[1].clone())?; return Ok(Value::Nil); }
                 let entries = target.borrow().entries.clone();
-                let address = self.set_address(&entries, &values[1])?;
+                let address = if let Value::Set(candidate) = self.set_search_item(&values[1]) {
+                    candidate.borrow().whole_address()
+                } else { self.set_address(&entries, &values[1])? };
                 {
                     let taken = target.borrow_mut().take(&address);
                     if taken.is_none() && which == 2 {

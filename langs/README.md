@@ -1982,6 +1982,7 @@ only. The extension labels so far, all from PHP:
   Equality disregards order. `ext.builtin.set.sorted` gathers an iterable
   into an array ordered by its members, stopping if they cannot be ordered.
 - `ext.builtin.set.unhashable` surrounds the name of an unhashable kind;
+  a third part repeats the kind in the set-element explanation;
   `ext.builtin.set.missing` stands before the representation of an absent
   member. `ext.builtin.set.empty`, `ext.builtin.set.operands`,
   `ext.builtin.set.arguments`, `ext.builtin.set.unsupported` and
@@ -4473,7 +4474,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.set.symmetric_difference` | - | - | `symmetric_difference` | - | - | - | - | - | - | - |
 | `ext.builtin.set.symmetric_difference_update` | - | - | `symmetric_difference_update` | - | - | - | - | - | - | - |
-| `ext.builtin.set.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.set.unhashable` | - | - | `TypeError: cannot use '` `' as a set element (unhashable type: '` `')` | - | - | - | - | - | - | - |
 | `ext.builtin.set.union` | - | - | `union` | - | - | - | - | - | - | - |
 | `ext.builtin.set.unsortable` | - | - | `TypeError: set members cannot be ordered` | - | - | - | - | - | - | - |
 | `ext.builtin.set.unsupported` | - | - | `NotImplementedError: hashing this value is not provided` | - | - | - | - | - | - | - |
