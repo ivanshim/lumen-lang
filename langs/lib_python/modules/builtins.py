@@ -42,6 +42,9 @@ SystemExit = SystemExit
 TypeError = TypeError
 UnboundLocalError = UnboundLocalError
 UnicodeError = UnicodeError
+UnicodeEncodeError = UnicodeEncodeError
+UnicodeDecodeError = UnicodeDecodeError
+UnicodeTranslateError = UnicodeTranslateError
 ValueError = ValueError
 ZeroDivisionError = ZeroDivisionError
 
@@ -321,8 +324,7 @@ class frozendict:
 # breakpoint, copyright, credits, exit, help, license, memoryview, open,
 # quit, __build_class__, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
-# IndentationError, TabError, ModuleNotFoundError, the three
-# UnicodeError kinds that carry encoding detail, and the OSError kinds
+# IndentationError, TabError, ModuleNotFoundError, and the OSError kinds
 # the operating system raises -- BlockingIOError, BrokenPipeError,
 # ChildProcessError, ConnectionError and its four kinds,
 # FileExistsError, FileNotFoundError, InterruptedError,

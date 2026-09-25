@@ -750,7 +750,10 @@
     "SyntaxError",
     "BaseExceptionGroup",
     "ExceptionGroup",
-    "GeneratorExit"
+    "GeneratorExit",
+    "UnicodeEncodeError",
+    "UnicodeDecodeError",
+    "UnicodeTranslateError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -818,6 +821,13 @@
   ],
   "ext.builtin.exceptions.traceback.with": [
     "with_traceback"
+  ],
+  "ext.builtin.exceptions.unicode": [
+    "encoding",
+    "object",
+    "start",
+    "end",
+    "reason"
   ],
   "ext.builtin.exceptions.unready": [
     "NotImplementedError: this exception operation cannot run yet"
