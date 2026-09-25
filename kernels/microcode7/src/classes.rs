@@ -1143,7 +1143,7 @@ impl<'a> Machine<'a> {
     pub(super) fn kind_covers(&self,op:&Prim,word:&str,value:&Value)->bool{
         match op {
             Prim::AsInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),
-            Prim::AsText=>matches!(value,Value::Text(_)),
+            Prim::AsText=>matches!(value,Value::Text(_) | Value::Unpaired(_)),
             Prim::AsReal=>matches!(value,Value::Frac(r) if r.places.is_some()),
             Prim::Listed=>matches!(value,Value::Vector(_)),
             Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),

@@ -278,6 +278,7 @@ pub enum CursorSource {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Codepoints(Rc<Vec<u32>>),
     Collection(Rc<RefCell<Value>>, bool),
     ValueMethod(Rc<(Value, String)>),
     View(Rc<(Value, String)>),
@@ -779,6 +780,7 @@ impl Value {
         // be there and the place to still be within it.
         let single = end == start + 1 && start >= 0;
         let one = if !single { None } else { match &object {
+            Some(Value::Codepoints(row)) if kind != 1 => row.get(start as usize).copied().map(Self::unicode_escaped),
             Some(Value::Text(s)) if kind != 1 => usize::try_from(start).ok().and_then(|i| s.chars().nth(i)).map(|c| Self::unicode_escaped(c as u32)),
             Some(Value::Bytes(cell, ..)) if kind == 1 => usize::try_from(start).ok().and_then(|i| cell.borrow().get(i).copied()).map(|b| format!("{:02x}", b)),
             _ => None,
@@ -807,6 +809,33 @@ impl Value {
             many => Self::tuple_text(many, sp),
         })
     }
+    pub fn text_codes(&self) -> Option<Vec<u32>> {
+        match self { Value::Text(s) => Some(s.chars().map(u32::from).collect()), Value::Codepoints(row) => Some(row.as_ref().clone()), _ => None }
+    }
+
+    pub fn from_codes(row: Vec<u32>) -> Value {
+        if let Some(text) = row.iter().copied().map(char::from_u32).collect::<Option<String>>() { Value::text(&text) }
+        else { Value::Codepoints(Rc::new(row)) }
+    }
+
+    pub fn codepoints_repr(row: &[u32]) -> String {
+        let quote = if row.contains(&39) && !row.contains(&34) { '"' } else { '\'' };
+        let mut result = quote.to_string();
+        for &n in row {
+            match char::from_u32(n) {
+                None => result.push_str(&format!("\\u{n:04x}")),
+                Some(c) if c == quote || c == '\\' => { result.push('\\'); result.push(c); }
+                Some('\n') => result.push_str("\\n"),
+                Some('\r') => result.push_str("\\r"),
+                Some('\t') => result.push_str("\\t"),
+                Some(c) if c.is_control() => result.push_str(&Self::unicode_escaped(n)),
+                Some(c) => result.push(c),
+            }
+        }
+        result.push(quote);
+        result
+    }
+
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -871,6 +900,7 @@ impl Value {
         }
         match self {
             Value::Flag(b) => Ok(format!("n{}/1", u8::from(*b))),
+            Value::Codepoints(row) => Ok(format!("codepoints:{row:?}")),
             Value::Text(s) => Ok(format!("s{}", s)),
             Value::Null => Ok("nil".into()),
             Value::Ellipsis => Ok("dots".into()),
@@ -903,7 +933,7 @@ impl Value {
             Value::Small(_) | Value::Huge(_) => Sort::Integer,
             Value::Frac(_) => Sort::Rational,
             Value::Real(_) => Sort::Real,
-            Value::Text(_) => Sort::Text,
+            Value::Text(_) | Value::Codepoints(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
             Value::Words(..) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Collection(cell, _) => return cell.borrow().sort(),
@@ -954,6 +984,7 @@ impl Value {
             // Neither what stands outside the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
+            Value::Codepoints(row) => !row.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Words(row, _) => !row.is_empty(),
             Value::Tuple(items) => !items.is_empty(),
@@ -978,6 +1009,7 @@ impl Value {
             Value::Real(r) => Ok(&r.p / &r.q),
             Value::Flag(b) => Ok(BigInt::from(*b as i64)),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
+            Value::Codepoints(_) => return Err("ValueError: invalid literal for int()".to_string()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Words(..) | Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
@@ -1057,6 +1089,7 @@ impl Value {
             }
             (Value::Words(a, x), Value::Words(b, y)) => x == y && a == b,
             (Value::Words(a, false), Value::Array(b)) | (Value::Array(b), Value::Words(a, false)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(s,v)| matches!(v,Value::Text(t) if s.as_str()==t.as_ref())),
+            (Value::Codepoints(a), Value::Codepoints(b)) => a == b,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -1312,6 +1345,7 @@ impl Value {
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             Value::Real(r) => decimal_string(&r.p, &r.q, r.places),
+            Value::Codepoints(row) => Self::codepoints_repr(row),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => (if *b { "true" } else { "false" }).to_string(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => "null".to_string(),

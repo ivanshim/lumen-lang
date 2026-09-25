@@ -6193,7 +6193,7 @@ impl<'a> Machine<'a> {
                 }.into()),
             };
         }
-        if name == "encode" && matches!(&actual, Value::Text(_)) {
+        if name == "encode" && matches!(&actual, Value::Text(_) | Value::Unpaired(_)) {
             let mut options = arguments;
             for (key, value) in keywords {
                 let place = match key.as_str() { "encoding"=>0, "errors"=>1, _=>return Err(self.octet_error("unready").into()) };
@@ -6202,18 +6202,22 @@ impl<'a> Machine<'a> {
                 options.push(value);
             }
             if options.len() > 2 { return Err(self.octet_error("arguments").into()); }
-            if let Some(error_mode) = options.get(1) { if !matches!(error_mode, Value::Text(s) if s.as_ref()=="strict") { return Err(self.octet_error("unready").into()); } }
-            options.truncate(1); options.insert(0, actual);
+            options.insert(0, actual);
             return self.octet_routine(2, &options).map_err(Escape::from);
         }
-        if matches!(&actual, Value::Octets { .. }) || name == "encode" && matches!(&actual, Value::Text(_)) {
+        if matches!(&actual, Value::Octets { .. }) || name == "encode" && matches!(&actual, Value::Text(_) | Value::Unpaired(_)) {
             // A working that writes where the row lies is asked of a
             // changeable row alone; a fixed row has no such member.
             let changeable = matches!(&actual, Value::Octets { changeable: true, .. });
             let operation = if name == "encode" { Some(2) } else { self.octet_member(name, changeable).and_then(Self::octet_operation) };
             if let Some(operation) = operation {
-                if !keywords.is_empty() { return Err(self.octet_error("unready").into()); }
                 let mut values = vec![actual]; values.extend(arguments);
+                for (key, value) in keywords {
+                    let slot = match (operation, key.as_str()) { (3, "encoding") => 1, (3, "errors") => 2, _ => return Err(self.octet_error("arguments").into()) };
+                    if values.len() > slot { return Err(self.octet_error("arguments").into()); }
+                    while values.len() < slot { values.push(Value::text("utf-8")); }
+                    values.push(value);
+                }
                 // A row lengthened by a walk takes the walk's members
                 // for its bytes, so the walk is drawn out into a row
                 // first, as the maker of a row of bytes draws one out.
@@ -7895,7 +7899,7 @@ impl<'a> Machine<'a> {
     /// the error policy named after it. Nothing but a row of bytes can
     /// be read this way; text asked of text is refused outright, as is
     /// anything else.
-    fn text_decoded(&self, values: &[Value]) -> Result<Value, String> {
+    fn text_decoded(&mut self, values: &[Value]) -> Result<Value, String> {
         if values.len() > 3 { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
         let words = self.table.strings("ext.builtin.to_string.undecodable");
         let said = |at: usize| words.get(at).cloned().unwrap_or_default();
@@ -7904,14 +7908,7 @@ impl<'a> Machine<'a> {
             Value::Text(_) => return Err(said(0)),
             other => return Err(format!("{}{}{}", said(1), other.kind_word(), said(2))),
         };
-        if let Some(policy) = values.get(2) {
-            match policy {
-                Value::Text(word) if self.table.spells("ext.system.bytes.strict", word) => {}
-                Value::Text(_) => return Err(self.octet_error("unready")),
-                _ => return Err(self.octet_error("arguments")),
-            }
-        }
-        self.octets_to_text(&content, self.octet_encoding(values.get(1))?)
+        self.convert_text(false, &content, values)
     }
 
     /// The workings a row of bytes shares with text: looking through
@@ -8155,18 +8152,112 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn octet_routine(&self, operation: u8, values: &[Value]) -> Result<Value, String> {
+    fn codec_function(&mut self, name: &str, arguments: Vec<Value>) -> Result<Value, String> {
+        let namespace = self.namespace_for("codecs")?;
+        let function = self.attribute(&namespace, name).ok_or_else(|| self.octet_error("unready"))?;
+        self.apply_within(function, arguments)
+    }
+
+    fn convert_text(&mut self, writing: bool, input: &[u8], values: &[Value]) -> Result<Value, String> {
+        if values.len() > 3 || values.is_empty() { return Err(self.octet_error("arguments")); }
+        let handling = match values.get(2) {
+            Some(Value::Text(word)) => word.to_string(),
+            None => String::from("strict"),
+            _ => return Err(self.octet_error("arguments")),
+        };
+        let alphabet = self.octet_encoding(values.get(1));
+        if !matches!(alphabet, Ok(0..=2)) {
+            return self.codec_function(if writing { "_encode" } else { "_decode" }, values.to_vec());
+        }
+        if writing && matches!(values[0], Value::Unpaired(_)) { return self.codec_function("_encode_surrogates", values.to_vec()); }
+        let alphabet = alphabet?;
+        let encoding = self.octet_codec_name(alphabet);
+        if writing {
+            let Value::Text(word) = &values[0] else { return Err(self.octet_error("arguments")); };
+            if alphabet == Self::WIDE { return Ok(self.octets(word.as_bytes().to_vec(), false)); }
+            let units = word.chars().collect::<Vec<_>>();
+            let ceiling = if alphabet == Self::SEVEN_BIT { 127 } else { 255 };
+            let mut result = Vec::new();
+            let mut cursor = 0;
+            while let Some(&letter) = units.get(cursor) {
+                if letter as u32 <= ceiling { result.push(letter as u8); cursor += 1; continue; }
+                let mut stop = cursor + 1;
+                while stop < units.len() && units[stop] as u32 > ceiling { stop += 1; }
+                match handling.as_str() {
+                    "ignore" => cursor = stop,
+                    "replace" => { result.extend(std::iter::repeat(b'?').take(stop - cursor)); cursor = stop; }
+                    _ => {
+                        let call = vec![Value::text(&encoding), values[0].clone(), Value::Small(cursor as i64), Value::Small(stop as i64), Value::text(&format!("ordinal not in range({})", ceiling + 1)), Value::text(&handling)];
+                        let replaced = self.codec_function("_encode_error", call)?;
+                        if let Value::Tuple(parts) = replaced {
+                            let extra = match &parts[0] {
+                                Value::Text(s) => self.octets_from_text(s, alphabet)?,
+                                Value::Octets { cell, .. } => cell.borrow().to_vec(),
+                                _ => return Err(self.octet_error("arguments")),
+                            };
+                            result.extend(extra);
+                            cursor = parts[1].as_big()?.to_usize().ok_or_else(|| self.octet_error("arguments"))?;
+                        } else { return Err(self.octet_error("arguments")); }
+                    }
+                }
+            }
+            return Ok(self.octets(result, false));
+        }
+        if alphabet == Self::BYTE_FOR_BYTE { return self.octets_to_text(input, alphabet); }
+        let mut result = Vec::<u32>::new();
+        let mut cursor = 0;
+        while cursor < input.len() {
+            let remaining = &input[cursor..];
+            let bad = match alphabet {
+                Self::SEVEN_BIT => remaining.iter().position(|b| *b > 127).map(|n| (n, n + 1, "ordinal not in range(128)")),
+                _ => match std::str::from_utf8(remaining) {
+                    Ok(_) => None,
+                    Err(e) => {
+                        let first = e.valid_up_to();
+                        let last = e.error_len().map_or(remaining.len(), |n| first + n);
+                        let cause = match e.error_len() {
+                            None => "unexpected end of data",
+                            Some(_) if remaining[first] < 194 || remaining[first] > 244 => "invalid start byte",
+                            _ => "invalid continuation byte",
+                        };
+                        Some((first, last, cause))
+                    }
+                },
+            };
+            match bad {
+                None => { result.extend(std::str::from_utf8(remaining).map_err(|_| self.octet_error("unready"))?.chars().map(|ch| ch as u32)); break; }
+                Some((first, last, cause)) => {
+                    result.extend(std::str::from_utf8(&remaining[..first]).map_err(|_| self.octet_error("unready"))?.chars().map(|ch| ch as u32));
+                    if handling == "ignore" { cursor += last; continue; }
+                    if handling == "replace" { result.push(65533); cursor += last; continue; }
+                    let call = vec![Value::text(&encoding), self.octets(input.to_vec(), false), Value::Small((cursor + first) as i64), Value::Small((cursor + last) as i64), Value::text(cause), Value::text(&handling)];
+                    match self.codec_function("_decode_error", call)? {
+                        Value::Tuple(parts) => {
+                            result.extend(parts[0].character_numbers().ok_or_else(|| self.octet_error("arguments"))?);
+                            cursor = parts[1].as_big()?.to_usize().ok_or_else(|| self.octet_error("arguments"))?;
+                        }
+                        _ => return Err(self.octet_error("arguments")),
+                    }
+                }
+            }
+        }
+        Ok(Value::characters(result))
+    }
+
+    fn octet_routine(&mut self, operation: u8, values: &[Value]) -> Result<Value, String> {
         let normalized: Vec<Value> = values.iter().map(Value::settled).collect();
         let values = normalized.as_slice();
         self.octet_work(operation, values, false)
     }
 
-    fn octet_work(&self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
-        if operation < 4 && values.len() == 3 {
-            match &values[2] {
-                Value::Text(word) if self.table.spells("ext.system.bytes.strict", word) => return self.octet_work(operation, &values[..2], negative_allowed),
-                _ => return Err(self.octet_error("unready")),
-            }
+    fn octet_work(&mut self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
+        if !values.is_empty() && operation < 4 && (operation > 1 || values.len() > 1) {
+            let input = if operation == 3 { self.octet_contents(&values[0], false)? } else { Vec::new() };
+            let answer = self.convert_text(operation != 3, &input, values)?;
+            return match (operation, answer) {
+                (1, Value::Octets { cell, .. }) => Ok(self.octets(cell.borrow().to_vec(), true)),
+                (_, answer) => Ok(answer),
+            };
         }
         let refusal = || self.octet_error("unready");
         let wrong = || self.octet_error("arguments");
@@ -9432,10 +9523,10 @@ impl<'a> Machine<'a> {
                 let said = self.object_words(one, true)?;
                 Value::text(&crate::text::ascii_escaped(&said))
             }
-            (Prim::AsText, [one]) => {
-                self.figures_allowed(one)?;
-                Value::text(&self.object_words(one, false)?)
-            }
+            (Prim::AsText, [one]) => match one {
+                Value::Unpaired(_) => one.clone(),
+                _ => { self.figures_allowed(one)?; Value::text(&self.object_words(one, false)?) }
+            },
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
             (Prim::Length, [one]) if self.appointed(one, 10).is_some() => {
@@ -9695,6 +9786,26 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::Plus && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
+            if let (Some(first), Some(last)) = (v[0].character_numbers(), v[1].character_numbers()) {
+                return Ok(Value::characters(first.into_iter().chain(last).collect()));
+            }
+        }
+        if v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
+            if let (Some(needle), Some(hay)) = (v[0].character_numbers(), v[1].character_numbers()) {
+                match op {
+                    Prim::Contains | Prim::Absent => {
+                        let present = (0..=hay.len()).any(|i| hay[i..].starts_with(&needle));
+                        return Ok(Value::Flag(if op == Prim::Contains { present } else { !present }));
+                    }
+                    Prim::Lt => return Ok(Value::Flag(needle < hay)),
+                    Prim::Le => return Ok(Value::Flag(needle <= hay)),
+                    Prim::Gt => return Ok(Value::Flag(needle > hay)),
+                    Prim::Ge => return Ok(Value::Flag(needle >= hay)),
+                    _ => {}
+                }
+            }
+        }
         // Two spans are alike when their bounds are, a pair of things
         // asked as the program asks; a span is always alike to itself.
         if let ([Value::Span(left), Value::Span(right)], true) = (v, matches!(op, Prim::Eq | Prim::Ne)) {
@@ -12542,6 +12653,7 @@ impl<'a> Machine<'a> {
                 Value::text(&v[0].representation(self.wording()))
             }
             Prim::AsText => {
+                if let [value @ Value::Unpaired(_)] = v { return Ok(value.clone()); }
                 n(1)?;
                 self.figures_allowed(&v[0])?;
                 Value::text(&self.told(&v[0], w))
@@ -12613,6 +12725,7 @@ impl<'a> Machine<'a> {
                 if let Some(held) = self.check_set_walk(&v[0])? { return Ok(Value::Small(held.borrow().entries.len() as i64)); }
                 match &v[0] {
                     Value::Octets { cell, .. } => Value::Small(cell.borrow().len() as i64),
+                    Value::Unpaired(numbers) => Value::Small(numbers.len() as i64),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Vector(l) | Value::Tuple(l) | Value::Arguments(l) => Value::Small(l.len() as i64),
                     Value::Set(members) => Value::Small(members.borrow().keys.len() as i64),
@@ -12639,6 +12752,7 @@ impl<'a> Machine<'a> {
             Prim::CodeOf => {
                 n(1)?;
                 match &v[0] {
+                    Value::Unpaired(numbers) => Value::Small(numbers[0] as i64),
                     Value::Text(s) => match s.chars().next() {
                         Some(c) => Value::Small(c as i64),
                         None => return Err(format!("{}() requires a non-empty string", name)),
@@ -12656,6 +12770,7 @@ impl<'a> Machine<'a> {
                 .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
                 match char::from_u32(code) {
                     Some(c) => Value::text(&c.to_string()),
+                    None if code >= 0xd800 && code <= 0xdfff && self.table.has_any("ext.system.bytes.encodings") => Value::characters(vec![code]),
                     None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
                 }
             }
@@ -12679,7 +12794,7 @@ impl<'a> Machine<'a> {
                     if let Value::Thing(t) = &v[0] { return Ok(Value::Blueprint(t.of.clone())); }
                     let wanted = match &v[0] {
                         Value::Complex(_) => Some(Prim::ComplexMade),
-                        Value::Text(_) => Some(Prim::AsText), Value::Flag(_) => Some(Prim::Truthful),
+                        Value::Text(_) | Value::Unpaired(_) => Some(Prim::AsText), Value::Flag(_) => Some(Prim::Truthful),
                         Value::Vector(_) => Some(Prim::Listed), Value::Dict(_) => Some(Prim::Dictionary),
                         // What a routine keeps under its names, seen as
                         // a view of the entries, is of the dictionary kind.
@@ -13182,6 +13297,20 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if let Value::Unpaired(numbers) = target {
+            return match at {
+                Value::Span(bounds) => {
+                    let (_, positions, _) = self.span_selection(bounds, numbers.len())?;
+                    Ok(Value::characters(positions.iter().map(|&p| numbers[p]).collect()))
+                }
+                _ => {
+                    let raw = at.as_big()?.to_i64().unwrap_or(i64::MAX);
+                    let place = if raw < 0 { raw + numbers.len() as i64 } else { raw };
+                    let n = numbers.get(place as usize).ok_or_else(|| self.method_fault("index"))?;
+                    Ok(Value::characters(vec![*n]))
+                }
+            };
+        }
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;
@@ -13759,6 +13888,7 @@ impl<'a> Machine<'a> {
     }
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
+        if let Value::Unpaired(numbers) = source { return Ok(numbers.iter().map(|&n| Value::characters(vec![n])).collect()); }
         if let Some(under) = self.underlying_unless(source, &[15]) { return self.gathered_members(&under); }
         // A thing of the program's own that says how it is walked, by a
         // walk method or by reading its places, has the members that

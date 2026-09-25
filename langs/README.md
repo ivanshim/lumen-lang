@@ -425,7 +425,8 @@ only. The extension labels so far, all from PHP:
   complaints, which need no further banner before them. Complaints
   belonging to other operations keep their former telling.
   Unicode properties and case mappings follow the Unicode 16.0 data;
-  lone surrogate code points remain outside the kernels' text values.
+  codecs can preserve lone surrogates in a separate code-point storage
+  form; literal reading retains its own restrictions.
 - `ext.builtin.range.value`: a switch making the range builtin a value
   with one, two or three whole-number arguments: end; start and end;
   start, end and step. Its bounds are kept, so its length, indexed places
@@ -509,11 +510,16 @@ only. The extension labels so far, all from PHP:
   which: the wide encoding, then the seven-bit one, then the one holding
   every byte to be the character of that number, then the one which
   writes a character past a byte as a backslash escape and reads such an
-  escape back. A codec beyond the fourth is not known. An escape naming
-  half a surrogate pair is refused rather than read, since the kernels
-  keep no such character.
-  `ext.system.bytes.strict` names strict conversion; other error policies
-  remain wanting.
+  escape back. UTF-8, ASCII and Latin-1 conversion runs in each kernel.
+  Other codecs are dispatched through the Python `codecs` library:
+  UTF-16/32, UTF-7, Unicode escapes, single-byte character maps and IDNA.
+  `ext.system.bytes.strict` names strict conversion. The standard error
+  handlers and registered callbacks receive Unicode exception objects
+  with the original input, encoding, half-open error span and reason.
+  UTF-8 recovery consumes only the valid prefix of a malformed sequence.
+  Surrogate escape/pass decoding preserves unpaired code points for
+  re-encoding, indexing and slicing. IDNA name preparation uses Unicode
+  3.2; named error replacements use Unicode 15.0 names.
 - `ext.builtin.bytes.hex` and `.fromhex`: the method spelling each byte
   with two hexadecimal figures, and the maker reading those figures back.
   White space may stand between pairs of figures. A mark given to `.hex`
