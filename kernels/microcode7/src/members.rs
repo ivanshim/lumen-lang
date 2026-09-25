@@ -24,7 +24,7 @@ pub struct Request<'a> {
 /// what CPython keeps in the type's own namespace. A kind answers its
 /// own alone, so a tuple has no append however a list has one.
 const KIND_MEMBERS: &[(&str, &str)] = &[
-    ("str", "upper lower title capitalize strip lstrip rstrip split rsplit join replace find rfind index count startswith endswith \
+    ("str", "upper lower title capitalize swapcase strip lstrip rstrip split rsplit join replace find rfind index rindex count startswith endswith \
              isdigit isalpha isalnum isspace islower isupper center ljust rjust zfill format encode"),
     ("list", "append extend insert pop remove sort reverse copy clear index count"),
     ("dict", "get keys values items setdefault update pop popitem copy clear fromkeys"),
@@ -166,16 +166,22 @@ impl Request<'_> {
         }
         if op=="encode"{return Err(self.fail("bytes"));}
         if op=="format"{return self.fill_fields(s).map(|t|Value::text(&t));}
-        if ["upper","lower","title","capitalize"].contains(&op){
+        if ["upper","lower","title"].contains(&op){
             self.takes(0,0)?;
             let converted=match op{
                 "upper"=>s.to_uppercase(),"lower"=>s.to_lowercase(),_=>{
                     if !s.is_ascii(){return Err(self.fail("unicode"));}
                     let mut out=String::new();let mut prior=false;
-                    for (at,ch) in s.chars().enumerate(){let capital=if op=="title"{!prior}else{at==0};out.push(if capital{ch.to_ascii_uppercase()}else{ch.to_ascii_lowercase()});prior=ch.is_ascii_alphabetic();}out
+                    for ch in s.chars(){let capital=!prior;out.push(if capital{ch.to_ascii_uppercase()}else{ch.to_ascii_lowercase()});prior=ch.is_ascii_alphabetic();}out
                 }
             };return Ok(Value::text(&converted));
         }
+        // Capitalize and swapcase share the full titlecase and case
+        // tables the text kind's own case changes already draw upon,
+        // so a letter outside ASCII is cased exactly as it would be
+        // reached by calling the method on the text directly.
+        if op=="capitalize"{self.takes(0,0)?;return Ok(Value::text(&crate::text::case_changed(s,crate::text::Work::CAPITALIZE)));}
+        if op=="swapcase"{self.takes(0,0)?;return Ok(Value::text(&crate::text::case_changed(s,crate::text::Work::SWAPCASE)));}
         if ["strip","lstrip","rstrip"].contains(&op){
             self.takes(0,1)?;
             let set=match self.given.first(){None|Some(Value::Nil)=>None,Some(v)=>Some(letters(v,self.complaint)?)};
@@ -199,13 +205,27 @@ impl Request<'_> {
             self.takes(2,3)?;let limit=self.number(2,-1)?;let old=self.string(0)?;let new=self.string(1)?;
             return Ok(Value::text(&s.replacen(&old,&new,if limit<0{usize::MAX}else{limit as usize})));
         }
-        if ["find","rfind","index","count","startswith","endswith"].contains(&op){return self.search_text(s);}
+        if ["find","rfind","index","rindex","count","startswith","endswith"].contains(&op){return self.search_text(s);}
         if ["isdigit","isalpha","isalnum","isspace","islower","isupper"].contains(&op){
-            self.takes(0,0)?;if !s.is_ascii(){return Err(self.fail("unicode"));}
+            self.takes(0,0)?;
+            // Alphabetic, Digit (Numeric_Type Digit or Decimal) and
+            // White_Space are read from the same character property
+            // table the case changes already draw upon, so a letter or
+            // a digit outside ASCII answers exactly as CPython's own
+            // tables say it should.
+            let space=|ch:char| ch.is_whitespace()||matches!(ch,'\u{1c}'..='\u{1f}');
             let mut yes=!s.is_empty();let mut cased=false;
             for ch in s.chars(){
-                cased|=ch.is_ascii_alphabetic();
-                yes&=match op{"isdigit"=>ch.is_ascii_digit(),"isalpha"=>ch.is_ascii_alphabetic(),"isalnum"=>ch.is_ascii_alphanumeric(),"isspace"=>ch.is_ascii_whitespace()||matches!(ch,'\u{1c}'..='\u{1f}'),"islower"=>!ch.is_ascii_uppercase(),_=>!ch.is_ascii_lowercase()};
+                let is_cased=crate::unicode::property(ch,16);
+                if is_cased{cased=true;}
+                yes&=match op{
+                    "isdigit"=>crate::unicode::property(ch,1024),
+                    "isalpha"=>crate::unicode::property(ch,2048),
+                    "isalnum"=>crate::unicode::property(ch,2048|2|512|1024),
+                    "isspace"=>space(ch),
+                    "islower"=>!is_cased||crate::unicode::property(ch,128),
+                    _=>!is_cased||crate::unicode::property(ch,64),
+                };
             }
             if op=="islower"||op=="isupper"{yes&=cased;}
             return Ok(Value::Flag(yes));

@@ -1126,6 +1126,9 @@
   "ext.builtin.method.rfind": [
     "rfind"
   ],
+  "ext.builtin.method.rindex": [
+    "rindex"
+  ],
   "ext.builtin.method.rjust": [
     "rjust"
   ],
@@ -1164,6 +1167,9 @@
   ],
   "ext.builtin.method.strip": [
     "strip"
+  ],
+  "ext.builtin.method.swapcase": [
+    "swapcase"
   ],
   "ext.builtin.method.title": [
     "title"
@@ -1462,6 +1468,11 @@
   "ext.builtin.text.fault.arguments": [
     "TypeError: invalid string method arguments"
   ],
+  "ext.builtin.text.fault.arguments.many": [
+    "TypeError: ",
+    "() takes at most 3 arguments (",
+    " given)"
+  ],
   "ext.builtin.text.fault.codepoint": [
     "ValueError: character mapping must be in range(0x110000)"
   ],
@@ -1570,6 +1581,9 @@
   "ext.builtin.text.join": [
     "join",
     "str.join"
+  ],
+  "ext.builtin.text.keyword.count": [
+    "count"
   ],
   "ext.builtin.text.keyword.encoding": [
     "encoding"
@@ -3247,6 +3261,15 @@
   ],
   "ext.text.format.unready": [
     "NotImplementedError: this format cannot be represented"
+  ],
+  "ext.text.format.digits": [
+    "ValueError: Too many decimal digits in format string"
+  ],
+  "ext.text.format.width.big": [
+    "ValueError: width too big"
+  ],
+  "ext.text.format.precision.big": [
+    "ValueError: precision too big"
   ],
   "ext.text.format.zero.integer": [
     "ValueError: Negative zero coercion (z) not allowed in integer format specifier"

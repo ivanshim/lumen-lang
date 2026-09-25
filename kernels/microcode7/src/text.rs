@@ -51,6 +51,7 @@ pub fn fit_names(table: &Table, work: Work, values: &mut Vec<Value>, named: Vec<
             Work::SPLIT | Work::RSPLIT => &[(1,"sep"),(2,"maxsplit")],
             Work::EXPANDTABS => &[(1,"tabsize")],
             Work::SPLITLINES => &[(1,"keepends")],
+            Work::REPLACE => &[(3,"count")],
             _ => &[],
         };
         let chosen = candidates.iter().find(|(_, tail)| table.spells(&format!("ext.builtin.text.keyword.{}",tail), &name));
@@ -111,7 +112,7 @@ pub fn written_row(values: &[String], fixed: bool) -> String {
     out
 }
 
-fn expression(value: &Value, words: Names) -> String {
+pub(crate) fn expression(value: &Value, words: Names) -> String {
     match value {
         Value::Text(word)=>quotation(word),
         Value::TextRow(row,closed)=>written_row(row,*closed),
@@ -135,7 +136,7 @@ fn expression(value: &Value, words: Names) -> String {
 
 fn blank(letter: char) -> bool { matches!(letter,'\u{1c}'..='\u{1f}') || letter.is_whitespace() }
 
-fn case_changed(word: &str, work: Work) -> String {
+pub(crate) fn case_changed(word: &str, work: Work) -> String {
     let characters: Vec<_>=word.chars().collect();
     characters.iter().enumerate().map(|(i,&letter)| {
         let lower=match work {
@@ -227,7 +228,19 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         PARTITION|RPARTITION|REMOVEPREFIX|REMOVESUFFIX|FORMATMAP|TRANSLATE|JOIN|ZFILL=>1..=1,
         _=>0..=0,
     };
-    if !allowed.contains(&g.tail.len()) {return Err(g.bad("arguments"));}
+    if !allowed.contains(&g.tail.len()) {
+        // These seven answer for their own count of arguments by name,
+        // as CPython's do, rather than by the one complaint every other
+        // text working shares.
+        if g.tail.len() > *allowed.end() && matches!(work, COUNT|FIND|RFIND|INDEX|RINDEX|STARTSWITH|ENDSWITH) {
+            let pieces = table.strings("ext.builtin.text.fault.arguments.many");
+            if pieces.len() == 3 {
+                let word = match work { FIND=>"find", RFIND=>"rfind", INDEX=>"index", RINDEX=>"rindex", COUNT=>"count", STARTSWITH=>"startswith", _=>"endswith" };
+                return Err(format!("{}{word}{}{}{}", pieces[0], pieces[1], g.tail.len(), pieces[2]));
+            }
+        }
+        return Err(g.bad("arguments"));
+    }
     let source=subject.as_ref();
     let many=source.chars().count();
     let answer=match work {
