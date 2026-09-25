@@ -1560,6 +1560,112 @@ is not a mappingproxy (test_dict test_views_mapping); `del f()[k]` is
 refused on stack8; a metaclass `__prepare__` mapping is not used as the
 class namespace.
 
+### 1y. Batch 16 merged as #503; batch 17 is long runs, open(), small builtins, regular expressions and Unicode errors
+
+Pull request #503 merged into main at a3407b6 with all six jobs green.
+Batch 17 folds five branches and one fix of its own.
+
+fix/test-timeouts lets test_math and test_exceptions finish. Both ran
+past the 900 s cap on each kernel and counted as running nothing.
+test_exceptions' context-chain cycle tests build a chain that loops on
+itself before raising, and the walk that sets a new exception's
+context went round it forever; both kernels now run a second walker
+at half speed beside the first (Floyd's method, as CPython's own fix
+does) and stop where the two meet. test_math's testRemainder builds a
+Fraction from thousands of subnormal floats, and fractions.py made
+each one by doubling a bignum denominator once per bit of exponent; a
+float now gives its ratio through its own as_integer_ratio(). The two
+files finish in minutes (test_math 87 tests, test_exceptions 115), and
+the kernels agree on each progress line but for one position of
+test_exceptions.
+
+fix/open-files gives Python the file road the suite's setUp methods
+take: an `open()` builtin over new file and directory primitives in
+both kernels (text and binary, r/w/a, encoding and errors, read,
+readline, readlines, iteration by line, write, the with-statement; a
+missing file raises CPython's FileNotFoundError), `sys.path` and
+imports that follow it, tempfile.mkdtemp, os.listdir and shutil.rmtree,
+a library module's `__file__` as an absolute path that does not depend
+on the working directory, and CPython's cmath and math test vectors under
+langs/lib_python/modules/test/mathdata. test_cmath goes from 1 to 13 on
+each kernel and test_string_literals from 0 to 14. Scratch programs
+that write files now really write them in the working directory, so
+checks run from a tree root. Three records move: file-builtin/11 and
+syntax-modern/1 (an open() of a missing file now raises CPython's
+FileNotFoundError where `open` was undefined) and reader-tail/3
+(test_import's `from sys import path` now runs). test.support's
+os_helper.unlink now really removes the file, so test_builtin no longer
+leaves '@test' behind, and file-builtin/28's record moves one position
+from E to F on both kernels.
+
+fix/small-builtins-2: `sum()` and `+` keep -0.0 from two negative
+zeros; `(int | str) | float` and `int | None` chain as unions; a kind's
+member called with another kind's value (`tuple.count([], 1)`) is
+refused with CPython's descriptor wording; `from m import X` for a
+missing X says `cannot import name 'X' from 'm' (<path>)` and carries
+`name` (the path is the library's relative path where CPython prints
+its install path).
+
+fix/regex-assertions sends unittest's assertRaisesRegex, assertRegex,
+assertNotRegex and assertWarnsRegex through the `re` module instead of
+a private matcher that refused any of `[](){}|`, with CPython's failure
+messages (`"nope" does not match "other"`, `Regex didn't match: ...`).
+re.py's backtracking reader grew what the suite's patterns use:
+literal lone braces, non-capturing and named groups and their
+back-references, lookahead and lookbehind, `\A` and `\Z`, classes with
+ranges and escapes, lazy quantifiers, the IGNORECASE, MULTILINE, DOTALL
+and VERBOSE flags, `escape`, `fullmatch`, `split`, `findall`,
+`finditer`, `sub` and `subn` with a function, and `Match.groups()` as a
+tuple. warnings filters match through `re` as CPython's do. Four
+records move: reader-tail/1 and reader-tail/4 (errors that now reach
+their assertion become failures; no pass lost on either kernel),
+stdlib-2/12 and warnings-module/7 (`re.compile(p, re.IGNORECASE)` and a
+bracketed warning filter used to raise).
+
+fix/exception-kinds adds UnicodeEncodeError, UnicodeDecodeError and
+UnicodeTranslateError under UnicodeError on both kernels (a new label,
+`ext.builtin.exceptions.unicode`, names their members): the
+constructors take CPython's arguments and check their count, the
+members stay writable, and `str()` is worked out afresh from them each
+time with CPython's single-character and range wordings and escape
+widths, never indexing past the object. The kernels' own codec faults
+already carried CPython's words and now have classes of those names to
+become. It also stops microcode7 taking a stale escape left by an
+earlier call for a fresh one when a re-raised exception crosses a
+with-statement's `__exit__`, which made test_raise_in_generator fail
+there; test_exceptions now prints the same progress line on both
+kernels. Both sides of the merge had appended three kinds to the end
+of the exception roster; the file kinds keep 40-42 and the Unicode
+kinds sit at 43-45.
+
+The batch-17 count stands at stack8 1,447 of 2,738 and microcode7
+1,458 of 2,738 (taken at 0d18ef2, with the files the regex and
+exception merges touch run again at 7bf4870 and 3810f97). test_math
+and test_exceptions now finish, which adds 202 tests to the number
+run: test_math passes 28 of 87 on each kernel and test_exceptions 32
+of 115. test_cmath goes from 1 to 13 and test_string_literals from 0
+to 14 on each kernel, test_iter from 24 to 36 (stack8) and 34
+(microcode7), test_str from 59 to 60 (stack8) and 73 to 74
+(microcode7), test_grammar from 46 to 47, and no file lost a pass.
+test_set on microcode7 ran past the 900 s cap under load and was
+measured alone (1,109 s). Run alone, scratch/reader-tail/4 (test_set)
+printed its new record on both kernels.
+
+Gaps this round records: test_fstring's 59 regex errors now run and
+fail on the reader's generic "invalid syntax" where CPython 3.14 names
+the fault (`f-string: expecting '}'`, `prefixes are incompatible`, ...;
+a branch is under way); re's own error messages lack CPython's ` at
+position N`; scratch/file-iter/12 differs from its record on both
+kernels (the two kernels also differ from each other at two positions)
+and has since before this batch; microcode7 needs about 1,100 s for
+test_set under load; SyntaxError carries no lineno, offset or text and
+no exception carries a `__traceback__`, since neither kernel tracks
+source lines at run time (most of test_exceptions' remaining failures);
+`UnicodeEncodeError.__new__` without `__init__` and a `__str__` that
+deletes `object` part-way are not handled; on microcode7 a bare
+`raise` from a resumed generator that must pass out through a plain
+function call still ends `module did not finish`.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
