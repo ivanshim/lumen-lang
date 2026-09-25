@@ -3327,6 +3327,10 @@ impl<'a> Machine<'a> {
         };
         let preceding = self.holding_fault.len();
         if let Some(value) = raised { self.holding_fault.push(value.clone()); }
+        // What got away from an earlier, unrelated call must not be
+        // mistaken for what this one raises: only a fault this very
+        // call sets belongs to it.
+        self.got_away = None;
         let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
         let asked = self.raised_if_error(asked);
         self.holding_fault.truncate(preceding);
@@ -3977,6 +3981,10 @@ impl<'a> Machine<'a> {
                     // as context; and what the leaving raises comes back
                     // as raised rather than as a wrong answer.
                     if let Err(Escape::Thrown(value)) = &body_result { self.holding_fault.push(value.clone()); }
+                    // What got away from an earlier, unrelated call must
+                    // not be mistaken for what this one raises: only a
+                    // fault this very call sets belongs to it.
+                    self.got_away = None;
                     let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
                     let asked = self.raised_if_error(asked);
                     self.holding_fault.truncate(preceding);
