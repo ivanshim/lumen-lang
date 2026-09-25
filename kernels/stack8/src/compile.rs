@@ -8627,6 +8627,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn comprehension(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
+        // The first iterable belongs to the enclosing scope. Reading it
+        // before entering the comprehension also lets an enclosing
+        // generator suspend there without making the comprehension yield.
         // A class body is no closure, so a comprehension written
         // straight in one would see none of its names at all once its
         // own routine is pushed, where CPython's reference reads the
@@ -8638,7 +8641,7 @@ impl<'a> Compiler<'a> {
         // other clause and the element read back run inside that
         // routine exactly as they did, seeing nothing of the body's
         // names, as a method does not either.
-        if self.lang.closes_over && self.in_class_body() {
+        if self.lang.closes_over && (self.in_class_body() || !self.lang.syntax_members.is_empty()) {
             let entry = self.pos;
             self.pos = clause;
             while !self.on_any(&self.lang.comprehension_in) && !self.exhausted() { self.take(); }

@@ -8035,6 +8035,8 @@ impl<'a> Builder<'a> {
     }
 
     fn gather_comprehension(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
+        // Evaluate the outermost source before creating the inner routine.
+        // Its yield, names and side effects belong to the surrounding body.
         // A class body is no closure, so a comprehension written
         // straight in one would see none of its names once its own
         // routine is pushed, where the reference reads the outermost
@@ -8046,7 +8048,7 @@ impl<'a> Builder<'a> {
         // other clause and the expression read back run inside that
         // routine exactly as they did, seeing nothing of the body's
         // names, as a method does not either.
-        if self.table.flag("ext.stmt.function.closes_over") && self.in_class_body() {
+        if self.table.flag("ext.stmt.function.closes_over") && (self.table.has_any("ext.builtin.exceptions.syntax") || self.in_class_body()) {
             let entry = self.pos;
             self.pos = first_for;
             while !self.on_any("ext.op.comprehension.in") && !self.exhausted() { self.advance(); }
