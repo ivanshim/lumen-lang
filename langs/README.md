@@ -4233,7 +4233,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4252,6 +4252,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.os` | - | - | `errno` `strerror` `filename` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` `: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback` | - | - | `traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
@@ -5203,3 +5204,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.zero.integer` | - | - | `ValueError: Negative zero coercion (z) not allowed in integer format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.zero.string` | - | - | `ValueError: Negative zero coercion (z) not allowed in string format specifier` | - | - | - | - | - | - | - |
 <!-- table:end -->
+
+`ext.builtin.exceptions.syntax` names the message, filename, start line and
+column, source text, end line and column, and print-file flag of a syntax
+exception. Its optional detail argument supplies four or six position values.

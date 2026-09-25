@@ -797,6 +797,22 @@ impl Value {
         let args = self.raised_arguments()?;
         let Value::Object(o) = self else { return None };
         if let Some(told) = Self::unicode_error_text(o, sp) { return Some(told); }
+        {
+            let fields = o.fields.borrow();
+            if let Some((_, Value::Tuple(names))) = fields.iter().find(|(n, _)| n == "\0syntax-fields") {
+                let get = |i: usize| names.get(i).and_then(|n| match n { Value::Text(n) => fields.iter().find(|(key, _)| key == n.as_ref()), _ => None }).map(|(_, v)| v.clone()).unwrap_or(Value::Null);
+                let mut text = get(0).display(sp);
+                let file = match get(1) { Value::Text(s) => Some(s.rsplit('/').next().unwrap_or("").to_string()), _ => None };
+                let line = match get(2) { Value::Small(n) => Some(n), _ => None };
+                match (file, line) {
+                    (Some(file), Some(n)) => text.push_str(&format!(" ({file}, line {n})")),
+                    (Some(file), None) => text.push_str(&format!(" ({file})")),
+                    (None, Some(n)) => text.push_str(&format!(" (line {n})")),
+                    _ => {}
+                }
+                return Some(text);
+            }
+        }
         // A group and an operating-system fault carry the words they
         // are shown with, made when they were.
         if let Some((_, Value::Text(shown))) = o.fields.borrow().iter().find(|(n, _)| n == "\0shown") { return Some(shown.to_string()); }

@@ -29,6 +29,9 @@ pub struct Token {
     pub lexeme: String,
     pub span: usize,
     pub row: u32,
+    pub column: usize,
+    pub end_column: usize,
+    pub end_row: u32,
 }
 
 /// Where a marker stands in a piece of text, found however it is
@@ -452,9 +455,9 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
         if text.is_empty() {
             return;
         }
-        out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row });
-        out.push(Token { shape: Shape::Quote, lexeme: text.to_string(), span: 0, row });
-        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row });
+        out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), span: 0, row });
+        out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text.to_string(), span: 0, row });
+        out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), span: 0, row });
     };
     let mut rest = source;
     // The rows of the page are counted through the weave, so that what
@@ -495,11 +498,11 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
         inside.pop();
         let ended = inside.last().map_or(row, |t| t.row);
         if writes {
-            out.push(Token { shape: Shape::Bare, lexeme: telling.clone(), span: 0, row });
+            out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), span: 0, row });
         }
         out.append(&mut inside);
         // Each run of code stands as a statement, however it ended.
-        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: ended });
+        out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), span: 0, row: ended });
         row += code.matches('\n').count() as u32;
         // One line end straight after the closing marker belongs to it.
         let shorter = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
@@ -509,20 +512,20 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
         rest = shorter;
     }
     says(rest, row, &mut out);
-    out.push(Token { shape: Shape::Finish, lexeme: "EOF".into(), span: 0, row });
+    out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Finish, lexeme: "EOF".into(), span: 0, row });
     Ok(out)
 }
 
 fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
-    let mut ended = 1;
+    let mut ended = (1, 1);
     scan_code_from(source, table, 1, &mut ended)
 }
 
 /// The same, begun at a given row, so that a run of code woven into a
 /// page names the rows of the page and not its own.
 fn scan_code_marking(source: &str, table: &Table, first: u32) -> Result<Vec<Token>, (String, u32)> {
-    let mut ended = first;
-    scan_code_from(source, table, first, &mut ended).map_err(|said| (said, ended))
+    let mut ended = (first, 1);
+    scan_code_from(source, table, first, &mut ended).map_err(|said| (said, ended.0))
 }
 
 /// The marks and letters opening a string, found before names are cut.
@@ -626,7 +629,7 @@ impl Quotation<'_> {
         self.table.single("ext.lexical.string.amiss").unwrap_or("Invalid string literal").to_owned()
     }
     fn token(&mut self, kind: Shape, text: String) {
-        self.made.push(Token { row: self.row, shape: kind, lexeme: text, span: 0 });
+        self.made.push(Token { end_row: 0, end_column: 0, column: 1, row: self.row, shape: kind, lexeme: text, span: 0 });
     }
     fn flush(&mut self, text: &mut String, missing: &mut bool) {
         let kind = if *missing { Shape::Unheld } else { Shape::Quote };
@@ -865,7 +868,7 @@ impl Quotation<'_> {
     }
 }
 
-fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> Result<Vec<Token>, String> {
+fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usize)) -> Result<Vec<Token>, String> {
     let text = drop_comments(source, table);
     let src: Vec<char> = text.chars().collect();
     let quotes = table.letters("lexical.string_quotes");
@@ -917,18 +920,24 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
     let fold_kw = table.flag("lexical.keywords_case_insensitive");
     let fold_id = table.flag("identifier.case_insensitive");
     let mut tokens: Vec<Token> = Vec::new();
-    let tok = |kind: Shape, text: String, row: u32| Token { shape: kind, lexeme: text, span: 0, row: row };
+    let line_beginnings: Vec<usize> = std::iter::once(0).chain(src.iter().enumerate().filter_map(|(i, c)| (*c == '\n').then_some(i + 1))).collect();
+    let at_column = |index| index - line_beginnings[line_beginnings.partition_point(|start| *start <= index) - 1] + 1;
+    let column = std::cell::Cell::new(1usize);
+    let tok = |kind: Shape, text: String, row: u32| Token { end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, span: 0, row: row };
     let (mut pos, mut row, mut at_bol) = (0usize, first, true);
     while pos < src.len() {
         // The row the reading has reached is kept where the caller can
         // see it, so that a reading that stops names the right line.
-        *ended = row;
+        *ended = (row, at_column(pos));
         if at_bol {
             at_bol = false;
             let mut width = 0;
             let mut k = pos;
             while k < src.len() && (src[k] == ' ' || src[k] == '\t') {
-                width += if src[k] == '\t' { unit } else { 1 };
+                width += match src[k] {
+                    '\t' if table.has_any("ext.builtin.exceptions.syntax") => 8 - width % 8,
+                    '\t' => unit, _ => 1,
+                };
                 k += 1;
             }
             let line_end = src[k..].iter().position(|c| *c == '\n').map_or(src.len(), |p| k + p);
@@ -941,9 +950,11 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 at_bol = true;
                 continue;
             }
-            tokens.push(Token { shape: Shape::Lead, lexeme: String::new(), span: width, row: row });
+            tokens.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Lead, lexeme: src[pos..k].iter().collect(), span: width, row: row });
             pos = k;
         }
+        column.set(at_column(pos));
+        ended.1 = column.get();
         if !table.strings("ext.lexical.string.long").is_empty() {
             if table.strings("lexical.comment_line").iter().any(|m| src[pos..].starts_with(&m.chars().collect::<Vec<_>>())) {
                 while pos < src.len() && src[pos] != '\n' { pos += 1; }
@@ -951,7 +962,18 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             }
             if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
                 let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new() };
-                quote.literal(body, &end, raw, fields, 0)?;
+                if let Err(mut words) = quote.literal(body, &end, raw, fields, 0) {
+                    if !fields && table.has_any("ext.builtin.exceptions.syntax") && words.starts_with("SyntaxError: unterminated ") {
+                        words.push_str(&format!(" (detected at line {})", quote.row));
+                    }
+                    return Err(words);
+                }
+                if !fields {
+                    for token in &mut quote.made {
+                        token.column = at_column(pos); token.row = row;
+                        token.end_column = at_column(quote.next); token.end_row = quote.row;
+                    }
+                }
                 pos = quote.next;
                 row = quote.row;
                 tokens.extend(quote.made);
@@ -959,6 +981,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             }
             if let Some(said) = prefix_conflict(&src, pos, table) { return Err(said); }
             if table.flag("ext.lexical.string.adjacent") && src[pos] == '\\' && src.get(pos + 1) == Some(&'\n') {
+                if pos + 2 == src.len() && table.has_any("ext.builtin.exceptions.syntax") { ended.1 += 1; return Err("SyntaxError: unexpected EOF while parsing".to_owned()); }
                 pos += 2;
                 row += 1;
                 continue;
@@ -973,6 +996,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     end += 1;
                 }
                 if src.get(end) == Some(&'\n') {
+                    if end + 1 == src.len() && table.has_any("ext.builtin.exceptions.syntax") { ended.1 = at_column(end); return Err("SyntaxError: unexpected EOF while parsing".to_owned()); }
                     pos = end + 1;
                     row += 1;
                     carried = true;
@@ -997,7 +1021,11 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
         if table.spells("ext.lexical.line_continuation", &c.to_string()) {
             pos += 1;
             if src.get(pos) == Some(&'\r') { pos += 1; }
-            if src.get(pos) != Some(&'\n') { return Err(table.single("ext.lexical.line_continuation.amiss").unwrap_or_default().to_string()); }
+            if src.get(pos) != Some(&'\n') {
+                ended.1 = at_column(pos);
+                if pos == src.len() && table.has_any("ext.builtin.exceptions.syntax") { return Err("SyntaxError: unexpected EOF while parsing".to_owned()); }
+                return Err(table.single("ext.lexical.line_continuation.amiss").unwrap_or_default().to_string());
+            }
             row += 1;
             pos += 1;
             continue;
@@ -1119,7 +1147,15 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 while at(k).map_or(false, |x| table.extends_name(x)) { k += 1; }
             }
             let spelling: String = src[pos..k].iter().collect();
-            if strict { check_numeral(&spelling, table)?; }
+            if strict {
+                if let Err(mut words) = check_numeral(&spelling, table) {
+                    if table.has_any("ext.builtin.exceptions.syntax") {
+                        ended.1 = column.get() + failed_digit(&spelling, &words);
+                        if table.single("ext.lexical.number.amiss") == Some(words.as_str()) { words = "SyntaxError: invalid decimal literal".to_string(); }
+                    }
+                    return Err(words);
+                }
+            }
             tokens.push(tok(Shape::Numeral, spelling, row));
             pos = k;
             continue;
@@ -1244,6 +1280,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
         }
         tokens = joined;
     }
+    column.set(at_column(src.len()));
     tokens.push(tok(Shape::Finish, "EOF".into(), row));
     Ok(tokens)
 }
@@ -1380,6 +1417,8 @@ fn told_of_key(table: &Table) -> Option<String> {
 /// A language naming such characters by their number names it that
 /// way, a character no one can show being no use in a complaint.
 fn told_of_character(table: &Table, c: char, row: u32) -> String {
+    if c.is_control() && table.has_any("ext.builtin.exceptions.syntax") { return format!("SyntaxError: invalid non-printable character U+{:04X}", u32::from(c)); }
+    if table.has_any("ext.builtin.exceptions.syntax") && c as u32 > 127 { return format!("SyntaxError: invalid character '{}' (U+{:04X})", c, u32::from(c)); }
     match (table.single("ext.system.reading.unexpected"), table.single("ext.system.reading.unexpected.character")) {
         (Some(opening), Some(named)) => format!("{opening} {named}{:02X}", c as u32),
         _ => format!("Unexpected character '{c}' at row {row}"),
@@ -1390,8 +1429,8 @@ fn told_of_character(table: &Table, c: char, row: u32) -> String {
 /// from the empty string, so the result is text whatever is woven in.
 fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Token>) -> Result<(), String> {
     let cut = pieces(s, plain, table)?;
-    let sign = |text: &str| Token { shape: Shape::Sign, lexeme: text.to_string(), span: 0, row };
-    let quote = |text: String| Token { shape: Shape::Quote, lexeme: text, span: 0, row };
+    let sign = |text: &str| Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: text.to_string(), span: 0, row };
+    let quote = |text: String| Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text, span: 0, row };
     if !cut.iter().any(|p| matches!(p, Piece::Code(_))) {
         tokens.push(quote(s.to_string()));
         return Ok(());
@@ -1495,4 +1534,42 @@ pub fn check_numeral(word: &str, table: &Table) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Keep the scanner cursor when a text operation cannot produce tokens.
+pub fn scan_position(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32, usize)> {
+    if source.contains('\0') && table.has_any("ext.builtin.exceptions.syntax") { return Err(("SyntaxError: source code string cannot contain null bytes".to_owned(), 0, 0)); }
+    if table.flag("ext.lexical.template") {
+        return scan_at(source, table).map_err(|(message, row)| (message, row, 1));
+    }
+    let mut cursor = (1, 1);
+    scan_code_from(source, table, 1, &mut cursor).map_err(|message| (message, cursor.0, cursor.1))
+}
+
+
+fn failed_digit(spelling: &str, complaint: &str) -> usize {
+    if complaint.contains("leading zeros") { return 0; }
+    let chars = spelling.chars().collect::<Vec<_>>();
+    let (base, skip) = match chars.get(..2) {
+        Some(['0', 'b' | 'B']) => (2, 2),
+        Some(['0', 'o' | 'O']) => (8, 2),
+        Some(['0', 'x' | 'X']) => (16, 2),
+        _ => (10, 0),
+    };
+    let mut index = skip;
+    while index < chars.len() {
+        let c = chars[index];
+        let next = chars.get(index + 1);
+        if c == '_' {
+            if !next.map_or(false, |n| n.is_digit(base)) { return index; }
+        } else if !c.is_digit(base) {
+            if skip != 0 {
+                return if base != 16 && c.is_ascii_digit() { index } else { index.saturating_sub(1) };
+            }
+            let exponent = matches!(c, 'e' | 'E') && next.map_or(false, |n| n.is_ascii_digit() || matches!(n, '+' | '-'));
+            if !exponent && !matches!(c, '.' | '+' | '-') { return index.saturating_sub(1); }
+        }
+        index += 1;
+    }
+    index.saturating_sub(1)
 }

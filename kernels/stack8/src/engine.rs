@@ -372,7 +372,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -475,6 +475,18 @@ impl<'a> Engine<'a> {
             let values = [args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone()];
             for (name, value) in self.lang.unicode_members.iter().skip(1).zip(values) { fields.push((name.clone(), value)); }
         }
+        if self.stands_on(&class, 36) {
+            let details = args.get(1).filter(|_| args.len() == 2).and_then(|v| match v.contents() {
+                Value::Tuple(v) | Value::Array(v) => Some(v), _ => None,
+            });
+            for (i, key) in self.lang.syntax_members.iter().enumerate() {
+                let value = if i == 0 { args.first().cloned() }
+                    else { details.as_ref().and_then(|v| v.get(i - 1)).cloned() };
+                fields.push((key.clone(), value.unwrap_or(Value::Null)));
+            }
+            let names = self.lang.syntax_members.iter().map(|n| Value::text(n)).collect();
+            fields.push(("\0syntax-fields".into(), Value::Tuple(Rc::new(names))));
+        }
         let args = Value::Tuple(Rc::new(args));
         fields.push(("\0arguments".into(), args.clone()));
         if let Some(name) = &self.lang.exception_args { fields.push((name.clone(), args)); }
@@ -575,6 +587,7 @@ impl<'a> Engine<'a> {
         for (key, value) in self.call_items(given)? {
             match key { Some(key) => named.push((key, value)), None => args.push(value) }
         }
+        let syntax = if self.stands_on(&class, 36) { self.check_syntax_details(&args)? } else { Vec::new() };
         let unicode_arity = if self.stands_on(&class, 43) || self.stands_on(&class, 44) { Some(5) }
             else if self.stands_on(&class, 45) { Some(4) } else { None };
         if let Some(wanted) = unicode_arity {
@@ -587,6 +600,7 @@ impl<'a> Engine<'a> {
         } else { self.exception_instance(class, args, Value::Null) };
         if let Value::Object(object) = &made {
             let mut fields = object.fields.borrow_mut();
+            self.install_syntax_details(&mut fields, &syntax);
             for (key, value) in named {
                 let allowed = [&self.lang.absent_name_member, &self.lang.absent_object_member].into_iter().flatten().any(|n| *n == key);
                 match fields.iter_mut().find(|(n, _)| *n == key) {
@@ -694,6 +708,26 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn check_syntax_details(&mut self, args: &[Value]) -> Res<Vec<Value>> {
+        if args.len() != 2 { return Ok(Vec::new()); }
+        let details = self.core_members(&args[1])?;
+        let n = details.len();
+        if n != 4 && n != 6 {
+            let (bound, count) = if n < 4 { ("least", 4) } else if n < 6 { ("least", 6) } else { ("most", 6) };
+            return Err(format!("TypeError: function takes at {bound} {count} arguments ({n} given)"));
+        }
+        Ok(details)
+    }
+
+    fn install_syntax_details(&self, fields: &mut [(String, Value)], details: &[Value]) {
+        if details.is_empty() { return; }
+        for (key, value) in fields {
+            if let Some(i) = self.lang.syntax_members.iter().position(|n| n == key).filter(|i| *i > 0 && *i < 7) {
+                *value = details.get(i - 1).cloned().unwrap_or(Value::Null);
+            }
+        }
+    }
+
     /// Whether a name is one of the methods an exception answers itself.
     fn exception_method_named(&self, name: &str) -> bool {
         [&self.lang.note_method, &self.lang.traceback_setter, &self.lang.group_split, &self.lang.group_subgroup, &self.lang.group_derive]
@@ -703,6 +737,19 @@ impl<'a> Engine<'a> {
     /// The methods an exception answers itself: adding a note, setting
     /// a traceback, and parting a group three ways.
     fn exception_method(&mut self, object: Rc<Instance>, name: &str, args: &[Value]) -> Flow<Value> {
+        if self.stands_on(&object.class, 36) && self.lang.constructor.as_deref() == Some(name) {
+            let details = self.check_syntax_details(args)?;
+            let Value::Object(fresh) = self.exception_instance(object.class.clone(), args.to_vec(), Value::Null) else { unreachable!() };
+            self.install_syntax_details(&mut fresh.fields.borrow_mut(), &details);
+            let mut fields = object.fields.borrow_mut();
+            for (key, value) in fresh.fields.borrow().iter() {
+                if (self.lang.syntax_members.contains(key) && (args.len() == 2 || self.lang.syntax_members.first() == Some(key))) || key == "\0arguments" || self.lang.exception_args.as_ref() == Some(key) {
+                    if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
+                    else { fields.push((key.clone(), value.clone())); }
+                }
+            }
+            return Ok(Value::Null);
+        }
         let unready = self.lang.exception_unready.clone().unwrap_or_default();
         if self.lang.note_method.as_deref() == Some(name) {
             let [Value::Text(_)] = args else { return Err(self.lang.note_invalid.clone().unwrap_or_default().into()) };
@@ -6817,7 +6864,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 // An exception answers its own few methods itself.
-                Value::Object(o) if self.exception_class(&o.class) && self.exception_method_named(name) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
+                Value::Object(o) if self.exception_class(&o.class) && (self.exception_method_named(name) || (self.stands_on(&o.class, 36) && self.lang.constructor.as_deref() == Some(name))) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
                 subject if self.descriptor_of(&subject, name).is_some() => {
                     let d = self.descriptor_of(&subject, name).expect("the descriptor");
                     self.descriptor_read(&d, subject)?
@@ -14827,8 +14874,21 @@ impl Engine<'_> {
         let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
-        let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?;
-        let program = crate::compile::compile(&tokens, self.lang, &mut local, 0)?;
+        let filename = own_file.as_deref().unwrap_or(path);
+        let tokens = match self.text_tokens(&source, 0) {
+            Ok(tokens) => tokens,
+            Err((said, row, col)) => {
+                let said = self.text_syntax(0, said, filename, row, col, None, &source);
+                return Err(self.carried.take().unwrap_or_else(|| said.into()));
+            }
+        };
+        let program = match crate::compile::compile(&tokens, self.lang, &mut local, 0) {
+            Ok(program) => program,
+            Err(said) => {
+                let said = self.text_syntax(0, said, filename, local.stopped_at, local.stopped_column, Some((local.stopped_end_row, local.stopped_end)), &source);
+                return Err(self.carried.take().unwrap_or_else(|| said.into()));
+            }
+        };
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0module:{offset}:{path}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -15235,16 +15295,91 @@ impl Engine<'_> {
     /// are kept where they name the very complaint the language has for
     /// text it cannot read; any other words are that complaint instead,
     /// since they are the assembler's and not the language's.
-    fn text_syntax(&self, said: String, file: &str, row: usize) -> String {
+    fn text_syntax(&mut self, mode: usize, said: String, file: &str, row: usize, column: usize, end: Option<(usize, usize)>, source: &str) -> String {
         let generic = self.lang.source_syntax.clone().unwrap_or_default();
-        let kind = generic.split_once(':').map(|(word, _)| format!("{}:", word));
-        let told = match &kind {
-            Some(kind) if said.starts_with(kind.as_str()) => said,
-            _ => generic,
-        };
-        let words = &self.lang.source_place;
-        if words.len() < 3 { return told; }
-        format!("{}{}{}{}{}{}", told, words[0], file, words[1], row.max(1), words[2])
+        let fallback = generic.split_once(':').map(|(kind, _)| kind).unwrap_or("");
+        let (kind, message) = said.split_once(": ").filter(|(kind, _)| self.native_exceptions.contains_key(*kind))
+            .unwrap_or((fallback, generic.split_once(": ").map(|(_, msg)| msg).unwrap_or(&generic)));
+        if let Some(Value::Class(class)) = self.native_exceptions.get(kind).cloned() {
+            if message == "source code string cannot contain null bytes" {
+                let raised = self.exception_instance(class, vec![Value::text(message)], Value::Null);
+                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                return String::new();
+            }
+            if row == 0 && mode != 0 && source.is_empty() {
+                let positions = vec![Value::text(file), Value::Small(0), Value::Small(0), Value::text(""), Value::Small(0), Value::Small(0)];
+                let raised = self.exception_instance(class, vec![Value::text(message), Value::Tuple(Rc::new(positions))], Value::Null);
+                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                return String::new();
+            }
+            if row == 0 {
+                let details = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(0), Value::Small(-1), Value::Null]));
+                let raised = self.exception_instance(class, vec![Value::text(message), details], Value::Null);
+                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                return String::new();
+            }
+            let row = row.max(1);
+            let mut text = source.split_inclusive('\n').nth(row - 1).unwrap_or("").to_owned();
+            let mut col = column.max(1) as i64;
+            let mut finish = end.map_or(col, |(_, n)| n as i64);
+            let end_row = end.map_or(row, |(r, _)| if r == 0 { row } else { r });
+            let mut message = message.to_owned();
+            if mode != 0 && source.ends_with('\\') && message == "unexpected EOF while parsing" {
+                message = "unexpected character after line continuation character".to_owned();
+                col = col.saturating_sub(1).max(1);
+            }
+            let unclosed = message.ends_with("was never closed");
+            let indentation = kind == "IndentationError" || kind == "TabError";
+            if unclosed || message == "unexpected character after line continuation character" { finish = 0; }
+            if message == "unexpected EOF while parsing" { finish = -1; }
+            if end.is_none() && message == "invalid syntax" {
+                let rest: String = text.chars().skip(col as usize - 1).collect();
+                let length = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').count();
+                finish = col + length.max(1) as i64;
+                if mode == 0 && !text.ends_with('\n') { text.push('\n'); }
+            }
+            if message.contains("bytes can only contain ASCII") { finish = text.trim_end_matches(['\r', '\n']).chars().count() as i64 + 1; }
+            if message.starts_with("leading zeros") {
+                finish = col + text.chars().skip(col as usize - 1).take_while(|c| matches!(c, '0' | '_')).count() as i64;
+            }
+            if end.is_none() && message.contains("prefixes") {
+                finish = col + text.chars().skip(col as usize - 1).take_while(char::is_ascii_alphabetic).count() as i64;
+            }
+            if message.starts_with("unterminated ") && !message.contains("detected at line") {
+                let detected = source.lines().count().max(row);
+                message.push_str(&format!(" (detected at line {detected})"));
+            }
+            if indentation {
+                if message.starts_with("unindent") { col = text.trim_end_matches(['\n', '\r']).chars().count() as i64 + 1; finish = -1; }
+                else if message.starts_with("expected an indented block") {
+                    let length = text.chars().skip(col as usize - 1).take_while(|c| c.is_alphanumeric() || *c == '_').count();
+                    finish = if length == 0 { -1 } else { col + length as i64 };
+                } else { finish = if kind == "TabError" { 0 } else { -1 }; }
+            }
+            if mode == 0 && (end.is_some() || unclosed || indentation || message.starts_with("unexpected EOF") || message.starts_with("unexpected character after line continuation")) && !text.ends_with('\n') { text.push('\n'); }
+            if message.starts_with("unterminated ") || (unclosed && source.lines().count() > row) { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
+            if message == "cannot assign to function call" && source.lines().count() > row { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
+            if mode != 0 && message == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { col = 0; finish = 0; }
+            let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("duplicate argument ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
+            // Symbol-table diagnostics retain UTF-8 spans; tokenizer
+            // diagnostics count characters in the original source.
+            if compiler_only {
+                col = text.chars().take(col.saturating_sub(1) as usize).map(char::len_utf8).sum::<usize>() as i64 + 1;
+                if finish > 0 {
+                    let ending = source.split_inclusive('\n').nth(end_row - 1).unwrap_or("");
+                    finish = ending.chars().take((finish - 1) as usize).map(char::len_utf8).sum::<usize>() as i64 + 1;
+                }
+            }
+            let line_text = if compiler_only {
+                std::fs::read_to_string(file).ok().and_then(|contents| contents.split_inclusive('\n').nth(row - 1).map(Value::text)).unwrap_or(Value::Null)
+            } else { Value::text(&text) };
+            let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(col), line_text, Value::Small(end_row as i64), Value::Small(finish)];
+            let raised = self.exception_instance(class, vec![Value::text(&message), Value::Tuple(Rc::new(details))], Value::Null);
+            self.chain_context(&raised);
+            self.carried = Some(Fault::Thrown(raised));
+            return String::new();
+        }
+        said
     }
 
     /// The tokens of text handed over to be read, or the reading's own
@@ -15252,9 +15387,20 @@ impl Engine<'_> {
     /// same complaint a file being run keeps, so text read through
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_syntax`.
-    fn text_tokens(&self, source: &str) -> Result<Vec<crate::lex::Token>, (String, usize)> {
-        crate::lex::lex_at(source, self.lang)
-            .and_then(|tokens| crate::layout::layout(tokens, self.lang, 0))
+    fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+        if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
+        if mode == 1 {
+            let word = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
+            if ["return", "raise", "break", "continue", "pass", "del", "import", "from", "global", "nonlocal", "assert", "class", "def", "for", "while", "if", "try", "with"].contains(&word) {
+                let prefix = source.len() - source.trim_start_matches([' ', '\t', '\n']).len();
+                let row = source[..prefix].bytes().filter(|c| *c == b'\n').count() + 1;
+                let col = source[..prefix].rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                return Err(("SyntaxError: invalid syntax".into(), row as _, col));
+            }
+        }
+
+        crate::lex::lex_position(source, self.lang)
+            .and_then(|tokens| crate::layout::layout_position(tokens, self.lang, 0))
     }
 
     /// The builtins that read text, hand out names, or fetch a module.
@@ -15303,21 +15449,76 @@ impl Engine<'_> {
 
     /// Text checked ahead of time and kept as a code value, with the
     /// file and the manner it is to be read in.
+    fn source_bytes(&mut self, bytes: &[u8], filename: &str) -> Res<Rc<str>> {
+        let bom = bytes.starts_with(&[239, 187, 191]);
+        let bytes = bytes.strip_prefix(&[239, 187, 191]).unwrap_or(bytes);
+        let mut spelling = "utf8".to_string();
+        for line in bytes.split(|b| *b == b'\n').take(2) {
+            let line = String::from_utf8_lossy(line);
+            if !line.trim_start().starts_with('#') { continue; }
+            if let Some((_, tail)) = line.split_once("coding") {
+                if let Some(tail) = tail.strip_prefix(':').or_else(|| tail.strip_prefix('=')) {
+                    spelling = tail.trim_start().chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).collect();
+                    break;
+                }
+            }
+        }
+        let encoding = spelling.to_ascii_lowercase().replace(['-', '_'], "");
+        if bom && !matches!(encoding.as_str(), "utf8" | "utf8sig") {
+            return Err(self.text_syntax(0, format!("SyntaxError: encoding problem: {spelling} with BOM"), filename, 0, 0, None, ""));
+        }
+        let decoded = match encoding.as_str() {
+            "ascii" | "usascii" => {
+                if let Some((index, byte)) = bytes.iter().enumerate().find(|(_, b)| **b > 127) {
+                    let words = format!("SyntaxError: 'ascii' codec can't decode byte 0x{byte:02x} in position {index}: ordinal not in range(128)");
+                    return Err(self.text_syntax(0, words, filename, 0, 0, None, ""));
+                }
+                bytes.iter().copied().map(char::from).collect()
+            },
+            "utf8" | "utf8sig" => match std::str::from_utf8(bytes) {
+                Ok(text) => text.to_owned(),
+                Err(error) => {
+                    let prefix = String::from_utf8_lossy(&bytes[..error.valid_up_to()]);
+                    let row = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+                    let col = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                    let source = String::from_utf8_lossy(bytes);
+                    let why = if error.error_len().is_none() { "unexpected end of data" } else if bytes[error.valid_up_to()] >= 194 { "invalid continuation byte" } else { "invalid start byte" };
+                    let position = prefix.rsplit(['\n', '\'', '"']).next().unwrap_or("").len();
+                    let message = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{:02x} in position {position}: {why}", bytes[error.valid_up_to()]);
+                    return Err(self.text_syntax(0, message, filename, row, col, Some((row, col + 1)), &source));
+                }
+            },
+            "latin1" | "latin" | "iso88591" => bytes.iter().copied().map(char::from).collect(),
+            "cp1251" | "iso88597" => {
+                let mapping = if encoding == "cp1251" { "ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя" } else { " ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�" };
+                let upper: Vec<char> = mapping.chars().collect();
+                bytes.iter().map(|b| if *b < 128 { char::from(*b) } else { upper[*b as usize - 128] }).collect()
+            }
+            _ => return Err(self.text_syntax(0, format!("SyntaxError: unknown encoding: {spelling}"), filename, 0, 0, None, "")),
+        };
+        Ok(Rc::from(decoded))
+    }
+
     fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
         if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
-        let (Value::Text(source), Value::Text(file), Value::Text(manner)) = (args[0].contents(), args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
+        let (Value::Text(file), Value::Text(manner)) = (args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
+        let source = match args[0].contents() {
+            Value::Text(source) => source,
+            Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
+            _ => return Err(self.source_unready()),
+        };
         let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err(self.source_unready()) };
         // Flags and inheritance are read and let be; another setting of
         // optimisation than the ordinary is not honoured.
         if args.get(5).map_or(false, |value| !matches!(value, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(self.source_unready()); }
-        let tokens = match self.text_tokens(if mode == 1 { source.trim() } else { &source }) {
+        let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
-            return Err(self.text_syntax(said, &file, trial.stopped_at));
+            return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
         }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
@@ -15336,6 +15537,7 @@ impl Engine<'_> {
         let Some(first) = args.first().map(Value::contents) else { return Err(self.source_unready()) };
         let (source, file, mode) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
+            Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing)),
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class.name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
@@ -15345,7 +15547,7 @@ impl Engine<'_> {
         };
         if args.len() > 3 { return Err(self.source_unready()); }
         // An expression to be weighed may stand in from the edge of its text.
-        let source = if mode == 1 { source.trim().to_string() } else { source };
+        let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_string() } else { source };
         let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {
             match value {
                 None | Some(Value::Null) => Ok(None),
@@ -15386,11 +15588,11 @@ impl Engine<'_> {
             };
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
-        let (program, shown) = self.text_program(&tokens, &file, mode, None)?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, None)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
     }
@@ -15402,11 +15604,11 @@ impl Engine<'_> {
     /// the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
     fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>) -> Res<Value> {
-        let source = if mode == 1 { source.trim() } else { source };
+        let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         // Text read inside a method is read as standing in that method's
         // class, as text read where a language has no manners of reading
@@ -15421,7 +15623,7 @@ impl Engine<'_> {
         self.registry.value_only = mode == 1;
         let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
             Ok(program) => program,
-            Err(said) => { let row = self.registry.stopped_at; return Err(self.text_syntax(said, &file, row)); }
+            Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
         };
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut mine = values;
@@ -15446,9 +15648,9 @@ impl Engine<'_> {
     /// of their own in the world, and a book is kept for them.
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Res<Value> {
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::default();
@@ -15464,7 +15666,7 @@ impl Engine<'_> {
         if own_natives {
             for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
         }
-        let (program, shown) = self.text_program(&tokens, &file, mode, Some(&mut local))?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local))?;
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -15480,7 +15682,7 @@ impl Engine<'_> {
     /// one statement shown as it runs, which is an expression written
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
-    fn text_program(&mut self, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
+    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
         let amiss;
         {
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
@@ -15491,10 +15693,10 @@ impl Engine<'_> {
             registry.value_only = mode == 1;
             match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
                 Ok(program) => return Ok((program, false)),
-                Err(said) => amiss = (said, registry.stopped_at),
+                Err(said) => amiss = (said, registry.stopped_at, registry.stopped_column, (registry.stopped_end_row, registry.stopped_end)),
             }
         }
-        Err(self.text_syntax(amiss.0, file, amiss.1))
+        Err(self.text_syntax(mode, amiss.0, file, amiss.1, amiss.2, Some(amiss.3), source))
     }
 
     /// Run a text's program as standing in its file, and answer what it

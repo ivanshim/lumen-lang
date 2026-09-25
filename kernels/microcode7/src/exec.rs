@@ -469,7 +469,7 @@ impl<'a> Machine<'a> {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
                 22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 => Some(20), 42 => Some(19),
-                43 | 44 | 45 => Some(22), _ => Some(1),
+                43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
             };
             let mut seed = Vec::new();
             match number {
@@ -562,6 +562,21 @@ impl<'a> Machine<'a> {
         } else if self.stands_under(&kind, 45) && row.len() == 4 {
             let values = [row[0].clone(), row[1].clone(), row[2].clone(), row[3].clone()];
             for (key, value) in members.iter().skip(1).zip(values) { holds.push((key.clone(), value)); }
+        }
+        if self.stands_under(&kind, 36) {
+            let keys = self.table.strings("ext.builtin.exceptions.syntax");
+            let mut locations = Vec::new();
+            if let Some(value) = row.get(1).filter(|_| row.len() == 2) {
+                match value.settled() {
+                    Value::Tuple(items) | Value::Vector(items) => locations.extend(items.iter().cloned()),
+                    _ => {}
+                }
+            }
+            locations.insert(0, row.first().cloned().unwrap_or(Value::Nil));
+            locations.resize(keys.len(), Value::Nil);
+            holds.extend(keys.iter().cloned().zip(locations));
+            let layout: Vec<Value> = keys.iter().map(|k| Value::text(k)).collect();
+            holds.push(("\0syntax-layout".to_string(), Value::Tuple(Rc::new(layout))));
         }
         let values = Value::Arguments(Rc::new(row));
         let seeded = [
@@ -660,6 +675,7 @@ impl<'a> Machine<'a> {
     /// call may give only the absent name and the object it was sought on.
     fn fault_from_call(&mut self, kind: Rc<Blueprint>, supplied: Vec<Value>) -> Res<Value> {
         let (row, named) = self.open_arguments(supplied)?;
+        let locations = if self.stands_under(&kind, 36) { self.syntax_detail_count(&row)? } else { Vec::new() };
         let unicode_arity = if self.stands_under(&kind, 43) || self.stands_under(&kind, 44) { Some(5) }
             else if self.stands_under(&kind, 45) { Some(4) } else { None };
         if let Some(wanted) = unicode_arity {
@@ -671,6 +687,7 @@ impl<'a> Machine<'a> {
             self.gather_faults(kind, row[0].clone(), members)?
         } else { self.make_fault(kind, row, Value::Nil) };
         if let Value::Thing(thing) = &made {
+            self.locate_syntax_fault(thing, &locations);
             let mut holds = thing.holds.borrow_mut();
             for (key, value) in named {
                 let allowed = ["ext.builtin.exceptions.name", "ext.builtin.exceptions.object"].iter().any(|label| self.table.single(label) == Some(key.as_str()));
@@ -777,6 +794,30 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn syntax_detail_count(&mut self, values: &[Value]) -> Result<Vec<Value>, String> {
+        let [_, detail] = values else { return Ok(Vec::new()) };
+        let parts = self.core_collect(detail)?;
+        match parts.len() {
+            4 | 6 => Ok(parts),
+            n => {
+                let description = if n < 4 { "at least 4" } else if n < 6 { "at least 6" } else { "at most 6" };
+                Err(format!("TypeError: function takes {description} arguments ({n} given)"))
+            },
+        }
+    }
+
+    fn locate_syntax_fault(&self, thing: &Thing, parts: &[Value]) {
+        if parts.is_empty() { return; }
+        let mut fields = thing.holds.borrow_mut();
+        for (at, name) in self.table.strings("ext.builtin.exceptions.syntax").iter().skip(1).take(6).enumerate() {
+            let value = parts.get(at).cloned().unwrap_or(Value::Nil);
+            match fields.iter_mut().find(|(key, _)| key == name) {
+                Some(entry) => entry.1 = value,
+                None => fields.push((name.clone(), value)),
+            }
+        }
+    }
+
     /// Whether a word names one of the few methods a fault answers itself.
     fn fault_method_word(&self, word: &str) -> bool {
         ["ext.builtin.exceptions.note", "ext.builtin.exceptions.traceback.with", "ext.builtin.exceptions.group.split", "ext.builtin.exceptions.group.subgroup", "ext.builtin.exceptions.group.derive"]
@@ -786,6 +827,23 @@ impl<'a> Machine<'a> {
     /// The methods a fault answers itself: a note added, a traceback
     /// set, and a gatherer divided three ways.
     fn fault_method(&mut self, thing: Rc<Thing>, word: &str, given: &[Value]) -> Res<Value> {
+        if self.stands_under(&thing.of, 36) && self.table.single("ext.stmt.class.constructor") == Some(word) {
+            let parts = self.syntax_detail_count(given)?;
+            let replacement = self.make_fault(thing.of.clone(), given.to_vec(), Value::Nil);
+            if let Value::Thing(new) = replacement {
+                self.locate_syntax_fault(&new, &parts);
+                let keys = self.table.strings("ext.builtin.exceptions.syntax");
+                let args_key = self.table.single("ext.builtin.exceptions.args");
+                let mut target = thing.holds.borrow_mut();
+                for (key, value) in new.holds.borrow().iter().filter(|(k, _)| (keys.contains(k) && (given.len() == 2 || keys.first() == Some(k))) || k == "\0raised-values" || args_key == Some(k.as_str())) {
+                    match target.iter_mut().find(|(k, _)| k == key) {
+                        Some(entry) => entry.1 = value.clone(),
+                        None => target.push((key.clone(), value.clone())),
+                    }
+                }
+            }
+            return Ok(Value::Nil);
+        }
         let unready = self.argument_fault("ext.builtin.exceptions.unready", None);
         if self.table.single("ext.builtin.exceptions.note") == Some(word) {
             let [Value::Text(_)] = given else { return Err(self.argument_fault("ext.builtin.exceptions.note.invalid", None).into()) };
@@ -2223,7 +2281,7 @@ impl<'a> Machine<'a> {
         });
         let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false) {
             Ok(built) => built,
-            Err((said, row)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
+            Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
         self.idents = built.globals;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -5747,7 +5805,7 @@ impl<'a> Machine<'a> {
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
-                if self.is_fault_kind(&thing.of) && self.fault_method_word(name) {
+                if self.is_fault_kind(&thing.of) && (self.fault_method_word(name) || (self.stands_under(&thing.of, 36) && self.table.single("ext.stmt.class.constructor") == Some(name))) {
                     return Some(Value::Member(Rc::new(Value::Thing(thing.clone())), name.to_string()));
                 }
                 if self.is_fault_kind(&thing.of) && self.table.single("ext.builtin.exceptions.cause") == Some(name) {
@@ -14690,9 +14748,15 @@ impl Machine<'_> {
         if let Some((owner, _)) = split { self.load_namespace(owner)?; }
         let beginning = self.idents.len();
         let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
-        let scanned = crate::scan::scan(&text, self.table)?;
-        let ready = crate::indent::indent(scanned, self.table, 0).map_err(|(words, _)| words)?;
-        let built = crate::build::build(&ready, self.table, &hidden, HashMap::new(), false, 0)?;
+        let filename = own_file.as_deref().unwrap_or(path);
+        let ready = match self.text_tokens(&text, 0) {
+            Ok(ready) => ready,
+            Err((words, line, offset)) => return Err(self.text_unreadable_at(0, words, filename, line, offset, None, &text)),
+        };
+        let built = match crate::build::build_module_position(&ready, self.table, &hidden) {
+            Ok(built) => built,
+            Err((words, line, (column, end_column, end_line))) => return Err(self.text_unreadable_at(0, words, filename, line, column, Some((end_line, end_column)), &text)),
+        };
         let exported = &built.globals[beginning..];
         self.idents.extend(exported.iter().map(|name| format!("\0import/{path}/{name}")));
         // Every name the text can reach at its own top level gets a slot
@@ -15124,17 +15188,93 @@ impl<'a> Machine<'a> {
     /// kept where they name the very complaint the language has for text
     /// it cannot read; any other words are that complaint instead, since
     /// they are the builder's and not the language's.
-    fn text_unreadable_at(&self, said: String, file: &str, row: u32) -> String {
-        let generic = self.source_unreadable();
-        let kind = generic.split_once(':').map(|(word, _)| format!("{}:", word));
-        let told = match &kind {
-            Some(kind) if said.starts_with(kind.as_str()) => said,
-            _ => generic,
-        };
-        let words = self.table.strings("ext.builtin.source.syntax.place");
-        if words.len() < 3 { return told; }
-        let row = row.saturating_sub(self.lines_ahead()).max(1);
-        format!("{}{}{}{}{}{}", told, words[0], file, words[1], row, words[2])
+    fn text_unreadable_at(&mut self, mode: usize, said: String, file: &str, row: u32, column: usize, end: Option<(u32, usize)>, source: &str) -> String {
+        let default = self.source_unreadable();
+        let parts = said.split_once(": ").filter(|(name, _)| self.fault_kinds.contains_key(*name))
+            .or_else(|| default.split_once(": "));
+        if let Some((name, message)) = parts {
+            if let Some(Value::Blueprint(kind)) = self.fault_kinds.get(name).cloned() {
+                if message == "source code string cannot contain null bytes" {
+                    let fault = self.make_fault(kind, vec![Value::text(message)], Value::Nil);
+                    self.keep_context(&fault); self.got_away = Some(Escape::Thrown(fault));
+                    return String::new();
+                }
+                if row == 0 && source.is_empty() && mode > 0 {
+                    let locations = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(0), Value::Small(0), Value::text(""), Value::Small(0), Value::Small(0)]));
+                    let fault = self.make_fault(kind, vec![Value::text(message), locations], Value::Nil);
+                    self.keep_context(&fault);
+                    self.got_away = Some(Escape::Thrown(fault));
+                    return String::new();
+                }
+                if row == 0 {
+                    let origin = vec![Value::text(file), Value::Small(0), Value::Small(-1), Value::Nil];
+                    let fault = self.make_fault(kind, vec![Value::text(message), Value::Tuple(Rc::new(origin))], Value::Nil);
+                    self.keep_context(&fault);
+                    self.got_away = Some(Escape::Thrown(fault));
+                    return String::new();
+                }
+                let line = row.max(1);
+                let mut text = source.split_inclusive('\n').nth(line as usize - 1).unwrap_or("").to_owned();
+                let mut offset = column.max(1) as i64;
+                let mut end_offset = end.map_or(offset, |(_, c)| c as i64);
+                let ending_line = end.map_or(line, |(r, _)| r.max(1));
+                let mut words = message.to_string();
+                if words == "unexpected EOF while parsing" && mode > 0 && source.ends_with('\\') {
+                    words = String::from("unexpected character after line continuation character");
+                    offset = (offset - 1).max(1);
+                }
+                let needs_closer = words.ends_with("was never closed");
+                let bad_indent = matches!(name, "IndentationError" | "TabError");
+                if needs_closer || words == "unexpected character after line continuation character" { end_offset = 0; }
+                if words == "unexpected EOF while parsing" { end_offset = -1; }
+                if end.is_none() && words == "invalid syntax" {
+                    let n = text.chars().skip(offset as usize - 1).take_while(|c| c.is_alphanumeric() || *c == '_').count().max(1);
+                    end_offset = offset + n as i64;
+                    if mode == 0 && !text.ends_with('\n') { text.push('\n'); }
+                }
+                if words.contains("bytes can only contain ASCII") { end_offset = 1 + text.trim_end_matches(['\n', '\r']).chars().count() as i64; }
+                let remainder: String = text.chars().skip(offset as usize - 1).collect();
+                if words.starts_with("leading zeros") { end_offset = offset + remainder.chars().take_while(|c| *c == '0' || *c == '_').count() as i64; }
+                if end.is_none() && words.contains("prefixes") { end_offset = offset + remainder.chars().take_while(char::is_ascii_alphabetic).count() as i64; }
+                if words.starts_with("unterminated ") && !words.contains("detected at line") {
+                    words = format!("{words} (detected at line {})", source.lines().count().max(line as usize));
+                }
+                if bad_indent {
+                    end_offset = if name == "TabError" { 0 } else { -1 };
+                    if words.starts_with("unindent") { offset = 1 + text.trim_end_matches(['\r', '\n']).chars().count() as i64; }
+                    if words.starts_with("expected an indented block") {
+                        let following: String = text.chars().skip(offset as usize - 1).collect();
+                        let count = following.chars().take_while(|ch| ch.is_alphanumeric() || *ch == '_').count();
+                        if count != 0 { end_offset = offset + count as i64; }
+                    }
+                }
+                if mode == 0 && (end.is_some() || needs_closer || bad_indent || words.starts_with("unexpected EOF") || words.starts_with("unexpected character after line continuation")) && !text.ends_with('\n') { text.push('\n'); }
+                if words.starts_with("unterminated ") || (needs_closer && source.lines().count() > line as usize) { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
+                if words == "cannot assign to function call" && source.lines().count() > line as usize { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
+                if mode > 0 && words == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { offset = 0; end_offset = 0; }
+                let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("duplicate argument ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
+                if omit {
+                    let first: String = text.chars().take(offset.saturating_sub(1) as usize).collect();
+                    offset = first.len() as i64 + 1;
+                    if end_offset > 0 {
+                        let final_line = source.split_inclusive('\n').nth(ending_line as usize - 1).unwrap_or("");
+                        let upto: String = final_line.chars().take((end_offset - 1) as usize).collect();
+                        end_offset = upto.len() as i64 + 1;
+                    }
+                }
+                let source_line = match (omit, if omit { std::fs::read_to_string(file).ok() } else { None }) {
+                    (false, _) => Value::text(&text),
+                    (true, Some(contents)) => contents.split_inclusive('\n').nth(line as usize - 1).map(Value::text).unwrap_or(Value::Nil),
+                    _ => Value::Nil,
+                };
+                let details = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(line as i64), Value::Small(offset), source_line, Value::Small(ending_line as i64), Value::Small(end_offset)]));
+                let value = self.make_fault(kind, vec![Value::text(&words), details], Value::Nil);
+                self.keep_context(&value);
+                self.got_away = Some(Escape::Thrown(value));
+                return String::new();
+            }
+        }
+        said
     }
 
     /// The tokens of text handed over to be read, else the reading's
@@ -15142,9 +15282,20 @@ impl<'a> Machine<'a> {
     /// the same complaint a file being run keeps, so text read through
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_unreadable_at`.
-    fn text_tokens(&self, source: &str) -> Result<Vec<crate::scan::Token>, (String, u32)> {
-        crate::scan::scan_at(source, self.table)
-            .and_then(|read| crate::indent::indent(read, self.table, 0))
+    fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+        if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
+        if mode == 1 {
+            let head = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
+            if ["return", "raise", "break", "continue", "pass", "del", "import", "from", "global", "nonlocal", "assert", "class", "def", "for", "while", "if", "try", "with"].contains(&head) {
+                let skipped = source.len() - source.trim_start_matches([' ', '\t', '\n']).len();
+                let line = source[..skipped].bytes().filter(|c| *c == b'\n').count() + 1;
+                let column = source[..skipped].rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                return Err(("SyntaxError: invalid syntax".into(), line as _, column));
+            }
+        }
+
+        crate::scan::scan_position(source, self.table)
+            .and_then(|read| crate::indent::indent_position(read, self.table, 0))
     }
 
     /// The readers of text, the handing out of names, and the fetching
@@ -15166,19 +15317,79 @@ impl<'a> Machine<'a> {
 
     /// Text checked ahead of time and kept as a code value with the
     /// file it stands in and the manner it is to be read in.
+    fn decode_program(&mut self, raw: &[u8], file: &str) -> Result<Rc<str>, String> {
+        let has_bom = raw.starts_with(b"\xef\xbb\xbf");
+        let raw = if has_bom { &raw[3..] } else { raw };
+        let written = raw.split(|c| *c == 10).take(2).find_map(|line| {
+            let ascii = String::from_utf8_lossy(line);
+            if !ascii.trim_start().starts_with('#') { return None; }
+            let (_, suffix) = ascii.split_once("coding")?;
+            let suffix = suffix.strip_prefix('=').or_else(|| suffix.strip_prefix(':'))?;
+            Some(suffix.trim_start().chars().take_while(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect::<String>())
+        }).unwrap_or_else(|| "utf8".into());
+        let cookie: String = written.chars().filter(|c| !"-_".contains(*c)).flat_map(char::to_lowercase).collect();
+        if has_bom && !["utf8", "utf8sig"].contains(&cookie.as_str()) {
+            let why = format!("SyntaxError: encoding problem: {written} with BOM");
+            return Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""));
+        }
+        if cookie == "ascii" || cookie == "usascii" {
+            match raw.iter().position(|b| *b >= 128) {
+                Some(at) => {
+                    let why = format!("SyntaxError: 'ascii' codec can't decode byte 0x{:02x} in position {at}: ordinal not in range(128)", raw[at]);
+                    return Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""));
+                }
+                None => return Ok(Rc::from(raw.iter().map(|b| char::from(*b)).collect::<String>())),
+            }
+        }
+        if ["latin", "latin1", "iso88591"].contains(&cookie.as_str()) { return Ok(Rc::from(raw.iter().map(|b| *b as char).collect::<String>())); }
+        let alphabet = match cookie.as_str() {
+            "cp1251" => Some("ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя"),
+            "iso88597" => Some(" ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�"),
+            _ => None,
+        };
+        if let Some(alphabet) = alphabet {
+            let symbols = alphabet.chars().collect::<Vec<_>>();
+            let mut text = String::new();
+            for &byte in raw { text.push(if byte >= 128 { symbols[(byte - 128) as usize] } else { byte as char }); }
+            return Ok(Rc::from(text));
+        }
+        if cookie != "utf8" && cookie != "utf8sig" {
+            return Err(self.text_unreadable_at(0, format!("SyntaxError: unknown encoding: {written}"), file, 0, 0, None, ""));
+        }
+        match std::str::from_utf8(raw) {
+            Ok(text) => Ok(Rc::from(text)),
+            Err(bad) => {
+                let upto = &raw[..bad.valid_up_to()];
+                let line = 1 + upto.iter().filter(|b| **b == 10).count() as u32;
+                let prefix = String::from_utf8_lossy(upto);
+                let offset = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                let position = prefix.rsplit(['"', '\'', '\n']).next().unwrap_or("").len();
+                let byte = raw[bad.valid_up_to()];
+                let reason = match bad.error_len() { None => "unexpected end of data", Some(_) if byte >= 194 => "invalid continuation byte", _ => "invalid start byte" };
+                let words = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{byte:02x} in position {position}: {reason}");
+                Err(self.text_unreadable_at(0, words, file, line, offset, Some((line, offset + 1)), &String::from_utf8_lossy(raw)))
+            }
+        }
+    }
+
     fn text_prepared(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
-        let (Value::Text(source), Value::Text(file), Value::Text(manner)) = (v[0].settled(), v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
+        let (Value::Text(file), Value::Text(manner)) = (v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
+        let source = match v[0].settled() {
+            Value::Text(s) => s,
+            Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
+            _ => return Err(self.source_refused()),
+        };
         let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err(self.source_refused()) };
         // Flags and inheritance are read and let be; optimisation beyond
         // the ordinary setting is not honoured.
         if v.get(5).map_or(false, |worth| !matches!(worth, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(self.source_refused()); }
-        let tokens = match self.text_tokens(if mode == 1 { source.trim() } else { &source }) {
+        let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        self.text_built(&tokens, &[], &file, mode, &[])?;
+        self.text_built(&source, &tokens, &[], &file, mode, &[])?;
         let kind = self.code_blueprint();
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64))];
         self.made += 1;
@@ -15195,6 +15406,7 @@ impl<'a> Machine<'a> {
         let Some(first) = v.first().map(Value::settled) else { return Err(self.source_refused()) };
         let (source, file, mode) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
+            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing)),
             Value::Thing(code) if self.table.single("ext.builtin.compile.kind") == Some(code.of.name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
@@ -15204,7 +15416,7 @@ impl<'a> Machine<'a> {
         };
         if v.len() > 3 { return Err(self.source_refused()); }
         // An expression to be weighed may stand in from the edge of its text.
-        let source = if mode == 1 { source.trim().to_owned() } else { source };
+        let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };
         let mut books = Vec::new();
         for place in 1..3 {
             books.push(match v.get(place) {
@@ -15244,12 +15456,12 @@ impl<'a> Machine<'a> {
             };
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (built, shown) = self.text_built(&tokens, &seeded, &file, mode, &[])?;
+        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[])?;
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         self.text_concluded(&built, &file, mode, shown)
@@ -15262,11 +15474,11 @@ impl<'a> Machine<'a> {
     /// so the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
     fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>) -> Result<Value, String> {
-        let source = if mode == 1 { source.trim() } else { source };
+        let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file = file.unwrap_or_else(|| "<string>".to_owned());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
         // Text read inside a method is read as standing in that
@@ -15281,7 +15493,7 @@ impl<'a> Machine<'a> {
         });
         let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1) {
             Ok(built) => built,
-            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -15306,9 +15518,9 @@ impl<'a> Machine<'a> {
     /// among the outermost cells, and a book kept for them.
     fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Result<Value, String> {
         let file = file.unwrap_or_else(|| "<string>".to_owned());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let beginning = self.idents.len();
         let prior: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
@@ -15320,7 +15532,7 @@ impl<'a> Machine<'a> {
             _ => false,
         };
         let shadowed: Vec<String> = if own_natives { self.table.prims.keys().cloned().collect() } else { Vec::new() };
-        let (built, shown) = self.text_built(&tokens, &prior, &file, mode, &shadowed)?;
+        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed)?;
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -15336,13 +15548,13 @@ impl<'a> Machine<'a> {
     /// statement shown as it runs, which is an expression written out
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
-    fn text_built(&mut self, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String]) -> Result<(crate::build::Built, bool), String> {
+    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String]) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
         if mode == 2 {
             if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), true, shadowed) { return Ok((built, true)); }
         }
         crate::build::build_text(tokens, self.table, seeded, 0, written_in, mode == 1, shadowed)
-            .map(|built| (built, false)).map_err(|(said, row)| self.text_unreadable_at(said, file, row))
+            .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
     /// Run a built text as standing in its file, and answer what it

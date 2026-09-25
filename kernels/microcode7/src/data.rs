@@ -767,6 +767,25 @@ impl Value {
         let row = self.arguments_held()?;
         let Value::Thing(thing) = self else { return None };
         if let Some(told) = Self::unicode_fault_text(thing, words) { return Some(told); }
+        let syntax = {
+            let members = thing.holds.borrow();
+            members.iter().find_map(|(key, value)| if key == "\0syntax-layout" { Some(value.clone()) } else { None })
+        };
+        if let Some(Value::Tuple(keys)) = syntax {
+            let members = thing.holds.borrow();
+            let read = |index: usize| -> Value {
+                if let Some(Value::Text(key)) = keys.get(index) {
+                    if let Some((_, value)) = members.iter().find(|(name, _)| name == key.as_ref()) { return value.clone(); }
+                }
+                Value::Nil
+            };
+            let message = read(0).render(words);
+            let filename = match read(1) { Value::Text(path) => Some(path.rsplit('/').next().unwrap_or("").to_owned()), _ => None };
+            let lineno = if let Value::Small(n) = read(2) { Some(n) } else { None };
+            return Some(if let Some(file) = filename {
+                if let Some(n) = lineno { format!("{message} ({file}, line {n})") } else { format!("{message} ({file})") }
+            } else if let Some(n) = lineno { format!("{message} (line {n})") } else { message });
+        }
         // A gatherer, or a system fault with its number, was given the
         // words to show itself with when it was made.
         if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }

@@ -795,7 +795,9 @@
     "ModuleNotFoundError",
     "UnicodeEncodeError",
     "UnicodeDecodeError",
-    "UnicodeTranslateError"
+    "UnicodeTranslateError",
+    "IndentationError",
+    "TabError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -867,6 +869,7 @@
   "ext.builtin.exceptions.traceback.with": [
     "with_traceback"
   ],
+  "ext.builtin.exceptions.syntax": ["msg", "filename", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line"],
   "ext.builtin.exceptions.unicode": [
     "encoding",
     "object",

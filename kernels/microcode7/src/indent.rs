@@ -45,6 +45,11 @@ fn never_shut(table: &Table, opener: &str, from: u32, upto: u32) -> String {
 /// The line count a text carries ahead of the program itself, put there
 /// by the mark that opens code, belongs to no line the language names.
 pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token>, (String, u32)> {
+    indent_position(tokens, table, ahead).map_err(|(said, line, _)| (said, line))
+}
+
+pub fn indent_position(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token>, (String, u32, usize)> {
+    if table.has_any("ext.builtin.exceptions.syntax") { return column_blocks(&tokens); }
     let by_indent = table.blocks == Blocks::Indented;
     let unit = table.count("block.indent_size").unwrap_or(4);
     let mut opens: Vec<&str> = ["syntax.group.open", "syntax.call.open", "syntax.array.open"].iter().filter_map(|k| table.single(k)).collect();
@@ -59,14 +64,14 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
     let held = table.around("ext.system.reading.unclosed").is_some() && table.around("ext.system.reading.unmatched").is_some();
     // Each bracket still owed an answer: what opened it, what would
     // answer it, and where it stands.
-    let mut owed: Vec<(&str, &str, u32)> = Vec::new();
+    let mut owed: Vec<(&str, &str, u32, usize)> = Vec::new();
     // The line the text has got to. A line end belongs to the line it
     // closes, so anything past one belongs to the line after.
     let mut got_to = 1u32;
     let mut out = Vec::with_capacity(tokens.len());
     let mut inside = 0usize;
     let mut stack = vec![0usize];
-    let mark = |k: Shape, line: u32| Token { shape: k, lexeme: String::new(), span: 0, row: line };
+    let mark = |k: Shape, line: u32| Token { end_row: 0, end_column: 0, column: 1, shape: k, lexeme: String::new(), span: 0, row: line };
     for t in tokens {
         if t.shape == Shape::LineEnd {
             got_to = t.row + 1;
@@ -76,7 +81,7 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
         match t.shape {
             Shape::Lead if by_indent && inside == 0 => {
                 if t.span % unit != 0 {
-                    return Err((format!("Invalid indentation at line {}", t.row), t.row));
+                    return Err((format!("Invalid indentation at line {}", t.row), t.row, t.column));
                 }
                 let level = t.span / unit;
                 let top = *stack.last().unwrap();
@@ -89,7 +94,7 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
                         out.push(mark(Shape::Close, t.row));
                     }
                     if *stack.last().unwrap() != level {
-                        return Err((format!("Indentation mismatch at line {}", t.row), t.row));
+                        return Err((format!("Indentation mismatch at line {}", t.row), t.row, t.column));
                     }
                 }
             }
@@ -108,20 +113,20 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
                 let opener = ends.iter().find(|(a, _)| *a == t.lexeme).map(|(a, z)| (a.as_str(), z.as_str()));
                 let shutter = ends.iter().any(|(_, z)| *z == t.lexeme);
                 match (held, opener, shutter) {
-                    (true, Some((a, z)), _) => owed.push((a, z, t.row)),
+                    (true, Some((a, z)), _) => owed.push((a, z, t.row, t.column)),
                     (true, None, true) => match owed.pop() {
                         // Nothing was opened for this one to answer.
                         None => {
                             let (head, tail) = table.around("ext.system.reading.unmatched").expect("words for a bracket answering none");
-                            return Err((format!("{head}{}{tail}", t.lexeme), t.row));
+                            return Err((format!("{head}{}{tail}", t.lexeme), t.row, t.column));
                         }
                         // It answers, but not the bracket it found.
-                        Some((a, z, on)) if z != t.lexeme => {
+                        Some((a, z, on, _)) if z != t.lexeme => {
                             let mut said = never_shut(table, a, on.saturating_sub(ahead), t.row.saturating_sub(ahead));
                             if let Some((head, tail)) = table.around("ext.system.reading.unclosed.mismatch") {
                                 said = format!("{said} {head}{}{tail}", t.lexeme);
                             }
-                            return Err((said, t.row));
+                            return Err((said, t.row, t.column));
                         }
                         Some(_) => {}
                     },
@@ -133,9 +138,9 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
                 // Of the brackets still owed answers, the innermost is
                 // the one to tell of: the reading was within it when
                 // the text gave out.
-                if let (true, Some(&(a, _, on))) = (held, owed.last()) {
+                if let (true, Some(&(a, _, on, col))) = (held, owed.last()) {
                     let said = never_shut(table, a, on.saturating_sub(ahead), got_to.saturating_sub(ahead));
-                    return Err((said, got_to));
+                    return Err((said, got_to, col));
                 }
                 while stack.len() > 1 {
                     stack.pop();
@@ -147,4 +152,90 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
         }
     }
     Ok(out)
+}
+
+
+/// A second indentation count treats a tab as one character. Both counts
+/// must agree with an earlier level, or the block would depend on tab size.
+fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
+    let mut output = Vec::with_capacity(input.len());
+    let mut widths = vec![0];
+    let mut characters = vec![0];
+    let mut opened: Vec<(String, u32, usize)> = Vec::new();
+    let mut line_start: Option<(String, u32)> = None;
+    let mut tail = String::new();
+    let mut pending: Option<(String, u32)> = None;
+    for (i, t) in input.iter().enumerate() {
+        if t.shape == Shape::Lead {
+            if !opened.is_empty() || input.get(i + 1).map_or(false, |word| word.shape == Shape::LineEnd) { continue; }
+            let n = t.lexeme.chars().count();
+            let rising = t.span > *widths.last().unwrap();
+            if let Some((word, line)) = pending.take() {
+                if !rising {
+                    return Err((format!("IndentationError: expected an indented block after '{word}' statement on line {line}"), t.row, input.get(i + 1).map_or(1, |next| next.column)));
+                }
+            } else if rising {
+                return Err(("IndentationError: unexpected indent".to_owned(), t.row, t.column));
+            }
+            if rising {
+                if n <= *characters.last().unwrap() { return Err(("TabError: inconsistent use of tabs and spaces in indentation".to_owned(), t.row, 1)); }
+                widths.push(t.span); characters.push(n);
+                let mut boundary = t.clone(); boundary.shape = Shape::Open; boundary.column = n + 1; output.push(boundary);
+            } else {
+                while t.span < *widths.last().unwrap() {
+                    widths.pop(); characters.pop();
+                    let mut boundary = t.clone(); boundary.shape = Shape::Close; boundary.column = n + 1; output.push(boundary);
+                }
+                if t.span != *widths.last().unwrap() { return Err(("IndentationError: unindent does not match any outer indentation level".to_owned(), t.row, 1)); }
+                if n != *characters.last().unwrap() { return Err(("TabError: inconsistent use of tabs and spaces in indentation".to_owned(), t.row, 1)); }
+            }
+            line_start = None; tail.clear();
+            continue;
+        }
+        if t.shape == Shape::LineEnd {
+            if opened.is_empty() {
+                if tail == ":" { pending = line_start.clone(); }
+                output.push(t.clone());
+            }
+            continue;
+        }
+        if t.shape == Shape::Finish {
+            if let Some((mark, line, col)) = opened.last() { return Err((format!("SyntaxError: '{mark}' was never closed"), *line, *col)); }
+            if tail == ":" && pending.is_none() { pending = line_start.clone(); }
+            if let Some((word, line)) = pending {
+                if word == "for" {
+                    let words = input.iter().filter(|w| w.row == line && !matches!(w.shape, Shape::LineEnd | Shape::Finish | Shape::Lead)).collect::<Vec<_>>();
+                    if !words.iter().any(|w| w.shape == Shape::Bare && w.lexeme == "in") {
+                        if let Some(bad) = words.get(2) { return Err((String::from("SyntaxError: invalid syntax"), bad.row, bad.column)); }
+                    }
+                }
+                return Err((format!("IndentationError: expected an indented block after '{word}' statement on line {line}"), line, t.column));
+            }
+            for _ in 1..widths.len() {
+                let mut boundary = t.clone(); boundary.shape = Shape::Close; output.push(boundary);
+            }
+            output.push(t.clone());
+            continue;
+        }
+        if t.shape == Shape::Sign {
+            let spelling = t.lexeme.as_str();
+            if ["(", "[", "{"].contains(&spelling) { opened.push((t.lexeme.clone(), t.row, t.column)); }
+            if [")", "]", "}"].contains(&spelling) {
+                match opened.pop() {
+                    None => return Err((format!("SyntaxError: unmatched '{spelling}'"), t.row, t.column)),
+                    Some((a, line, _)) => {
+                        if !matches!((a.as_str(), spelling), ("(", ")") | ("[", "]") | ("{", "}")) {
+                            let mut message = format!("SyntaxError: closing parenthesis '{spelling}' does not match opening parenthesis '{a}'");
+                            if line != t.row { message.push_str(&format!(" on line {line}")); }
+                            return Err((message, t.row, t.column));
+                        }
+                    }
+                }
+            }
+        }
+        line_start.get_or_insert_with(|| (t.lexeme.clone(), t.row));
+        tail = if t.shape == Shape::Sign { t.lexeme.clone() } else { String::new() };
+        output.push(t.clone());
+    }
+    Ok(output)
 }
