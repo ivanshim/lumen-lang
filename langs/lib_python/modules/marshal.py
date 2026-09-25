@@ -116,6 +116,16 @@ class _Writer:
             self.put(parts[1])
             self.put(parts[2])
             return
+        # A value this runtime keeps no built-in writing for, such as
+        # an `enumerate` or a `reversed`, is asked how it reduces: the
+        # pieces that build it again, standing at the very place this
+        # one does. Nothing else here holds itself, so this takes no
+        # place among the things held either.
+        reduced = __reduce_native__(value)
+        if reduced is not None:
+            self.pieces.append('Z')
+            self.put(reduced)
+            return
         self.refuse(value)
 
     def exactly(self, value, plain):
@@ -239,6 +249,8 @@ class _Reader:
             stop = self.get()
             step = self.get()
             return slice(start, stop, step)
+        if tag == 'Z':
+            return __rebuild_native__(self.get())
         raise ValueError('bad marshal data')
 
 

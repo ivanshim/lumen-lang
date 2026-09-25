@@ -1845,6 +1845,8 @@ impl Lang {
             ("ext.builtin.sorted", Builtin::Sorted),
             ("ext.builtin.reversed", Builtin::Reversed),
             ("ext.builtin.enumerate", Builtin::Enumerate),
+            ("ext.builtin.reduce_native", Builtin::ReduceNative),
+            ("ext.builtin.rebuild_native", Builtin::RebuildNative),
             ("ext.builtin.zip", Builtin::Zip),
             ("ext.builtin.map", Builtin::Map),
             ("ext.builtin.filter", Builtin::Filter),

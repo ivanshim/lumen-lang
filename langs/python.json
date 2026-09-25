@@ -725,6 +725,12 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.reduce_native": [
+    "__reduce_native__"
+  ],
+  "ext.builtin.rebuild_native": [
+    "__rebuild_native__"
+  ],
   "ext.builtin.enumerate.missing": [
     "TypeError: enumerate() missing required argument 'iterable'"
   ],

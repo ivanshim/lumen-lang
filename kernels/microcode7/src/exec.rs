@@ -12210,7 +12210,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::Tuple(Rc::new(Vec::new())) }
                 else { n(1)?; Value::Tuple(Rc::new(self.gathered_members(&v[0])?)) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -15168,7 +15168,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -15179,6 +15179,94 @@ impl Machine<'_> {
 
     fn cursor_value(kind: IteratorKind) -> Value {
         Value::Iterator(Rc::new(RefCell::new(IteratorState { kind, peek: None, done: false, walks: None })))
+    }
+
+    fn cursor_value_walked(kind: IteratorKind, walks: Option<Rc<str>>) -> Value {
+        let walk = Self::cursor_value(kind);
+        if let (Value::Iterator(state), Some(word)) = (&walk, walks) { state.borrow_mut().walks = Some(word); }
+        walk
+    }
+
+    /// What a value keeps no built-in writing for reduces to, for the
+    /// module that writes values out to bytes: nothing for a value
+    /// with no such reduction, else the pieces that opposite number
+    /// reads back into a value the very same as this one -- the same
+    /// kind, and, for a walk, standing at the very place this one
+    /// does, so that a value already stepped some way into keeps
+    /// standing there once it is written out and read back.
+    fn native_reduce(&self, value: &Value) -> Value {
+        if let Value::Blueprint(b) = value {
+            return Value::Tuple(Rc::new(vec![Value::text("class"), Value::text(&b.name)]));
+        }
+        if let Value::Thing(t) = value {
+            let Some(Value::Iterator(cell)) = Self::underlying(value) else { return Value::Nil };
+            let IteratorKind::Count(walk, n) = &cell.borrow().kind else { return Value::Nil };
+            return Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Blueprint(t.of.clone()), walk.clone(), Value::from_big(n.clone())]));
+        }
+        let Value::Iterator(cell) = value else { return Value::Nil };
+        let held = cell.borrow();
+        let walks = held.walks.clone().map_or(Value::Nil, |w| Value::text(&w));
+        match &held.kind {
+            IteratorKind::Stored(entries) => {
+                let remaining: Vec<Value> = entries.iter().cloned().collect();
+                Value::Tuple(Rc::new(vec![Value::text("items"), walks, Value::Tuple(Rc::new(remaining))]))
+            }
+            IteratorKind::Stepping(walk, at) => Value::Tuple(Rc::new(vec![
+                Value::text("counted"), walks,
+                Value::from_big(walk.first.clone()), Value::from_big(walk.limit.clone()), Value::from_big(walk.stride.clone()),
+                Value::text(&walk.word), Value::from_big(at.clone()),
+            ])),
+            IteratorKind::PlacedBack(thing, at) => Value::Tuple(Rc::new(vec![Value::text("back"), walks, thing.clone(), Value::from_big(at.clone())])),
+            IteratorKind::Count(walk, n) => Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Nil, walk.clone(), Value::from_big(n.clone())])),
+            _ => Value::Nil,
+        }
+    }
+
+    /// The value a reduction written out by `native_reduce` reads back
+    /// into, standing exactly where the value written out stood.
+    fn native_rebuild(&mut self, value: &Value) -> Result<Value, String> {
+        let malformed = || "TypeError: a written value cannot be read back".to_string();
+        let Value::Tuple(parts) = value else { return Err(malformed()) };
+        let Some(Value::Text(tag)) = parts.first() else { return Err(malformed()) };
+        let text_at = |i: usize| -> Option<Rc<str>> { match parts.get(i) { Some(Value::Text(t)) => Some(t.clone()), _ => None } };
+        let big_at = |i: usize| -> Result<BigInt, String> { match parts.get(i) { Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => v.as_big(), _ => Err(malformed()) } };
+        match tag.as_ref() {
+            "class" => {
+                let Some(name) = text_at(1) else { return Err(malformed()) };
+                self.lookup(&name).ok_or_else(malformed)
+            }
+            "items" => {
+                let walks = text_at(1);
+                let Some(Value::Tuple(items)) = parts.get(2) else { return Err(malformed()) };
+                Ok(Self::cursor_value_walked(IteratorKind::Stored(items.iter().cloned().collect()), walks))
+            }
+            "counted" => {
+                let walks = text_at(1);
+                let (first, limit, stride, at) = (big_at(2)?, big_at(3)?, big_at(4)?, big_at(6)?);
+                let Some(word) = text_at(5) else { return Err(malformed()) };
+                let walk = crate::data::Progression { first, limit, stride, word: word.to_string() };
+                Ok(Self::cursor_value_walked(IteratorKind::Stepping(Rc::new(walk), at), walks))
+            }
+            "back" => {
+                let walks = text_at(1);
+                let Some(thing) = parts.get(2).cloned() else { return Err(malformed()) };
+                let at = big_at(3)?;
+                Ok(Self::cursor_value_walked(IteratorKind::PlacedBack(thing, at), walks))
+            }
+            "numbered" => {
+                let Some(walk) = parts.get(2).cloned() else { return Err(malformed()) };
+                let n = big_at(3)?;
+                let cursor = Self::cursor_value(IteratorKind::Count(walk, n));
+                match parts.get(1) {
+                    Some(Value::Blueprint(b)) => {
+                        self.made += 1;
+                        Ok(Value::Thing(Rc::new(Thing { of: b.clone(), holds: RefCell::new(vec![("\0underlying".to_owned(), cursor)]), turn: self.made })))
+                    }
+                    _ => Ok(cursor),
+                }
+            }
+            _ => Err(malformed()),
+        }
     }
 
     /// The word the reference gives a walk of a thing, for the walks a
@@ -15694,6 +15782,8 @@ impl Machine<'_> {
                 require(1, 1)?;
                 input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &Self::unhashable_kind(&input[0])))
             }
+            ReduceNative => { require(1, 1)?; Ok(self.native_reduce(&input[0])) }
+            RebuildNative => { require(1, 1)?; self.native_rebuild(&input[0]) }
             IdentityOf => {
                 require(1, 1)?;
                 // A collection a name keeps in a shared cell is known by the

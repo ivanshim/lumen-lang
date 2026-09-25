@@ -12911,6 +12911,9 @@ impl<'a> Engine<'a> {
             // it is either nothing at all or a plain write, and is
             // settled before the builtins are reached.
             Builtin::Restore => unreachable!(),
+            // These two are read only where a language binds names,
+            // which reaches them through `core_call` instead.
+            Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -13595,7 +13598,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -13604,6 +13607,94 @@ impl Engine<'_> {
 
     fn core_cursor(source: CursorSource) -> Value {
         Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false, walked: None })))
+    }
+
+    fn core_cursor_walked(source: CursorSource, walked: Option<Rc<str>>) -> Value {
+        let walk = Self::core_cursor(source);
+        if let (Value::Cursor(state), Some(word)) = (&walk, walked) { state.borrow_mut().walked = Some(word); }
+        walk
+    }
+
+    /// What a value keeps no built-in writing for reduces to, for the
+    /// module that writes values out to bytes: nothing for a value
+    /// with no such reduction, else the pieces that opposite number
+    /// reads back into a value the very same as this one -- the same
+    /// kind, and, for a walk, standing at the very place this one
+    /// does, so that a value already stepped some way into keeps
+    /// standing there once it is written out and read back.
+    fn native_reduce(&self, value: &Value) -> Value {
+        if let Value::Class(c) = value {
+            return Value::Tuple(Rc::new(vec![Value::text("class"), Value::text(&c.name)]));
+        }
+        if let Value::Object(o) = value {
+            let Some(Value::Cursor(cell)) = Self::worth_of(value) else { return Value::Null };
+            let CursorSource::Numbered(walk, n) = &cell.borrow().source else { return Value::Null };
+            return Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Class(o.class.clone()), walk.clone(), Value::of_big(n.clone())]));
+        }
+        let Value::Cursor(cell) = value else { return Value::Null };
+        let held = cell.borrow();
+        let walked = held.walked.clone().map_or(Value::Null, |w| Value::text(&w));
+        match &held.source {
+            CursorSource::Items(items, at) => {
+                let remaining: Vec<Value> = items.get(*at..).map(<[Value]>::to_vec).unwrap_or_default();
+                Value::Tuple(Rc::new(vec![Value::text("items"), walked, Value::Tuple(Rc::new(remaining))]))
+            }
+            CursorSource::Counted(row, at) => Value::Tuple(Rc::new(vec![
+                Value::text("counted"), walked,
+                Value::of_big(row.start.clone()), Value::of_big(row.stop.clone()), Value::of_big(row.step.clone()),
+                Value::text(&row.name), Value::of_big(at.clone()),
+            ])),
+            CursorSource::IndexedBack(thing, at) => Value::Tuple(Rc::new(vec![Value::text("back"), walked, thing.clone(), Value::of_big(at.clone())])),
+            CursorSource::Numbered(walk, n) => Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Null, walk.clone(), Value::of_big(n.clone())])),
+            _ => Value::Null,
+        }
+    }
+
+    /// The value a reduction written out by `native_reduce` reads back
+    /// into, standing exactly where the value written out stood.
+    fn native_rebuild(&mut self, value: &Value) -> Res<Value> {
+        let malformed = || "TypeError: a written value cannot be read back".to_string();
+        let Value::Tuple(parts) = value else { return Err(malformed()) };
+        let Some(Value::Text(tag)) = parts.first() else { return Err(malformed()) };
+        let text_at = |i: usize| -> Option<Rc<str>> { match parts.get(i) { Some(Value::Text(t)) => Some(t.clone()), _ => None } };
+        let big_at = |i: usize| -> Res<BigInt> { match parts.get(i) { Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => v.as_big(), _ => Err(malformed()) } };
+        match tag.as_ref() {
+            "class" => {
+                let Some(name) = text_at(1) else { return Err(malformed()) };
+                self.lookup(&name).cloned().ok_or_else(malformed)
+            }
+            "items" => {
+                let walked = text_at(1);
+                let Some(Value::Tuple(items)) = parts.get(2) else { return Err(malformed()) };
+                Ok(Self::core_cursor_walked(CursorSource::Items(Rc::new(items.to_vec()), 0), walked))
+            }
+            "counted" => {
+                let walked = text_at(1);
+                let (start, stop, step, at) = (big_at(2)?, big_at(3)?, big_at(4)?, big_at(6)?);
+                let Some(name) = text_at(5) else { return Err(malformed()) };
+                let row = crate::value::Counted { start, stop, step, name: name.to_string() };
+                Ok(Self::core_cursor_walked(CursorSource::Counted(Rc::new(row), at), walked))
+            }
+            "back" => {
+                let walked = text_at(1);
+                let Some(thing) = parts.get(2).cloned() else { return Err(malformed()) };
+                let at = big_at(3)?;
+                Ok(Self::core_cursor_walked(CursorSource::IndexedBack(thing, at), walked))
+            }
+            "numbered" => {
+                let Some(walk) = parts.get(2).cloned() else { return Err(malformed()) };
+                let n = big_at(3)?;
+                let cursor = Self::core_cursor(CursorSource::Numbered(walk, n));
+                match parts.get(1) {
+                    Some(Value::Class(c)) => {
+                        self.made += 1;
+                        Ok(Value::Object(Rc::new(Instance { class: c.clone(), fields: RefCell::new(vec![("\0worth".to_string(), cursor)]), mark: self.made })))
+                    }
+                    _ => Ok(cursor),
+                }
+            }
+            _ => Err(malformed()),
+        }
     }
 
     /// The word the reference gives a walk of a thing, where gathering
@@ -14099,6 +14190,8 @@ impl Engine<'_> {
                 Value::text(&crate::strings::ascii_escaped(&written.plain()))
             }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &Self::unhashable_named(&args[0])))?) }
+            Builtin::ReduceNative => { arity(1, 1)?; self.native_reduce(&args[0]) }
+            Builtin::RebuildNative => { arity(1, 1)?; self.native_rebuild(&args[0])? }
             Builtin::Identity => {
                 arity(1, 1)?;
                 // A collection kept in a cell is known by the cell, which
