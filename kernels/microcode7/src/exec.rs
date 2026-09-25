@@ -525,12 +525,24 @@ impl<'a> Machine<'a> {
         if Rc::ptr_eq(&handled, &thing) { return; }
         let context_of = |of: &Rc<Thing>| of.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.settled());
         let mut step = handled.clone();
+        // A chain already standing behind `handled` may loop back on
+        // itself without ever passing through the value being raised
+        // (a program may set the context member to whatever it likes).
+        // A second walker, moved every other step, meets the first
+        // again if that is so, so the search still ends.
+        let mut runner = handled.clone();
+        let mut alternate = false;
         while let Some(Value::Thing(older)) = context_of(&step) {
             if Rc::ptr_eq(&older, &thing) {
                 if let Some((_, slot)) = step.holds.borrow_mut().iter_mut().find(|(k, _)| k == key) { *slot = Value::Nil; }
                 break;
             }
             step = older;
+            if Rc::ptr_eq(&step, &runner) { break; }
+            if alternate {
+                if let Some(Value::Thing(ahead)) = context_of(&runner) { runner = ahead; }
+            }
+            alternate = !alternate;
         }
         let mut holds = thing.holds.borrow_mut();
         match holds.iter_mut().find(|(k, _)| k == key) {
