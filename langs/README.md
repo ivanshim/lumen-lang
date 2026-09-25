@@ -4919,7 +4919,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
-| `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |

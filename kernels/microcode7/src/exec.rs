@@ -476,7 +476,9 @@ impl<'a> Machine<'a> {
         // name and object of a name or attribute fault, and the number
         // and words of a system fault.
         if let Some(key) = self.table.single("ext.builtin.exceptions.traceback.member") { holds.push((key.to_string(), Value::Nil)); }
-        let names_absent = self.stands_under(&kind, 10) || self.stands_under(&kind, 12);
+        // A name fault, an attribute fault and an import fault (19 is
+        // ImportError) each carry the name that was absent.
+        let names_absent = self.stands_under(&kind, 10) || self.stands_under(&kind, 12) || self.stands_under(&kind, 19);
         if names_absent { if let Some(key) = self.table.single("ext.builtin.exceptions.name") { holds.push((key.to_string(), Value::Nil)); } }
         if self.stands_under(&kind, 12) { if let Some(key) = self.table.single("ext.builtin.exceptions.object") { holds.push((key.to_string(), Value::Nil)); } }
         // The exhaustion carries what a generator returned, which is
@@ -752,6 +754,19 @@ impl<'a> Machine<'a> {
         let [head, tail] = self.table.strings("ext.system.fault.name") else { return None };
         let from = told.find(head.as_str())? + head.len();
         told[from..].strip_suffix(tail.as_str()).map(str::to_string)
+    }
+
+    /// The namespace a "cannot import name" complaint named, read out
+    /// of its own words: what `ImportError.name` is CPython's own
+    /// module.
+    fn import_source_not_there(&self, told: &str) -> Option<String> {
+        let told = told.trim_start_matches('\0');
+        let [head, mid, close] = self.table.strings("ext.stmt.import.member.missing") else { return None };
+        let after_head = told.strip_prefix(head.as_str())?;
+        let at = after_head.find(mid.as_str())?;
+        let after_mid = &after_head[at + mid.len()..];
+        let close_at = after_mid.find(close.as_str())?;
+        Some(after_mid[..close_at].to_string())
     }
 
     /// Where a fault nobody took is an exit, the status the run is to
@@ -1928,6 +1943,12 @@ impl<'a> Machine<'a> {
                         written.push((self.table.single("ext.builtin.exceptions.name"), Value::text(&word)));
                         written.push((self.table.single("ext.builtin.exceptions.object"), holder));
                     }
+                }
+                // An import fault names the namespace the wanted name
+                // was sought in, read straight out of its own words
+                // the way a name fault's own name is.
+                if self.table.strings("ext.stmt.import.member.missing").first().map_or(false, |head| told.trim_start_matches('\0').starts_with(head.as_str())) {
+                    if let Some(source) = self.import_source_not_there(told) { written.push((self.table.single("ext.builtin.exceptions.name"), Value::text(&source))); }
                 }
                 let mut holds = object.holds.borrow_mut();
                 for (key, value) in written {
@@ -14287,8 +14308,32 @@ impl Machine<'_> {
         }
         let full = format!("{path}.{wanted}");
         if self.library_sources.contains_key(&full) { return self.load_namespace(&full); }
-        let (head, tail) = self.table.around("ext.stmt.import.member.missing").unwrap_or(("", ""));
-        Err(format!("{head}{wanted}{tail}"))
+        Err(self.import_member_fault(path, wanted))
+    }
+
+    /// The words for an entry a namespace has not: the name and the
+    /// namespace CPython names in "cannot import name", with the
+    /// namespace's own file appended the way CPython appends it for
+    /// one read from a file, so that `e.name` and the text before " ("
+    /// agree with the reference's own.
+    fn import_member_fault(&self, path: &str, wanted: &str) -> String {
+        let told = match self.table.strings("ext.stmt.import.member.missing") {
+            [head, mid, tail] => format!("{head}{wanted}{mid}{path}{tail}"),
+            _ => format!("ImportError: cannot import name '{wanted}' from '{path}'"),
+        };
+        match self.namespace_file_path(path) {
+            Some(file) => format!("{told} ({file})"),
+            None => told,
+        }
+    }
+
+    /// Where a namespace's own text was read from, for one the run
+    /// keeps as source read out of a file of its own: the very file
+    /// the library keeps it under, so the words naming it point at
+    /// the file honestly.
+    fn namespace_file_path(&self, path: &str) -> Option<String> {
+        if !self.library_sources.contains_key(path) { return None; }
+        Some(format!("langs/lib_python/modules/{}.py", path.replace('.', "/")))
     }
 }
 

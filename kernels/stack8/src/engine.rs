@@ -381,7 +381,9 @@ impl<'a> Engine<'a> {
         // attribute fault and an operating-system fault, the last
         // shown with its number.
         if let Some(name) = &self.lang.traceback_member { fields.push((name.clone(), Value::Null)); }
-        if self.stands_on(&class, 10) || self.stands_on(&class, 12) {
+        // A name fault, an attribute fault and an import fault (19 is
+        // ImportError) each carry the name that was absent.
+        if self.stands_on(&class, 10) || self.stands_on(&class, 12) || self.stands_on(&class, 19) {
             if let Some(name) = &self.lang.absent_name_member { fields.push((name.clone(), Value::Null)); }
         }
         if self.stands_on(&class, 12) {
@@ -666,6 +668,18 @@ impl<'a> Engine<'a> {
         let [before, after] = self.lang.name_words.as_slice() else { return None };
         let rest = &told[told.find(before.as_str())? + before.len()..];
         rest.strip_suffix(after.as_str()).map(str::to_string)
+    }
+
+    /// The module a "cannot import name" fault named, read out of its
+    /// own words: what `ImportError.name` is CPython's own module.
+    fn absent_import(&self, told: &str) -> Option<String> {
+        let told = told.trim_start_matches('\0');
+        let [head, mid, close] = self.lang.import_member_missing.as_slice() else { return None };
+        let after_head = told.strip_prefix(head.as_str())?;
+        let at = after_head.find(mid.as_str())?;
+        let after_mid = &after_head[at + mid.len()..];
+        let close_at = after_mid.find(close.as_str())?;
+        Some(after_mid[..close_at].to_string())
     }
 
     /// The status an exit nobody took asks the run to end with, and
@@ -1553,6 +1567,12 @@ impl<'a> Engine<'a> {
                         filled.push((&self.lang.absent_name_member, Value::text(&name)));
                         filled.push((&self.lang.absent_object_member, holder));
                     }
+                }
+                // An import fault names the module the wanted name was
+                // sought in, read straight out of its own words the
+                // way a name fault's own name is.
+                if self.lang.import_member_missing.first().map_or(false, |head| told.trim_start_matches('\0').starts_with(head.as_str())) {
+                    if let Some(module) = self.absent_import(told) { filled.push((&self.lang.absent_name_member, Value::text(&module))); }
                 }
                 let mut fields = object.fields.borrow_mut();
                 for (key, held) in filled {
@@ -14255,7 +14275,31 @@ impl Engine<'_> {
         }
         let child = format!("{path}.{name}");
         if self.module_sources.contains_key(&child) { return self.import_module(&child); }
-        Err(Self::named_fault(&self.lang.import_member_missing, name).into())
+        Err(self.import_member_fault(path, name).into())
+    }
+
+    /// The words for a member a module has not: the name and the
+    /// module CPython names in "cannot import name", with the module's
+    /// own file appended the way CPython appends it for a module read
+    /// from one, so that `e.name` and the text before " (" agree with
+    /// the reference's own.
+    fn import_member_fault(&self, path: &str, name: &str) -> String {
+        let pieces = &self.lang.import_member_missing;
+        let told = if pieces.len() == 3 { format!("{}{name}{}{path}{}", pieces[0], pieces[1], pieces[2]) }
+            else { format!("ImportError: cannot import name '{name}' from '{path}'") };
+        match self.module_file_path(path) {
+            Some(file) => format!("{told} ({file})"),
+            None => told,
+        }
+    }
+
+    /// Where a module's own text was read from, for a module the run
+    /// keeps as source read out of a file of its own: the very file
+    /// the library keeps it under, so the words naming it point at
+    /// the file honestly.
+    fn module_file_path(&self, path: &str) -> Option<String> {
+        if !self.module_sources.contains_key(path) { return None; }
+        Some(format!("langs/lib_python/modules/{}.py", path.replace('.', "/")))
     }
 }
 
