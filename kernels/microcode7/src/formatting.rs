@@ -129,11 +129,21 @@ impl Layout<'_> {
         }
     }
 
-    fn read_count(&self, input: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<Option<usize>, String> {
+    /// A run of decimal digits read as a width or a precision. CPython
+    /// parses these into a machine word first: a run wide enough to
+    /// overflow it (the format mini-language alone; `%`-style
+    /// formatting parses further before this same complaint is worded)
+    /// is "too many decimal digits" whatever the run means, and a run
+    /// that fits but still names a width or a precision past what the
+    /// field could ever use is worded by which of the two it was.
+    fn read_count(&self, input: &mut std::iter::Peekable<std::str::Chars<'_>>, big: &str, strict: bool) -> Result<Option<usize>, String> {
         let mut digits = String::new();
         while input.peek().map_or(false, |c| c.is_ascii_digit()) { digits.push(input.next().unwrap()); }
         if digits.is_empty() { return Ok(None); }
-        digits.parse::<usize>().ok().filter(|n| *n <= 100000).map(Some).ok_or_else(|| self.refused())
+        let total = digits.chars().fold(0u128, |acc, c| acc.saturating_mul(10).saturating_add(u128::from(c.to_digit(10).unwrap())));
+        if strict && total >= (1u128 << 63) { return Err(self.complain("ext.text.format.digits", &[])); }
+        if total > i32::MAX as u128 { return Err(self.complain(big, &[])); }
+        Ok(Some(total as usize))
     }
 
     fn description(&self, pattern: &str) -> Result<Presentation, String> {
@@ -152,11 +162,11 @@ impl Layout<'_> {
             marks.next(); shape.zero = true;
             if !second.map_or(false, |c| matches!(c, '<' | '>' | '=' | '^')) { shape.padding = '0'; }
         }
-        shape.extent = self.read_count(&mut marks)?.unwrap_or_default();
+        shape.extent = self.read_count(&mut marks, "ext.text.format.width.big", true)?.unwrap_or_default();
         if marks.peek().map_or(false, |c| matches!(c, ',' | '_')) { shape.separator = marks.next(); }
         if marks.peek() == Some(&'.') {
             marks.next();
-            shape.digits = self.read_count(&mut marks)?;
+            shape.digits = self.read_count(&mut marks, "ext.text.format.precision.big", true)?;
             if marks.peek().map_or(false, |c| matches!(c, ',' | '_')) { shape.fraction_separator = marks.next(); }
             else if shape.digits.is_none() { return Err(self.complain("ext.text.format.precision.missing", &[])); }
         }
@@ -349,6 +359,11 @@ impl Layout<'_> {
         } else if first.bytes().all(|b| b.is_ascii_digit()) {
             if *numbering > 0 { return Err(self.complain("ext.text.format.numbered.manual", &[])); }
             *numbering = -1;
+            // A run of digits too wide for a machine word overflows the
+            // same way a width or a precision that wide would, whether
+            // it ever names a field the arguments hold or not.
+            let wide: u128 = first.parse().unwrap_or(u128::MAX);
+            if wide >= (1u128 << 63) { return Err(self.complain("ext.text.format.digits", &[])); }
             Some(first.parse::<usize>().map_err(|_| self.complain("ext.text.format.index", &[first]))?)
         } else { None };
         let mut selected = match index {
@@ -443,13 +458,13 @@ impl Layout<'_> {
                 let width = self.dynamic(positional, &mut used)?;
                 shape.extent = width.unsigned_abs() as usize;
                 if width < 0 { shape.justify = Some('<'); }
-            } else { shape.extent = self.read_count(&mut input)?.unwrap_or(0); }
+            } else { shape.extent = self.read_count(&mut input, "ext.text.format.width.big", false)?.unwrap_or(0); }
             if input.peek() == Some(&'.') {
                 input.next();
                 shape.digits = Some(if input.peek() == Some(&'*') {
                     if named.is_some() { return Err(self.refused()); }
                     input.next(); self.dynamic(positional, &mut used)?.max(0) as usize
-                } else { self.read_count(&mut input)?.unwrap_or(0) });
+                } else { self.read_count(&mut input, "ext.text.format.precision.big", false)?.unwrap_or(0) });
             }
             if input.peek().map_or(false, |c| matches!(c, 'h' | 'l' | 'L')) { input.next(); }
             let conversion = input.next().ok_or_else(|| self.complain("ext.op.rem.format.incomplete", &[]))?;
@@ -691,7 +706,7 @@ fn side(number: f64, form: &Presentation, polarity: Option<char>) -> String {
 }
 
 pub fn is_complaint(table: &Table, message: &str) -> bool {
-    let labels = "ext.text.format.complex.zero ext.text.format.complex.align ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
+    let labels = "ext.text.format.complex.zero ext.text.format.complex.align ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.digits ext.text.format.width.big ext.text.format.precision.big ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
     labels.split_whitespace().filter_map(|label| table.single(label))
         .any(|opening| !opening.is_empty() && message.starts_with(opening))
 }

@@ -409,8 +409,9 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.text.count`, `ext.builtin.text.find`, `ext.builtin.text.rfind`, `ext.builtin.text.index`, `ext.builtin.text.rindex`, `ext.builtin.text.startswith`, `ext.builtin.text.endswith`, `ext.builtin.text.replace`: count, seek, test a beginning or ending, or replace a bounded number of matches.
 - `ext.builtin.text.length`, `ext.builtin.text.repr`: count characters or write a value as a quoted expression.
 - `ext.builtin.text.keyword.keepends`, `.tabsize`, `.maxsplit`, `.sep`,
-  `.encoding` and `.errors`: lists naming the keyword places admitted by
-  the corresponding text operation. Other names are refused at the run.
+  `.encoding`, `.errors` and `.count`: lists naming the keyword places
+  admitted by the corresponding text operation. Other names are refused
+  at the run.
 - `ext.op.index.text.negative`: a switch letting a text index below
   nought count from the end, in characters. A place outside the text
   raises `ext.builtin.text.fault.index`.
@@ -2013,8 +2014,8 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.sum.non_number`, `ext.builtin.range.non_integer` and
   `ext.builtin.range.zero_step` give their words for a member that
   cannot be added, a bound that is not whole, and a step of nought.
-- `ext.builtin.method.upper`, `.lower`, `.title` and `.capitalize`:
-  lists naming changes of case on text. Each method label names a
+- `ext.builtin.method.upper`, `.lower`, `.title`, `.capitalize` and
+  `.swapcase`: lists naming changes of case on text. Each method label names a
   value's member after the pipe mark; no spelling leaves the pipe as
   before. A method kept aside keeps its receiver, even after the old
   binding is given another value. Mutable collections keep one holding
@@ -2024,13 +2025,15 @@ only. The extension labels so far, all from PHP:
   the head, or the tail, by whitespace or the letters handed over.
   `.split` and `.rsplit` split at a separator or at whitespace, with an
   optional limit; `.join` puts the receiver between strings gathered
-  from one collection; `.replace` replaces occurrences, with a limit.
-- `ext.builtin.method.find`, `.rfind`, `.index` and `.count`: seek from
+  from one collection; `.replace` replaces occurrences, with a limit
+  given by place or by the `count` keyword.
+- `ext.builtin.method.find`, `.rfind`, `.index`, `.rindex` and `.count`: seek from
   the head or tail, require a match, or count matches. Text bounds and
   answers count characters. Arrays answer index and count too.
   `.startswith` and `.endswith` test the ends within optional bounds.
   `.isdigit`, `.isalpha`, `.isalnum`, `.isspace`, `.islower` and
-  `.isupper` test text; character properties needing a table stop.
+  `.isupper` test text by the Unicode character property each is
+  defined upon, reading the same table the case changes draw upon.
 - `ext.builtin.method.center`, `.ljust`, `.rjust` and `.zfill`: pad to
   a width, with an optional single fill character; zfill puts noughts
   after a sign. `.format` fills unnamed, numbered, or named fields,
@@ -3549,9 +3552,15 @@ only. The extension labels so far, all from PHP:
 - `ext.text.format.unready`: what is said when the requested presentation
   cannot be provided: country-dependent numbers, objects needing their own
   formatter, a format method kept apart from its receiver, a starred count
-  beside a mapping key, a surrogate character, Unicode printability not
-  known to the held tables, or a width or precision beyond one hundred thousand. Such requests are read, but never answered
+  beside a mapping key, a surrogate character, or Unicode printability not
+  known to the held tables. Such requests are read, but never answered
   with an ordinary rendering in place of the requested one.
+- `ext.text.format.digits`: a run of decimal digits, read as a width, a
+  precision or a field's number, wide enough to overflow the machine word
+  it is parsed into. `ext.text.format.width.big` and `.precision.big` are
+  what a width or a precision that fits the word but still names more
+  than a field could ever hold is called instead, in the format
+  mini-language and in `%`-style formatting alike.
 - `ext.text.format.zero.integer` and `.zero.string`: complaints for the
   suppression of negative zero on an integer presentation or on text.
 - `ext.text.format.precision.integer` and `.precision.missing`: complaints
@@ -4354,6 +4363,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.replace` | - | - | `replace` | - | - | - | - | - | - | - |
 | `ext.builtin.method.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
 | `ext.builtin.method.rfind` | - | - | `rfind` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rindex` | - | - | `rindex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.rjust` | - | - | `rjust` | - | - | - | - | - | - | - |
 | `ext.builtin.method.rsplit` | - | - | `rsplit` | - | - | - | - | - | - | - |
 | `ext.builtin.method.rstrip` | - | - | `rstrip` | - | - | - | - | - | - | - |
@@ -4368,6 +4378,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.split.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.method.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
 | `ext.builtin.method.strip` | - | - | `strip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.swapcase` | - | - | `swapcase` | - | - | - | - | - | - | - |
 | `ext.builtin.method.title` | - | - | `title` | - | - | - | - | - | - | - |
 | `ext.builtin.method.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
@@ -4485,6 +4496,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.endswith` | - | - | `endswith` `str.endswith` | - | - | - | - | - | - | - |
 | `ext.builtin.text.expandtabs` | - | - | `expandtabs` `str.expandtabs` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.arguments` | - | - | `TypeError: invalid string method arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.arguments.many` | - | - | `TypeError: ` `() takes at most 3 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.codepoint` | - | - | `ValueError: character mapping must be in range(0x110000)` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.encode` | - | - | `NotImplementedError: str.encode requires bytes, which are not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.fill` | - | - | `TypeError: The fill character must be exactly one character long` | - | - | - | - | - | - | - |
@@ -4518,6 +4530,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.isprintable` | - | - | `isprintable` `str.isprintable` | - | - | - | - | - | - | - |
 | `ext.builtin.text.istitle` | - | - | `istitle` `str.istitle` | - | - | - | - | - | - | - |
 | `ext.builtin.text.join` | - | - | `join` `str.join` | - | - | - | - | - | - | - |
+| `ext.builtin.text.keyword.count` | - | - | `count` | - | - | - | - | - | - | - |
 | `ext.builtin.text.keyword.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
 | `ext.builtin.text.keyword.errors` | - | - | `errors` | - | - | - | - | - | - | - |
 | `ext.builtin.text.keyword.keepends` | - | - | `keepends` | - | - | - | - | - | - | - |
@@ -5158,12 +5171,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.complex.align` | - | - | `ValueError: '=' alignment flag is not allowed in complex format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.complex.zero` | - | - | `ValueError: Zero padding is not allowed in complex format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
+| `ext.text.format.digits` | - | - | `ValueError: Too many decimal digits in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid` | - | - | `ValueError: Invalid format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.key` | - | - | `KeyError: '` `'` | - | - | - | - | - | - | - |
 | `ext.text.format.kinds` | - | - | `int` `float` `str` `bool` `list` `dict` `NoneType` `object` `complex` `tuple` `set` `range` `bytes` `bytearray` `type` | - | - | - | - | - | - | - |
 | `ext.text.format.numbered.auto` | - | - | `ValueError: cannot switch from manual field specification to automatic field numbering` | - | - | - | - | - | - | - |
 | `ext.text.format.numbered.manual` | - | - | `ValueError: cannot switch from automatic field numbering to manual field specification` | - | - | - | - | - | - | - |
+| `ext.text.format.precision.big` | - | - | `ValueError: precision too big` | - | - | - | - | - | - | - |
 | `ext.text.format.precision.integer` | - | - | `ValueError: Precision not allowed in integer format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.precision.missing` | - | - | `ValueError: Format specifier missing precision` | - | - | - | - | - | - | - |
 | `ext.text.format.recursion` | - | - | `ValueError: Max string recursion exceeded` | - | - | - | - | - | - | - |
@@ -5172,6 +5187,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.spec.type` | - | - | `TypeError: format() argument 2 must be str, not ` | - | - | - | - | - | - | - |
 | `ext.text.format.unknown` | - | - | `ValueError: Unknown format code '` `' for object of type '` `'` | - | - | - | - | - | - | - |
 | `ext.text.format.unready` | - | - | `NotImplementedError: this format cannot be represented` | - | - | - | - | - | - | - |
+| `ext.text.format.width.big` | - | - | `ValueError: width too big` | - | - | - | - | - | - | - |
 | `ext.text.format.zero.integer` | - | - | `ValueError: Negative zero coercion (z) not allowed in integer format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.zero.string` | - | - | `ValueError: Negative zero coercion (z) not allowed in string format specifier` | - | - | - | - | - | - | - |
 <!-- table:end -->

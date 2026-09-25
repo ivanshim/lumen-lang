@@ -33,6 +33,34 @@ def choice(sequence):
         raise 'IndexError: Cannot choose from an empty sequence'
     return sequence[_next() % len(sequence)]
 
+def choices(population, weights=None, *, cum_weights=None, k=1):
+    n = len(population)
+    if cum_weights is not None:
+        if weights is not None:
+            raise 'TypeError: Cannot specify both weights and cumulative weights'
+        cumulative = cum_weights
+    elif weights is not None:
+        cumulative = []
+        total = 0
+        for w in weights:
+            total += w
+            cumulative.append(total)
+    else:
+        cumulative = None
+    result = []
+    if cumulative is None:
+        for _ in range(k):
+            result.append(population[_next() % n])
+    else:
+        total = cumulative[-1]
+        for _ in range(k):
+            spot = random() * total
+            at = 0
+            while at < len(cumulative) - 1 and cumulative[at] <= spot:
+                at += 1
+            result.append(population[at])
+    return result
+
 def shuffle(sequence):
     # Ordinary arrays are copied on writes through a function argument;
     # returning a shuffled copy would conceal a missing in-place change.

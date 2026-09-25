@@ -7759,6 +7759,75 @@ impl<'a> Engine<'a> {
         writer.template(text, args, &mut offered)
     }
 
+    /// `str.format_map` fills named fields from a mapping read key by
+    /// key, each key taken the very way a subscript takes it: a plain
+    /// mapping's own pairs, a program's own class through whatever
+    /// `__getitem__` it carries, and a dict subclass's `__missing__`
+    /// standing in for a key the mapping does not hold. A path after
+    /// the key reads an attribute or a further place the same way a
+    /// plain field of `.format` does.
+    fn mapping_format(&mut self, s: &str, mapping: &Value, depth: usize) -> Res<String> {
+        if depth > 2 { return Err(crate::strings::fault(self.lang, "format")); }
+        let mut out = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if (c == '{' || c == '}') && chars.peek() == Some(&c) { chars.next(); out.push(c); continue; }
+            if c == '}' { return Err(crate::strings::fault(self.lang, "format.brace")); }
+            if c != '{' { out.push(c); continue; }
+            let mut field = String::new();
+            let mut nested = 0;
+            let mut closed = false;
+            for c in chars.by_ref() {
+                if c == '}' && nested == 0 { closed = true; break; }
+                if c == '{' { nested += 1; }
+                if c == '}' { nested -= 1; }
+                field.push(c);
+            }
+            if !closed { return Err(crate::strings::fault(self.lang, "format.brace")); }
+            let (head, spec) = field.split_once(':').unwrap_or((&field, ""));
+            let (path, conversion) = head.split_once('!').unwrap_or((head, ""));
+            let first_end = path.find(['.', '[']).unwrap_or(path.len());
+            let key = &path[..first_end];
+            if key.is_empty() || key.chars().next().unwrap().is_ascii_digit() {
+                return Err(crate::strings::fault(self.lang, "format.positional"));
+            }
+            let mut value = self.special_dyad(&Action::At, mapping, &Value::text(key))?;
+            let mut rest = &path[first_end..];
+            while !rest.is_empty() {
+                value = value.contents();
+                if let Some(tail) = rest.strip_prefix('.') {
+                    let end = tail.find(['.', '[']).unwrap_or(tail.len());
+                    let member = &tail[..end];
+                    value = match &value {
+                        Value::Object(o) => o.fields.borrow().iter().find(|(k, _)| k == member).map(|(_, v)| v.clone()),
+                        _ => None,
+                    }.ok_or_else(|| crate::strings::fault(self.lang, "format"))?;
+                    rest = &tail[end..];
+                } else if let Some(tail) = rest.strip_prefix('[') {
+                    let end = tail.find(']').ok_or_else(|| crate::strings::fault(self.lang, "format"))?;
+                    let asked = &tail[..end];
+                    let index = asked.parse::<i64>().map_or_else(|_| Value::text(asked), Value::Small);
+                    value = self.special_dyad(&Action::At, &value, &index)?;
+                    rest = &tail[end + 1..];
+                } else { return Err(crate::strings::fault(self.lang, "format")); }
+            }
+            let spec = self.mapping_format(spec, mapping, depth + 1)?;
+            let words = self.wording();
+            let shown = if conversion == "r" || conversion == "a" {
+                let mut shown = crate::strings::repr(&value, &words);
+                if conversion == "a" {
+                    shown = shown.chars().map(|c| if c.is_ascii() { c.to_string() }
+                        else if c as u32 <= 255 { format!("\\x{:02x}", c as u32) }
+                        else if c as u32 <= 65535 { format!("\\u{:04x}", c as u32) }
+                        else { format!("\\U{:08x}", c as u32) }).collect();
+                }
+                Value::text(&shown).string_field(&words, &spec, "")
+            } else { value.string_field(&words, &spec, conversion) };
+            out.push_str(&shown.ok_or_else(|| crate::strings::fault(self.lang, "format"))?);
+        }
+        Ok(out)
+    }
+
     /// Text on the left of the remainder sign, filled mark by mark. A
     /// thing of the program's own gives the marks that show a value its
     /// own words, as its show and its representation.
@@ -10305,7 +10374,7 @@ impl<'a> Engine<'a> {
         if matches!(&contents, Value::Text(_)) {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
-                let operation = match operation { "split"=>Some(crate::strings::TextOp::Split), "rsplit"=>Some(crate::strings::TextOp::Rsplit), "join"=>Some(crate::strings::TextOp::Join), "strip"=>Some(crate::strings::TextOp::Strip), "lstrip"=>Some(crate::strings::TextOp::Lstrip), "rstrip"=>Some(crate::strings::TextOp::Rstrip), "replace"=>Some(crate::strings::TextOp::Replace), "startswith"=>Some(crate::strings::TextOp::Startswith), "endswith"=>Some(crate::strings::TextOp::Endswith), "find"=>Some(crate::strings::TextOp::Find), "rfind"=>Some(crate::strings::TextOp::Rfind), "index"=>Some(crate::strings::TextOp::Index), "count"=>Some(crate::strings::TextOp::Count), "upper"=>Some(crate::strings::TextOp::Upper), "lower"=>Some(crate::strings::TextOp::Lower), _=>None };
+                let operation = match operation { "split"=>Some(crate::strings::TextOp::Split), "rsplit"=>Some(crate::strings::TextOp::Rsplit), "join"=>Some(crate::strings::TextOp::Join), "strip"=>Some(crate::strings::TextOp::Strip), "lstrip"=>Some(crate::strings::TextOp::Lstrip), "rstrip"=>Some(crate::strings::TextOp::Rstrip), "replace"=>Some(crate::strings::TextOp::Replace), "startswith"=>Some(crate::strings::TextOp::Startswith), "endswith"=>Some(crate::strings::TextOp::Endswith), "find"=>Some(crate::strings::TextOp::Find), "rfind"=>Some(crate::strings::TextOp::Rfind), "index"=>Some(crate::strings::TextOp::Index), "rindex"=>Some(crate::strings::TextOp::Rindex), "count"=>Some(crate::strings::TextOp::Count), "upper"=>Some(crate::strings::TextOp::Upper), "lower"=>Some(crate::strings::TextOp::Lower), "swapcase"=>Some(crate::strings::TextOp::Swapcase), _=>None };
                 if let Some(op) = operation {
                     let mut given = vec![contents]; given.extend(args.into_iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }));
                     if op == crate::strings::TextOp::Join && given.len() == 2 { given[1] = Value::array(self.comprehension_items(&given[1])?); }
@@ -11604,9 +11673,20 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                // A mapping handed to format_map is read the way a
+                // subscript reads it, key by key: a plain mapping, one
+                // of the program's own classes with its own `__getitem__`,
+                // or a dict subclass whose `__missing__` stands in for a
+                // key it does not hold, all answer exactly as `[]` would.
+                if op == crate::strings::TextOp::FormatMap {
+                    if normalized.len() != 2 { return Err(crate::strings::fault(self.lang, "arguments")); }
+                    let Value::Text(s) = &normalized[0] else { return Err(crate::strings::fault(self.lang, "receiver")); };
+                    let s = s.clone();
+                    return Ok(Value::text(&self.mapping_format(&s, &normalized[1], 0)?));
+                }
                 crate::strings::run(op, name, &normalized, self.lang, &sp)?
             },
-            Builtin::ClassTool(work) => return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
+            Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };

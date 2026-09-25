@@ -5235,6 +5235,10 @@ impl<'a> Machine<'a> {
             let (mut positional, named) = self.open_arguments(received)?;
             if *work != crate::text::Work::MAKETRANS { positional.insert(0, Value::Text(subject.clone())); }
             crate::text::fit_names(self.table, *work, &mut positional, named)?;
+            if *work == crate::text::Work::FORMATMAP {
+                if positional.len() != 2 { return Err(crate::text::complaint(self.table, "arguments").into()); }
+                return Ok(Value::text(&self.mapping_format(subject, &positional[1], 0)?));
+            }
             Ok(crate::text::apply(self.table, *work, name, &positional, self.wording())?)
         })())
     }
@@ -6186,6 +6190,12 @@ impl<'a> Machine<'a> {
                 let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| match v.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }));
                 if *work == crate::text::Work::JOIN && given.len() == 2 { given[1] = Value::Vector(Rc::new(self.gathered_members(&given[1])?)); }
                 crate::text::fit_names(self.table, *work, &mut given, keywords)?;
+                if *work == crate::text::Work::FORMATMAP {
+                    if given.len() != 2 { return Err(crate::text::complaint(self.table, "arguments").into()); }
+                    let Value::Text(s) = &given[0] else { return Err(crate::text::complaint(self.table, "receiver").into()); };
+                    let s = s.to_string();
+                    return Ok(Value::text(&self.mapping_format(&s, &given[1], 0)?));
+                }
                 return crate::text::apply(self.table, *work, name, &given, self.wording()).map_err(Escape::from);
             }
         }
@@ -6296,6 +6306,75 @@ impl<'a> Machine<'a> {
             false => Ok(Value::Nil),
             true => Err(format!("\0{}", self.table.single("ext.builtin.method.sort.modified").unwrap_or_default()).into()),
         }
+    }
+
+    /// `str.format_map` fills named fields from a mapping read key by
+    /// key, each key taken the very way a subscript takes it: a plain
+    /// mapping's own pairs, a program's own class through whatever
+    /// `__getitem__` it carries, and a dict subclass's `__missing__`
+    /// standing in for a key the mapping does not hold. A path after
+    /// the key reads an attribute or a further place the same way a
+    /// plain field of `.format` does.
+    fn mapping_format(&mut self, s: &str, mapping: &Value, depth: usize) -> Result<String, Escape> {
+        if depth > 2 { return Err(crate::text::complaint(self.table, "format").into()); }
+        let mut out = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if (c == '{' || c == '}') && chars.peek() == Some(&c) { chars.next(); out.push(c); continue; }
+            if c == '}' { return Err(crate::text::complaint(self.table, "format.brace").into()); }
+            if c != '{' { out.push(c); continue; }
+            let mut field = String::new();
+            let mut nested = 0;
+            let mut closed = false;
+            for c in chars.by_ref() {
+                if c == '}' && nested == 0 { closed = true; break; }
+                if c == '{' { nested += 1; }
+                if c == '}' { nested -= 1; }
+                field.push(c);
+            }
+            if !closed { return Err(crate::text::complaint(self.table, "format.brace").into()); }
+            let (head, spec) = field.split_once(':').unwrap_or((&field, ""));
+            let (path, conversion) = head.split_once('!').unwrap_or((head, ""));
+            let first_end = path.find(['.', '[']).unwrap_or(path.len());
+            let key = &path[..first_end];
+            if key.is_empty() || key.chars().next().unwrap().is_ascii_digit() {
+                return Err(crate::text::complaint(self.table, "format.positional").into());
+            }
+            let mut value = self.prim(Prim::At, "", &[mapping.clone(), Value::text(key)])?;
+            let mut rest = &path[first_end..];
+            while !rest.is_empty() {
+                value = value.settled();
+                if let Some(tail) = rest.strip_prefix('.') {
+                    let end = tail.find(['.', '[']).unwrap_or(tail.len());
+                    let member = &tail[..end];
+                    value = match &value {
+                        Value::Thing(t) => t.holds.borrow().iter().find(|(k, _)| k == member).map(|(_, v)| v.clone()),
+                        _ => None,
+                    }.ok_or_else(|| crate::text::complaint(self.table, "format"))?;
+                    rest = &tail[end..];
+                } else if let Some(tail) = rest.strip_prefix('[') {
+                    let end = tail.find(']').ok_or_else(|| crate::text::complaint(self.table, "format"))?;
+                    let asked = &tail[..end];
+                    let index = asked.parse::<i64>().map_or_else(|_| Value::text(asked), Value::Small);
+                    value = self.prim(Prim::At, "", &[value, index])?;
+                    rest = &tail[end + 1..];
+                } else { return Err(crate::text::complaint(self.table, "format").into()); }
+            }
+            let spec = self.mapping_format(spec, mapping, depth + 1)?;
+            let names = self.wording();
+            let shown = if conversion == "r" || conversion == "a" {
+                let mut shown = crate::text::expression(&value, names);
+                if conversion == "a" {
+                    shown = shown.chars().map(|c| if c.is_ascii() { c.to_string() }
+                        else if c as u32 <= 255 { format!("\\x{:02x}", c as u32) }
+                        else if c as u32 <= 65535 { format!("\\u{:04x}", c as u32) }
+                        else { format!("\\U{:08x}", c as u32) }).collect();
+                }
+                Value::text(&shown).in_field(names, &spec, "")
+            } else { value.in_field(names, &spec, conversion) };
+            out.push_str(&shown.ok_or_else(|| crate::text::complaint(self.table, "format"))?);
+        }
+        Ok(out)
     }
 
     fn ordered_members(&mut self, receiver: &Value, keywords: &[(String, Value)]) -> Res<Vec<Value>> {
