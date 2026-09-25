@@ -339,6 +339,16 @@ const SET_STILL_LABELS: &[&str] = &[
     "ext.builtin.set.issubset", "ext.builtin.set.issuperset", "ext.builtin.set.isdisjoint",
 ];
 
+/// A path resolved against the working directory and cleared of `.`
+/// and `..`, so it reads the same way wherever the run is later asked
+/// about it from, as CPython's own `__file__` always does. Where the
+/// host cannot resolve it (a `..` reaching above a filesystem root
+/// under an unusual mount, say), the path as given is kept rather than
+/// losing `__file__` altogether.
+fn made_absolute(path: &str) -> String {
+    std::fs::canonicalize(path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
+}
+
 /// A number written in base 36, lowercase, with no leading zeroes kept
 /// bare: short, and safe inside a file name on every host this runs on.
 fn to_radix36(mut n: u64) -> String {
@@ -14481,6 +14491,16 @@ impl Engine<'_> {
         for name in &self.lang.module_names {
             if !fields.iter().any(|(key, _)| key == name) { fields.push((name.clone(), Value::text(path))); }
         }
+        // `__file__` is read from outside a module (`mod.__file__`) as
+        // freely as `__name__` is, in CPython, so it is carried here
+        // the same unconditional way, whether or not the module's own
+        // text ever names it: a module that never spells `__file__`
+        // still answers one to a caller that asks by attribute.
+        if let Some(word) = &file_word {
+            if !fields.iter().any(|(key, _)| key == word) {
+                fields.push((word.clone(), own_file.as_deref().map_or(Value::Null, Value::text)));
+            }
+        }
         self.made += 1;
         let object = Rc::new(Instance {
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }),
@@ -14512,7 +14532,9 @@ impl Engine<'_> {
     /// ahead of the library. Only a plain, undotted name is looked for
     /// this way, since a directory a program builds for itself holds no
     /// packages of its own; the file and what it holds come back
-    /// together, the file's place kept for `__file__` to answer with.
+    /// together, the file's place made absolute first, since a name on
+    /// `sys.path` may be relative to a working directory `__file__`
+    /// must not depend on later changing.
     fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
         if path.contains('.') { return None; }
         let Value::Object(sys) = self.modules.get("sys")? else { return None };
@@ -14527,7 +14549,7 @@ impl Engine<'_> {
             if dir.is_empty() { continue; }
             let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
             if let Ok(source) = std::fs::read_to_string(&file) {
-                return Some((file, source));
+                return Some((made_absolute(&file), source));
             }
         }
         None
@@ -14537,13 +14559,19 @@ impl Engine<'_> {
     /// carries the library there to be found: the plain file first, and
     /// a package's own file failing that. Nothing here reads the file
     /// again; the text the module runs from was read in once already,
-    /// when the library was gathered into the program.
+    /// when the library was gathered into the program. The place named
+    /// is always the one on the machine that built this binary --
+    /// `CARGO_MANIFEST_DIR` is written in at compile time, not read from
+    /// the working directory a later run happens to stand in -- since
+    /// that is the only machine the library's own text in `langs/` is
+    /// promised to still be sitting at.
     fn library_module_file(&self, path: &str) -> Option<String> {
+        const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
         let stem = path.replace('.', "/");
-        let flat = format!("langs/lib_python/modules/{stem}.py");
-        if std::path::Path::new(&flat).is_file() { return Some(flat); }
-        let package = format!("langs/lib_python/modules/{stem}/__init__.py");
-        if std::path::Path::new(&package).is_file() { return Some(package); }
+        let flat = format!("{ROOT}/{stem}.py");
+        if std::path::Path::new(&flat).is_file() { return Some(made_absolute(&flat)); }
+        let package = format!("{ROOT}/{stem}/__init__.py");
+        if std::path::Path::new(&package).is_file() { return Some(made_absolute(&package)); }
         None
     }
 
