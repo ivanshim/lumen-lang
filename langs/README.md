@@ -2447,6 +2447,12 @@ only. The extension labels so far, all from PHP:
   what a language spelling them expects.
 - `ext.builtin.file.kind`: a builtin answering one for a path naming a
   file, two for a directory, nought for neither.
+- `ext.builtin.dir.list`, `.make` and `.remove_tree`: builtins that
+  reach outside the run alongside the file ones above — a directory's
+  own entries, by name alone; a fresh directory made under one already
+  there, named uniquely from a prefix and a suffix; and a directory
+  taken away along with everything under it. What cannot be done
+  answers false, the same as the file builtins beside them.
 - `ext.builtin.host.info`: a builtin answering the host's own facts as a
   list: the working directory (or nothing), the word for the system, the
   word for the machine, and the environment as a map.
@@ -3130,7 +3136,10 @@ only. The extension labels so far, all from PHP:
   stand upon ordinary faults. An exit that nobody takes ends the run
   with the status its argument gives: none for nought, a whole number as
   itself, and anything else written out as a complaint with a status of
-  one. The spellings belong wholly to the
+  one. Last of all, standing upon the operating system fault, come the
+  two kinds `open()` and the directory builtins raise: a file missing
+  where one was asked to be read, and a file asked to be read where a
+  directory stands instead. The spellings belong wholly to the
   definition. A program may call these classes or stand a class upon one.
   Catching follows the classes themselves and their bases: a new class
   bearing an old name is still another class.
@@ -4188,13 +4197,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.delattr` | - | - | `delattr` | - | - | - | - | - | - | - |
 | `ext.builtin.dict` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.dir` | - | - | `dir` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.list` | - | - | `__list_dir` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.make` | - | - | `__make_dir` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.remove_tree` | - | - | `__remove_tree` | - | - | - | - | - | - | - |
 | `ext.builtin.divmod` | - | - | `divmod` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
 | `ext.builtin.enumerate` | - | - | `enumerate` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4210,21 +4222,22 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.note.invalid` | - | - | `TypeError: note must be a str` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.notes` | - | - | `__notes__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.object` | - | - | `obj` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.os` | - | - | `errno` `strerror` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.os` | - | - | `errno` `strerror` `filename` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` `: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback` | - | - | `traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.value` | - | - | `value` | - | - | - | - | - | - | - |
 | `ext.builtin.exec` | - | - | `exec` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
-| `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
+| `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
-| `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.frozenset` | - | - | `frozenset` | - | - | - | - | - | - | - |
@@ -4920,7 +4933,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
-| `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |

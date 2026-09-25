@@ -13,7 +13,7 @@ class _Context:
 class _Raises:
     def __init__(self, expected, phrase=None):
         self.expected = expected
-        self.phrase = phrase
+        self.phrase = _compile_regex(phrase) if phrase is not None else None
         self.exception = None
 
     def __enter__(self):
@@ -25,8 +25,8 @@ class _Raises:
         if not isinstance(value, self.expected):
             return False
         self.exception = value
-        if self.phrase is not None and not _matches(self.phrase, _message(value)):
-            raise AssertionError('exception message does not contain ' + self.phrase)
+        if self.phrase is not None and self.phrase.search(_message(value)) is None:
+            raise AssertionError('"' + self.phrase.pattern + '" does not match "' + _message(value) + '"')
         return True
 
 class TestResult:
@@ -271,10 +271,17 @@ class TestCase:
         self.assertEqual(first, second, msg)
 
     def assertRegex(self, text, pattern, msg=None):
-        self._check(_matches(pattern, text), "Regex didn't match: " + _representation(pattern) + ' not found in ' + _representation(text), msg)
+        pattern = _compile_regex(pattern)
+        if pattern.search(text) is None:
+            message = "Regex didn't match: " + _representation(pattern.pattern) + ' not found in ' + _representation(text)
+            self._check(False, message, msg)
 
     def assertNotRegex(self, text, pattern, msg=None):
-        self._check(not _matches(pattern, text), 'Regex matched: ' + _representation(pattern) + ' matches ' + _representation(text), msg)
+        pattern = _compile_regex(pattern)
+        match = pattern.search(text)
+        if match is not None:
+            message = 'Regex matched: ' + _representation(text[match.start():match.end()]) + ' matches ' + _representation(pattern.pattern) + ' in ' + _representation(text)
+            self._check(False, message, msg)
 
     def assertWarns(self, expected, *args, **kwargs):
         context = _Warns(expected)
@@ -509,54 +516,19 @@ def _representation(value):
     return repr(value)
 
 
+def _compile_regex(pattern):
+    # A phrase handed to an assertRaisesRegex/assertRegex family method is
+    # either an already-compiled pattern (it answers to `search`) or plain
+    # text, which is compiled through the real `re` module the way
+    # CPython's own unittest compiles it.
+    if getattr(pattern, 'search', None) is not None:
+        return pattern
+    import re
+    return re.compile(pattern)
+
+
 def _matches(pattern, text):
-    search = getattr(pattern, 'search', None)
-    if search is not None:
-        return search(text) is not None
-    for index in range(len(pattern)):
-        character = pattern[index]
-        if character in '[](){}|':
-            raise 'NotImplementedError: grouped regular expressions are not supported'
-    if pattern[:1] == '^':
-        return _match_at(pattern[1:], text)
-    for start in range(len(text) + 1):
-        if _match_at(pattern, text[start:]):
-            return True
-    return False
-
-
-def _match_at(pattern, text):
-    if pattern == '':
-        return True
-    if pattern == '$':
-        return text == '' or text == '\n'
-    atom = pattern[0]
-    width = 1
-    escaped = atom == '\\'
-    if escaped:
-        if len(pattern) < 2:
-            raise 'ValueError: trailing regular expression escape'
-        atom = pattern[1]
-        width = 2
-        if atom == 'n':
-            atom = '\n'
-        elif atom == 't':
-            atom = '\t'
-        elif atom not in '.^$*+?\\':
-            raise 'NotImplementedError: this regular expression escape is not supported'
-    first = len(text) > 0 and (text[0] == atom or (atom == '.' and not escaped and text[0] != '\n'))
-    tail = pattern[width:]
-    quantifier = tail[:1]
-    if quantifier == '*' or quantifier == '?':
-        if _match_at(tail[1:], text):
-            return True
-    if not first:
-        return False
-    if quantifier == '*' or quantifier == '+':
-        return _match_at(tail[1:], text[1:]) or _match_at(pattern[:width] + '*' + tail[1:], text[1:])
-    if quantifier == '?':
-        return _match_at(tail[1:], text[1:])
-    return _match_at(tail, text[1:])
+    return _compile_regex(pattern).search(text) is not None
 
 
 class _SubTest:
@@ -595,7 +567,7 @@ class _SubTest:
 class _Warns:
     def __init__(self, expected, pattern=None):
         self.expected = expected
-        self.pattern = pattern
+        self.pattern = _compile_regex(pattern) if pattern is not None else None
         self.warning = None
         self.filename = None
         self.lineno = None
@@ -612,13 +584,19 @@ class _Warns:
         self.manager.__exit__(kind, value, traceback)
         if kind is not None:
             return False
+        first_matching = None
         for record in self.manager.records:
             if isinstance(record.message, self.expected):
-                if self.pattern is None or _matches(self.pattern, _message(record.message)):
-                    self.warning = record.message
-                    self.filename = record.filename
-                    self.lineno = record.lineno
-                    return False
+                if first_matching is None:
+                    first_matching = record.message
+                if self.pattern is not None and self.pattern.search(_message(record.message)) is None:
+                    continue
+                self.warning = record.message
+                self.filename = record.filename
+                self.lineno = record.lineno
+                return False
+        if first_matching is not None:
+            raise AssertionError('"' + self.pattern.pattern + '" does not match "' + _message(first_matching) + '"')
         raise AssertionError(_class_name(self.expected) + ' not triggered')
 
 

@@ -41,8 +41,23 @@
   "ext.builtin.file.kind": [
     "__file_kind"
   ],
+  "ext.builtin.file.read": [
+    "__file_read"
+  ],
+  "ext.builtin.file.write": [
+    "__file_write"
+  ],
   "ext.builtin.file.remove": [
     "__remove_file"
+  ],
+  "ext.builtin.dir.list": [
+    "__list_dir"
+  ],
+  "ext.builtin.dir.make": [
+    "__make_dir"
+  ],
+  "ext.builtin.dir.remove_tree": [
+    "__remove_tree"
   ],
   "ext.builtin.host.info": [
     "__host_info"
@@ -750,7 +765,13 @@
     "SyntaxError",
     "BaseExceptionGroup",
     "ExceptionGroup",
-    "GeneratorExit"
+    "GeneratorExit",
+    "FileNotFoundError",
+    "IsADirectoryError",
+    "ModuleNotFoundError",
+    "UnicodeEncodeError",
+    "UnicodeDecodeError",
+    "UnicodeTranslateError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -801,11 +822,14 @@
   ],
   "ext.builtin.exceptions.os": [
     "errno",
-    "strerror"
+    "strerror",
+    "filename"
   ],
   "ext.builtin.exceptions.os.message": [
     "[Errno ",
-    "] "
+    "] ",
+    ": '",
+    "'"
   ],
   "ext.builtin.exceptions.suppress": [
     "__suppress_context__"
@@ -818,6 +842,13 @@
   ],
   "ext.builtin.exceptions.traceback.with": [
     "with_traceback"
+  ],
+  "ext.builtin.exceptions.unicode": [
+    "encoding",
+    "object",
+    "start",
+    "end",
+    "reason"
   ],
   "ext.builtin.exceptions.unready": [
     "NotImplementedError: this exception operation cannot run yet"
@@ -2700,6 +2731,7 @@
   ],
   "ext.stmt.import.member.missing": [
     "ImportError: cannot import name '",
+    "' from '",
     "'"
   ],
   "ext.stmt.import.missing": [

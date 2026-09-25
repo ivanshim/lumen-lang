@@ -490,7 +490,19 @@ impl<'a> Machine<'a> {
                                 Self::underlying(&subject).unwrap_or_else(||subject.clone()),
                             _=>subject.clone(),
                         };
-                        match self.attribute(&receiver,&entry) {
+                        // A loose entry is the kind's own alone, so a
+                        // receiver of some other kind is refused before
+                        // the entry is even looked up, even where it
+                        // happens to answer to an entry of the same
+                        // name some other kind carries (`list.count`,
+                        // `tuple.count`); a receiver of the kind itself,
+                        // or standing under it the way a flag stands
+                        // under the whole-number kind, still reaches
+                        // the entry as before.
+                        let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
+                            .map_or(true,|op|self.kind_covers(&op,&word,&receiver.settled()));
+                        let found=if of_own_kind{self.attribute(&receiver,&entry)}else{None};
+                        match found {
                             Some(bound)=>self.apply_class_member(bound,values),
                             None=>{
                                 let words=self.table.strings("ext.stmt.class.detail.descriptor.foreign");
@@ -1010,6 +1022,25 @@ impl<'a> Machine<'a> {
             ||matches!(value,Value::Intrinsic(op,_) if op.names_a_kind())
             ||self.kind_spelling(value).is_some()
     }
+    /// Whether a value may stand as one member of a union built by
+    /// `|`: a kind itself, `Nil` (which the sign reads as the kind
+    /// `None` alone is of), or a tuple of further such members, the
+    /// shape a union already takes once built. A tuple built some
+    /// other way, holding a value that is none of these, is not one.
+    pub(super) fn union_member(&self,value:&Value)->bool{
+        matches!(value,Value::Nil)
+            ||self.stands_for_a_kind(value)
+            ||matches!(value,Value::Tuple(items) if items.iter().all(|v|self.union_member(v)))
+    }
+    /// Whether a value is enough on its own to tell `|` a union is
+    /// meant rather than some other working: a kind by itself, or a
+    /// tuple already built as one (non-empty, every member a union
+    /// member). `Nil` alone answers to neither, the way CPython's own
+    /// `NoneType` defines no `__or__`/`__ror__` of its own.
+    pub(super) fn union_anchor(&self,value:&Value)->bool{
+        self.stands_for_a_kind(value)
+            ||matches!(value,Value::Tuple(items) if !items.is_empty()&&items.iter().all(|v|self.union_member(v)))
+    }
     /// The kind primitive read as a worth: what the kind of a kind is.
     pub(super) fn kind_builder_word(&self)->Value{
         match self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf) {
@@ -1084,6 +1115,11 @@ impl<'a> Machine<'a> {
         let amiss=if class_only{"core.issubclass.amiss"}else{"core.isinstance.amiss"};
         match choice {
             Value::Tuple(options)|Value::Vector(options)=>{for option in options.iter(){if self.is_beneath(subject,option,class_only)?{return Ok(true);}}Ok(false)},
+            // A union built by `|` carries a bare `Nil` for the
+            // `NoneType` member, the very value `None` itself is, so
+            // a chained union reads it back this way rather than
+            // needing `type(None)`.
+            Value::Nil=>Ok(if class_only{matches!(subject,Value::KindOf(Kind::Nothing))}else{matches!(subject,Value::Nil)}),
             Value::Blueprint(c)=>{
                 // What is asked about must be a class wherever a class
                 // is what is asked about.

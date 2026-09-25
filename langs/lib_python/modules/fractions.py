@@ -75,6 +75,17 @@ def _ratio(value):
         return _parse(value)
     if isinstance(value, float):
         value = _as_float(value)
+        if value != value:
+            raise 'ValueError: cannot convert NaN to integer ratio'
+        if value == inf or value == -inf:
+            raise 'OverflowError: cannot convert Infinity to integer ratio'
+        # A float's own as_integer_ratio() reads its bits directly, so
+        # it costs the same whether the exponent is tiny or huge. The
+        # doubling loop below is kept only for the duck-typed numerics
+        # that reach this point without a float type of their own,
+        # where a subnormal exponent would otherwise double a bignum
+        # denominator on the order of a thousand times over.
+        return value.as_integer_ratio()
     if value != value:
         raise 'ValueError: cannot convert NaN to integer ratio'
     if value == inf or value == -inf:

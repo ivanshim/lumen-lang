@@ -15,21 +15,25 @@ use crate::value::{Frac, Real, Value};
 /// Significant digits when no operand says.
 pub const DEFAULT_PLACES: usize = 15;
 
-/// Any number as p/q, with its precision when real.
+/// Any number as p/q, with its precision when real. `below` keeps
+/// whether a real that stands at nought came of working with a
+/// number below nought, the one thing p/q alone cannot say of a
+/// nought (a whole number's own zero carries no such sign).
 #[derive(Clone)]
 pub struct Exact {
     pub p: BigInt,
     pub q: BigInt,
     pub places: Option<usize>,
+    pub below: bool,
 }
 
 impl Exact {
     pub fn from_value(v: &Value) -> Option<Exact> {
         Some(match v {
-            Value::Small(n) => Exact { p: BigInt::from(*n), q: BigInt::one(), places: None },
-            Value::Huge(n) => Exact { p: (**n).clone(), q: BigInt::one(), places: None },
-            Value::Frac(r) => Exact { p: r.p.clone(), q: r.q.clone(), places: None },
-            Value::Real(r) => Exact { p: r.p.clone(), q: r.q.clone(), places: Some(r.places) },
+            Value::Small(n) => Exact { p: BigInt::from(*n), q: BigInt::one(), places: None, below: false },
+            Value::Huge(n) => Exact { p: (**n).clone(), q: BigInt::one(), places: None, below: false },
+            Value::Frac(r) => Exact { p: r.p.clone(), q: r.q.clone(), places: None, below: false },
+            Value::Real(r) => Exact { p: r.p.clone(), q: r.q.clone(), places: Some(r.places), below: r.below },
             _ => return None,
         })
     }
@@ -164,7 +168,11 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
     // the nought below nought, which a real of a width writes apart.
     let opposed = a.p.is_negative() != b.p.is_negative();
     Ok(match calc {
-        Operation::Plus => shape_number(cross(1), &a.q * &b.q, places),
+        // A sum of two noughts below nought is a nought below nought
+        // itself, the one case addition's own sign is not simply
+        // above nought: everywhere else, even a number cancelled
+        // exactly by its own opposite, the sum stands above nought.
+        Operation::Plus => shape_signed(cross(1), &a.q * &b.q, places, a.p.is_zero() && b.p.is_zero() && a.below && b.below),
         Operation::Minus => shape_number(cross(-1), &a.q * &b.q, places),
         Operation::Times => shape_signed(&a.p * &b.p, &a.q * &b.q, places, opposed),
         Operation::Over => shape_signed(&a.p * &b.q, &a.q * &b.p, places, opposed),
@@ -184,7 +192,7 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
             let beneath = whole.is_negative();
             let mut n = whole.abs().to_u64().ok_or_else(|| "Exponent too large".to_string())?;
             let mut base = a.clone();
-            let mut acc = Exact { p: BigInt::one(), q: BigInt::one(), places: a.places };
+            let mut acc = Exact { p: BigInt::one(), q: BigInt::one(), places: a.places, below: false };
             while n > 0 {
                 if n & 1 == 1 {
                     acc = Exact::from_value(&precise(Operation::Times, &acc, &base)?).expect("a number");

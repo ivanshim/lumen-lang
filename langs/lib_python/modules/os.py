@@ -23,7 +23,10 @@ def urandom(size):
     raise 'NotImplementedError: os.urandom needs byte values'
 
 def listdir(path='.'):
-    raise 'NotImplementedError: os.listdir is not supported'
+    entries = __list_dir(path)
+    if entries is False:
+        raise FileNotFoundError(2, 'No such file or directory', path)
+    return entries
 
 def mkdir(path, mode=511, *, dir_fd=None):
     raise 'NotImplementedError: os.mkdir is not supported'
@@ -32,7 +35,9 @@ def remove(path, *, dir_fd=None):
     if dir_fd is not None:
         raise 'NotImplementedError: os.remove directory descriptors are not supported'
     if not __remove_file(path):
-        raise 'OSError: os.remove failed'
+        if not __file_exists(path):
+            raise FileNotFoundError(2, 'No such file or directory', path)
+        raise OSError(1, 'Operation not permitted', path)
 
 unlink = remove
 

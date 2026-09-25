@@ -1,12 +1,4 @@
 # Where a program would put a file it means to throw away.
-#
-# Every one of CPython's temporary things ends in a directory being made
-# or a file being opened. This runtime makes no directory -- os.mkdir
-# refuses -- and offers no builtin open, so none of them can be made
-# here. What is left that can be answered truthfully is where the host
-# says such things belong and what they are usually called, and those
-# two are below. The rest refuse and say which missing piece stops them,
-# rather than handing back a name that no directory stands behind.
 import os
 
 __all__ = ['NamedTemporaryFile', 'TemporaryFile', 'SpooledTemporaryFile',
@@ -35,7 +27,16 @@ def gettempdir():
 
 
 def mkdtemp(suffix=None, prefix=None, dir=None):
-    raise 'NotImplementedError: tempfile.mkdtemp needs os.mkdir, which this runtime does not carry'
+    if suffix is None:
+        suffix = ''
+    if prefix is None:
+        prefix = template
+    if dir is None:
+        dir = gettempdir()
+    made = __make_dir(dir, prefix, suffix)
+    if made is False:
+        raise FileNotFoundError(2, 'No such file or directory', dir)
+    return made
 
 
 def mkstemp(suffix=None, prefix=None, dir=None, text=False):

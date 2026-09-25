@@ -716,9 +716,53 @@ impl Value {
         None
     }
 
+    /// The one character or byte a Unicode fault's own account picks
+    /// out shows as CPython escapes it: two hex digits under 0x100,
+    /// four under 0x10000, eight beyond.
+    fn unicode_escaped(codepoint: u32) -> String {
+        if codepoint <= 0xff { format!("\\x{:02x}", codepoint) }
+        else if codepoint <= 0xffff { format!("\\u{:04x}", codepoint) }
+        else { format!("\\U{:08x}", codepoint) }
+    }
+
+    /// A Unicode codec fault's own account of itself, read from the
+    /// members it carries rather than from the row it was made with,
+    /// so that changing one afterward changes what it is shown by.
+    /// Nothing here is a language's own word: these three kinds and
+    /// their wording belong to Python alone, and are reached only
+    /// through the markers Python's own roster puts on its kinds.
+    fn unicode_fault_text(thing: &Rc<Thing>, words: Names) -> Option<String> {
+        let marker = thing.of.every_field().iter().find_map(|(k, _)| match k.as_str() {
+            "\0unicode-encode" => Some(0u8), "\0unicode-decode" => Some(1u8),
+            "\0unicode-translate" => Some(2u8), _ => None,
+        })?;
+        let holds = thing.holds.borrow();
+        let get = |name: &str| holds.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+        let as_i64 = |v: Option<Value>| match v { Some(Value::Small(n)) => Some(n), _ => None };
+        let start = as_i64(get("start"))?;
+        let end = as_i64(get("end"))?;
+        let reason = get("reason").unwrap_or(Value::Nil).render(words);
+        let object = get("object");
+        let single = end == start + 1 && start >= 0;
+        let one = if !single { None } else { match &object {
+            Some(Value::Text(s)) if marker != 1 => usize::try_from(start).ok().and_then(|i| s.chars().nth(i)).map(|c| Self::unicode_escaped(c as u32)),
+            Some(Value::Octets { cell, .. }) if marker == 1 => usize::try_from(start).ok().and_then(|i| cell.borrow().get(i).copied()).map(|b| format!("{:02x}", b)),
+            _ => None,
+        }};
+        Some(match (marker, &one) {
+            (0, Some(escaped)) => format!("'{}' codec can't encode character '{escaped}' in position {start}: {reason}", get("encoding").unwrap_or(Value::Nil).render(words)),
+            (0, None) => format!("'{}' codec can't encode characters in position {start}-{}: {reason}", get("encoding").unwrap_or(Value::Nil).render(words), end - 1),
+            (1, Some(hexed)) => format!("'{}' codec can't decode byte 0x{hexed} in position {start}: {reason}", get("encoding").unwrap_or(Value::Nil).render(words)),
+            (1, None) => format!("'{}' codec can't decode bytes in position {start}-{}: {reason}", get("encoding").unwrap_or(Value::Nil).render(words), end - 1),
+            (_, Some(escaped)) => format!("can't translate character '{escaped}' in position {start}: {reason}"),
+            (_, None) => format!("can't translate characters in position {start}-{}: {reason}", end - 1),
+        })
+    }
+
     pub fn raised_words(&self, words: Names) -> Option<String> {
         let row = self.arguments_held()?;
         let Value::Thing(thing) = self else { return None };
+        if let Some(told) = Self::unicode_fault_text(thing, words) { return Some(told); }
         // A gatherer, or a system fault with its number, was given the
         // words to show itself with when it was made.
         if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }

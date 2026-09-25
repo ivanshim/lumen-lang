@@ -26,6 +26,7 @@ EOFError = EOFError
 Exception = Exception
 ExceptionGroup = ExceptionGroup
 ImportError = ImportError
+ModuleNotFoundError = ModuleNotFoundError
 IndexError = IndexError
 KeyError = KeyError
 KeyboardInterrupt = KeyboardInterrupt
@@ -42,6 +43,9 @@ SystemExit = SystemExit
 TypeError = TypeError
 UnboundLocalError = UnboundLocalError
 UnicodeError = UnicodeError
+UnicodeEncodeError = UnicodeEncodeError
+UnicodeDecodeError = UnicodeDecodeError
+UnicodeTranslateError = UnicodeTranslateError
 ValueError = ValueError
 ZeroDivisionError = ZeroDivisionError
 
@@ -315,17 +319,227 @@ class frozendict:
         return cls(rows)
 
 
+FileNotFoundError = FileNotFoundError
+IsADirectoryError = IsADirectoryError
+
+# A file read from or written to the host's own disk. What backs it is
+# whichever whole-file primitive the kernel carries -- a read brings
+# the whole file in once, at open time; a write is kept here and goes
+# out whole, at close (or at an explicit flush) -- so nothing here
+# streams, but everything the two reference tests that need open() ask
+# of a file, this file answers.
+class _HostFile:
+    def __init__(self, name, mode, encoding=None, errors=None):
+        self.name = name
+        self.mode = mode
+        self._binary = 'b' in mode
+        self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
+        self.errors = errors if errors is not None else 'strict'
+        self.closed = False
+        self._pos = 0
+        self._dirty = False
+        # Line-at-a-time reading is what both the reference tests and
+        # the probe lean on hardest, so the whole of what is left to
+        # read is split into lines once, the first time a line is
+        # asked for, rather than this file being rescanned from the
+        # front for every `\n` -- letting a many-line file be walked
+        # in time proportional to its own length rather than its
+        # square. `read` and `seek` empty this cache, since either may
+        # move `_pos` somewhere the cache does not account for; the
+        # next line asked for after either then rebuilds it.
+        self._lines = None
+        self._lines_at = 0
+        self._lines_pos = 0
+        reading = 'r' in mode or '+' in mode and 'w' not in mode and 'a' not in mode
+        writing = 'w' in mode
+        appending = 'a' in mode
+        if not (reading or writing or appending):
+            reading = True
+        if writing:
+            if __file_exists(name) and __file_kind(name) == 2:
+                raise IsADirectoryError(21, 'Is a directory', name)
+            self._buffer = ''
+        elif appending:
+            if __file_exists(name):
+                if __file_kind(name) == 2:
+                    raise IsADirectoryError(21, 'Is a directory', name)
+                brought = __file_read(name)
+                self._buffer = brought if brought is not False else ''
+            else:
+                self._buffer = ''
+            self._pos = len(self._buffer)
+        else:
+            kind = __file_kind(name)
+            if kind == 0:
+                raise FileNotFoundError(2, 'No such file or directory', name)
+            if kind == 2:
+                raise IsADirectoryError(21, 'Is a directory', name)
+            brought = __file_read(name)
+            if brought is False:
+                raise OSError(5, 'Input/output error', name)
+            self._buffer = brought
+
+    def _open(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file.')
+
+    def readable(self):
+        return 'r' in self.mode or '+' in self.mode
+
+    def writable(self):
+        return 'w' in self.mode or 'a' in self.mode or '+' in self.mode
+
+    def _carried(self, text):
+        return text.encode('utf-8') if self._binary else text
+
+    def read(self, size=-1):
+        self._open()
+        if size is None or size < 0:
+            size = len(self._buffer) - self._pos
+        value = self._buffer[self._pos:self._pos + size]
+        self._pos += len(value)
+        self._lines = None
+        return self._carried(value)
+
+    def _ensure_lines(self):
+        if self._lines is None or self._lines_pos != self._pos:
+            self._lines = self._buffer[self._pos:].splitlines(keepends=True)
+            self._lines_at = 0
+            self._lines_pos = self._pos
+
+    def readline(self, size=-1):
+        self._open()
+        if size is not None and size >= 0:
+            start = self._pos
+            limit = min(len(self._buffer), start + size)
+            found = self._buffer.find('\n', start, limit)
+            stop = limit if found < 0 else found + 1
+            self._pos = stop
+            self._lines = None
+            return self._carried(self._buffer[start:stop])
+        self._ensure_lines()
+        if self._lines_at >= len(self._lines):
+            return self._carried('')
+        line = self._lines[self._lines_at]
+        self._lines_at += 1
+        self._pos += len(line)
+        self._lines_pos = self._pos
+        return self._carried(line)
+
+    def readlines(self, hint=-1):
+        self._open()
+        if hint is None or hint < 0:
+            self._ensure_lines()
+            remaining = self._lines[self._lines_at:]
+            self._lines_at = len(self._lines)
+            self._pos += sum(len(line) for line in remaining)
+            self._lines_pos = self._pos
+            if self._binary:
+                return [self._carried(line) for line in remaining]
+            return remaining
+        lines = []
+        total = 0
+        while True:
+            line = self.readline()
+            if line == self._carried(''):
+                return lines
+            lines.append(line)
+            total += len(line)
+            if total >= hint:
+                return lines
+
+    def __iter__(self):
+        self._open()
+        return self
+
+    def __next__(self):
+        line = self.readline()
+        if line == self._carried(''):
+            raise StopIteration
+        return line
+
+    def write(self, data):
+        self._open()
+        if not self.writable():
+            raise ValueError('File not open for writing')
+        if self._binary:
+            if not isinstance(data, bytes) and not isinstance(data, bytearray):
+                raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
+            data = bytes(data).decode('utf-8')
+        elif not isinstance(data, str):
+            raise TypeError('write() argument must be str, not ' + type(data).__name__)
+        self._buffer = self._buffer[:self._pos] + data + self._buffer[self._pos + len(data):]
+        self._pos += len(data)
+        self._dirty = True
+        self._lines = None
+        return len(data)
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
+    def flush(self):
+        self._open()
+        if self._dirty:
+            wrote = __file_write(self.name, self._buffer)
+            if wrote is False:
+                raise FileNotFoundError(2, 'No such file or directory', self.name)
+            self._dirty = False
+
+    def close(self):
+        if self.closed:
+            return
+        if self.writable():
+            self.flush()
+        self.closed = True
+
+    def __enter__(self):
+        self._open()
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.close()
+        return False
+
+    def tell(self):
+        self._open()
+        return self._pos
+
+    def seekable(self):
+        return True
+
+    def seek(self, offset, whence=0):
+        self._open()
+        if whence == 1:
+            offset += self._pos
+        elif whence == 2:
+            offset += len(self._buffer)
+        self._pos = offset
+        return self._pos
+
+    def __repr__(self):
+        return "<_io.TextIOWrapper name='" + self.name + "' mode='" + self.mode + "'>"
+
+
+def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+    if not isinstance(file, str):
+        raise TypeError("expected str, bytes or os.PathLike object, not " + type(file).__name__)
+    for letter in mode:
+        if letter not in 'rwaxb+t':
+            raise ValueError("invalid mode: '" + mode + "'")
+    return _HostFile(file, mode, encoding, errors)
+
+
 # What CPython's builtins holds and this one does not, so that a reader
 # looking for a missing name learns it is missing rather than broken.
 # There is no object behind any of these here: aiter, anext, ascii,
-# breakpoint, copyright, credits, exit, help, license, memoryview, open,
+# breakpoint, copyright, credits, exit, help, license, memoryview,
 # quit, __build_class__, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
-# IndentationError, TabError, ModuleNotFoundError, the three
-# UnicodeError kinds that carry encoding detail, and the OSError kinds
-# the operating system raises -- BlockingIOError, BrokenPipeError,
+# IndentationError, TabError, and the OSError kinds
+# the operating system raises besides FileNotFoundError and
+# IsADirectoryError -- BlockingIOError, BrokenPipeError,
 # ChildProcessError, ConnectionError and its four kinds,
-# FileExistsError, FileNotFoundError, InterruptedError,
-# IsADirectoryError, NotADirectoryError, PermissionError,
-# ProcessLookupError and TimeoutError -- along with the old spellings
-# EnvironmentError and IOError.
+# FileExistsError, InterruptedError, NotADirectoryError,
+# PermissionError, ProcessLookupError and TimeoutError -- along with
+# the old spellings EnvironmentError and IOError.

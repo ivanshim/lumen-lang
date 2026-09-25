@@ -122,7 +122,11 @@ fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
         Calc::Plus if ints => Ok(Value::from_big(&a.above + &b.above)),
         Calc::Minus if ints => Ok(Value::from_big(&a.above - &b.above)),
         Calc::Times if ints => Ok(Value::from_big(&a.above * &b.above)),
-        Calc::Plus => Ok(make_number(&a.above * &b.beneath + &b.above * &a.beneath, &a.beneath * &b.beneath, places)),
+        // A sum of two noughts under nought is a nought under nought
+        // itself, the one case addition's own sign is not simply
+        // above nought: everywhere else, even a number cancelled
+        // exactly by its own opposite, the sum stands above nought.
+        Calc::Plus => Ok(made_number(&a.above * &b.beneath + &b.above * &a.beneath, &a.beneath * &b.beneath, places, a.above.is_zero() && b.above.is_zero() && a.under && b.under)),
         Calc::Minus => Ok(make_number(&a.above * &b.beneath - &b.above * &a.beneath, &a.beneath * &b.beneath, places)),
         // Working a nought together with something under nought leaves
         // the nought under nought, which a real of a width writes apart.
