@@ -8758,8 +8758,10 @@ impl<'a> Compiler<'a> {
             if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
                 self.read(&seed);
                 self.pos = end;
-            } else { self.expr(1)?; }
-            self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
+            } else {
+                self.expr(1)?;
+                self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
+            }
             let bag = self.gensym("comprehension_source");
             self.write(&bag);
             let at = self.gensym("comprehension_place");

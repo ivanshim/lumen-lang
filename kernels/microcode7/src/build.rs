@@ -8166,13 +8166,16 @@ impl<'a> Builder<'a> {
         if !self.on_any("ext.op.comprehension.in") { return Err("Expected the word before a comprehension source".into()); }
         self.advance();
         let unavailable = targets.iter().any(Option::is_none);
+        let walks = self.table.flag("ext.stmt.yield.suspends");
         let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
             Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
-            None => self.expr(1)?,
+            None => {
+                let value = self.expr(1)?;
+                prim_call(if walks { Prim::Walked } else { Prim::Iterated }, vec![value])
+            }
         };
-        let walks = self.table.flag("ext.stmt.yield.suspends");
         let source_name = self.gather_name("gather_source");
-        let hold = self.write(&source_name, prim_call(if walks { Prim::Walked } else { Prim::Iterated }, vec![source]));
+        let hold = self.write(&source_name, source);
         let cursor = self.gather_name("gather_cursor");
         let begin = self.write(&cursor, constant(Value::Small(0)));
         let bag = self.read(&source_name);
