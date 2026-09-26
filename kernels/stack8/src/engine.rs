@@ -4519,7 +4519,8 @@ impl<'a> Engine<'a> {
             72 => true,
             // A walk answers a guess at how many members it has left,
             // where the reference keeps one for a walk of its kind.
-            78 => matches!(family, Kindred::Walk),
+            78 | 80 => matches!(family, Kindred::Walk),
+            79 | 81 => matches!(family, Kindred::Walk | Kindred::Counted),
             _ => false,
         }
     }
@@ -4587,11 +4588,14 @@ impl<'a> Engine<'a> {
     /// so the answers and the refusals are the plain forms' too.
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         let wanted = match place {
+            80 | 81 => 1,
             12 => 2,
             2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=72 => 1,
             _ => 0,
         };
         if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
+        if place == 79 || place == 81 { return self.pickle_reduction(&receiver.contents()); }
+        if place == 80 { return self.pickle_position(&receiver.contents(), &args[0]); }
         let family = Self::native_family(receiver).ok_or_else(|| self.special_fault())?;
         // A working handed a value of a kind it cannot take turns that
         // value down, leaving the other side of the pair to answer.
@@ -6380,6 +6384,14 @@ impl<'a> Engine<'a> {
                         if let Some(fled) = self.carried.take() { return Err(fled); }
                         self.data.push(result?);
                         return Ok(());
+                    }
+                    Value::ByteKind(mutable, _) => {
+                        let args = self.drop_many(argc - 1)?;
+                        let items = self.call_items(args)?;
+                        let word = self.byte_kind_word(mutable).to_string();
+                        let answer = self.builtin_call(Builtin::Bytes(u8::from(mutable)), &word, items)?;
+                        self.data.push(answer);
+                        Ok(())
                     }
                     Value::Native(b, word) => {
                         let args = self.drop_many(argc - 1)?;
@@ -14203,6 +14215,106 @@ impl Engine<'_> {
     /// kind, and, for a walk, standing at the very place this one
     /// does, so that a value already stepped some way into keeps
     /// standing there once it is written out and read back.
+    fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
+        let pack = |parts: Vec<Value>| Value::Tuple(Rc::new(parts));
+        let native = |op: Builtin| {
+            let word = self.lang.builtins.iter().find(|(_, candidate)| **candidate == op).map(|(word, _)| word.clone()).unwrap_or_default();
+            Value::Native(op, Rc::from(word))
+        };
+        let iter = native(Builtin::Iter);
+        if let Value::Counted(row) = value {
+            return Ok(pack(vec![native(Builtin::Span), pack(vec![Value::of_big(row.start.clone()), Value::of_big(row.stop.clone()), Value::of_big(row.step.clone())])]));
+        }
+        if let Value::Generator(cell) = value {
+            let held = cell.borrow();
+            if held.walked.is_none() || held.program.is_some() { return Err("TypeError: cannot pickle generator object".into()); }
+            let entries = if held.closed { Vec::new() } else { held.items.get(held.pc..).unwrap_or_default().to_vec() };
+            return Ok(pack(vec![iter, pack(vec![Value::array(entries)])]));
+        }
+        let Value::Cursor(cell) = value else { return Err("TypeError: cannot pickle this iterator".into()) };
+        let saved = cell.borrow().clone();
+        if saved.finished {
+            match &saved.source {
+                CursorSource::Living(..) => return Ok(pack(vec![iter, pack(vec![Value::array(Vec::new())])])),
+                CursorSource::Called(..) | CursorSource::Indexed(..) => return Ok(pack(vec![iter, pack(vec![pack(Vec::new())])])),
+                CursorSource::IndexedBack(..) => {
+                    let empty = if saved.walked.as_deref() == Some("list_reverseiterator") { Value::array(Vec::new()) } else { pack(Vec::new()) };
+                    return Ok(pack(vec![native(Builtin::Reversed), pack(vec![empty])]));
+                }
+                _ => {}
+            }
+        }
+        let (maker, inputs, position) = match &saved.source {
+            CursorSource::Counted(row, at) => (iter, vec![Value::Counted(row.clone())], Some(Value::of_big(at.clone()))),
+            CursorSource::Living(home, at) => (iter, vec![Value::Bond(home.clone())], Some(Value::Small(*at as i64))),
+            CursorSource::Items(items, at) => {
+                if matches!(saved.walked.as_deref(), Some("list_reverseiterator" | "reversed")) {
+                    let mut original = items.to_vec();
+                    original.reverse();
+                    return Ok(pack(vec![native(Builtin::Reversed), pack(vec![if saved.walked.as_deref() == Some("reversed") { pack(original) } else { Value::array(original) }]), Value::of_big(BigInt::from(items.len()) - BigInt::from(*at) - 1)]));
+                }
+                let source = match saved.walked.as_deref() {
+                    Some("tuple_iterator") => pack(items.to_vec()),
+                    Some("bytes_iterator" | "bytearray_iterator") => self.byte_make(items.iter().filter_map(|item| item.as_big().ok()?.to_u8()).collect(), saved.walked.as_deref() == Some("bytearray_iterator")),
+                    Some("str_iterator" | "str_ascii_iterator") => Value::text(&items.iter().map(Value::plain).collect::<String>()),
+                    _ => Value::array(items.to_vec()),
+                };
+                (iter, vec![source], Some(Value::Small(*at as i64)))
+            }
+            CursorSource::Indexed(thing, at) => (iter, vec![thing.clone()], Some(Value::of_big(at.clone()))),
+            CursorSource::IndexedBack(thing, at) => (native(Builtin::Reversed), vec![thing.clone()], Some(Value::of_big(at.clone()))),
+            CursorSource::Called(work, stop) => (iter, vec![work.clone(), stop.clone()], None),
+            CursorSource::Numbered(walk, n) => (native(Builtin::Enumerate), vec![walk.clone(), Value::of_big(n.clone())], None),
+            CursorSource::Combined(walks, work, exact) => {
+                let mut inputs = Vec::new();
+                if let Some(work) = work { inputs.push(work.clone()); }
+                inputs.extend(walks.iter().cloned());
+                (native(if work.is_some() { Builtin::Map } else { Builtin::Zip }), inputs, if *exact { Some(Value::Flag(true)) } else { None })
+            }
+            CursorSource::Selected(walk, test) => (native(Builtin::Filter), vec![test.clone(), walk.clone()], None),
+            CursorSource::Handed(thing) => (iter, vec![thing.clone()], None),
+            CursorSource::Viewed(..) => {
+                let temporary = Value::Cursor(Rc::new(RefCell::new(saved)));
+                let remaining = self.core_members(&temporary)?;
+                (iter, vec![Value::array(remaining)], None)
+            }
+        };
+        let mut parts = vec![maker, pack(inputs)];
+        if let Some(position) = position { parts.push(position); }
+        Ok(pack(parts))
+    }
+
+    fn pickle_position(&mut self, receiver: &Value, position: &Value) -> Res<Value> {
+        let Value::Cursor(cell) = receiver else { return Err("TypeError: expected iterator".into()) };
+        let mut held = cell.borrow_mut();
+        if let CursorSource::Combined(_, _, exact) = &mut held.source {
+            *exact = self.truth(position);
+            return Ok(Value::Null);
+        }
+        let index = match position.contents() {
+            v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => v.as_big()?,
+            _ => return Err("TypeError: an integer is required".into()),
+        };
+        let nonnegative = index.clone().max(BigInt::from(0));
+        let backwards = matches!(held.walked.as_deref(), Some("reversed" | "list_reverseiterator"));
+        match &mut held.source {
+            CursorSource::Counted(row, at) => *at = nonnegative.min(row.length()),
+            CursorSource::Indexed(_, at) => *at = nonnegative,
+            CursorSource::IndexedBack(_, at) => *at = index.max(BigInt::from(-1)),
+            CursorSource::Items(items, at) => {
+                *at = if backwards { (BigInt::from(items.len()) - BigInt::from(1) - index).max(BigInt::from(0)).to_usize().unwrap_or(items.len()).min(items.len()) }
+                    else { nonnegative.to_usize().unwrap_or(items.len()).min(items.len()) };
+            }
+            CursorSource::Living(home, at) => {
+                let size = match home.borrow().contents() { Value::Array(items) => items.len(), _ => 0 };
+                *at = nonnegative.to_usize().unwrap_or(size).min(size);
+            }
+            _ => return Err("TypeError: iterator has no integer state".into()),
+        }
+        held.pending = None;
+        Ok(Value::Null)
+    }
+
     fn native_reduce(&self, value: &Value) -> Value {
         if let Value::Class(c) = value {
             return Value::Tuple(Rc::new(vec![Value::text("class"), Value::text(&c.name)]));
@@ -14227,6 +14339,7 @@ impl Engine<'_> {
             ])),
             CursorSource::IndexedBack(thing, at) => Value::Tuple(Rc::new(vec![Value::text("back"), walked, thing.clone(), Value::of_big(at.clone())])),
             CursorSource::Numbered(walk, n) => Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Null, walk.clone(), Value::of_big(n.clone())])),
+            CursorSource::Handed(thing) => Value::Tuple(Rc::new(vec![Value::text("handed"), thing.clone()])),
             _ => Value::Null,
         }
     }
@@ -14240,6 +14353,12 @@ impl Engine<'_> {
         let text_at = |i: usize| -> Option<Rc<str>> { match parts.get(i) { Some(Value::Text(t)) => Some(t.clone()), _ => None } };
         let big_at = |i: usize| -> Res<BigInt> { match parts.get(i) { Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => v.as_big(), _ => Err(malformed()) } };
         match tag.as_ref() {
+            "instance" => {
+                let (Some(Value::Class(class)), Some(base)) = (parts.get(1), parts.get(2)) else { return Err(malformed()); };
+                self.made += 1;
+                let fields = vec![("\0worth".to_string(), base.clone().held(false))];
+                Ok(Value::Object(Rc::new(Instance { class: class.clone(), fields: RefCell::new(fields), mark: self.made })))
+            }
             "class" => {
                 let Some(name) = text_at(1) else { return Err(malformed()) };
                 self.lookup(&name).cloned().ok_or_else(malformed)
@@ -14438,6 +14557,11 @@ impl Engine<'_> {
             // without a further place ever being asked for.
             CursorSource::IndexedBack(thing, place) => {
                 if *place < BigInt::from(0) { return Ok(None); }
+                if let Value::Array(items) = thing.contents() {
+                    let item = place.to_usize().and_then(|at| items.get(at)).cloned();
+                    if item.is_some() { *place -= 1; }
+                    return Ok(item);
+                }
                 match self.special_call(thing, 11, vec![Value::of_big(place.clone())]) {
                     Ok(Some(item)) => { *place -= 1; Ok(Some(item)) }
                     Ok(None) => Ok(None),
@@ -14583,6 +14707,7 @@ impl Engine<'_> {
 
     fn core_apply(&mut self, work: &Value, mut args: Vec<Value>) -> Res<Value> {
         match work {
+            Value::ByteKind(mutable, _) => self.byte_call(u8::from(*mutable), &args),
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
             Value::Routine(p) => {
@@ -14676,7 +14801,8 @@ impl Engine<'_> {
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
         if !matches!(b, Builtin::Identity | Builtin::Reversed) {
-            for value in &mut args {
+            for (position, value) in args.iter_mut().enumerate() {
+                if b == Builtin::SetAttr && position == 2 { continue; }
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
@@ -14751,7 +14877,7 @@ impl Engine<'_> {
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
-            Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
+            Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::ByteKind(..) | Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
             Builtin::Repr => {
                 arity(1, 1)?;
                 // A cursor is written by its kind and its identity, and
@@ -14782,7 +14908,16 @@ impl Engine<'_> {
                 Value::text(&crate::strings::ascii_escaped(&written.plain()))
             }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &Self::unhashable_named(&args[0])))?) }
-            Builtin::ReduceNative => { arity(1, 1)?; self.native_reduce(&args[0]) }
+            Builtin::ReduceNative => {
+                arity(1, 2)?;
+                if args.len() == 2 {
+                    if !self.truth(&args[1]) { return Ok(Self::worth_of(&args[0]).unwrap_or(Value::Null)); }
+                    match &args[0] {
+                        Value::Object(instance) => Value::Map(Rc::new(instance.fields.borrow().iter().filter(|(key, _)| !key.starts_with('\0')).map(|(key, item)| (Value::text(key), item.clone())).collect())),
+                        _ => Value::Null,
+                    }
+                } else { self.native_reduce(&args[0]) }
+            }
             Builtin::RebuildNative => { arity(1, 1)?; self.native_rebuild(&args[0])? }
             Builtin::Identity => {
                 arity(1, 1)?;
@@ -14803,6 +14938,9 @@ impl Engine<'_> {
                     Value::Text(a) => a.as_ptr() as usize as u64,
                     Value::Object(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Class(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Bytes(cell, ..) => Rc::as_ptr(cell) as usize as u64,
+                    Value::Slice(bounds) => Rc::as_ptr(bounds) as usize as u64,
+                    Value::Counted(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Generator(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
@@ -14949,6 +15087,9 @@ impl Engine<'_> {
                     let last = &row.start + (&length - 1) * &row.step;
                     let backwards = crate::value::Counted { start: last, stop: &row.start - &row.step, step: -&row.step, name: row.name.clone() };
                     return self.core_iterator(&Value::Counted(Rc::new(backwards)));
+                }
+                if let Value::Array(items) = &source {
+                    return Ok(Self::core_cursor_walked(CursorSource::IndexedBack(args[0].clone(), BigInt::from(items.len()) - 1), Some(Rc::from("list_reverseiterator"))));
                 }
                 let mut items = self.core_members(&source)?; items.reverse();
                 let walk = Self::core_cursor(CursorSource::Items(Rc::new(items), 0));
