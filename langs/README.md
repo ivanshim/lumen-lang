@@ -4330,6 +4330,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.unwritable` | - | - | `AttributeError: '` `' object has no attribute '` `' and no __dict__ for setting new attributes` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__ceil__` | - | - | `__ceil__` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__floor__` | - | - | `__floor__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__index__` | - | - | `__index__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__truediv__` | - | - | `int.__truediv__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |

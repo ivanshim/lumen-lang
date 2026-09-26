@@ -3,6 +3,7 @@
 
 use crate::data::{Names, Value};
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
 use std::rc::Rc;
 
@@ -32,7 +33,7 @@ const KIND_MEMBERS: &[(&str, &str)] = &[
     ("range", "index count"),
     ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
     ("bool", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
-    ("float", "real imag conjugate as_integer_ratio is_integer hex"),
+    ("float", "real imag conjugate as_integer_ratio is_integer hex __floor__ __ceil__"),
     ("complex", "real imag conjugate"),
 ];
 
@@ -134,6 +135,18 @@ impl Request<'_> {
         if self.operation=="imag"{return Ok(if real{crate::data::worth_of_binary(0.0,crate::math::DEFAULT_PLACES).keeping_point(true)}else{Value::Small(0)});}
         if self.operation=="bit_length" && !real{return Ok(Value::Small(value.as_big()?.bits() as i64));}
         if self.operation=="is_integer"{return Ok(Value::Flag(match &value{Value::Frac(r)=>!r.past_numbers()&&(&r.above%&r.beneath).is_zero(),_=>true}));}
+        // The nearer whole number one side or the other: an infinity
+        // owns no such neighbour, and a nan is not among the numbers at
+        // all, so each fails as turning either into a plain int fails.
+        if (self.operation=="__floor__"||self.operation=="__ceil__") && real {
+            let Value::Frac(r) = &value else { unreachable!() };
+            if r.past_numbers() {
+                return Err(if r.above.is_zero() { "ValueError: cannot convert float NaN to integer".to_string() }
+                    else { "OverflowError: cannot convert float infinity to integer".to_string() });
+            }
+            let whole = if self.operation=="__floor__" { r.above.div_floor(&r.beneath) } else { -((-&r.above).div_floor(&r.beneath)) };
+            return Ok(Value::from_big(whole));
+        }
         if self.operation=="as_integer_ratio"{
             let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(_)=>return Err(self.fail("unready")),other=>(other.as_big()?,BigInt::from(1))};
             let mut divisor=pair.0.abs();let mut remainder=pair.1.clone();
