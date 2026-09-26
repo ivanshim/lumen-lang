@@ -11006,6 +11006,9 @@ impl<'a> Machine<'a> {
             }
             Prim::CopyWorth => {
                 n(2)?;
+                if let Value::Generator(_) = &v[0] {
+                    return Err("TypeError: cannot pickle 'generator' object".to_string());
+                }
                 let deep = matches!(v[1], Value::Flag(true));
                 let mut known = Vec::new();
                 self.copy_worth(&v[0], deep, &mut known)

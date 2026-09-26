@@ -12547,6 +12547,9 @@ impl<'a> Engine<'a> {
             }
             Builtin::CopyValue => {
                 arity(2)?;
+                if matches!(args[0], Value::Generator(_)) {
+                    return Err("TypeError: cannot pickle 'generator' object".into());
+                }
                 duplicate_value(&args[0], matches!(args[1], Value::Flag(true)), &mut HashMap::new(), &mut self.made)
             }
             Builtin::CallOutcome => {
