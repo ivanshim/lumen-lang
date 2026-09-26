@@ -8810,6 +8810,22 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if !matches!(subject, Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Set(_)) {
+            return self.object_words_inner(subject, quoted);
+        }
+        let ceiling = self.table.count("ext.system.recursion.limit");
+        if ceiling.is_some_and(|limit| self.standing >= limit) {
+            if let Some(told) = self.table.single("ext.system.recursion.exceeded") {
+                return Err(format!("\0{told}"));
+            }
+        }
+        self.standing += 1;
+        let text = self.object_words_inner(subject, quoted);
+        self.standing -= 1;
+        text
+    }
+
+    fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
         let celled = match subject {
             Value::Mutable(place, represented) => Some((place.clone(), *represented)),
             Value::Shared(place) => Some((place.clone(), false)),
@@ -9673,8 +9689,13 @@ impl<'a> Machine<'a> {
         for (key, value) in one.iter() {
             let (found, _) = self.map_locate(other, Some(other), key)?;
             match found {
-                Some(index) if self.equal_contents(value, &other[index].1) => {}
-                _ => return Ok(false),
+                None => return Ok(false),
+                Some(index) => {
+                    let rhs = &other[index].1;
+                    if value.one_place(rhs) { continue; }
+                    let verdict = self.prim(Prim::Eq, "", &[value.clone(), rhs.clone()])?;
+                    if !self.object_truth(&verdict)? { return Ok(false); }
+                }
             }
         }
         Ok(true)
@@ -15978,6 +15999,12 @@ impl Machine<'_> {
         if keywords.is_empty() {
             if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }
             if op == Prim::Belongs && matches!(input.get(1), Some(Value::OctetKind { .. })) { return self.octet_routine(16, &input); }
+            if op == Prim::Quoted && input.len() == 1 {
+                if let Value::Dict(_) = &input[0] {
+                    let words = self.object_words(&input[0], true)?;
+                    return Ok(Value::text(&words));
+                }
+            }
             if op == Prim::Quoted && matches!(input.first(), Some(Value::Text(_))) { return crate::text::apply(self.table, crate::text::Work::REPR, name, &input, self.wording()); }
             if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };

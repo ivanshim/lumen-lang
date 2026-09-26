@@ -4015,9 +4015,11 @@ impl<'a> Engine<'a> {
         // map with a Thing among its keys pays for the walk.
         for (key, value) in one.iter() {
             let (found, _) = self.map_locate(other, Some(other), key)?;
-            match found {
-                Some(index) if self.mapping_equality(value, &other[index].1) => {}
-                _ => return Ok(false),
+            let Some(index) = found else { return Ok(false) };
+            let compared = &other[index].1;
+            if !value.same_place(compared) {
+                let answer = self.special_dyad(&Action::Eq, value, compared)?;
+                if !self.special_truth(&answer)? { return Ok(false); }
             }
         }
         Ok(true)
@@ -4649,6 +4651,19 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        let container = matches!(value, Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Set(_));
+        if container {
+            if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
+            }
+            self.reaching += 1;
+        }
+        let result = self.special_text_inner(value, representation);
+        if container { self.reaching -= 1; }
+        result
+    }
+
+    fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
         // Where the definition asks it, a collection reads the same
         // whether or not a representation was asked for: the members
         // inside it are always written as representations, so that text
@@ -14375,6 +14390,9 @@ impl Engine<'_> {
         if named.is_empty() {
             if b == Builtin::Hash && matches!(args.first(), Some(Value::Bytes(..))) { return self.byte_call(17, &args); }
             if b == Builtin::InstanceOf && matches!(args.get(1), Some(Value::ByteKind(..))) { return self.byte_call(16, &args); }
+            if b == Builtin::Repr && args.len() == 1 && matches!(args[0], Value::Map(_)) {
+                return self.special_text(&args[0], true).map(|text| Value::text(&text));
+            }
             if b == Builtin::Repr && matches!(args.first(), Some(Value::Text(_))) { return crate::strings::run(crate::strings::TextOp::Repr, name, &args, self.lang, &self.wording()); }
             if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
