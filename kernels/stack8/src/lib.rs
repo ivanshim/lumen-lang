@@ -244,6 +244,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     };
 
     let mut machine = engine::Engine::new(lang, registry);
+    machine.library_root = request.iter()
+        .find(|(from, key, ..)| from == "SELF" && key == "library_root")
+        .map(|(.., value, _)| value.clone());
     if lang.import_values {
         machine.module_sources = request.iter().filter(|(kind, ..)| kind == "MODULE").map(|(_, name, source, _)| (name.clone(), source.clone())).collect();
     }

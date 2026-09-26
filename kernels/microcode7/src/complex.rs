@@ -45,82 +45,111 @@ pub fn complaint(t: &Table, ending: &str) -> String {
     t.single(&format!("ext.builtin.complex.{ending}")).unwrap_or_default().to_owned()
 }
 
-pub fn floor(t: &Table, left: &Value, right: &Value) -> String {
-    let bits = t.strings("ext.builtin.complex.floor");
-    [bits[0].as_str(), &left.kind_word(), bits[1].as_str(), &right.kind_word(), bits[2].as_str()].concat()
+pub fn floor(t: &Table, left: &Value, right: &Value, symbol: &str) -> String {
+    let pieces = t.strings("ext.stmt.class.binary.amiss");
+    [pieces[0].as_str(), symbol, pieces[1].as_str(), &left.kind_word(), pieces[2].as_str(), &right.kind_word(), pieces[3].as_str()].concat()
 }
 
-fn quotient(top: (f64,f64), bottom: (f64,f64)) -> (f64,f64) {
+fn boxed(number: f64) -> f64 {
+    let size: f64 = if number.is_infinite() { 1.0 } else { 0.0 };
+    size.copysign(number)
+}
+
+fn quotient(top: (f64,f64), bottom: (f64,f64), scalar: bool) -> (f64,f64) {
     let (r,i) = bottom;
-    if i.abs() > r.abs() {
-        let scale = r/i;
-        let divisor = i + r*scale;
-        ((top.0*scale+top.1)/divisor,(top.1*scale-top.0)/divisor)
-    } else {
+    let computed;
+    if r.abs() >= i.abs() {
         let scale = i/r;
         let divisor = r + i*scale;
-        ((top.0+top.1*scale)/divisor,(top.1-top.0*scale)/divisor)
+        computed = if scalar { (top.0/divisor, -top.0*scale/divisor) }
+            else { ((top.0+top.1*scale)/divisor,(top.1-top.0*scale)/divisor) };
+    } else if i.abs() >= r.abs() {
+        let scale = r/i;
+        let divisor = i + r*scale;
+        computed = if scalar { (top.0*scale/divisor, -top.0/divisor) }
+            else { ((top.0*scale+top.1)/divisor,(top.1*scale-top.0)/divisor) };
+    } else { computed = (f64::NAN,f64::NAN); }
+    if !(computed.0.is_nan() && computed.1.is_nan()) { return computed; }
+    let (a,b) = top;
+    match (scalar, a.is_infinite() || b.is_infinite(), r.is_finite() && i.is_finite()) {
+        (false,true,true) => (f64::INFINITY*(boxed(a)*r+boxed(b)*i), f64::INFINITY*(boxed(b)*r-boxed(a)*i)),
+        _ if a.is_finite() && b.is_finite() && (r.is_infinite() || i.is_infinite()) => {
+            if scalar { (0.0*(a*boxed(r)), 0.0*(-a*boxed(i))) }
+            else { (0.0*(a*boxed(r)+b*boxed(i)), 0.0*(b*boxed(r)-a*boxed(i))) }
+        }
+        _ => computed,
     }
 }
 
 fn product(x: (f64,f64), y: (f64,f64)) -> (f64,f64) {
-    (x.0*y.0-x.1*y.1, x.0*y.1+x.1*y.0)
+    let terms = [x.0*y.0, x.1*y.1, x.0*y.1, x.1*y.0];
+    let answer = (terms[0]-terms[1], terms[2]+terms[3]);
+    if answer.0.is_nan() && answer.1.is_nan() {
+        let mut values = [x.0,x.1,y.0,y.1];
+        let mut redo = false;
+        for offset in [0,2] {
+            if values[offset].is_infinite() || values[offset+1].is_infinite() {
+                values[offset] = boxed(values[offset]);
+                values[offset+1] = boxed(values[offset+1]);
+                redo = true;
+            }
+        }
+        redo |= terms.iter().any(|term| term.is_infinite());
+        if redo {
+            for v in &mut values { if v.is_nan() { *v = 0.0_f64.copysign(*v); } }
+            let [a,b,c,d] = values;
+            return (f64::INFINITY*(a*c-b*d),f64::INFINITY*(a*d+b*c));
+        }
+    }
+    answer
 }
 
 pub fn reckon(t: &Table, op: Prim, values: &[Value]) -> Result<Value,String> {
     let first = &values[0];
     if matches!(op,Prim::Positive | Prim::NumberAlone) { return Ok(first.clone()); }
     if op == Prim::Negate {
-        let (r,i) = coordinates(first).ok_or_else(|| complaint(t,"unready"))?;
+        let (r,i) = coordinates(first).ok_or_else(|| number_error(t,first))?;
         return Ok(pair(t, -r,-i));
     }
     let second = values.get(1).ok_or_else(|| complaint(t,"unready"))?;
-    if matches!(op,Prim::IntDiv | Prim::Mod) { return Err(floor(t,first,second)); }
+    if matches!(op,Prim::IntDiv | Prim::Mod) { return Err(floor(t,first,second, match op { Prim::Mod => "%", _ => "//" })); }
     if matches!(op,Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
         let symbol = match op { Prim::Ge => ">=", Prim::Gt => ">", Prim::Le => "<=", _ => "<" };
         let words = t.strings("ext.builtin.complex.order");
         return Err([words[0].as_str(),symbol,words[1].as_str(),&first.kind_word(),words[2].as_str(),&second.kind_word(),words[3].as_str()].concat());
     }
-    let x = coordinates(first).ok_or_else(|| complaint(t,"unready"))?;
-    let y = coordinates(second).ok_or_else(|| complaint(t,"unready"))?;
+    let x = coordinates(first).ok_or_else(|| number_error(t,first))?;
+    let y = coordinates(second).ok_or_else(|| number_error(t,second))?;
     let lhs_complex = matches!(first, Value::Complex(_));
     let rhs_complex = matches!(second, Value::Complex(_));
     let finite = x.0.is_finite() && x.1.is_finite() && y.0.is_finite() && y.1.is_finite();
-    if !finite {
-        let owed = match op {
-            Prim::Times => lhs_complex && rhs_complex,
-            Prim::Over | Prim::OverReal => rhs_complex,
-            Prim::Power => y.1 != 0.0 || y.0 != 0.0 && y.0 != 1.0,
-            _ => false,
-        };
-        if owed { return Err(complaint(t,"unready")); }
-    }
     let result = match op {
         Prim::Plus => (x.0+y.0, if !rhs_complex { x.1 } else if !lhs_complex { y.1 } else { x.1+y.1 }),
         Prim::Minus => (x.0-y.0, if !rhs_complex { x.1 } else if !lhs_complex { -y.1 } else { x.1-y.1 }),
         Prim::Times => if !rhs_complex { (x.0*y.0,x.1*y.0) } else if !lhs_complex { (x.0*y.0,x.0*y.1) } else { product(x,y) },
         Prim::Over | Prim::OverReal => {
             if y == (0.0,0.0) { return Err(complaint(t,"zero")); }
-            if rhs_complex { quotient(x,y) } else { (x.0/y.0,x.1/y.0) }
+            if rhs_complex { quotient(x,y,!lhs_complex) } else { (x.0/y.0,x.1/y.0) }
         }
         Prim::Power => {
             let exponent = y.0;
             if y == (0.0,0.0) { (1.0,0.0) }
             else if y == (1.0,0.0) { x }
-            else if x == (0.0,0.0) {
-                if exponent < 0.0 || y.1 != 0.0 { return Err(complaint(t,"power.zero")); }
-                (0.0,0.0)
-            } else if y.1 == 0.0 && exponent.abs() <= 100.0 && exponent == exponent.trunc() {
-                let mut answer = (1.0,0.0);
+            else if y.1 == 0.0 && exponent.abs() <= 100.0 && exponent == exponent.trunc() {
+                if x == (0.0,0.0) && exponent < 0.0 { return Err(complaint(t,"power.zero")); }
                 let mut factor = x;
                 let mut count = exponent.abs() as u64;
-                loop {
-                    if count % 2 == 1 { answer = product(answer,factor); }
+                while count % 2 == 0 { factor = product(factor,factor); count /= 2; }
+                let mut answer = factor;
+                while count > 1 {
                     count /= 2;
-                    if count == 0 { break; }
                     factor = product(factor,factor);
+                    if count % 2 == 1 { answer = product(answer,factor); }
                 }
-                if exponent.is_sign_negative() { quotient((1.0,0.0),answer) } else { answer }
+                if exponent.is_sign_negative() { quotient((1.0,0.0),answer,true) } else { answer }
+            } else if x == (0.0,0.0) {
+                if exponent < 0.0 || y.1 != 0.0 { return Err(complaint(t,"power.zero")); }
+                (0.0,0.0)
             } else {
                 let distance = x.0.hypot(x.1);
                 let bearing = x.1.atan2(x.0);
@@ -134,10 +163,17 @@ pub fn reckon(t: &Table, op: Prim, values: &[Value]) -> Result<Value,String> {
         }
         _ => return Err(complaint(t,"unready")),
     };
-    if finite && op == Prim::Power && !(result.0.is_finite() && result.1.is_finite()) {
-        return Err(complaint(t,"unready"));
+    if finite && op == Prim::Power && (result.0.is_infinite() || result.1.is_infinite()) {
+        return Err(complaint(t,"power.overflow"));
     }
     Ok(pair(t, result.0,result.1))
+}
+
+fn number_error(t: &Table, v: &Value) -> String {
+    match v {
+        Value::Huge(_) => complaint(t,"integer.overflow"),
+        _ => t.single("ext.system.fault.operands").unwrap_or_default().to_owned(),
+    }
 }
 
 fn decimal(source: &str) -> Option<f64> {
@@ -207,7 +243,7 @@ pub fn decimal_value(number: f64) -> Value {
 /// Keep the kind which the definition itself gave the complaint.
 pub fn already_named(table: &Table, words: &str) -> bool {
     if !table.has_any("ext.builtin.complex") { return false; }
-    for ending in ["invalid", "arguments", "integer", "power.zero", "zero", "unready"] {
+    for ending in ["invalid", "arguments", "integer", "integer.overflow", "power.zero", "power.overflow", "power.modulo", "zero", "unready"] {
         let expected = complaint(table, ending);
         if !expected.is_empty() && words == expected { return true; }
     }
