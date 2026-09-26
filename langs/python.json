@@ -3243,6 +3243,10 @@
   "ext.system.names.module": [
     "builtins"
   ],
+  "ext.system.syntax_warnings": [
+    "warnings",
+    "warn_explicit"
+  ],
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],

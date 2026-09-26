@@ -74,6 +74,10 @@ pub struct Registry {
     /// about what it does. They are found while reading and said before
     /// the run, since that is when the reference says them.
     pub said_while_reading: Vec<(Complaint, String, u32)>,
+    /// The reference's warnings about how a statement is written, found
+    /// while reading, each with the row and column it stands at, for the
+    /// caller that compiled the text to say through the warnings module.
+    pub warnings: Vec<(String, usize, usize)>,
     /// Where each bag of members a class may take in begins, by name:
     /// the token just past the mark that opens its body. Its members are
     /// read again wherever a class takes them in.
@@ -1600,8 +1604,210 @@ impl<'a> Compiler<'a> {
 
     fn stmt(&mut self) -> Res<()> {
         let began = self.pos;
+        self.note_syntax_warnings(began);
         self.stmt_read()?;
         self.stmt_closed(began)
+    }
+
+    /// Where the statement beginning at `began` ends: its line end, or
+    /// the block that opens or closes after it, outside every bracket.
+    fn stmt_reach(&self, began: usize) -> usize {
+        let mut end = began;
+        let mut depth = 0usize;
+        while end < self.tokens.len() {
+            let token = &self.tokens[end];
+            if depth == 0 && matches!(token.shape, Shape::LineEnd | Shape::Finish | Shape::Open | Shape::Close) { break; }
+            if token.shape == Shape::Sign {
+                if ["(", "[", "{"].contains(&token.lexeme.as_str()) { depth += 1; }
+                if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth = depth.saturating_sub(1); }
+            }
+            end += 1;
+        }
+        end
+    }
+
+    /// The bracket closing the one at `open`, within `end`.
+    fn bracket_close(&self, open: usize, end: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        for at in open..end {
+            let token = &self.tokens[at];
+            if token.shape != Shape::Sign { continue; }
+            if ["(", "[", "{"].contains(&token.lexeme.as_str()) { depth += 1; }
+            if [")", "]", "}"].contains(&token.lexeme.as_str()) {
+                depth -= 1;
+                if depth == 0 { return Some(at); }
+            }
+        }
+        None
+    }
+
+    /// The bracket opening the one closed at `close`, not before `from`.
+    fn bracket_open(&self, close: usize, from: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut at = close;
+        loop {
+            let token = &self.tokens[at];
+            if token.shape == Shape::Sign {
+                if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth += 1; }
+                if ["(", "[", "{"].contains(&token.lexeme.as_str()) {
+                    depth -= 1;
+                    if depth == 0 { return Some(at); }
+                }
+            }
+            if at == from { return None; }
+            at -= 1;
+        }
+    }
+
+    /// Whether a sign standing at depth nought between the brackets is
+    /// among those given (a comma makes a tuple, a colon a dictionary).
+    fn bracket_holds(&self, open: usize, close: usize, signs: &[&str]) -> bool {
+        let mut depth = 0usize;
+        for at in open + 1..close {
+            let token = &self.tokens[at];
+            if token.shape != Shape::Sign { continue; }
+            if ["(", "[", "{"].contains(&token.lexeme.as_str()) { depth += 1; }
+            else if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth = depth.saturating_sub(1); }
+            else if depth == 0 && signs.contains(&token.lexeme.as_str()) { return true; }
+        }
+        false
+    }
+
+    /// The reference's name for the kind of a literal that begins at
+    /// `at`, and the token just past it: a number, a string, bytes, or
+    /// a display of a tuple, list, dictionary or set. Nothing for
+    /// anything else, a parenthesised expression among them.
+    fn literal_kind(&self, at: usize, end: usize) -> Option<(&'static str, usize)> {
+        let token = &self.tokens[at];
+        match token.shape {
+            Shape::Numeral => {
+                // Numbers joined by arithmetic signs are folded into one
+                // by the reference before it looks, so they read as one
+                // here: a real among them, or a division, makes a real.
+                let mut kind = Self::number_kind(&token.lexeme);
+                let mut past = at + 1;
+                while past + 1 < end && self.arithmetic_sign(&self.tokens[past]) && self.tokens[past].lexeme != "."
+                    && self.tokens[past + 1].shape == Shape::Numeral {
+                    let joined = Self::number_kind(&self.tokens[past + 1].lexeme);
+                    kind = match (kind, joined, self.tokens[past].lexeme.as_str()) {
+                        ("complex", _, _) | (_, "complex", _) => "complex",
+                        ("float", _, _) | (_, "float", _) | (_, _, "/") => "float",
+                        _ => "int",
+                    };
+                    past += 2;
+                }
+                Some((kind, past))
+            }
+            Shape::Quote => {
+                let mut past = at + 1;
+                while past < end && self.tokens[past].shape == Shape::Quote { past += 1; }
+                Some(("str", past))
+            }
+            Shape::Bytes => Some(("bytes", at + 1)),
+            Shape::Sign if ["(", "[", "{"].contains(&token.lexeme.as_str()) => {
+                let close = self.bracket_close(at, end)?;
+                let kind = match token.lexeme.as_str() {
+                    "[" => "list",
+                    "{" => if close == at + 1 || self.bracket_holds(at, close, &[":"]) { "dict" } else { "set" },
+                    _ if self.bracket_holds(at, close, &[","]) => "tuple",
+                    // One literal in parentheses is that literal.
+                    _ if close == at + 2 => self.literal_kind(at + 1, close)?.0,
+                    _ => return None,
+                };
+                Some((kind, close + 1))
+            }
+            _ => None,
+        }
+    }
+
+    /// The reference's name for the kind of a number as it is spelled.
+    fn number_kind(lexeme: &str) -> &'static str {
+        let text = lexeme.to_ascii_lowercase();
+        let based = text.starts_with("0x") || text.starts_with("0o") || text.starts_with("0b");
+        if text.ends_with('j') { "complex" } else if !based && (text.contains('.') || text.contains('e')) { "float" } else { "int" }
+    }
+
+    /// The kind of the literal that ends just before `past`, if the
+    /// operand ending there is one and not a call, a subscript or a
+    /// larger expression a literal merely ends.
+    fn literal_kind_before(&self, past: usize, began: usize) -> Option<&'static str> {
+        if past == began { return None; }
+        let last = past - 1;
+        let token = &self.tokens[last];
+        let start = if token.shape == Shape::Sign && [")", "]", "}"].contains(&token.lexeme.as_str()) {
+            let open = self.bracket_open(last, began)?;
+            // A name or a bracket before the opening one makes a call or
+            // a subscript of it, not a display.
+            if open > began {
+                let before = &self.tokens[open - 1];
+                if before.shape == Shape::Instr && !self.lang.keywords.contains(&before.lexeme) { return None; }
+                if before.shape == Shape::Sign && [")", "]", "}"].contains(&before.lexeme.as_str()) { return None; }
+            }
+            open
+        } else {
+            let mut start = last;
+            while start > began && token.shape == Shape::Quote && self.tokens[start - 1].shape == Shape::Quote { start -= 1; }
+            // A number reached through arithmetic signs from other numbers
+            // is one folded number, back to the first of them.
+            while token.shape == Shape::Numeral && start > began + 1 && self.arithmetic_sign(&self.tokens[start - 1]) && self.tokens[start - 1].lexeme != "."
+                && self.tokens[start - 2].shape == Shape::Numeral { start -= 2; }
+            start
+        };
+        let (kind, ends) = self.literal_kind(start, past)?;
+        if ends != past { return None; }
+        if start > began && self.arithmetic_sign(&self.tokens[start - 1]) { return None; }
+        Some(kind)
+    }
+
+    /// Whether the token is a sign that binds a literal into a larger
+    /// expression, so that the literal is no operand of its own.
+    fn arithmetic_sign(&self, token: &Token) -> bool {
+        token.shape == Shape::Sign && ["+", "-", "*", "/", "//", "%", "**", "@", "&", "|", "^", "<<", ">>", "."].contains(&token.lexeme.as_str())
+    }
+
+    /// The reference's warnings about how the statement beginning at
+    /// `began` is written, noted for the caller that compiled the text:
+    /// an assertion of a parenthesised tuple, an identity test against
+    /// a literal, and a call made upon a literal. Each is noted once.
+    fn note_syntax_warnings(&mut self, began: usize) {
+        let lang = self.lang;
+        if lang.syntax_members.is_empty() || lang.syntax_warning_words.is_empty() { return; }
+        let end = self.stmt_reach(began);
+        let mut found: Vec<(String, usize, usize)> = Vec::new();
+        let head = &self.tokens[began];
+        if head.shape == Shape::Instr && Lang::spells(&lang.assert_words, &head.lexeme) && began + 1 < end && self.tokens[began + 1].is_lexeme(Shape::Sign, "(") {
+            if let Some(close) = self.bracket_close(began + 1, end) {
+                let after = self.tokens.get(close + 1);
+                let ends_there = close + 1 >= end || after.map_or(true, |t| t.shape == Shape::Sign && (t.lexeme == "," || lang.ends_stmt(&t.lexeme)));
+                if ends_there && self.bracket_holds(began + 1, close, &[","]) {
+                    let at = &self.tokens[began + 1];
+                    found.push(("assertion is always true, perhaps remove parentheses?".to_string(), at.row, at.column));
+                }
+            }
+        }
+        for at in began..end {
+            let token = &self.tokens[at];
+            if token.shape == Shape::Instr && lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, Action::Same)) {
+                let negated = at + 1 < end && self.tokens[at + 1].shape == Shape::Instr && Lang::spells(&lang.identity_not, &self.tokens[at + 1].lexeme);
+                let mut right = at + 1 + usize::from(negated);
+                // A sign before a number is folded into it by the reference.
+                if right < end && self.tokens[right].shape == Shape::Sign && ["-", "+"].contains(&self.tokens[right].lexeme.as_str()) && right + 1 < end && self.tokens[right + 1].shape == Shape::Numeral { right += 1; }
+                let on_right = self.literal_kind(right, end).filter(|(_, past)| *past >= end || !self.arithmetic_sign(&self.tokens[*past])).map(|(kind, _)| kind);
+                let kind = on_right.or_else(|| self.literal_kind_before(at, began));
+                if let Some(kind) = kind {
+                    let (word, meant) = if negated { ("is not", "!=") } else { ("is", "==") };
+                    found.push((format!("\"{word}\" with '{kind}' literal. Did you mean \"{meant}\"?"), token.row, token.column));
+                }
+            }
+            if token.is_lexeme(Shape::Sign, "(") && at > began {
+                if let Some(kind) = self.literal_kind_before(at, began) {
+                    found.push((format!("'{kind}' object is not callable; perhaps you missed a comma?"), token.row, token.column));
+                }
+            }
+        }
+        for warning in found {
+            if !self.registry.warnings.contains(&warning) { self.registry.warnings.push(warning); }
+        }
     }
 
     /// Where a statement ends, a language of line-ended statements

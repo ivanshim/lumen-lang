@@ -15965,11 +15965,41 @@ impl<'a> Machine<'a> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        self.text_built(&source, &tokens, &[], &file, mode, &[])?;
+        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[])?;
+        for (message, row, column) in &built.warnings {
+            self.syntax_warning(mode, message, &file, *row, *column, &source)?;
+        }
         let kind = self.code_blueprint();
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64))];
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing { of: kind, holds: RefCell::new(holds), turn: self.made })))
+    }
+
+    /// A warning the reading noted about a compiled text, told through
+    /// the reference's warnings module so a filter the program set
+    /// holds; one making it an error makes it the syntax fault the
+    /// reference raises, placed at the line the reading noted.
+    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: u32, column: usize, source: &str) -> Result<(), String> {
+        let words = self.table.strings("ext.system.syntax_warnings");
+        let (Some(module_name), Some(teller_name)) = (words.first().cloned(), words.get(1).cloned()) else { return Ok(()) };
+        let Some(kind_name) = self.table.strings("ext.builtin.exceptions").get(27).cloned() else { return Ok(()) };
+        let Some(category) = self.fault_kinds.get(&kind_name).cloned() else { return Ok(()) };
+        let module = self.load_namespace(&module_name)?;
+        // The module keeps its names in cells; the function is the cell's content.
+        let teller = match self.read_class_member(module, &teller_name, true) {
+            Ok(teller) => teller.settled(),
+            Err(Escape::Error(told)) => return Err(told),
+            Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+        };
+        let handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
+        match self.apply_class_member(teller, handed) {
+            Ok(_) => Ok(()),
+            Err(Escape::Thrown(Value::Thing(raised))) if raised.of.goes_by(&kind_name, false) => {
+                Err(self.text_unreadable_at(mode, format!("SyntaxError: {message}"), file, row, column, None, source))
+            }
+            Err(Escape::Error(told)) => Err(told),
+            Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+        }
     }
 
     /// Text or a code value run: as one expression where it is to be

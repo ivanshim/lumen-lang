@@ -137,6 +137,10 @@ pub struct Builder<'a> {
     asynchronous: bool,
     /// The values a case's pattern works out ahead of the subject.
     pattern_kinds: Vec<Form>,
+    /// What the reference warns of in how a statement is written, found
+    /// while reading, with the row and column of each, for whoever
+    /// compiled the text to say through the warnings module.
+    warnings: Vec<(String, u32, usize)>,
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
@@ -232,6 +236,9 @@ pub struct Builder<'a> {
 
 pub struct Built {
     pub program: Rc<Routine>,
+    /// The reference's warnings about how the text is written, with the
+    /// row and column of each.
+    pub warnings: Vec<(String, u32, usize)>,
     pub globals: Vec<String>,
     /// The names the outermost statements declared global, which text
     /// read into two dictionaries writes to the outer one.
@@ -430,7 +437,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { declarations: Vec::new(), asynchronous: false, pattern_kinds: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { declarations: Vec::new(), asynchronous: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -542,7 +549,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         None => top.idents.clone(),
     };
     let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
-    Ok(Built { program: Rc::new(program), globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program })
+    Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program })
 }
 
 /// Which parameters of each program are written with the reference sign.
@@ -1720,9 +1727,213 @@ impl<'a> Builder<'a> {
 
     fn stmt(&mut self) -> Res<Form> {
         let opened = self.pos;
+        self.warnings_in_statement(opened);
         let made = self.stmt_of_line()?;
         self.past_stmt(opened)?;
         Ok(made)
+    }
+
+    /// The token past the statement opened at `opened`: its line end,
+    /// or the edge of a block, met outside every bracket.
+    fn statement_limit(&self, opened: usize) -> usize {
+        let mut limit = opened;
+        let mut nesting = 0usize;
+        while let Some(token) = self.tokens.get(limit) {
+            if nesting == 0 && matches!(token.shape, Shape::LineEnd | Shape::Finish | Shape::Open | Shape::Close) { break; }
+            if token.shape == Shape::Sign {
+                match token.lexeme.as_str() {
+                    "(" | "[" | "{" => nesting += 1,
+                    ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            limit += 1;
+        }
+        limit
+    }
+
+    /// The closing bracket paired with the one opened at `at`, before `limit`.
+    fn pair_close(&self, at: usize, limit: usize) -> Option<usize> {
+        let mut nesting = 0usize;
+        for here in at..limit {
+            let token = &self.tokens[here];
+            if token.shape != Shape::Sign { continue; }
+            match token.lexeme.as_str() {
+                "(" | "[" | "{" => nesting += 1,
+                ")" | "]" | "}" => { nesting -= 1; if nesting == 0 { return Some(here); } }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The opening bracket paired with the one closed at `at`, at or after `floor`.
+    fn pair_open(&self, at: usize, floor: usize) -> Option<usize> {
+        let mut nesting = 0usize;
+        let mut here = at;
+        loop {
+            let token = &self.tokens[here];
+            if token.shape == Shape::Sign {
+                match token.lexeme.as_str() {
+                    ")" | "]" | "}" => nesting += 1,
+                    "(" | "[" | "{" => { nesting -= 1; if nesting == 0 { return Some(here); } }
+                    _ => {}
+                }
+            }
+            if here == floor { return None; }
+            here -= 1;
+        }
+    }
+
+    /// Whether one of the signs stands unbracketed between the pair.
+    fn pair_holds(&self, open: usize, close: usize, signs: &[&str]) -> bool {
+        let mut nesting = 0usize;
+        for here in open + 1..close {
+            let token = &self.tokens[here];
+            if token.shape != Shape::Sign { continue; }
+            match token.lexeme.as_str() {
+                "(" | "[" | "{" => nesting += 1,
+                ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
+                other if nesting == 0 && signs.contains(&other) => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// A literal beginning at `at` -- a number, text, bytes, or a display
+    /// of a tuple, list, dictionary or set -- as the reference names its
+    /// kind, with the token past it. A bracketed expression is none.
+    fn literal_at(&self, at: usize, limit: usize) -> Option<(&'static str, usize)> {
+        let token = self.tokens.get(at)?;
+        if at >= limit { return None; }
+        match token.shape {
+            Shape::Numeral => {
+                // The reference folds numbers joined by arithmetic signs
+                // into one number before it looks; the chain is read as
+                // that one number, real where any part or a division is.
+                let mut kind = Self::numeral_kind(&token.lexeme);
+                let mut past = at + 1;
+                while past + 1 < limit && Self::joins_operands(&self.tokens[past]) && self.tokens[past].lexeme != "." && self.tokens[past + 1].shape == Shape::Numeral {
+                    let next = Self::numeral_kind(&self.tokens[past + 1].lexeme);
+                    kind = if kind == "complex" || next == "complex" { "complex" }
+                        else if kind == "float" || next == "float" || self.tokens[past].lexeme == "/" { "float" }
+                        else { "int" };
+                    past += 2;
+                }
+                Some((kind, past))
+            }
+            Shape::Quote => {
+                let mut past = at + 1;
+                while past < limit && self.tokens[past].shape == Shape::Quote { past += 1; }
+                Some(("str", past))
+            }
+            Shape::ByteQuote => Some(("bytes", at + 1)),
+            Shape::Sign => {
+                let opener = token.lexeme.as_str();
+                if !["(", "[", "{"].contains(&opener) { return None; }
+                let close = self.pair_close(at, limit)?;
+                let kind = if opener == "[" { "list" }
+                    else if opener == "{" { if close == at + 1 || self.pair_holds(at, close, &[":"]) { "dict" } else { "set" } }
+                    else if self.pair_holds(at, close, &[","]) { "tuple" }
+                    else if close == at + 2 { self.literal_at(at + 1, close)?.0 }
+                    else { return None };
+                Some((kind, close + 1))
+            }
+            _ => None,
+        }
+    }
+
+    /// The reference's name for a number's kind, from its spelling.
+    fn numeral_kind(lexeme: &str) -> &'static str {
+        let spelling = lexeme.to_ascii_lowercase();
+        let prefixed = ["0x", "0o", "0b"].iter().any(|prefix| spelling.starts_with(prefix));
+        if spelling.ends_with('j') { "complex" }
+        else if !prefixed && (spelling.contains('.') || spelling.contains('e')) { "float" }
+        else { "int" }
+    }
+
+    /// The kind of a literal whose last token stands just before `past`,
+    /// where the operand ending there is that literal alone: not a call
+    /// or a subscript of it, and not a wider expression it ends.
+    fn literal_ending(&self, past: usize, opened: usize) -> Option<&'static str> {
+        if past <= opened { return None; }
+        let last = past - 1;
+        let token = &self.tokens[last];
+        let closes = token.shape == Shape::Sign && [")", "]", "}"].contains(&token.lexeme.as_str());
+        let begin = if closes {
+            let open = self.pair_open(last, opened)?;
+            if open > opened {
+                let ahead = &self.tokens[open - 1];
+                let names = ahead.shape == Shape::Bare && !self.table.keywords.contains(&ahead.lexeme);
+                let closed = ahead.shape == Shape::Sign && [")", "]", "}"].contains(&ahead.lexeme.as_str());
+                if names || closed { return None; }
+            }
+            open
+        } else {
+            let mut begin = last;
+            while token.shape == Shape::Quote && begin > opened && self.tokens[begin - 1].shape == Shape::Quote { begin -= 1; }
+            // Numbers reached through arithmetic signs from a number are
+            // the one folded number, back to the first of them.
+            while token.shape == Shape::Numeral && begin > opened + 1 && Self::joins_operands(&self.tokens[begin - 1]) && self.tokens[begin - 1].lexeme != "."
+                && self.tokens[begin - 2].shape == Shape::Numeral { begin -= 2; }
+            begin
+        };
+        let (kind, ends) = self.literal_at(begin, past)?;
+        if ends != past { return None; }
+        if begin > opened && Self::joins_operands(&self.tokens[begin - 1]) { return None; }
+        Some(kind)
+    }
+
+    /// Whether the token is an operator sign that makes a literal part
+    /// of a wider expression rather than an operand on its own.
+    fn joins_operands(token: &Token) -> bool {
+        token.shape == Shape::Sign && ["+", "-", "*", "/", "//", "%", "**", "@", "&", "|", "^", "<<", ">>", "."].contains(&token.lexeme.as_str())
+    }
+
+    /// What the reference warns of in the statement opened at `opened`,
+    /// noted for whoever compiled the text: an assertion of a
+    /// parenthesised tuple, an identity test against a literal, and a
+    /// call made upon a literal. Each place is noted once.
+    fn warnings_in_statement(&mut self, opened: usize) {
+        let table = self.table;
+        if !table.has_any("ext.builtin.exceptions.syntax") || !table.has_any("ext.system.syntax_warnings") { return; }
+        let limit = self.statement_limit(opened);
+        let mut noted: Vec<(String, u32, usize)> = Vec::new();
+        let first = &self.tokens[opened];
+        if first.shape == Shape::Bare && table.spells("ext.stmt.assert", &first.lexeme) && opened + 1 < limit && self.tokens[opened + 1].shape == Shape::Sign && self.tokens[opened + 1].lexeme == "(" {
+            if let Some(close) = self.pair_close(opened + 1, limit) {
+                let next = self.tokens.get(close + 1);
+                let ends = close + 1 >= limit || next.map_or(true, |t| t.shape == Shape::Sign && (t.lexeme == "," || table.separates(&t.lexeme)));
+                if ends && self.pair_holds(opened + 1, close, &[","]) {
+                    let bracket = &self.tokens[opened + 1];
+                    noted.push(("assertion is always true, perhaps remove parentheses?".to_owned(), bracket.row, bracket.column));
+                }
+            }
+        }
+        for here in opened..limit {
+            let token = &self.tokens[here];
+            if token.shape == Shape::Bare && table.spells("ext.op.identical", &token.lexeme) {
+                let negated = here + 1 < limit && self.tokens[here + 1].shape == Shape::Bare && table.spells("ext.op.identical.negated", &self.tokens[here + 1].lexeme);
+                let mut right = here + 1 + usize::from(negated);
+                // The reference folds a sign before a number into the number.
+                let signed = right + 1 < limit && self.tokens[right].shape == Shape::Sign && ["-", "+"].contains(&self.tokens[right].lexeme.as_str()) && self.tokens[right + 1].shape == Shape::Numeral;
+                if signed { right += 1; }
+                let after = self.literal_at(right, limit).filter(|(_, past)| *past >= limit || !Self::joins_operands(&self.tokens[*past])).map(|(kind, _)| kind);
+                if let Some(kind) = after.or_else(|| self.literal_ending(here, opened)) {
+                    let (spoken, meant) = if negated { ("is not", "!=") } else { ("is", "==") };
+                    noted.push((format!("\"{spoken}\" with '{kind}' literal. Did you mean \"{meant}\"?"), token.row, token.column));
+                }
+            }
+            if here > opened && token.shape == Shape::Sign && token.lexeme == "(" {
+                if let Some(kind) = self.literal_ending(here, opened) {
+                    noted.push((format!("'{kind}' object is not callable; perhaps you missed a comma?"), token.row, token.column));
+                }
+            }
+        }
+        for warning in noted {
+            if !self.warnings.contains(&warning) { self.warnings.push(warning); }
+        }
     }
 
     /// After a statement of a line-ended language must come the line's

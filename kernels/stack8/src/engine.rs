@@ -2076,6 +2076,12 @@ impl<'a> Engine<'a> {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) { return found; }
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
+            // A module's cell that holds nothing -- a name never bound, or
+            // one deleted -- is no value to read in a language that binds
+            // values rather than cells: the name is undefined.
+            if !self.lang.bind_names && matches!(&*shared.borrow(), Value::Blank) {
+                return Err(format!("Undefined variable: {}", slot.ident));
+            }
             return Ok(match () {
                 _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
                 _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
@@ -16042,11 +16048,45 @@ impl Engine<'_> {
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
         }
+        for (message, row, column) in std::mem::take(&mut trial.warnings) {
+            self.syntax_warning(mode, &message, &file, row, column, &source)?;
+        }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
         let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64))];
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
+    }
+
+    /// A warning the reading noted about how a compiled text is
+    /// written, said through the reference's warnings module, so that
+    /// a filter the program set is honoured. One turning the warning
+    /// into an error makes it the syntax fault the reference raises.
+    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: usize, column: usize, source: &str) -> Res<()> {
+        let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
+        let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
+        let Some(kind_name) = self.lang.exceptions.get(27).cloned() else { return Ok(()) };
+        let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
+        let module = match self.import_module(&module_name) {
+            Ok(module) => module,
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        // A module carries its names in cells; the function is what the cell holds.
+        let teller = match self.class_get(module, &teller_name, false) {
+            Ok(teller) => teller.contents(),
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        let handed = vec![Value::text(message), category, Value::text(file), Value::Small(row as i64)];
+        match self.class_apply(teller, handed) {
+            Ok(_) => Ok(()),
+            Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if o.class.named(&kind_name, false)) => {
+                Err(self.text_syntax(mode, format!("SyntaxError: {message}"), file, row, column, None, source))
+            }
+            Err(Fault::Note(told)) => Err(told),
+            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+        }
     }
 
     /// Text, or a code value, run: as one expression where it was asked

@@ -3409,6 +3409,18 @@ only. The extension labels so far, all from PHP:
 - `ext.system.module.name`: a list of names bound to the text
   `"__main__"` before the file runs. These are ordinary bindings and
   may be written anew by the program.
+- `ext.system.syntax_warnings`: the module and the function in it that
+  the reference says its syntax warnings through, for a text compiled
+  while the program runs. The readers note three such warnings while
+  reading a statement -- an assertion of a parenthesised tuple
+  ("assertion is always true, perhaps remove parentheses?"), an identity
+  test against a literal ("is" with 'int' literal. Did you mean "=="?)
+  and a call made upon a literal ('tuple' object is not callable;
+  perhaps you missed a comma?) -- and the compile builtin hands each to
+  that function with the text's file name and the line, so a filter the
+  program set is honoured; one that turns the warning into an error
+  makes it the syntax fault the reference raises, at that line. A
+  program read from its file says nothing of these.
 - `ext.system.names.module`: the module a name is looked for in when
   nothing in the program has bound it and the kernel knows no word of
   its own for it. The module is fetched the first time a name is missed
@@ -5224,6 +5236,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.source.marked` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.source.method` | - | - | - | - | `__METHOD__` | - | - | - | - | - |
 | `ext.system.source.routine` | - | - | - | - | `__FUNCTION__` | - | - | - | - | - |
+| `ext.system.syntax_warnings` | - | - | `warnings` `warn_explicit` | - | - | - | - | - | - | - |
 | `ext.system.text.bytes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.empty_array` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.text` | - | - | - | - | `0` | - | - | - | - | - |
