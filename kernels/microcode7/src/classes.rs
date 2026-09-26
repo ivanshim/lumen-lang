@@ -843,6 +843,9 @@ impl<'a> Machine<'a> {
                 if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
             }
             if let Some(under)=native.filter(|v|!matches!(v.settled(),Value::Set(_))) {
+                if matches!(under.settled(), Value::Complex(_)) {
+                    if self.native_member(&under,key) { return Ok(Value::Member(Rc::new(under),key.to_owned())); }
+                }
                 if let Some(operation)=Self::kind_method_named(self.table,key){
                     // The parts of a complex number are members read and
                     // not methods called, as on the number itself.

@@ -5638,6 +5638,7 @@ impl<'a> Machine<'a> {
             // Every worth is laid out to a specification, the layout
             // having marks of its own for each kind or words against
             // the kinds that take none.
+            74 | 79 => mark == 'c',
             72 => true,
             // A walk answers a guess at how many members it has left,
             // where the table keeps one for a walk of its own kind.
@@ -5725,9 +5726,19 @@ impl<'a> Machine<'a> {
         };
         if !keywords.is_empty() || arguments.len() != wanted { return Err(self.method_fault("arguments").into()); }
         let mark = Self::native_mark(receiver).ok_or_else(|| self.bad_answer())?;
+        match (mark, at) {
+            ('c', 74) => return Ok(receiver.settled()),
+            ('c', 79) => {
+                let z = crate::complex::coordinates(&receiver.settled()).expect("complex coordinates");
+                let row = [z.0,z.1].into_iter().map(crate::complex::decimal_value).collect();
+                return Ok(Value::Tuple(Rc::new(row)));
+            }
+            ('c', 4..=7) => return Ok(Value::Refusal(Rc::from(self.table.single("ext.stmt.class.special.declined").unwrap_or_default()))),
+            _ => {}
+        }
         // Handed a value of a kind it does not take, the working hands
         // it back undone and the other side of the pair may answer.
-        if wanted == 1 && Self::mark_defers(mark, at) && !Self::mark_accepts(mark, Self::native_mark(&arguments[0])) {
+        if wanted == 1 && Self::mark_defers(mark, at) && !Self::mark_accepts(mark, if mark == 'c' && matches!(arguments[0].settled(), Value::Frac(ref number) if number.places.is_some()) { Some('r') } else { Self::native_mark(&arguments[0]) }) {
             let word = self.table.strings("ext.stmt.class.special.declined").first().map_or(String::new(), String::clone);
             return Ok(Value::Refusal(Rc::from(word.as_str())));
         }
@@ -9539,7 +9550,14 @@ impl<'a> Machine<'a> {
             // stands for, by its own methods where it has them.
             (Prim::AsInt | Prim::AsReal | Prim::Magnitude | Prim::Positive | Prim::NumberAlone, [subject @ Value::Thing(_)]) => {
                 let index = match operation { Prim::AsInt => 38, Prim::AsReal => 39, Prim::Magnitude => 40, _ => 41 };
-                match self.ask_special(subject, index, &[])? { Some(answer) => answer, None => return Ok(None) }
+                match self.ask_special(subject, index, &[])? {
+                    Some(answer) => answer,
+                    None if index == 41 => match Self::underlying(subject) {
+                        Some(number @ Value::Complex(_)) => number,
+                        _ => return Ok(None),
+                    },
+                    None => return Ok(None),
+                }
             }
             // Inversion is the thing's own where it has the method, and
             // its worth's where it stands on a native kind.
@@ -9609,7 +9627,10 @@ impl<'a> Machine<'a> {
             (Prim::ComplexMade, [item @ Value::Thing(_)]) => match self.ask_special(item, 74, &[])? {
                 Some(answer @ Value::Complex(_)) => answer,
                 Some(_) => return Err(self.bad_answer()),
-                None => return Ok(None),
+                None => match Self::underlying(item) {
+                    Some(number @ Value::Complex(_)) => number,
+                    _ => return Ok(None),
+                },
             },
             // Formatting, by the builtin or by a field of a formatted
             // string; a conversion asked in the field shows the thing as
@@ -10480,7 +10501,7 @@ impl<'a> Machine<'a> {
             if let Some(result) = self.powered_real(v)? { return Ok(result); }
         }
         let formatting = op == Prim::Mod && self.table.flag("ext.op.rem.formats_text") && matches!(v.first(), Some(Value::Text(_)));
-        if self.table.has_any("ext.op.div.zero") && !formatting && matches!(op, Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod) {
+        if self.table.has_any("ext.op.div.zero") && !formatting && !v.iter().any(|item| matches!(item, Value::Complex(_))) && matches!(op, Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod) {
             let zero = match &v[1] {
                 Value::Flag(false) => true,
                 other => math::ratio_of(other).map_or(false, |r| r.above == BigInt::from(0) && r.beneath != BigInt::from(0)),
@@ -16905,7 +16926,7 @@ impl Machine<'_> {
             }
             QuotRem => {
                 require(2, 2)?;
-                if input.iter().any(|x| matches!(x, Value::Complex(_))) { return Err(crate::complex::floor(self.table, &input[0], &input[1])); }
+                if input.iter().any(|x| matches!(x, Value::Complex(_))) { return Err(crate::complex::floor(self.table, &input[0], &input[1], "divmod()")); }
                 let one = as_number(&input[0]); let two = as_number(&input[1]);
                 let integral = |v: &Value| matches!(v, Value::Huge(_) | Value::Small(_));
                 if integral(&one) && integral(&two) {
@@ -16931,7 +16952,7 @@ impl Machine<'_> {
             Powered => {
                 require(2, 3)?;
                 if input.iter().any(|x| matches!(x, Value::Complex(_))) {
-                    if input.len() != 2 { return Err(crate::complex::complaint(self.table, "unready")); }
+                    if input.len() > 2 && !matches!(input[2], Value::Nil) { return Err(crate::complex::complaint(self.table,"power.modulo")); }
                     return crate::complex::reckon(self.table, Prim::Power, &input);
                 }
                 if input.len() < 3 || matches!(input[2], Value::Nil) {

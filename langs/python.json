@@ -23,6 +23,15 @@
     "' and '",
     "'"
   ],
+  "ext.builtin.complex.power.overflow": [
+    "OverflowError: complex exponentiation"
+  ],
+  "ext.builtin.complex.power.modulo": [
+    "ValueError: complex modulo"
+  ],
+  "ext.builtin.complex.integer.overflow": [
+    "OverflowError: int too large to convert to float"
+  ],
   "ext.builtin.complex.power.zero": [
     "ZeroDivisionError: 0.0 to a negative or complex power"
   ],
@@ -2723,7 +2732,8 @@
     "__dir__",
     "__instancecheck__",
     "__subclasscheck__",
-    "__length_hint__"
+    "__length_hint__",
+    "__getnewargs__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
