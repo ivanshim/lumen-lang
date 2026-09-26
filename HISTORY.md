@@ -1882,3 +1882,22 @@ about twelve (test_set one class per invocation). Every result matched the
 same check on the build machine. With every check on Lambda, the build
 machine only builds and probes, and is resized between jobs in about
 three minutes (stop, change the type, start).
+
+### 1ad. Batch 20b merged as #509; batch 20c: exceptions, SyntaxError wording, int corners
+
+Pull request #509 merged into main. Batch 20c folds three branches, the
+first begun from batch 20a and checked from the start on Lambda.
+fix/exception-attrs: SyntaxError's and ImportError's attributes as
+CPython constructs and prints them, str() of a Unicode error whose
+attributes were set to None or deleted, MemoryError and BufferError
+(test_exceptions 50 to 68, test_list +2). fix/syntax-messages: CPython's
+precise SyntaxError wording where the readers already found the error,
+and the doctests of test_syntax (test_syntax 56 to 72).
+fix/long-leftovers: int corners that do not rest on the documented `//`
+and divmod divergence — classmethods on int subclasses, to_bytes and
+from_bytes, correctly rounded true division of huge ints (test_long 25 to
+30).
+
+Merged, the fifty files count 1967 on stack8 and 1979 on microcode7, up
+from 1926 and 1938, with no passing test lost; the whole check (scratch,
+gates, all fifty files with test_set by class) ran on Lambda.
