@@ -3488,7 +3488,7 @@ impl<'a> Engine<'a> {
                         // Attaching a frame does not change the command line's
                         // existing diagnostic for an uncaught kernel fault.
                         if let Value::Object(object) = &value {
-                            if !words.starts_with('\0') {
+                            if self.caught.is_empty() && !words.starts_with('\0') {
                                 object.fields.borrow_mut().push(("\0diagnostic".into(), Value::text(&words)));
                             }
                         }

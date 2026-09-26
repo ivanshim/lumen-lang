@@ -3609,7 +3609,7 @@ impl<'a> Machine<'a> {
                         // Keep the outer reporter's words while the raised
                         // value acquires the frames a handler can inspect.
                         if let Value::Thing(item) = &raised {
-                            if text.as_bytes().first() != Some(&0) {
+                            if text.as_bytes().first() != Some(&0) && self.holding_fault.is_empty() {
                                 let entry = (String::from("\0report"), Value::text(&text));
                                 item.holds.borrow_mut().push(entry);
                             }
