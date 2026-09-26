@@ -6129,6 +6129,30 @@ impl<'a> Engine<'a> {
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        if matches!(op, Action::Awaited) {
+            let mut answer = self.drop_top()?;
+            if let Value::Generator(held) = &answer {
+                while self.resume_generator(held, Value::Null)?.is_some() {}
+                let returned = held.borrow().returned.clone();
+                answer = returned;
+            }
+            self.data.push(answer);
+            return Ok(());
+        }
+        if matches!(op, Action::AsyncGenerator) {
+            let generator = self.drop_top()?;
+            self.data.push(Self::adapter(250, vec![generator]));
+            return Ok(());
+        }
+        if matches!(op, Action::AsyncWalk) {
+            let source = collection_contents(&self.drop_top()?);
+            let iterable = match source {
+                Value::Adapter(proxy) if proxy.0 == 250 => proxy.1[0].clone(),
+                other => other,
+            };
+            self.data.push(iterable);
+            return self.perform(&Action::WalkFrom, 1);
+        }
         if self.lang.bind_names && matches!(op, Action::Extent | Action::KeyAt | Action::ValueAt
             | Action::WalkFrom | Action::WalkAlone | Action::WalkMore | Action::WalkThis
             | Action::WalkKey | Action::WalkOnward) {
@@ -7903,6 +7927,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::array(kept.into_iter().map(|v| match v { Value::Hashed(pair) => pair.0.clone(), other => other }).collect())
             }
+            Action::Awaited | Action::AsyncGenerator | Action::AsyncWalk => unreachable!("asynchronous walks were handled before dispatch"),
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
                 if let Value::Class(class) = &handed {

@@ -497,6 +497,7 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class,self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
+                9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
                 0 => Ok(w.1[0].clone()),
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
@@ -823,6 +824,20 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if let Value::Adapter(proxy) = &subject {
+            if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
+                let dynamic = match receiver { Value::Object(o) => o.class.clone(), Value::Class(c) => c.clone(), _ => return Err(self.class_refusal()) };
+                let order: Vec<_> = std::iter::once(dynamic.clone()).chain(dynamic.lineage.iter().cloned()).collect();
+                if let Some(start) = order.iter().position(|class| Rc::ptr_eq(class, owner)) {
+                    for class in &order[start + 1..] {
+                        if let Some(value) = Self::own_class_value(class, name) {
+                            return self.bind_class_value(value, Some(receiver.clone()), dynamic);
+                        }
+                    }
+                }
+                return Err(self.missing_member(&subject, name));
+            }
+        }
         let answer = self.class_read(subject.clone(), name, plain);
         if plain { return answer; }
         let Err(fault) = &answer else { return answer };
