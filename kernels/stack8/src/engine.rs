@@ -6547,6 +6547,7 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?);
+                let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
                         let mut found = Vec::new();
@@ -6593,7 +6594,14 @@ impl<'a> Engine<'a> {
                     let middle = items.drain(*at..until).collect();
                     items.insert(*at, Value::array(middle));
                 } else if items.len() > *count {
-                    let told = self.apart_fault(&self.lang.unpack_long, &[count.to_string()]);
+                    let mut expected = count.to_string();
+                    if sized_builtin {
+                        if let Some(join) = self.lang.unpack_long.get(2) {
+                            expected.push_str(join);
+                            expected.push_str(&items.len().to_string());
+                        }
+                    }
+                    let told = self.apart_fault(&self.lang.unpack_long, &[expected]);
                     return Err(told.unwrap_or_else(|| "Too many values".to_string()).into());
                 }
                 Value::array(items)

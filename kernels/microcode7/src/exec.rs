@@ -10774,7 +10774,14 @@ impl<'a> Machine<'a> {
                     return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
                 }
                 if star.is_none() && values.len() != wanted {
-                    let said = self.apart_words("ext.stmt.unpack.long", &[wanted.to_string()]);
+                    let count = match &v[0] {
+                        Value::Vector(_) | Value::Tuple(_) | Value::Dict(_) => {
+                            self.table.strings("ext.stmt.unpack.long").get(2)
+                                .map(|between| format!("{wanted}{between}{}", values.len()))
+                        }
+                        _ => None,
+                    }.unwrap_or_else(|| wanted.to_string());
+                    let said = self.apart_words("ext.stmt.unpack.long", &[count]);
                     return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
                 }
                 if let Some(middle) = star {

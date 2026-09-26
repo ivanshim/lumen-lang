@@ -2913,7 +2913,8 @@
   ],
   "ext.stmt.unpack.long": [
     "ValueError: too many values to unpack (expected ",
-    ")"
+    ")",
+    ", got "
   ],
   "ext.stmt.unpack.rest": [
     "*"

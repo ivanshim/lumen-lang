@@ -1834,7 +1834,10 @@ only. The extension labels so far, all from PHP:
   the count of values there were, and a fourth that stands before the
   count of places where one of them is starred, since such a place
   takes what is left over and the count is then only a floor. The long
-  one holds two pieces around the count of places. The unwalkable one
+  one holds two pieces around the count of places, with an optional third
+  piece introducing the actual length for builtin lists, tuples and maps.
+  Iterators keep only the expected count and are not consumed for a length.
+  The unwalkable one
   holds two pieces around the name of the kind that could not be
   walked. Where the pieces open with the name of an exception class the
   complaint is raised as one of that class, and a guard about the
@@ -3099,7 +3102,10 @@ only. The extension labels so far, all from PHP:
   the count of values there were, and a fourth that stands before the
   count of places where one of them is starred, since such a place
   takes what is left over and the count is then only a floor. The long
-  one holds two pieces around the count of places. The unwalkable one
+  one holds two pieces around the count of places, with an optional third
+  piece introducing the actual length for builtin lists, tuples and maps.
+  Iterators keep only the expected count and are not consumed for a length.
+  The unwalkable one
   holds two pieces around the name of the kind that could not be
   walked. Where the pieces open with the name of an exception class the
   complaint is raised as one of that class, and a guard about the
@@ -5036,7 +5042,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
 | `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack.long` | - | - | `ValueError: too many values to unpack (expected ` `)` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.long` | - | - | `ValueError: too many values to unpack (expected ` `)` `, got ` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.rest` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.short` | - | - | `ValueError: not enough values to unpack (expected ` `, got ` `)` `at least ` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.unwalkable` | - | - | `TypeError: cannot unpack non-iterable ` ` object` | - | - | - | - | - | - | - |
