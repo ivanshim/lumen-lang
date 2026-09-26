@@ -5302,6 +5302,18 @@ impl<'a> Machine<'a> {
     /// for the kind itself wherever the kind is asked what its values
     /// can do. Nothing where the word names no native kind.
     pub(super) fn kind_stand_in(&self, word: &str) -> Option<Value> {
+        let walking = ["generator", "reversed", "filter", "map", "zip", "enumerate", "callable_iterator", "bytearray_iterator", "bytes_iterator", "dict_reverseitemiterator", "dict_reversevalueiterator", "dict_reversekeyiterator", "dict_itemiterator", "dict_valueiterator", "dict_keyiterator", "set_iterator", "longrange_iterator", "range_iterator", "str_iterator", "str_ascii_iterator", "tuple_iterator", "list_reverseiterator", "list_iterator", "iterator"];
+        if walking.contains(&word) {
+            let empty = IteratorKind::Stored(std::collections::VecDeque::new());
+            return Some(Self::cursor_value_walked(empty, Some(Rc::from(word))));
+        }
+        let portion = match word {
+            "dict_items" => Some('i'), "dict_values" => Some('v'), "dict_keys" => Some('k'), "mappingproxy" => Some('m'), _ => None,
+        };
+        if let Some(part) = portion {
+            let dictionary = Value::Dict(Rc::new(Vec::new().into()));
+            return Some(Value::Window(Rc::new(dictionary), part));
+        }
         Some(match self.table.prims.get(word)? {
             Prim::AsText => Value::text(""),
             Prim::AsInt => Value::Small(0),
@@ -5425,6 +5437,7 @@ impl<'a> Machine<'a> {
             14 => holds || mark == 'W',
             15 => holds || "wWV".contains(mark),
             16 => mark == 'w',
+            42 => "ldpWV".contains(mark),
             18 | 20 | 28 => counts || joins,
             19 => counts || uniques,
             21 | 24 | 25 | 26 | 27 | 29 | 32 | 38 | 39 | 40 | 41 => counts,
@@ -5538,6 +5551,7 @@ impl<'a> Machine<'a> {
             10 => Some(Prim::Length), 15 => Some(Prim::Iterator), 16 => Some(Prim::NextItem),
             25 => Some(Prim::Negate), 38 | 43 => Some(Prim::AsInt), 39 => Some(Prim::AsReal),
             40 => Some(Prim::Magnitude), 41 => Some(Prim::Positive), 44 => Some(Prim::BitsOver),
+            42 => Some(Prim::Backwards),
             _ => None,
         } { return self.native_working(work, name, vec![receiver.clone()]); }
         // A guess at how many members a walk has left, for the kinds
@@ -5665,6 +5679,7 @@ impl<'a> Machine<'a> {
     /// under the name.
     pub(super) fn carried_by_kind(&self, value: &Value, name: &str) -> Option<Value> {
         let word: String = match value {
+            Value::Blueprint(b) => Self::native_word(b)?,
             Value::Intrinsic(_, word) => word.to_string(),
             Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
             _ => return None,
@@ -16035,7 +16050,12 @@ impl Machine<'_> {
                 // spells no word of its own for is asked about by the
                 // kind's own name, no word standing in its place.
                 if let Some(word) = Self::native_beneath(class) {
-                    if !self.table.prims.contains_key(&word) { return Ok(item.kind_word() == word); }
+                    if !self.table.prims.contains_key(&word) {
+                        if let Value::Thing(thing) = item {
+                            return Ok(std::iter::once(&thing.of).chain(thing.of.ancestry.iter()).any(|parent| Rc::ptr_eq(parent, class)));
+                        }
+                        return Ok(Self::native_word(class).is_some() && item.kind_word() == word);
+                    }
                 }
                 Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false)))
             }

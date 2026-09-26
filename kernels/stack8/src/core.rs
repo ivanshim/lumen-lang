@@ -45,7 +45,10 @@ impl Value {
             // otherwise by the word kept of the thing it was made from.
             Value::Cursor(state) => return state.try_borrow().map_or("iterator".to_string(), |held| match &held.source {
                 CursorSource::Living(..) => "list_iterator".to_string(),
-                CursorSource::Counted(..) => "range_iterator".to_string(),
+                CursorSource::Counted(row, _) => {
+                    let small = [&row.start, &row.stop, &row.step, &row.length()].iter().all(|n| n.to_i64().is_some());
+                    if small { "range_iterator" } else { "longrange_iterator" }.to_string()
+                },
                 CursorSource::Viewed(Value::View(window), ..) => match window.1.as_str() { "keys" => "dict_keyiterator", "values" => "dict_valueiterator", _ => "dict_itemiterator" }.to_string(),
                 CursorSource::Called(..) => "callable_iterator".to_string(),
                 CursorSource::Numbered(..) => "enumerate".to_string(),
