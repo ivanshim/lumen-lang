@@ -530,7 +530,9 @@ impl Writer<'_> {
                 at += 1;
                 rule.precision = Some(if chars.get(at) == Some(&'*') {
                     if keyed.is_some() { return Err(self.fault("ext.text.format.unready", &[])); }
-                    at += 1; self.star(&args, &mut used)?.max(0) as usize
+                    at += 1;
+                    let precision = self.star(&args, &mut used)?;
+                    i32::try_from(precision).map_err(|_| "OverflowError: Python int too large to convert to C int".to_string())?.max(0) as usize
                 } else { self.count(&chars, &mut at, "ext.text.format.precision.big", false)?.unwrap_or(0) });
             }
             if chars.get(at).map_or(false, |c| "hlL".contains(*c)) { at += 1; }
@@ -678,19 +680,31 @@ fn complex_parts(value: &Value) -> Option<(f64, f64)> {
     }
 }
 
+// Binary64 fractions terminate within 1,074 decimal places. Beyond
+// that finite expansion the requested places are all zeroes.
+fn expanded_decimal(number: f64, places: usize, scientific: bool) -> String {
+    let kept = places.min(1074);
+    let mut result = if scientific { format!("{number:.kept$e}") } else { format!("{number:.kept$}") };
+    if number.is_finite() && places > kept {
+        let at = result.find('e').unwrap_or(result.len());
+        result.insert_str(at, &"0".repeat(places - kept));
+    }
+    result
+}
+
 fn decimal(number: f64, rule: &Rule) -> String {
     let places = rule.precision.unwrap_or(6);
     let code = rule.code.to_ascii_lowercase();
     let mut body = match code {
-        'f' | '%' => format!("{number:.places$}"),
-        'e' => format!("{number:.places$e}"),
+        'f' | '%' => expanded_decimal(number, places, false),
+        'e' => expanded_decimal(number, places, true),
         '\0' if rule.precision.is_none() => {
             if number != 0.0 && !(0.0001..1e16).contains(&number) { format!("{number:e}") }
             else { number.to_string() }
         }
         _ => {
             let significant = places.max(1);
-            let exponential = format!("{:.*e}", significant - 1, number);
+            let exponential = expanded_decimal(number, significant - 1, true);
             let (mantissa, exponent) = exponential.split_once('e').unwrap();
             let exponent: i32 = exponent.parse().unwrap();
             let threshold = significant as i32 - i32::from(code == '\0');
@@ -701,7 +715,7 @@ fn decimal(number: f64, rule: &Rule) -> String {
                 format!("{mantissa}e{exponent}")
             } else {
                 let digits = (significant as i32 - 1 - exponent).max(0) as usize;
-                let fixed = format!("{number:.digits$}");
+                let fixed = expanded_decimal(number, digits, false);
                 if !rule.alternate && fixed.contains('.') { fixed.trim_end_matches('0').trim_end_matches('.').to_string() } else { fixed }
             }
         }

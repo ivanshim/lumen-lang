@@ -474,7 +474,12 @@ impl Layout<'_> {
                 input.next();
                 shape.digits = Some(if input.peek() == Some(&'*') {
                     if named.is_some() { return Err(self.refused()); }
-                    input.next(); self.dynamic(positional, &mut used)?.max(0) as usize
+                    input.next();
+                    let precision = self.dynamic(positional, &mut used)?;
+                    if precision < i32::MIN as i64 || precision > i32::MAX as i64 {
+                        return Err(String::from("OverflowError: Python int too large to convert to C int"));
+                    }
+                    precision.max(0) as usize
                 } else { self.read_count(&mut input, "ext.text.format.precision.big", false)?.unwrap_or(0) });
             }
             if input.peek().map_or(false, |c| matches!(c, 'h' | 'l' | 'L')) { input.next(); }
@@ -643,13 +648,13 @@ impl Presentation {
         let precision = self.digits.unwrap_or(6);
         let mut raw = if x.is_nan() { "nan".to_owned() }
         else if x.is_infinite() { "inf".to_owned() }
-        else if mode == 'f' || mode == '%' { format!("{:.*}", precision, x) }
-        else if mode == 'e' { format!("{:.*e}", precision, x) }
+        else if mode == 'f' || mode == '%' { long_real_digits(x, precision, false) }
+        else if mode == 'e' { long_real_digits(x, precision, true) }
         else if self.letter.is_none() && self.digits.is_none() {
             if x > 0.0 && (x < 0.0001 || x >= 1e16) { format!("{:e}", x) } else { format!("{}", x) }
         } else {
             let significant = precision.max(1);
-            let sci = format!("{:.*e}", significant - 1, x);
+            let sci = long_real_digits(x, significant - 1, true);
             let (coefficient, exponent) = sci.split_once('e').unwrap();
             let power = exponent.parse::<i32>().unwrap();
             let cutoff = significant as i32 - if self.letter.is_none() { 1 } else { 0 };
@@ -659,7 +664,7 @@ impl Presentation {
                 keep.to_owned() + "e" + exponent
             } else {
                 let places = (significant as i32 - power - 1).max(0) as usize;
-                let fixed = format!("{:.*}", places, x);
+                let fixed = long_real_digits(x, places, false);
                 if self.alternative || !fixed.contains('.') { fixed }
                 else { fixed.trim_end_matches('0').trim_end_matches('.').to_owned() }
             }
@@ -679,6 +684,18 @@ impl Presentation {
         if mode == '%' { raw.push('%'); }
         raw
     }
+}
+
+fn long_real_digits(value: f64, wanted: usize, exponent: bool) -> String {
+    let bounded = wanted.min(1074);
+    let text = if exponent { format!("{:.*e}", bounded, value) } else { format!("{:.*}", bounded, value) };
+    if wanted == bounded || !value.is_finite() { return text; }
+    // No binary64 value has further nonzero fractional digits here.
+    let end = text.find('e').unwrap_or(text.len());
+    let mut answer = text[..end].to_owned();
+    answer.extend(std::iter::repeat('0').take(wanted - bounded));
+    answer.push_str(&text[end..]);
+    answer
 }
 
 /// The two real parts of a worth that keeps them, and nothing at all
