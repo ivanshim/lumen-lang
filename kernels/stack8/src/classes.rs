@@ -465,7 +465,7 @@ impl<'a> Engine<'a> {
         self.descriptor_hook(member, "descriptor.set").is_some() || self.descriptor_hook(member, "descriptor.delete").is_some()
     }
     /// Whether a fault is a missing member's, however it was raised.
-    fn attribute_fault(&self, fault: &Fault) -> bool {
+    pub(super) fn attribute_fault(&self, fault: &Fault) -> bool {
         let kind = self.class_word("attribute.amiss").split(':').next().unwrap_or_default();
         if kind.is_empty() { return false; }
         match fault {

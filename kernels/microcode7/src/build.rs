@@ -135,6 +135,8 @@ pub struct Builder<'a> {
     stopped_fatally: bool,
     /// Whether the statement under way was marked asynchronous.
     asynchronous: bool,
+    /// The values a case's pattern works out ahead of the subject.
+    pattern_kinds: Vec<Form>,
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
@@ -428,7 +430,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { declarations: Vec::new(), asynchronous: false, loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { declarations: Vec::new(), asynchronous: false, pattern_kinds: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -4456,6 +4458,7 @@ impl<'a> Builder<'a> {
             if self.look().shape == Shape::Close { self.advance(); break; }
             if !self.key("ext.stmt.match.case") { return Err(self.bad_case()); }
             self.advance();
+            self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
             let first = if starts_wide { self.advance(); self.pattern_name()? } else { self.pattern_choice()? };
             let mut members = vec![first];
@@ -4479,7 +4482,8 @@ impl<'a> Builder<'a> {
                 let address = self.address_to_write(&name);
                 (name, address)
             }).collect();
-            let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple };
+            let kinds = std::mem::take(&mut self.pattern_kinds);
+            let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple, kinds };
             if self.key("ext.stmt.match.guard") {
                 self.advance();
                 let guard = self.expr(0)?;
@@ -4620,62 +4624,71 @@ impl<'a> Builder<'a> {
         }
         if self.on_any("syntax.map.open") {
             self.advance();
-            let mut values = Vec::new();
-            let mut rest_name = None;
+            let mut pairs = Vec::new();
+            let mut rest: Option<(usize, String)> = None;
             while !self.on_any("syntax.map.close") {
-                if let Some(start) = rest_name {
-                    self.pos = start;
+                if let Some((start, _)) = &rest {
+                    self.pos = *start;
                     let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: invalid syntax".to_owned() } else { self.bad_case() };
                     return Err(words);
                 }
                 if self.on_any("op.pow") {
                     self.advance();
-                    rest_name = Some(self.pos);
-                    let capture = self.pattern_name()?;
-                    if !matches!(capture, CaseTest::Keep(_)) { return Err(self.bad_case()); }
-                    values.push(capture);
+                    let start = self.pos;
+                    let CaseTest::Keep(name) = self.pattern_name()? else { return Err(self.bad_case()) };
+                    rest = Some((start, name));
                 } else {
-                    match self.pattern_single()? {
-                        CaseTest::Equal(_) | CaseTest::Pending(_) => {}
-                        _ => return Err(self.bad_case()),
-                    }
+                    let key = self.pattern_single()?;
+                    if !matches!(key, CaseTest::Equal(_) | CaseTest::Worth(_)) { return Err(self.bad_case()); }
                     self.need_sign(table.single("syntax.map.pair").unwrap_or_default(), "between a key and its pattern")?;
-                    values.push(self.pattern_choice()?);
+                    pairs.push((key, self.pattern_choice()?));
                 }
                 if !self.on_any("syntax.map.separator") { break; }
                 self.advance();
             }
             self.need_sign(table.single("syntax.map.close").unwrap_or_default(), "after the mapping pattern")?;
-            return Ok(CaseTest::Pending(values));
+            return Ok(CaseTest::Table { pairs, rest: rest.map(|(_, name)| name) });
         }
         if self.look().shape != Shape::Bare { return Err(self.bad_case()); }
         for (label, value) in [("literal.null", Value::Nil), ("literal.true", Value::Flag(true)), ("literal.false", Value::Flag(false))] {
             if self.key(label) { self.advance(); return Ok(CaseTest::Equal(value)); }
         }
         let binding = self.pattern_name()?;
-        let mut qualified = false;
+        let mut path = Vec::new();
         while self.on_any("op.pipe") {
             self.advance();
-            self.need_word("after the member mark")?;
-            qualified = true;
+            path.push(self.need_word("after the member mark")?);
         }
-        if !self.on_any("syntax.call.open") {
-            return Ok(if qualified { CaseTest::Pending(Vec::new()) } else { binding });
-        }
+        let opens_call = self.on_any("syntax.call.open");
+        if path.is_empty() && !opens_call { return Ok(binding); }
+        // A dotted name, or the class ahead of a class pattern's brackets,
+        // is worked out ahead of the subject and handed to the fitting by
+        // its place among such values.
+        let CaseTest::Keep(head) = &binding else { return Err(self.bad_case()) };
+        let mut worked = self.read(head);
+        for member in &path { worked = prim_call(Prim::Of, vec![worked, constant(Value::text(member))]); }
+        let place = self.pattern_kinds.len();
+        self.pattern_kinds.push(worked);
+        if !opens_call { return Ok(CaseTest::Worth(place)); }
         self.advance();
-        let mut fields = Vec::new();
-        let mut named = HashSet::new();
+        let mut positional = Vec::new();
+        let mut named: Vec<(String, CaseTest)> = Vec::new();
         while !self.on_any("syntax.call.close") {
             if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
-                if !named.insert(self.advance().lexeme) { return Err(self.bad_case()); }
+                let word = self.advance().lexeme;
+                if named.iter().any(|(seen, _)| *seen == word) { return Err(self.bad_case()); }
                 self.advance();
-            } else if !named.is_empty() { return Err(self.bad_case()); }
-            fields.push(self.pattern_choice()?);
+                named.push((word, self.pattern_choice()?));
+            } else if !named.is_empty() {
+                return Err(self.bad_case());
+            } else {
+                positional.push(self.pattern_choice()?);
+            }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
         }
         self.need_sign(table.single("syntax.call.close").unwrap_or_default(), "after the class pattern")?;
-        Ok(CaseTest::Pending(fields))
+        Ok(CaseTest::Shape { kind: place, positional, named })
     }
 
     /// `switch (v) { case a: ... default: ... }`. The first case equal to

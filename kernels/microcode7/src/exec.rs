@@ -4183,9 +4183,13 @@ impl<'a> Machine<'a> {
                 let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
                 Ok(Value::Flag(empty))
             }
-            Form::Fits { value, test, slots, tuple } => {
+            Form::Fits { value, test, slots, tuple, kinds } => {
                 let subject = self.value_of(value, frame)?;
-                let result = fit_case(test, &subject, *tuple).map_err(|()| self.table.single("ext.stmt.match.unready").unwrap_or_default().to_owned())?;
+                // Classes and dotted names the pattern spells are worked
+                // out here, ahead of the fitting, in the order written.
+                let mut given = Vec::new();
+                for kind in kinds { given.push(self.value_of(kind, frame)?); }
+                let result = self.fit_case(test, &subject, *tuple, &given)?;
                 if let Some(captures) = result {
                     for (name, address) in slots {
                         self.store(address, frame, captures.get(name).expect("a captured name").clone())?;
@@ -9312,6 +9316,185 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+    }
+
+    /// Whether the value passes the test, and what the test binds where
+    /// it does. The values worked out ahead of the fitting -- classes and
+    /// dotted names -- stand in `given` by their place. A tuple subject
+    /// may be taken apart but never kept whole, the kernel having no
+    /// tuple value to hand over for it.
+    fn fit_case(&mut self, test: &crate::form::CaseTest, value: &Value, tuple: bool, given: &[Value]) -> Result<Option<HashMap<String, Value>>, String> {
+        use crate::form::CaseTest;
+        let unready = self.table.single("ext.stmt.match.unready").unwrap_or_default().to_owned();
+        let mut gathered = HashMap::new();
+        if tuple && matches!(test, CaseTest::Keep(_) | CaseTest::Also { .. }) { return Err(unready); }
+        match test {
+            CaseTest::Ignore => {}
+            CaseTest::Keep(name) => { gathered.insert(name.clone(), value.clone()); }
+            CaseTest::Equal(wanted) => {
+                let equal = match (wanted, value) {
+                    (Value::Nil | Value::Flag(_), _) => wanted.selfsame(value),
+                    (_, Value::Flag(flag)) => wanted.equals(&Value::Small(if *flag { 1 } else { 0 })),
+                    _ => wanted.equals(value),
+                };
+                if !equal { return Ok(None); }
+            }
+            CaseTest::Worth(place) => { if !given[*place].equals(value) { return Ok(None); } }
+            CaseTest::AnyOf(choices) => {
+                for next in choices {
+                    let answer = self.fit_case(next, value, tuple, given)?;
+                    if answer.is_some() { return Ok(answer); }
+                }
+                return Ok(None);
+            }
+            CaseTest::Also { test: within, name } => {
+                let Some(found) = self.fit_case(within, value, tuple, given)? else { return Ok(None); };
+                gathered = found;
+                gathered.insert(name.clone(), value.clone());
+            }
+            CaseTest::Series { members, spread } => {
+                if let Value::Shared(cell) = value {
+                    let inner = cell.borrow().clone();
+                    return self.fit_case(test, &inner, tuple, given);
+                }
+                let Value::Vector(values) = value else { return Ok(None); };
+                let values = values.clone();
+                let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
+                if values.len() < minimum { return Ok(None); }
+                if spread.is_none() && minimum != values.len() { return Ok(None); }
+                let mut position = 0;
+                for (ordinal, member) in members.iter().enumerate() {
+                    let next = match spread {
+                        Some(star) if ordinal == *star => {
+                            let end = values.len() - (members.len() - ordinal - 1);
+                            let portion = Value::Vector(Rc::new(values[position..end].to_vec()));
+                            position = end;
+                            portion
+                        }
+                        _ => {
+                            let portion = values[position].clone();
+                            position += 1;
+                            portion
+                        }
+                    };
+                    match self.fit_case(member, &next, false, given)? {
+                        None => return Ok(None),
+                        Some(found) => gathered.extend(found),
+                    }
+                }
+            }
+            CaseTest::Table { pairs, rest } => {
+                if let Value::Shared(cell) = value {
+                    let inner = cell.borrow().clone();
+                    return self.fit_case(test, &inner, tuple, given);
+                }
+                let Value::Dict(entries) = value else { return Ok(None); };
+                let entries = entries.clone();
+                let mut taken = Vec::new();
+                for (key, member) in pairs {
+                    let wanted = match key {
+                        CaseTest::Equal(literal) => literal.clone(),
+                        CaseTest::Worth(place) => given[*place].clone(),
+                        _ => return Err(unready),
+                    };
+                    let Some(at) = self.dict_place(&entries, &wanted)? else { return Ok(None); };
+                    let held = entries[at].1.clone();
+                    match self.fit_case(member, &held, false, given)? {
+                        None => return Ok(None),
+                        Some(found) => gathered.extend(found),
+                    }
+                    taken.push(at);
+                }
+                if let Some(name) = rest {
+                    let left: Vec<(Value, Value)> = entries.iter().enumerate().filter(|(at, _)| !taken.contains(at)).map(|(_, pair)| pair.clone()).collect();
+                    gathered.insert(name.clone(), Value::Dict(Rc::new(left.into())));
+                }
+            }
+            CaseTest::Shape { kind, positional, named } => {
+                let class = given[*kind].clone();
+                if !self.core_belongs(value, &class)? { return Ok(None); }
+                // A native kind arrives as the intrinsic or as the plain
+                // reading of its word; either stands for the whole subject
+                // with one positional test.
+                let native_kind = matches!(class, Value::Intrinsic(..) | Value::Wrapped(8, _));
+                let title = match &class {
+                    Value::Blueprint(b) => b.name.clone(),
+                    Value::Intrinsic(_, word) => word.to_string(),
+                    Value::Wrapped(8, parts) => match &parts[0] { Value::Text(word) => word.to_string(), other => other.kind_word() },
+                    other => other.kind_word(),
+                };
+                if !positional.is_empty() {
+                    // The class lists the members its positional tests stand
+                    // for, in order; a builtin kind stands for the whole
+                    // subject with a single one.
+                    let listed = match &class {
+                        Value::Blueprint(b) => self.table.strings("ext.stmt.class.special").get(83).and_then(|word| self.inherited_entry(b, word)),
+                        _ => None,
+                    };
+                    match listed {
+                        Some(Value::Tuple(words)) | Some(Value::Vector(words)) => {
+                            if positional.len() > words.len() {
+                                let plural = if words.len() == 1 { "" } else { "s" };
+                                return Err(format!("TypeError: {title}() accepts {} positional sub-pattern{plural} ({} given)", words.len(), positional.len()));
+                            }
+                            for (member, word) in positional.iter().zip(words.iter()) {
+                                let Value::Text(word) = word else { return Err("TypeError: __match_args__ elements must be strings".to_owned()) };
+                                let Some(held) = self.member_for_case(value, word)? else { return Ok(None); };
+                                match self.fit_case(member, &held, false, given)? {
+                                    None => return Ok(None),
+                                    Some(found) => gathered.extend(found),
+                                }
+                            }
+                        }
+                        None if positional.len() == 1 && native_kind => {
+                            match self.fit_case(&positional[0], value, false, given)? {
+                                None => return Ok(None),
+                                Some(found) => gathered.extend(found),
+                            }
+                        }
+                        None => return Err(format!("TypeError: {title}() accepts 0 positional sub-patterns ({} given)", positional.len())),
+                        Some(_) => return Err(format!("TypeError: {title}.__match_args__ must be a tuple")),
+                    }
+                }
+                for (word, member) in named {
+                    let Some(held) = self.member_for_case(value, word)? else { return Ok(None); };
+                    match self.fit_case(member, &held, false, given)? {
+                        None => return Ok(None),
+                        Some(found) => gathered.extend(found),
+                    }
+                }
+            }
+        }
+        Ok(Some(gathered))
+    }
+
+    /// A member of a class pattern's subject: nothing where the subject
+    /// lacks it, which fails the pattern and not the run.
+    fn member_for_case(&mut self, subject: &Value, word: &str) -> Result<Option<Value>, String> {
+        match self.read_class_member(subject.clone(), word, false) {
+            Ok(found) => Ok(Some(found)),
+            Err(escape) if self.missing_member_escape(&escape) => Ok(None),
+            Err(Escape::Error(message)) => Err(message),
+            Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+        }
+    }
+
+    /// Where a key stands among a map's pairs: through the store's own
+    /// place where that can say, else by a walk comparing the keys.
+    fn dict_place(&mut self, entries: &crate::data::MapStore, key: &Value) -> Result<Option<usize>, String> {
+        if let Some(words) = self.cannot_key(key) { return Err(words); }
+        let key = self.hash_key(key)?;
+        if let Ok(address) = key.hash_address() {
+            match entries.locate(&address) {
+                Found::Found(at) => return Ok(Some(at)),
+                Found::Absent => return Ok(None),
+                Found::Unknown => {}
+            }
+        }
+        for (at, (stored, _)) in entries.iter().enumerate() {
+            if self.keys_agree(stored, &key)? { return Ok(Some(at)); }
+        }
+        Ok(None)
     }
 
     /// The thing is asked for its asynchronous walk, and what it hands
@@ -15028,66 +15211,7 @@ fn collection_read(held: &Value) -> Value {
 }
 
 /// Try a case without touching any cell until all its parts have agreed.
-fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<Option<HashMap<String, Value>>, ()> {
-    use crate::form::CaseTest;
-    let mut gathered = HashMap::new();
-    if tuple && matches!(test, CaseTest::Keep(_) | CaseTest::Also { .. }) { return Err(()); }
-    match test {
-        CaseTest::Ignore => {}
-        CaseTest::Keep(name) => { gathered.insert(name.clone(), value.clone()); }
-        CaseTest::Equal(wanted) => {
-            let equal = match (wanted, value) {
-                (Value::Nil | Value::Flag(_), _) => wanted.selfsame(value),
-                (_, Value::Flag(flag)) => wanted.equals(&Value::Small(if *flag { 1 } else { 0 })),
-                _ => wanted.equals(value),
-            };
-            if !equal { return Ok(None); }
-        }
-        CaseTest::Pending(_) => return Err(()),
-        CaseTest::AnyOf(choices) => {
-            for next in choices {
-                let answer = fit_case(next, value, tuple)?;
-                if answer.is_some() { return Ok(answer); }
-            }
-            return Ok(None);
-        }
-        CaseTest::Also { test: within, name } => {
-            let Some(found) = fit_case(within, value, tuple)? else { return Ok(None); };
-            gathered = found;
-            gathered.insert(name.clone(), value.clone());
-        }
-        CaseTest::Series { members, spread } => {
-            if let Value::Shared(cell) = value {
-                return fit_case(test, &cell.borrow(), tuple);
-            }
-            let Value::Vector(values) = value else { return Ok(None); };
-            let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
-            if values.len() < minimum { return Ok(None); }
-            if spread.is_none() && minimum != values.len() { return Ok(None); }
-            let mut position = 0;
-            for (ordinal, member) in members.iter().enumerate() {
-                let next = match spread {
-                    Some(star) if ordinal == *star => {
-                        let end = values.len() - (members.len() - ordinal - 1);
-                        let portion = Value::Vector(Rc::new(values[position..end].to_vec()));
-                        position = end;
-                        portion
-                    }
-                    _ => {
-                        let portion = values[position].clone();
-                        position += 1;
-                        portion
-                    }
-                };
-                match fit_case(member, &next, false)? {
-                    None => return Ok(None),
-                    Some(found) => gathered.extend(found),
-                }
-            }
-        }
-    }
-    Ok(Some(gathered))
-}
+
 
 
 /// A container's comparison keeps a shared nonreflexive item findable.

@@ -5893,6 +5893,132 @@ impl<'a> Engine<'a> {
         Ok(found)
     }
 
+    /// Whether the subject fits the pattern, gathering what the pattern
+    /// binds. The values read ahead of the match -- classes and dotted
+    /// names -- stand in `given` by their place. A tuple subject may be
+    /// taken apart but not kept whole: the kernel has no tuple value to
+    /// hand over in its stead.
+    fn fit_pattern(&mut self, pattern: &crate::code::Pattern, subject: &Value, bound: &mut Vec<(String, Value)>, tuple: bool, given: &[Value]) -> Flow<bool> {
+        use crate::code::Pattern;
+        let unready = self.lang.match_unready.first().cloned().unwrap_or_default();
+        match pattern {
+            Pattern::Any => Ok(true),
+            Pattern::Literal(value) => Ok(Pattern::literal_fits(value, subject)),
+            Pattern::Capture(_) | Pattern::Bound(..) if tuple => Err(unready.into()),
+            Pattern::Capture(name) => { bound.push((name.clone(), subject.clone())); Ok(true) }
+            Pattern::Bound(inner, name) => {
+                if !self.fit_pattern(inner, subject, bound, tuple, given)? { return Ok(false); }
+                bound.push((name.clone(), subject.clone()));
+                Ok(true)
+            }
+            Pattern::Value(at) => Ok(given[*at].equals(subject)),
+            Pattern::Alternatives(choices) => {
+                for choice in choices {
+                    let mut attempt = Vec::new();
+                    if self.fit_pattern(choice, subject, &mut attempt, tuple, given)? { bound.extend(attempt); return Ok(true); }
+                }
+                Ok(false)
+            }
+            Pattern::Sequence(parts, star) => {
+                if let Value::Bond(cell) = subject { let inner = cell.borrow().clone(); return self.fit_pattern(pattern, &inner, bound, tuple, given); }
+                let Value::Array(items) = subject else { return Ok(false); };
+                let items = items.clone();
+                let fixed = parts.len() - usize::from(star.is_some());
+                if items.len() < fixed || (star.is_none() && items.len() != fixed) { return Ok(false); }
+                let extra = items.len() - fixed;
+                for (i, part) in parts.iter().enumerate() {
+                    let held = if *star == Some(i) {
+                        Value::Array(Rc::new(items[i..i + extra].to_vec()))
+                    } else {
+                        let at = if star.map_or(false, |s| i > s) { i + extra - 1 } else { i };
+                        items[at].clone()
+                    };
+                    if !self.fit_pattern(part, &held, bound, false, given)? { return Ok(false); }
+                }
+                Ok(true)
+            }
+            Pattern::Mapping(pairs, rest) => {
+                if let Value::Bond(cell) = subject { let inner = cell.borrow().clone(); return self.fit_pattern(pattern, &inner, bound, tuple, given); }
+                let Value::Map(store) = subject else { return Ok(false) };
+                let store = store.clone();
+                let mut taken = Vec::new();
+                for (key, part) in pairs {
+                    let wanted = match key {
+                        Pattern::Literal(value) => value.clone(),
+                        Pattern::Value(at) => given[*at].clone(),
+                        _ => return Err(unready.into()),
+                    };
+                    let (found, _) = self.map_locate(&store, Some(&store), &wanted)?;
+                    let Some(at) = found else { return Ok(false) };
+                    let entry = store[at].1.clone();
+                    if !self.fit_pattern(part, &entry, bound, false, given)? { return Ok(false); }
+                    taken.push(at);
+                }
+                if let Some(name) = rest {
+                    let left: Vec<(Value, Value)> = store.iter().enumerate().filter(|(at, _)| !taken.contains(at)).map(|(_, pair)| pair.clone()).collect();
+                    bound.push((name.clone(), Value::Map(Rc::new(left.into()))));
+                }
+                Ok(true)
+            }
+            Pattern::Class(at, positional, keyed) => {
+                let kind = given[*at].clone();
+                if !self.core_isinstance(subject, &kind)? { return Ok(false); }
+                // A builtin kind comes as the native value or as the plain
+                // reading of its word; either stands for the whole subject
+                // with a single positional sub-pattern.
+                let builtin_kind = matches!(&kind, Value::Native(..)) || matches!(&kind, Value::Adapter(w) if w.0 == 8)
+                    || matches!(&kind, Value::Class(c) if Self::kind_beneath(c).is_some());
+                let title = match &kind {
+                    Value::Class(c) => c.name.clone(),
+                    Value::Native(_, word) => word.to_string(),
+                    Value::Adapter(w) if w.0 == 8 => match &w.1[0] { Value::Text(word) => word.to_string(), other => other.core_kind() },
+                    other => other.core_kind(),
+                };
+                if !positional.is_empty() {
+                    // The class lists, in order, the members its positional
+                    // sub-patterns stand for; a builtin kind stands for
+                    // the whole subject with one.
+                    let listed = match &kind {
+                        Value::Class(c) => self.lang.class_special.get(83).and_then(|word| self.class_value(c, word)),
+                        _ => None,
+                    };
+                    match listed {
+                        Some(Value::Tuple(names)) | Some(Value::Array(names)) => {
+                            if positional.len() > names.len() {
+                                return Err(format!("TypeError: {title}() accepts {} positional sub-pattern{} ({} given)", names.len(), if names.len() == 1 { "" } else { "s" }, positional.len()).into());
+                            }
+                            for (part, name) in positional.iter().zip(names.iter()) {
+                                let Value::Text(word) = name else { return Err("TypeError: __match_args__ elements must be strings".into()) };
+                                let Some(member) = self.member_for_pattern(subject, word)? else { return Ok(false) };
+                                if !self.fit_pattern(part, &member, bound, false, given)? { return Ok(false); }
+                            }
+                        }
+                        None if positional.len() == 1 && builtin_kind => {
+                            if !self.fit_pattern(&positional[0], subject, bound, false, given)? { return Ok(false); }
+                        }
+                        None => return Err(format!("TypeError: {title}() accepts 0 positional sub-patterns ({} given)", positional.len()).into()),
+                        Some(_) => return Err(format!("TypeError: {title}.__match_args__ must be a tuple").into()),
+                    }
+                }
+                for (word, part) in keyed {
+                    let Some(member) = self.member_for_pattern(subject, word)? else { return Ok(false) };
+                    if !self.fit_pattern(part, &member, bound, false, given)? { return Ok(false); }
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    /// A member of a class pattern's subject: nothing where the subject
+    /// has no such member, which fails the pattern rather than the run.
+    fn member_for_pattern(&mut self, subject: &Value, word: &str) -> Flow<Option<Value>> {
+        match self.class_get(subject.clone(), word, false) {
+            Ok(member) => Ok(Some(member)),
+            Err(fault) if self.attribute_fault(&fault) => Ok(None),
+            Err(fault) => Err(fault),
+        }
+    }
+
     fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Value::Fields(o) = value {
             return Ok(o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, _)| Value::text(k)).collect());
@@ -5942,11 +6068,13 @@ impl<'a> Engine<'a> {
         let result = match op {
             Action::Match(pattern, names, tuple) => {
                 let subject = self.drop_top()?;
+                // The values the pattern read ahead -- classes and dotted
+                // names -- stand under the subject, in the order read.
+                let given = self.drop_many(argc - 1)?;
                 let mut bindings = Vec::new();
-                match pattern.fit(&subject, &mut bindings, *tuple) {
-                    Err(()) => return Err(self.lang.match_unready.first().cloned().unwrap_or_default().into()),
-                    Ok(false) => Value::Null,
-                    Ok(true) => Value::Array(Rc::new(names.iter().map(|name| {
+                match self.fit_pattern(pattern, &subject, &mut bindings, *tuple, &given)? {
+                    false => Value::Null,
+                    true => Value::Array(Rc::new(names.iter().map(|name| {
                         bindings.iter().find(|(n, _)| n == name).expect("a pattern binding").1.clone()
                     }).collect())),
                 }

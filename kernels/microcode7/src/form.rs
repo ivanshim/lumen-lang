@@ -495,7 +495,15 @@ pub enum CaseTest {
     AnyOf(Vec<CaseTest>),
     Series { members: Vec<CaseTest>, spread: Option<usize> },
     Also { test: Box<CaseTest>, name: String },
-    Pending(Vec<CaseTest>),
+    /// A value worked out ahead of the fitting (a dotted name), by its
+    /// place among those values; the subject must equal it.
+    Worth(usize),
+    /// A mapping: each key -- a literal, or a value worked out ahead --
+    /// with the test its entry must pass, and a name for the pairs left.
+    Table { pairs: Vec<(CaseTest, CaseTest)>, rest: Option<String> },
+    /// A class, by its place among the values worked out ahead, with
+    /// positional tests and named ones for the subject's members.
+    Shape { kind: usize, positional: Vec<CaseTest>, named: Vec<(String, CaseTest)> },
 }
 
 impl CaseTest {
@@ -503,7 +511,7 @@ impl CaseTest {
         use std::collections::BTreeSet;
         let mut found = BTreeSet::new();
         let children = match self {
-            Self::Ignore | Self::Equal(_) => return Ok(found),
+            Self::Ignore | Self::Equal(_) | Self::Worth(_) => return Ok(found),
             Self::Keep(n) => { found.insert(n.clone()); return Ok(found); }
             Self::Also { test, name } => {
                 found = test.names()?;
@@ -518,7 +526,12 @@ impl CaseTest {
                 }
                 return Ok(found);
             }
-            Self::Series { members, .. } | Self::Pending(members) => members,
+            Self::Series { members, .. } => members.iter().collect::<Vec<&CaseTest>>(),
+            Self::Table { pairs, rest } => {
+                if let Some(name) = rest { found.insert(name.clone()); }
+                pairs.iter().map(|(_, test)| test).collect()
+            }
+            Self::Shape { positional, named, .. } => positional.iter().chain(named.iter().map(|(_, test)| test)).collect(),
         };
         for child in children {
             for name in child.names()? {
@@ -533,7 +546,7 @@ impl CaseTest {
 pub enum Form {
     /// A case test which writes its names only upon success. A tuple
     /// may give up its members, but cannot yet be kept whole.
-    Fits { value: Box<Form>, test: Rc<CaseTest>, slots: Vec<(String, Address)>, tuple: bool },
+    Fits { value: Box<Form>, test: Rc<CaseTest>, slots: Vec<(String, Address)>, tuple: bool, kinds: Vec<Form> },
     Const(Value),
     Read(Address),
     /// The same, but the last look a binding gets before a write of

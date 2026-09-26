@@ -462,7 +462,7 @@ impl<'a> Machine<'a> {
     }
     /// Whether an escape tells of a member that is not there, in words
     /// or as a raised thing of that kind.
-    fn missing_member_escape(&self,escape:&Escape)->bool {
+    pub(super) fn missing_member_escape(&self,escape:&Escape)->bool {
         let Some(kind)=self.detail("attribute.amiss").split(':').next().filter(|k|!k.is_empty()) else{return false};
         match escape {
             Escape::Error(words)=>words.split(':').next()==Some(kind),

@@ -193,6 +193,8 @@ pub struct Compiler<'a> {
     annotation_target: Option<usize>,
     /// Whether the statement being read was marked asynchronous.
     asynchronous: bool,
+    /// How many values a case's pattern has read ahead of the subject.
+    pattern_values: usize,
     lang: &'a Lang,
     tokens: &'a [Token],
     pos: usize,
@@ -451,7 +453,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, asynchronous: false, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, asynchronous: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -3047,10 +3049,12 @@ impl<'a> Compiler<'a> {
         while self.look().shape != Shape::Close && !self.exhausted() {
             if !self.on_keyword(&self.lang.match_cases) { return Err(self.pattern_fault()); }
             self.take();
+            self.pattern_values = 0;
             let pattern = self.case_pattern()?;
             let names = pattern.bindings().map_err(|_| self.pattern_fault())?;
             self.read(&subject);
-            self.act(Action::Match(Rc::new(pattern), names.clone(), tuple), 1);
+            // The values the pattern read ahead stand under the subject.
+            self.act(Action::Match(Rc::new(pattern), names.clone(), tuple), 1 + self.pattern_values);
             let found = self.gensym("fitted");
             self.write(&found);
             self.read(&found);
@@ -3215,31 +3219,29 @@ impl<'a> Compiler<'a> {
         if let Some(map) = &lang.map_brackets {
             if self.at_symbol(&map.open) {
                 self.take();
-                let mut items = Vec::new();
-                let mut rest = None;
+                let mut pairs = Vec::new();
+                let mut rest: Option<(usize, String)> = None;
                 while !self.at_symbol(&map.close) {
-                    if let Some(capture_at) = rest {
-                        self.pos = capture_at;
+                    if let Some((capture_at, _)) = &rest {
+                        self.pos = *capture_at;
                         return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: invalid syntax".into() });
                     }
                     if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Power)) {
                         self.take();
                         let capture_at = self.pos;
-                        let capture = self.pattern_capture()?;
-                        if !matches!(capture, Pattern::Capture(_)) { return Err(self.pattern_fault()); }
-                        items.push(capture);
-                        rest = Some(capture_at);
+                        let Pattern::Capture(name) = self.pattern_capture()? else { return Err(self.pattern_fault()) };
+                        rest = Some((capture_at, name));
                     } else {
                         let key = self.pattern_atom()?;
-                        if !matches!(key, Pattern::Literal(_) | Pattern::Unready(_)) { return Err(self.pattern_fault()); }
+                        if !matches!(key, Pattern::Literal(_) | Pattern::Value(_)) { return Err(self.pattern_fault()); }
                         self.want_sign(lang.pair_mark.as_deref().unwrap_or_default(), "between a key and its pattern")?;
-                        items.push(self.pattern_part()?);
+                        pairs.push((key, self.pattern_part()?));
                     }
                     if !map.between.as_ref().map_or(false, |s| self.at_symbol(s)) { break; }
                     self.take();
                 }
                 self.want_sign(&map.close, "after the mapping pattern")?;
-                return Ok(Pattern::Unready(items));
+                return Ok(Pattern::Mapping(pairs, rest.map(|(_, name)| name)));
             }
         }
         if token.shape == Shape::Instr {
@@ -3247,34 +3249,42 @@ impl<'a> Compiler<'a> {
             if lang.false_words.contains(&token.lexeme) { self.take(); return Ok(Pattern::Literal(Value::Flag(false))); }
             if lang.null_words.contains(&token.lexeme) { self.take(); return Ok(Pattern::Literal(Value::Null)); }
             let capture = self.pattern_capture()?;
-            let mut dotted = false;
+            let mut path = Vec::new();
             while lang.pipe_words.contains(&self.look().lexeme) {
-                dotted = true;
                 self.take();
-                self.want_name("after the member mark")?;
+                path.push(self.want_name("after the member mark")?);
             }
-            if let Some(call) = &lang.calling {
-                if self.at_symbol(&call.open) {
+            let called = lang.calling.as_ref().map_or(false, |call| self.at_symbol(&call.open));
+            if path.is_empty() && !called { return Ok(capture); }
+            // A dotted name, or a class before its brackets, is a value
+            // of the program's own: it is read here, ahead of the
+            // subject, and stands among the values the match is handed.
+            let Pattern::Capture(head) = &capture else { return Err(self.pattern_fault()) };
+            self.read(head);
+            for member in &path { self.act(Action::Grab(Rc::from(member.as_str())), 1); }
+            let place = self.pattern_values;
+            self.pattern_values += 1;
+            let Some(call) = lang.calling.clone().filter(|_| called) else { return Ok(Pattern::Value(place)) };
+            self.take();
+            let mut positional = Vec::new();
+            let mut keyed: Vec<(String, Pattern)> = Vec::new();
+            while !self.at_symbol(&call.close) {
+                let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
+                if keyword {
+                    let name = self.take().lexeme;
+                    if keyed.iter().any(|(old, _)| *old == name) { return Err(self.pattern_fault()); }
                     self.take();
-                    let mut items = Vec::new();
-                    let mut keywords = Vec::new();
-                    while !self.at_symbol(&call.close) {
-                        let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
-                        if keyword {
-                            let name = self.take().lexeme;
-                            if keywords.contains(&name) { return Err(self.pattern_fault()); }
-                            keywords.push(name);
-                            self.take();
-                        } else if !keywords.is_empty() { return Err(self.pattern_fault()); }
-                        items.push(self.pattern_part()?);
-                        if !call.between.as_ref().map_or(false, |s| self.at_symbol(s)) { break; }
-                        self.take();
-                    }
-                    self.want_sign(&call.close, "after the class pattern")?;
-                    return Ok(Pattern::Unready(items));
+                    keyed.push((name, self.pattern_part()?));
+                } else if !keyed.is_empty() {
+                    return Err(self.pattern_fault());
+                } else {
+                    positional.push(self.pattern_part()?);
                 }
+                if !call.between.as_ref().map_or(false, |s| self.at_symbol(s)) { break; }
+                self.take();
             }
-            return Ok(if dotted { Pattern::Unready(Vec::new()) } else { capture });
+            self.want_sign(&call.close, "after the class pattern")?;
+            return Ok(Pattern::Class(place, positional, keyed));
         }
         Err(self.pattern_fault())
     }

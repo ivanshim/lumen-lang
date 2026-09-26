@@ -2731,7 +2731,8 @@
     "__aiter__",
     "__anext__",
     "__aenter__",
-    "__aexit__"
+    "__aexit__",
+    "__match_args__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"

@@ -1619,12 +1619,20 @@ only. The extension labels so far, all from PHP:
   names. `ext.stmt.match.as` binds the whole value after a pattern fits.
   `ext.stmt.match.guard` begins the condition asked after those bindings
   are made. A failed pattern writes no bindings.
-- `ext.stmt.match.unready` gives the words said on reaching a mapping,
-  class or named-value pattern whose running is not yet furnished.
-  Such patterns are read whole. A tuple subject may be taken apart, but
-  keeping that tuple whole says these words too: the kernels have no
-  tuple value to hand over, and must not hand over a mutable array in
-  its stead. `ext.stmt.match.invalid` gives the words
+- `ext.stmt.match.unready` gives the words said when a pattern would
+  keep a tuple subject whole: the kernels have no tuple value to hand
+  over, and must not hand over a mutable array in its stead. Mapping,
+  class and value patterns are fitted at the run. A dotted name, or the
+  class before a class pattern's brackets, is worked out ahead of the
+  subject and handed to the fitting by its place; a value pattern fits
+  what equals it. A mapping pattern looks each key up in a map subject
+  and fits the entry found, and a doubly starred name keeps the pairs
+  left over as a map. A class pattern asks whether the subject is an
+  instance of the class, then fits each keyword's sub-pattern to the
+  member so named, and each positional sub-pattern to the member the
+  class's `__match_args__` (the last word of `ext.stmt.class.special`)
+  names in its place -- or, for a builtin kind, to the subject itself.
+  A member the subject lacks fails the pattern. `ext.stmt.match.invalid` gives the words
   for a pattern written amiss, including repeated bindings and alternatives
   which do not bind the same names. Both labels take lists of words,
   whose first entry is the whole complaint.
@@ -1777,8 +1785,9 @@ only. The extension labels so far, all from PHP:
   asks its subject for its asynchronous walk and steps it by that
   walk's own word for the next member, ending on `ext.stmt.async.stop`;
   a context block so marked is entered and left by the asynchronous
-  words. The four words stand last in `ext.stmt.class.special`
-  (`__aiter__`, `__anext__`, `__aenter__`, `__aexit__`).
+  words. The four words stand at places 79 to 82 of
+  `ext.stmt.class.special` (`__aiter__`, `__anext__`, `__aenter__`,
+  `__aexit__`), before `__match_args__` at place 83.
 - `ext.stmt.loop.else`: the block reader's switch for a last arm after a
   loop. Exhaustion reaches it; a break passes over it. A continue leaves
   the last arm still to be reached when the loop is done.
@@ -4971,7 +4980,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` `__aiter__` `__anext__` `__aenter__` `__aexit__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` `__aiter__` `__anext__` `__aenter__` `__aexit__` `__match_args__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
