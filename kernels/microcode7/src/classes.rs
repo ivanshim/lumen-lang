@@ -493,7 +493,10 @@ impl<'a> Machine<'a> {
             // same: a thing whose call member is a thing of its own
             // kind is refused at the depth the table allows, as any
             // call that never comes back is.
-            Value::Thing(t)=>{let called=self.inherited_entry(&t.of,self.detail("call")).ok_or_else(||self.class_unready())?;self.deeper()?;values.insert(0,Value::Thing(t));let answer=self.apply_class_member(called,values);self.standing-=1;answer},
+            Value::Thing(t)=>{let called=self.inherited_entry(&t.of,self.detail("call")).ok_or_else(|| {
+                let message = self.core_complaint("core.uncallable", &t.of.name);
+                if message.is_empty() { self.class_unready() } else { message.into() }
+            })?;self.deeper()?;values.insert(0,Value::Thing(t));let answer=self.apply_class_member(called,values);self.standing-=1;answer},
             Value::Blueprint(c)=>self.construct_ordered(c,values),
             Value::Wrapped(tag,kept)=>{
                 match tag {

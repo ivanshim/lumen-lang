@@ -6419,7 +6419,16 @@ impl<'a> Engine<'a> {
                         self.data.push(answer);
                         Ok(())
                     }
-                    Value::Object(o) if self.fuller_classes() => {let args=self.drop_many(argc-1)?;let v=self.class_apply(Value::Object(o),args)?;self.data.push(v);Ok(())},
+                    Value::Object(o) if self.fuller_classes() => {
+                        let args = self.drop_many(argc - 1)?;
+                        if self.lang.core_words.contains_key("core.uncallable")
+                            && self.class_value(&o.class, self.class_word("call")).is_none() {
+                            return Err(self.core_fault("core.uncallable", &o.class.name).into());
+                        }
+                        let v = self.class_apply(Value::Object(o), args)?;
+                        self.data.push(v);
+                        Ok(())
+                    },
                     // A bound member of a value, as a set's or a run of
                     // bytes' methods are read, takes its arguments the
                     // way every other callee does: what was spread is
@@ -6497,7 +6506,7 @@ impl<'a> Engine<'a> {
                     // A word of the language's own stands where a
                     // routine stands: text spelling one is called as
                     // though the word itself had been written there.
-                    Value::Text(word) => match self.lang.builtins.get(word.as_ref()).copied() {
+                    Value::Text(word) if !self.lang.core_words.contains_key("core.uncallable") => match self.lang.builtins.get(word.as_ref()).copied() {
                         Some(native) => {
                             let mut given = self.drop_many(argc - 1)?;
                             let outcome = self.builtin(native, &word, &mut given);
@@ -6510,6 +6519,8 @@ impl<'a> Engine<'a> {
                         }
                         None => Err(format!("'{}' is not a function", name).into()),
                     },
+                    value if self.lang.core_words.contains_key("core.uncallable") =>
+                        Err(self.core_fault("core.uncallable", &value.core_kind()).into()),
                     _ => Err(format!("'{}' is not a function", name).into()),
                 };
             }

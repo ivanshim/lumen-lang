@@ -4544,7 +4544,13 @@ impl<'a> Machine<'a> {
                         return self.make_instance(class.clone(), values);
                     }
                 }
-                let (p, env) = self.routine_of(stands, target)?;
+                let (p, env) = match self.routine_of(stands, target) {
+                    Ok(callable) => callable,
+                    Err(fault) => {
+                        self.value_list(args, frame)?;
+                        return Err(fault);
+                    }
+                };
                 let callee = self.env_for(&p, env, args, frame)?;
                 self.drive(p, callee)
             }
@@ -5435,7 +5441,11 @@ impl<'a> Machine<'a> {
     }
 
     fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
-        let word = match stands { Value::Text(word) | Value::Intrinsic(_, word) => word, _ => return None };
+        let word = match stands {
+            Value::Intrinsic(_, word) => word,
+            Value::Text(word) if self.table.strings("ext.builtin.core.uncallable").is_empty() => word,
+            _ => return None,
+        };
         let op = self.table.prims.get(word.as_ref()).copied()?;
         let name = word.to_string();
         Some((|| {
@@ -5462,6 +5472,8 @@ impl<'a> Machine<'a> {
         match stands {
             Value::Bound(p, env) => Ok((p, env)),
             Value::Unset => Err("Unknown function".to_string().into()),
+            other if !self.table.strings("ext.builtin.core.uncallable").is_empty() =>
+                Err(self.core_complaint("core.uncallable", &other.kind_word()).into()),
             _ => match node {
                 Form::Read(slot) => Err(format!("'{}' is not a function", slot.ident).into()),
                 _ => Err("eval needs a program".to_string().into()),
@@ -6110,7 +6122,13 @@ impl<'a> Machine<'a> {
                     let given = self.value_list(args, frame)?;
                     return Ok(Next::Value(self.make_instance(class.clone(), given)?));
                 }
-                let (p, env) = self.routine_of(stands, target)?;
+                let (p, env) = match self.routine_of(stands, target) {
+                    Ok(callable) => callable,
+                    Err(fault) => {
+                        self.value_list(args, frame)?;
+                        return Err(fault);
+                    }
+                };
                 let callee = self.env_for(&p, env, args, frame)?;
                 Ok(Next::Jump(p, callee))
             }
