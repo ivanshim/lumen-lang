@@ -4717,10 +4717,16 @@ impl<'a> Engine<'a> {
                 Err(fled) => { self.data.truncate(depth); self.carried = Some(fled); Err(String::new()) }
             };
         }
-        let held = receiver.contents();
+        let held = if (2..=7).contains(&place) && Self::sequence_row(receiver).is_some() {
+            receiver.clone()
+        } else { receiver.contents() };
         // Membership reads the other way round: the member stands before
-        // the container it is sought in.
-        if place == 14 { return self.special_dyad(&Action::Contains, &args[0], &held); }
+        // the container it is sought in. Keep a list's cell so equality
+        // can change the sequence while it is being searched.
+        if place == 14 {
+            let sequence = if Self::sequence_row(receiver).is_some() { receiver } else { &held };
+            return self.special_dyad(&Action::Contains, &args[0], sequence);
+        }
         // The signs of a pair. A reflected member is the same sign with
         // the value it was asked of on the right.
         let (sign, turned) = match place {
@@ -4742,7 +4748,9 @@ impl<'a> Engine<'a> {
             66 => (Action::BitOne, false), 71 => (Action::BitOne, true),
             _ => return Err(self.lang.method_errors["arguments"].clone()),
         };
-        let other = args[0].contents();
+        let other = if (2..=7).contains(&place) && Self::sequence_row(&args[0]).is_some() {
+            args[0].clone()
+        } else { args[0].contents() };
         if turned { self.special_dyad(&sign, &other, &held) } else { self.special_dyad(&sign, &held, &other) }
     }
 
@@ -5193,7 +5201,71 @@ impl<'a> Engine<'a> {
         })
     }
 
+    fn sequence_row(value: &Value) -> Option<bool> {
+        match value {
+            Value::Array(_) => Some(true),
+            Value::Tuple(_) => Some(false),
+            Value::Collection(cell, _) | Value::Bond(cell) => Self::sequence_row(&cell.borrow()),
+            _ => None,
+        }
+    }
+
+    fn sequence_comparison(&mut self, op: &Action, left: &Value, right: &Value) -> Res<Value> {
+        if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
+        }
+        self.reaching += 1;
+        let answer = (|| {
+            let mut at = 0;
+            loop {
+                let (a, b) = (left.contents(), right.contents());
+                let (Value::Array(x) | Value::Tuple(x), Value::Array(y) | Value::Tuple(y)) = (&a, &b) else { unreachable!() };
+                if at == 0 && matches!(a, Value::Array(_)) && x.len() != y.len() && matches!(op, Action::Eq | Action::Ne) {
+                    return Ok(Value::Flag(matches!(op, Action::Ne)));
+                }
+                let (Some(one), Some(other)) = (x.get(at), y.get(at)) else {
+                    let order = x.len().cmp(&y.len());
+                    return Ok(Value::Flag(match op {
+                        Action::Eq => order.is_eq(), Action::Ne => !order.is_eq(),
+                        Action::Lt => order.is_lt(), Action::Le => order.is_le(),
+                        Action::Gt => order.is_gt(), _ => order.is_ge(),
+                    }));
+                };
+                if !self.sequence_equal_item(one, other)? {
+                    return match op {
+                        Action::Eq | Action::Ne => Ok(Value::Flag(matches!(op, Action::Ne))),
+                        _ => self.special_dyad(op, one, other),
+                    };
+                }
+                at += 1;
+            }
+        })();
+        self.reaching -= 1;
+        answer
+    }
+
+    fn sequence_equal_item(&mut self, stored: &Value, wanted: &Value) -> Res<bool> {
+        if stored.same_place(wanted) { return Ok(true); }
+        let answer = self.special_dyad(&Action::Eq, stored, wanted)?;
+        self.special_truth(&answer)
+    }
+
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.lang.sequence_values && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
+            && Self::sequence_row(a).is_some() && Self::sequence_row(a) == Self::sequence_row(b) {
+            return self.sequence_comparison(op, a, b);
+        }
+        if self.lang.sequence_values && matches!(op, Action::Contains | Action::Lacks)
+            && Self::sequence_row(b).is_some() {
+            let mut position = 0;
+            let found = loop {
+                let (Value::Array(row) | Value::Tuple(row)) = b.contents() else { break false };
+                let Some(item) = row.get(position).cloned() else { break false };
+                if self.sequence_equal_item(&item, a)? { break true; }
+                position += 1;
+            };
+            return Ok(Value::Flag(found == matches!(op, Action::Contains)));
+        }
         // A map written into with the bit-or sign is written in its own
         // cell, so every name for it sees the pairs it took. The right
         // side may be a map or any row of pairs; the pairs before an
@@ -5449,6 +5521,11 @@ impl<'a> Engine<'a> {
                 }
             }
             let outcome = self.special_dyad(op, left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
+            if let (Action::Mul, Ok(Value::Tuple(row))) = (op, &outcome) {
+                let from_subclass = left.iter().chain(right.iter())
+                    .any(|worth| matches!(worth, Value::Tuple(source) if Rc::ptr_eq(source, row)));
+                if from_subclass { return Ok(Value::Tuple(Rc::new(row.as_ref().clone()))); }
+            }
             // A thing standing on a builtin kind is named by its own
             // class where the working is refused by the kinds it was
             // handed, rather than by the kind of the worth beneath it:
@@ -5638,7 +5715,11 @@ impl<'a> Engine<'a> {
         }
         if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
             let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
-            return Ok(Some(self.builtin(op, &word, &mut settled)?));
+            let answer = self.builtin(op, &word, &mut settled)?;
+            if let (Builtin::Tuple, Value::Tuple(row)) = (op, &answer) {
+                return Ok(Some(Value::Tuple(Rc::new(row.as_ref().clone()))));
+            }
+            return Ok(Some(answer));
         }
         let args: &[Value] = if changed { &settled } else { args };
         let first = if changed { args.first() } else { first };
@@ -8433,7 +8514,9 @@ impl<'a> Engine<'a> {
             }
             Action::Mul if rowed(a) || rowed(b) => {
                 let (row, by) = if rowed(a) { (a, b) } else { (b, a) };
-                let repeated = self.sequence_repeated(&items(row), self.sequence_count(by)?)?;
+                let count = self.sequence_count(by)?;
+                if matches!(row, Value::Tuple(_)) && count == 1 { return Ok(Some(row.clone())); }
+                let repeated = self.sequence_repeated(&items(row), count)?;
                 Ok(Some(match row { Value::Tuple(_) => Value::Tuple(Rc::new(repeated)), _ => Value::array(repeated) }))
             }
             // Text repeated stands apart, since the count it takes is
@@ -10635,7 +10718,7 @@ impl<'a> Engine<'a> {
         // A tuple answers to the two methods that only look through it,
         // and a row searched for a value it does not hold names that
         // value; both are worded by the definition.
-        if self.lang.sequence_values && matches!(operation, "index" | "count") && matches!(&contents, Value::Tuple(_) | Value::Array(_)) {
+        if self.lang.sequence_values && matches!(operation, "index" | "count" | "remove") && matches!(&contents, Value::Tuple(_) | Value::Array(_)) && (operation != "remove" || matches!(&contents, Value::Array(_))) {
             let (Value::Tuple(items) | Value::Array(items)) = &contents else { unreachable!() };
             let most = if operation == "index" { 3 } else { 1 };
             if !named.is_empty() || args.is_empty() || args.len() > most {
@@ -10643,27 +10726,45 @@ impl<'a> Engine<'a> {
             }
             let whole = |v: &Value| -> Res<i64> { match v.contents() {
                 Value::Small(n) => Ok(n), Value::Flag(t) => Ok(i64::from(t)),
-                Value::Huge(n) => Ok(n.to_i64().unwrap_or(i64::MAX)),
+                Value::Huge(n) => Ok(n.to_i64().unwrap_or_else(|| if n.sign() == num_bigint::Sign::Minus { i64::MIN } else { i64::MAX })),
                 _ => Err(self.lang.method_errors["arguments"].clone()),
             }};
             let within = |n: i64| -> usize {
                 let place = if n < 0 { n.saturating_add(items.len() as i64) } else { n };
-                place.clamp(0, items.len() as i64) as usize
+                place.max(0) as usize
             };
             let from = match args.get(1) { Some(v) => within(whole(v)?), None => 0 };
             let upto = match args.get(2) { Some(v) => within(whole(v)?), None => items.len() };
-            let found = (from..upto.max(from)).filter(|i| Self::member_matches(&args[0], &items[*i]));
-            if operation == "count" { return Ok(Value::Small(found.count() as i64)); }
+            let stop = if args.get(2).is_none() { usize::MAX } else { upto };
+            let mut at = from;
+            let mut count = 0;
+            while at < stop {
+                let (Value::Array(current) | Value::Tuple(current)) = receiver.contents() else { break };
+                let Some(item) = current.get(at).cloned() else { break };
+                if self.sequence_equal_item(&item, &args[0])? {
+                    if operation == "index" { return Ok(Value::Small(at as i64)); }
+                    if operation == "remove" {
+                        if let Value::Collection(cell, _) = receiver {
+                            if let Value::Array(row) = &mut *cell.borrow_mut() {
+                                if at < row.len() { Rc::make_mut(row).remove(at); }
+                            }
+                        }
+                        return Ok(Value::Null);
+                    }
+                    count += 1;
+                }
+                at += 1;
+            }
+            if operation == "count" { return Ok(Value::Small(count)); }
+            if operation == "remove" { return Err(self.lang.method_errors["remove"].clone()); }
             let words = &self.lang.sequence_missing;
             let piece = |i: usize| words.get(i).map_or("", String::as_str);
-            return match found.into_iter().next() {
-                Some(at) => Ok(Value::Small(at as i64)),
-                None => Err(match &contents {
-                    Value::Tuple(_) => piece(2).to_string(),
-                    _ => format!("{}{}{}", piece(0), args[0].representation(&self.wording()), piece(1)),
-                }),
-            };
+            return Err(match &contents {
+                Value::Tuple(_) => piece(2).to_string(),
+                _ => format!("{}{}{}", piece(0), args[0].representation(&self.wording()), piece(1)),
+            });
         }
+
         if operation == "encode" && matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             let mut supplied = args;
             for (key, value) in named {
@@ -14687,7 +14788,8 @@ impl Engine<'_> {
         if named.is_empty() {
             if b == Builtin::Hash && matches!(args.first(), Some(Value::Bytes(..))) { return self.byte_call(17, &args); }
             if b == Builtin::InstanceOf && matches!(args.get(1), Some(Value::ByteKind(..))) { return self.byte_call(16, &args); }
-            if b == Builtin::Repr && args.len() == 1 && matches!(args[0], Value::Map(_)) {
+            if b == Builtin::Repr && args.len() == 1 && (matches!(args[0], Value::Map(_))
+                || window.is_none() && matches!(args[0], Value::Array(_) | Value::Tuple(_))) {
                 return self.special_text(&args[0], true).map(|text| Value::text(&text));
             }
             if b == Builtin::Repr && matches!(args.first(), Some(Value::Text(_))) { return crate::strings::run(crate::strings::TextOp::Repr, name, &args, self.lang, &self.wording()); }
@@ -14824,6 +14926,9 @@ impl Engine<'_> {
             }
             Builtin::Tuple | Builtin::Set | Builtin::Frozen => {
                 arity(0, 1)?;
+                if b == Builtin::Tuple {
+                    if let Some(value @ Value::Tuple(_)) = args.first() { return Ok(value.clone()); }
+                }
                 // A set that cannot be changed, handed to the maker of
                 // its own kind, is handed straight back: nothing may
                 // alter it, so a fresh one would be the same set under

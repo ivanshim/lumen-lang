@@ -90,20 +90,12 @@ def itermulti(seqn):
     'Test multiple tiers of iterators'
     return chain(map(lambda x:x, iterfunc(IterGen(Sequence(seqn)))))
 
-# Trim: the kernel cannot yet build a subclass of tuple.
-# Keep the name, but refuse construction rather than feign inheritance.
-class LyingTuple:
-    def __init__(self, *args):
-        raise 'NotImplementedError: builtin sequence subclasses are not supported'
+class LyingTuple(tuple):
 
     def __iter__(self):
         yield 1
 
-# Trim: the kernel cannot yet build a subclass of list.
-# Keep the name, but refuse construction rather than feign inheritance.
-class LyingList:
-    def __init__(self, *args):
-        raise 'NotImplementedError: builtin sequence subclasses are not supported'
+class LyingList(list):
 
     def __iter__(self):
         yield 1
