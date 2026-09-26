@@ -2595,7 +2595,7 @@ impl<'a> Machine<'a> {
         None
     }
 
-    fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
+    fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
         if self.names_in_calls {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
@@ -15420,13 +15420,31 @@ impl<'a> Machine<'a> {
             Held::Reading(which) => {
                 let near = self.readings[which].near.clone();
                 let outer = self.readings[which].outer.clone();
-                if let Some(worth) = looked_up(&near, name) { return Some(Ok(worth)); }
-                if let Some(worth) = outer.as_ref().and_then(|held| looked_up(held, name)) { return Some(Ok(worth)); }
+                match self.booked_get(&near, name) {
+                    Ok(Some(worth)) => return Some(Ok(worth)),
+                    Ok(None) => {}
+                    Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                }
+                if let Some(outer) = &outer {
+                    match self.booked_get(outer, name) {
+                        Ok(Some(worth)) => return Some(Ok(worth)),
+                        Ok(None) => {}
+                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                    }
+                }
                 // A builtin is reached through the dictionary of builtins
                 // the outer dictionary names, so a program may hand over
                 // one of its own and so choose what the text can reach.
+                // Such a dictionary need not be a plain one: it is asked
+                // for the very way any other name is.
                 let roots = outer.unwrap_or(near);
-                let named = self.table.single("ext.system.module.builtins").and_then(|word| looked_up(&roots, word));
+                let named = match self.table.single("ext.system.module.builtins") {
+                    Some(word) => match self.booked_get(&roots, word) {
+                        Ok(v) => v,
+                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                    },
+                    None => None,
+                };
                 // A dictionary of builtins the program put there shuts
                 // the text in; the one the kernel supplied stands for
                 // the ordinary names, and those find the spare namespace
@@ -15440,10 +15458,10 @@ impl<'a> Machine<'a> {
                             None => None,
                         }
                     }
-                    Some(_) => None,
-                    // Naming no dictionary of its own leaves the text
-                    // reaching what any other name reaches, the spare
-                    // namespace with it.
+                    Some(other) => match self.mapping_read(&other, name) {
+                        Ok(v) => v,
+                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                    },
                     None => match self.native_of(name) {
                         Some(worth) => Some(worth),
                         None => self.spare_name(name),
@@ -15455,7 +15473,7 @@ impl<'a> Machine<'a> {
     }
 
     /// Write a slot's name into the dictionary it lives in, or strike it out.
-    fn booked_write(&self, at: usize, name: &str, worth: Option<Value>) {
+    fn booked_write(&mut self, at: usize, name: &str, worth: Option<Value>) {
         match self.book_holding(at) {
             Some(Held::World) => if let Some(book) = &self.world_book { set_down(book, name, worth) },
             Some(Held::Reading(which)) => {
@@ -15464,7 +15482,8 @@ impl<'a> Machine<'a> {
                     Some(outer) if book.declared.iter().any(|word| word == name) => outer,
                     _ => &book.near,
                 };
-                set_down(goes_to, name, worth);
+                let goes_to = goes_to.clone();
+                if let Err(escape) = self.booked_put(&goes_to, name, worth) { self.got_away = Some(escape); }
             }
             None => {}
         }
@@ -15551,8 +15570,18 @@ impl<'a> Machine<'a> {
             Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))))
         };
         if op == Prim::ClassWork(8) {
-            let mut words: Vec<String> = match &*book.borrow() {
+            let held = book.borrow().clone();
+            let mut words: Vec<String> = match &held {
                 Value::Dict(entries) => entries.iter().map(|(key, _)| key.bare()).collect(),
+                // A program's own value standing in for the names here
+                // lists them the way it is asked to elsewhere too: by
+                // its own `keys`, set in order the same way a plain
+                // dictionary's own keys are.
+                Value::Thing(_) => {
+                    let bound = self.read_class_member(held.clone(), "keys", false).map_err(|e| self.suspension_fault(e))?;
+                    let listed = self.apply_class_member(bound, Vec::new()).map_err(|e| self.suspension_fault(e))?;
+                    self.object_members(&listed)?.iter().map(Value::bare).collect()
+                }
                 _ => Vec::new(),
             };
             words.sort();
@@ -15574,6 +15603,103 @@ impl<'a> Machine<'a> {
 
     fn source_refused(&self) -> String {
         self.table.single("ext.builtin.source.unready").unwrap_or_default().to_owned()
+    }
+
+    /// Whether an escape, in either of its two shapes, names a fault of
+    /// the given kind: a value actually raised, read by its blueprint
+    /// and the whole of its ancestry, the way `missing_member_escape`
+    /// reads one for a member gone missing; or the kernel's own words
+    /// for a complaint not yet raised as a value, read by the name at
+    /// their front.
+    fn escape_names(&self, escape: &Escape, kind: &str) -> bool {
+        match escape {
+            Escape::Error(words) => words.split(':').next() == Some(kind),
+            Escape::Thrown(Value::Thing(t)) => t.of.name == kind || t.of.ancestry.iter().any(|b| b.name == kind),
+            _ => false,
+        }
+    }
+
+    /// A name read out of whatever a dictionary of names is standing
+    /// for here: the plain pairs of a dictionary, the dictionary a
+    /// read-only window looks onto, or a program's own value read the
+    /// very way any subscript is read from it — through the blueprint
+    /// it answers to, or the native worth of a kind it stands on where
+    /// its blueprint does not. A key neither carries answers with
+    /// nothing, as a plain dictionary answers a key it has not;
+    /// anything else the reading raises goes uncaught.
+    fn mapping_read(&mut self, held: &Value, name: &str) -> Result<Option<Value>, Escape> {
+        match held {
+            Value::Dict(entries) => Ok(entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, v)| v.clone())),
+            Value::Window(owner, 'm') => { let owner = owner.as_ref().clone(); self.mapping_read(&owner, name) }
+            _ => match self.prim(Prim::At, "", &[held.clone(), Value::text(name)]) {
+                Ok(v) => Ok(Some(v)),
+                Err(words) => {
+                    // A missing key is kept as one of the kernel's own
+                    // sentinel words until something asks what it
+                    // stands for; a plain reading through a subscript
+                    // never asks, so it is asked here instead, the very
+                    // way a catch clause matching `KeyError` asks it.
+                    let escape = match self.got_away.take() {
+                        Some(escape) => escape,
+                        None => match self.as_raised(&words) {
+                            Some(value) => Escape::Thrown(value),
+                            None => Escape::Error(words),
+                        },
+                    };
+                    if self.escape_names(&escape, "KeyError") { return Ok(None); }
+                    Err(escape)
+                }
+            },
+        }
+    }
+
+    /// A name written into such a value, or taken out of it where
+    /// nothing is given: the plain pairs of a dictionary, in place; or
+    /// a program's own value written or removed the very way any
+    /// subscript assignment or removal reaches it — through the
+    /// blueprint it answers to, or the native worth it stands on. A
+    /// value with neither is refused the way any other value nothing
+    /// may be written into is.
+    fn mapping_write(&mut self, held: &Value, name: &str, given: Option<Value>) -> Result<(), Escape> {
+        let key = Value::text(name);
+        let outcome = match given {
+            Some(value) => self.user_operation(Prim::Placed, &[held.clone(), key, value]),
+            None => self.user_operation(Prim::Erase, &[held.clone(), key]),
+        };
+        match outcome {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => {
+                let kind = match held { Value::Thing(t) => t.of.name.clone(), other => other.kind_word() };
+                Err(self.core_complaint("core.immutable", &kind).into())
+            }
+            Err(words) => Err(match self.got_away.take() {
+                Some(escape) => escape,
+                None => Escape::Error(words),
+            }),
+        }
+    }
+
+    /// A name read out of a cell kept for such a dictionary, whichever
+    /// of the shapes above it holds.
+    fn booked_get(&mut self, book: &Rc<RefCell<Value>>, name: &str) -> Result<Option<Value>, Escape> {
+        let held = book.borrow().clone();
+        self.mapping_read(&held, name)
+    }
+
+    /// A name written into a cell kept for such a dictionary, or taken
+    /// out where nothing is given: the plain pairs of a dictionary,
+    /// written in place, or a program's own value written through its
+    /// blueprint. A shape neither of these leaves the write undone, as
+    /// it always has, since nothing but a dictionary was ever kept in
+    /// such a cell before a program's own value could stand in for one
+    /// too.
+    fn booked_put(&mut self, book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>) -> Result<(), Escape> {
+        let held = book.borrow().clone();
+        match &held {
+            Value::Dict(_) => { set_down(book, name, value); Ok(()) }
+            Value::Thing(_) => self.mapping_write(&held, name, value),
+            _ => Ok(()),
+        }
     }
 
     fn source_unreadable(&self) -> String {
@@ -15715,7 +15841,7 @@ impl<'a> Machine<'a> {
                 _ => Err(self.source_refused()),
             },
             Prim::Prepare => self.text_prepared(name, v),
-            _ => self.text_performed(op == Prim::Weigh, v),
+            _ => self.text_performed(op == Prim::Weigh, name, v),
         }
     }
 
@@ -15796,7 +15922,11 @@ impl<'a> Machine<'a> {
         };
         self.text_built(&source, &tokens, &[], &file, mode, &[])?;
         let kind = self.code_blueprint();
-        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64))];
+        // `co_flags` names its bits the reference does; nothing here
+        // ever sets the coroutine bit, since top-level `await` is not
+        // run, so a reading of it is always nought, which is enough for
+        // a program only asking whether that one bit is clear.
+        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64)), ("co_flags".to_owned(), Value::Small(0))];
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing { of: kind, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -15804,11 +15934,11 @@ impl<'a> Machine<'a> {
     /// Text or a code value run: as one expression where it is to be
     /// weighed, else as statements; in the dictionaries handed over,
     /// else where the call stands.
-    fn text_performed(&mut self, weighing: bool, v: &[Value]) -> Result<Value, String> {
+    fn text_performed(&mut self, weighing: bool, name: &str, v: &[Value]) -> Result<Value, String> {
         // The names set aside are only for a reading handed no
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
-        let Some(first) = v.first().map(Value::settled) else { return Err(self.source_refused()) };
+        let Some(first) = v.first().map(Value::settled) else { return Err(self.core_complaint("core.arity", name)) };
         let (source, file, mode) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
             Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing)),
@@ -15817,9 +15947,9 @@ impl<'a> Machine<'a> {
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
                 (holds[0].1.bare(), Some(holds[1].1.bare()), mode)
             }
-            _ => return Err(self.source_refused()),
+            _ => return Err(self.core_complaint("core.arity", name)),
         };
-        if v.len() > 3 { return Err(self.source_refused()); }
+        if v.len() > 3 { return Err(self.core_complaint("core.arity", name)); }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };
         let mut books = Vec::new();
@@ -15827,7 +15957,12 @@ impl<'a> Machine<'a> {
             books.push(match v.get(place) {
                 None | Some(Value::Nil) => None,
                 Some(Value::Shared(cell)) if matches!(&*cell.borrow(), Value::Dict(_)) => Some(cell.clone()),
-                Some(_) => return Err(self.source_refused()),
+                // A program's own value, standing in for a dictionary of
+                // its own through the blueprint it answers to: kept in
+                // a cell of its own so the rest of a reading works with
+                // it exactly as it works with a plain dictionary's cell.
+                Some(thing @ Value::Thing(_)) => Some(Rc::new(RefCell::new(thing.clone()))),
+                Some(_) => return Err(self.core_complaint("core.arity", name)),
             });
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
@@ -15841,10 +15976,27 @@ impl<'a> Machine<'a> {
         };
         // A dictionary handed over for the outer names is given the
         // builtins as well, unless it names a dictionary of its own.
+        // A dictionary handed over for the outer names is given the
+        // builtins as well, unless it names a dictionary of its own;
+        // such a dictionary of its own is asked for them the very way
+        // any other name is asked for, since it need not be a plain one.
         if let Some(word) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
-            if looked_up(&outer, &word).is_none() {
+            let already = match self.booked_get(&outer, &word) {
+                Ok(v) => v,
+                Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+            };
+            if already.is_none() {
                 let natives = self.natives_kept();
-                set_down(&outer, &word, Some(Value::Shared(natives)));
+                if self.booked_put(&outer, &word, Some(Value::Shared(natives))).is_err() {
+                    // A value with no way to be written into refuses
+                    // this seeding under its own particular words, not
+                    // the plain complaint an ordinary write refused
+                    // gives, since the key here is the module's own and
+                    // not one the program asked to write itself.
+                    let outer_held = outer.borrow().clone();
+                    let kind = match &outer_held { Value::Thing(t) => t.of.name.clone(), other => other.kind_word() };
+                    return Err(self.core_complaint("source.builtins_immutable", &kind));
+                }
             }
         }
         self.perform_booked(&source, file, mode, outer, near)
