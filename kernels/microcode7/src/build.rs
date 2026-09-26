@@ -1715,6 +1715,46 @@ impl<'a> Builder<'a> {
     }
 
     fn stmt(&mut self) -> Res<Form> {
+        let opened = self.pos;
+        let made = self.stmt_of_line()?;
+        self.past_stmt(opened)?;
+        Ok(made)
+    }
+
+    /// After a statement of a line-ended language must come the line's
+    /// end, a separator, or the edge of the block. What else stands
+    /// there is refused; a lone `print` or `exec` with an expression
+    /// after it is the statement the language once spelled that way.
+    fn past_stmt(&mut self, opened: usize) -> Res<()> {
+        let table = self.table;
+        if !table.has_any("ext.stmt.legacy_call") || !table.has_any("ext.builtin.exceptions.syntax") { return Ok(()); }
+        let shape = self.look().shape;
+        if self.on_stmt_end() || matches!(shape, Shape::Finish | Shape::Close | Shape::Open | Shape::Lead) { return Ok(()); }
+        // Compound statements step over the line ends past their block
+        // to look for another arm; a token on a later line than the
+        // statement's last token therefore opens the next statement.
+        if self.pos <= opened { return Ok(()); }
+        let previous = &self.tokens[self.pos - 1];
+        // A block's close stands on the line after the block, so a
+        // statement ending on a token that shapes the block is over.
+        if matches!(previous.shape, Shape::LineEnd | Shape::Close | Shape::Open | Shape::Lead | Shape::Finish) { return Ok(()); }
+        let ended_on = if previous.end_row != 0 { previous.end_row } else { previous.row };
+        if self.look().row > ended_on { return Ok(()); }
+        let first = self.tokens[opened].clone();
+        let lone_word = opened + 1 == self.pos && first.shape == Shape::Bare;
+        if lone_word && table.spells("ext.stmt.legacy_call", &first.lexeme) && !self.on_any("ext.stmt.yield") {
+            let here = self.pos;
+            let expression = self.comma_value().is_ok();
+            self.pos = here;
+            if expression {
+                let word = first.lexeme;
+                return Err(format!("SyntaxError: Missing parentheses in call to '{word}'. Did you mean {word}(...)?"));
+            }
+        }
+        Err("SyntaxError: invalid syntax".to_owned())
+    }
+
+    fn stmt_of_line(&mut self) -> Res<Form> {
         // A language that says where a complaint happened wants each
         // statement to carry the line it was written on.
         // Only the program's own lines are carried: what stands ahead of
@@ -5831,7 +5871,6 @@ impl<'a> Builder<'a> {
         self.kind_mark = enclosing_mark;
         self.place_depth -= usize::from(writing);
         let mut expr = read?;
-        if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("{") { return Err(String::from("SyntaxError: invalid syntax")); }
         if self.on_writing() && self.table.has_any("ext.stmt.class.special") {
             if self.tokens.get(began + 1).map_or(false, |token| self.table.spells("op.pipe", &token.lexeme)) {
                 let assignment = self.pos;

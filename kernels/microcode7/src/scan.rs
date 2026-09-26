@@ -1373,6 +1373,22 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
         }
         tokens = joined;
     }
+    // Brackets may stand open two hundred deep and no deeper, as the
+    // reference's reader has it; the one past that is refused, for a
+    // table with syntax words of its own.
+    if table.has_any("ext.builtin.exceptions.syntax") {
+        let mut standing = 0usize;
+        for item in tokens.iter().filter(|item| item.shape == Shape::Sign) {
+            let text = item.lexeme.as_str();
+            if [")", "]", "}"].contains(&text) { standing = standing.saturating_sub(1); continue; }
+            if !["(", "[", "{"].contains(&text) { continue; }
+            standing += 1;
+            if standing > 200 {
+                *ended = (item.row, item.column);
+                return Err("SyntaxError: too many nested parentheses".to_owned());
+            }
+        }
+    }
     column.set(at_column(src.len()));
     tokens.push(tok(Shape::Finish, "EOF".into(), row));
     Ok(tokens)

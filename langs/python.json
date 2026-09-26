@@ -2836,6 +2836,10 @@
   ],
   "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
+  "ext.stmt.legacy_call": [
+    "print",
+    "exec"
+  ],
   "ext.stmt.match": [
     "match"
   ],

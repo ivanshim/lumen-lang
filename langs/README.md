@@ -1627,6 +1627,13 @@ only. The extension labels so far, all from PHP:
   for a pattern written amiss, including repeated bindings and alternatives
   which do not bind the same names. Both labels take lists of words,
   whose first entry is the whole complaint.
+- `ext.stmt.legacy_call` names the words (`print`, `exec`) that were once
+  statements of their own. A statement that is one of these words alone,
+  with an expression after it on the same line, is refused with the
+  reference's words for the old form; any other statement that runs on
+  past its end, without a line end or separator, is refused as invalid
+  syntax. A language without the label lets its statements stand as
+  they are read.
 - `ext.op.bit.left` and `ext.op.bit.right` are also spelled by the
   indented definition, with the existing whole-number shift operations.
   Its `ext.lexical.number.separator` admits underscores between digits.
@@ -5005,6 +5012,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |
 | `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.match` | - | - | `match` | - | - | - | - | - | - | - |
 | `ext.stmt.match.as` | - | - | `as` | - | - | - | - | - | - | - |

@@ -780,6 +780,8 @@ pub struct Lang {
     pub match_guards: Vec<String>,
     pub match_as: Vec<String>,
     pub match_unready: Vec<String>,
+    /// Words that were once statements of their own (`print`, `exec`).
+    pub legacy_call: Vec<String>,
     pub match_invalid: Vec<String>,
     pub switch_words: Vec<String>,
     pub case_words: Vec<String>,
@@ -1261,7 +1263,7 @@ w ext.builtin.class.derive
 w ext.builtin.call.outcome
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
-w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stmt.match.or | w ext.stmt.match.guard | w ext.stmt.match.as | w ext.stmt.match.unready | w ext.stmt.match.invalid
+w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stmt.match.or | w ext.stmt.match.guard | w ext.stmt.match.as | w ext.stmt.match.unready | w ext.stmt.legacy_call | w ext.stmt.match.invalid
 
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
@@ -2633,6 +2635,7 @@ impl Lang {
             match_guards: r.strings("ext.stmt.match.guard")?,
             match_as: r.strings("ext.stmt.match.as")?,
             match_unready: r.strings("ext.stmt.match.unready")?,
+            legacy_call: r.strings("ext.stmt.legacy_call")?,
             match_invalid: r.strings("ext.stmt.match.invalid")?,
             switch_words: r.strings("ext.stmt.switch")?,
             case_words: r.strings("ext.stmt.case")?,

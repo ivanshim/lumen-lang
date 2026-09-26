@@ -1335,6 +1335,9 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
     lex_position(source, lang).map_err(|(message, row, _)| (message, row))
 }
 
+/// How many brackets may stand open at once before the reader refuses.
+const BRACKET_LEVELS: usize = 200;
+
 pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
     let final_crlf = source.ends_with("\r\n");
     let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
@@ -1366,6 +1369,23 @@ pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, us
             cur.out
         }
     };
+    // The reference keeps a bounded stack of open brackets, two
+    // hundred deep, and so does a language with its words for syntax
+    // faults: the bracket past the bound is where the fault is told.
+    if !lang.syntax_members.is_empty() {
+        let mut open = 0usize;
+        for token in &out {
+            if token.shape != Shape::Sign { continue; }
+            match token.lexeme.as_str() {
+                "(" | "[" | "{" => {
+                    open += 1;
+                    if open > BRACKET_LEVELS { return Err(("SyntaxError: too many nested parentheses".into(), token.row, token.column)); }
+                }
+                ")" | "]" | "}" => open = open.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
     if lang.bind_names {
         if let Some(call) = &lang.calling {
             let mut depth = 0usize;

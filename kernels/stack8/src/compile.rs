@@ -1595,6 +1595,48 @@ impl<'a> Compiler<'a> {
     }
 
     fn stmt(&mut self) -> Res<()> {
+        let began = self.pos;
+        self.stmt_read()?;
+        self.stmt_closed(began)
+    }
+
+    /// Where a statement ends, a language of line-ended statements
+    /// wants the line's end, a separator or the edge of the block:
+    /// anything else standing there is a fault. A bare `print` or
+    /// `exec` ahead of an expression is the statement form the
+    /// language once had, and is named as such.
+    fn stmt_closed(&mut self, began: usize) -> Res<()> {
+        let lang = self.lang;
+        if lang.legacy_call.is_empty() || lang.syntax_members.is_empty() { return Ok(()); }
+        if self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish | Shape::Open | Shape::Lead) { return Ok(()); }
+        // A compound statement takes the line ends after its block while
+        // looking for a further arm, so a token on a later line than
+        // the statement's last is the next statement, not a fault.
+        if self.pos == 0 || self.pos <= began { return Ok(()); }
+        let last = &self.tokens[self.pos - 1];
+        // The close of a block is placed on the line that follows it,
+        // so a statement whose last token shapes the block has ended.
+        if matches!(last.shape, Shape::LineEnd | Shape::Close | Shape::Open | Shape::Lead | Shape::Finish) { return Ok(()); }
+        let last_row = if last.end_row != 0 { last.end_row } else { last.row };
+        if self.look().row > last_row { return Ok(()); }
+        let head = self.tokens[began].clone();
+        if self.pos == began + 1 && head.shape == Shape::Instr && Lang::spells(&lang.legacy_call, &head.lexeme) && !self.on_keyword(&lang.yield_words) {
+            // Only words that read as an expression name the old form.
+            let from = self.mark();
+            let halted = self.pos;
+            let reads = self.scope_value().is_ok();
+            self.piece().instrs.truncate(from);
+            self.pos = halted;
+            self.registry.stopped_end = 0;
+            self.registry.stopped_end_row = 0;
+            if reads {
+                return Err(format!("SyntaxError: Missing parentheses in call to '{0}'. Did you mean {0}(...)?", head.lexeme));
+            }
+        }
+        Err("SyntaxError: invalid syntax".into())
+    }
+
+    fn stmt_read(&mut self) -> Res<()> {
         let lang = self.lang;
         if !lang.syntax_members.is_empty() {
             let word = self.look().lexeme.clone();
@@ -5941,7 +5983,6 @@ impl<'a> Compiler<'a> {
         self.annotation_target = outer_annotation;
         self.writing_place = saved_place;
         expression?;
-        if !self.lang.syntax_members.is_empty() && self.at_symbol("{") { return Err("SyntaxError: invalid syntax".into()); }
         if !self.lang.class_special.is_empty() && self.on_writing()
             && self.tokens.get(target_at + 1).map_or(false, |t| Lang::spells(&self.lang.pipe_words, &t.lexeme)) {
             let end = self.pos;
