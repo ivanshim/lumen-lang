@@ -712,7 +712,19 @@ impl Value {
         match self {
             Value::Arguments(row) => Self::argument_text(row, words),
             Value::Thing(thing) => match self.arguments_held() {
-                Some(row) => format!("{}({})", thing.of.name, row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+                Some(row) => {
+                    let mut shown: Vec<String> = row.iter().map(|x| x.representation(words)).collect();
+                    if thing.of.every_field().iter().any(|(k, _)| k == "\0import-fault") {
+                        for key in ["name", "path", "name_from"] {
+                            let value = thing.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+                            match value {
+                                None | Some(Value::Nil) => {},
+                                Some(v) => shown.push(format!("{key}={}", v.representation(words))),
+                            }
+                        }
+                    }
+                    format!("{}({})", thing.of.name, shown.join(", "))
+                },
                 None => self.render(words),
             },
             Value::Vector(row) => {

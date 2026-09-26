@@ -808,7 +808,9 @@
     "UnicodeDecodeError",
     "UnicodeTranslateError",
     "IndentationError",
-    "TabError"
+    "TabError",
+    "MemoryError",
+    "BufferError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -1874,6 +1876,10 @@
   "ext.builtin.source.unready": [
     "NotImplementedError: this source operation cannot run yet"
   ],
+  "ext.builtin.source.builtins_immutable": [
+    "TypeError: cannot assign __builtins__ to ",
+    " globals"
+  ],
   "ext.builtin.import": [
     "__import__"
   ],
@@ -2692,6 +2698,9 @@
   "ext.stmt.class.detail.arguments.new": [
     "TypeError: ",
     ".__new__() takes exactly one argument (the type to instantiate)"
+  ],
+  "ext.stmt.class.detail.integer.layout": [
+    "__basicsize__", "__itemsize__", "__sizeof__", "24", "4", "30", "32"
   ],
   "ext.stmt.class.detail.root.members": [
     "__eq__",

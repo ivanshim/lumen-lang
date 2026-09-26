@@ -510,7 +510,11 @@ def _exception_detail(error, message):
     """The last line of a traceback: the kind and, after it, the message."""
     if isinstance(error, BaseException):
         detail = error.__class__.__name__
-        text = error.msg if isinstance(error, SyntaxError) else str(error)
+        text = str(error)
+        if isinstance(error, SyntaxError):
+            text = str(error.msg or '<no detail available>')
+            if error.lineno is None and error.filename is not None:
+                text = text + ' (' + str(error.filename) + ')'
         if text != '':
             detail = detail + ': ' + text
         return detail
