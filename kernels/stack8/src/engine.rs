@@ -62,6 +62,7 @@ pub struct Engine<'a> {
     /// which a language that tells values apart by identity wants.
     fresh_routines: bool,
     pub module_sources: HashMap<String, String>,
+    pub library_root: Option<String>,
     modules: HashMap<String, Value>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
@@ -993,6 +994,7 @@ impl<'a> Engine<'a> {
             code_class: None,
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
+            library_root: None,
             modules: HashMap::new(),
             importing: std::collections::HashSet::new(),
             fetching_names: false,
@@ -15335,22 +15337,15 @@ impl Engine<'_> {
         None
     }
 
-    /// Where a library module's own text lives on disk, if this run
-    /// carries the library there to be found: the plain file first, and
-    /// a package's own file failing that. Nothing here reads the file
-    /// again; the text the module runs from was read in once already,
-    /// when the library was gathered into the program. The place named
-    /// is always the one on the machine that built this binary --
-    /// `CARGO_MANIFEST_DIR` is written in at compile time, not read from
-    /// the working directory a later run happens to stand in -- since
-    /// that is the only machine the library's own text in `langs/` is
-    /// promised to still be sitting at.
+    /// Locate embedded source on disk, using the host's override when given.
+    /// Without one, keep looking in the checkout that built this kernel.
     fn library_module_file(&self, path: &str) -> Option<String> {
         const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
+        let root = self.library_root.as_deref().unwrap_or(ROOT);
         let stem = path.replace('.', "/");
-        let flat = format!("{ROOT}/{stem}.py");
+        let flat = format!("{root}/{stem}.py");
         if std::path::Path::new(&flat).is_file() { return Some(made_absolute(&flat)); }
-        let package = format!("{ROOT}/{stem}/__init__.py");
+        let package = format!("{root}/{stem}/__init__.py");
         if std::path::Path::new(&package).is_file() { return Some(made_absolute(&package)); }
         None
     }
