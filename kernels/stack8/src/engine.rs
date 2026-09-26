@@ -376,7 +376,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -922,6 +922,7 @@ impl<'a> Engine<'a> {
     }
 
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
+        crate::faint::name_last_word(lang.finaliser.clone());
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         let mut world: Vec<Value> = idents.iter().map(|word| if lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
@@ -1286,6 +1287,7 @@ impl<'a> Engine<'a> {
             at += 1;
             let Some(thing) = standing else { continue };
             let Some(method) = thing.class.method(&named).cloned() else { continue };
+            if !crate::faint::first_words(&thing) { continue; }
             let _ = self.invoke(&method, vec![Value::Object(thing)]);
         }
         self.things_made.borrow_mut().clear();
@@ -1358,6 +1360,86 @@ impl<'a> Engine<'a> {
     /// The complaints waiting are handed to the routine the program put
     /// in their way, oldest first. A routine answering false leaves its
     /// complaint to be written out as it would have been.
+    /// Whatever went away since the last step is seen to: last words
+    /// are said, sleeping walks are closed, watchers are told. What any
+    /// of them raises is written to the error stream and dropped, since
+    /// nothing in the program stands where it could be caught.
+    fn settle_departed(&mut self) {
+        loop {
+            let (words, walks, gone) = crate::faint::settle();
+            if words.is_empty() && walks.is_empty() && gone.is_empty() { return; }
+            for (object, routine) in words {
+                self.speak_ignoring(routine, vec![Value::Object(object)]);
+            }
+            for walk in walks {
+                if let Err(fault) = self.close_generator(&walk) {
+                    self.ignore_fault(fault, &Value::Generator(walk.clone()));
+                }
+            }
+            for (told, bearer) in gone {
+                self.speak_ignoring(told, vec![bearer]);
+            }
+        }
+    }
+
+    /// A call made on the run's behalf, whose raised value nobody can
+    /// take: it is told and let go.
+    fn speak_ignoring(&mut self, callee: Value, args: Vec<Value>) {
+        let shown = callee.clone();
+        if let Err(words) = self.call_held(callee, args) {
+            let fault = self.carried.take().unwrap_or(Fault::Note(words));
+            self.ignore_fault(fault, &shown);
+        }
+    }
+
+    fn ignore_fault(&mut self, fault: Fault, about: &Value) {
+        if matches!(fault, Fault::Finished) { return; }
+        let sp = self.wording();
+        let told = fault.told(&sp);
+        let told = told.trim_start_matches('\0');
+        eprintln!("Exception ignored in: {}", about.representation(&sp));
+        eprintln!("{told}");
+    }
+
+    /// The program asked for the rounds nothing reaches to be found and
+    /// broken. Their objects say their last words first, and the rounds
+    /// are looked for again afterwards, since last words may keep an
+    /// object alive; then every round still unreached is emptied, the
+    /// counting frees the rest, and the watchers are told.
+    fn collect_cycles(&mut self) -> usize {
+        loop {
+            let mut graph = crate::faint::Graph::from_candidates();
+            let unreached = graph.unreached();
+            let mut spoke = false;
+            for value in &unreached {
+                match value {
+                    Value::Object(o) => {
+                        let Some(words) = crate::faint::last_word_of(&o.class) else { continue };
+                        if crate::faint::first_words(o) {
+                            spoke = true;
+                            self.speak_ignoring(words, vec![Value::Object(o.clone())]);
+                        }
+                    }
+                    Value::Generator(g) if crate::faint::asleep(g) => {
+                        spoke = true;
+                        if let Err(fault) = self.close_generator(g) {
+                            self.ignore_fault(fault, value);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if spoke { continue; }
+            let count = unreached.len();
+            let grave = crate::faint::Graph::sever(&unreached);
+            drop(unreached);
+            drop(graph);
+            drop(grave);
+            self.settle_departed();
+            return count;
+        }
+    }
+
     fn hand_over_complaints(&mut self) -> Flow<()> {
         self.any_waiting.set(false);
         loop {
@@ -2789,6 +2871,9 @@ impl<'a> Engine<'a> {
         if outcome.is_ok() && self.any_waiting.get() {
             outcome = self.hand_over_complaints();
         }
+        if crate::faint::pending() {
+            self.settle_departed();
+        }
         if outcome.is_err() {
             self.hushed.set(quiet);
         }
@@ -3813,6 +3898,11 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Line(row) => {
                     self.line = *row;
+                    // Whatever went away during the last statement is seen
+                    // to between statements, never in the middle of one.
+                    if crate::faint::pending() {
+                        self.settle_departed();
+                    }
                     if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
                     // A statement reached is a fault gone by: the calls
                     // an earlier one was raised under are none of its
@@ -5638,7 +5728,13 @@ impl<'a> Engine<'a> {
         }
         if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
             let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
-            return Ok(Some(self.builtin(op, &word, &mut settled)?));
+            let answer = self.builtin(op, &word, &mut settled)?;
+            // A walk over a thing's worth keeps the thing, as the
+            // reference's does: the thing lives as long as the walk.
+            if let (Builtin::Iter, Value::Cursor(state), Some(thing @ Value::Object(_))) = (op, &answer, args.first()) {
+                state.borrow_mut().origin = Some(thing.clone());
+            }
+            return Ok(Some(answer));
         }
         let args: &[Value] = if changed { &settled } else { args };
         let first = if changed { args.first() } else { first };
@@ -6909,6 +7005,9 @@ impl<'a> Engine<'a> {
                 if self.fuller_classes() {let made=self.class_make(class,args)?;self.data.push(made);return Ok(());}
                 self.made += 1;
                 let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
+                if self.lang.finaliser.is_some() && crate::faint::last_word_of(&class).is_some() {
+                    crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&object)));
+                }
                 if self.lang.destructor.is_some() {
                     self.things_made.borrow_mut().push(Rc::downgrade(&object));
                 }
@@ -12297,6 +12396,27 @@ impl<'a> Engine<'a> {
                 arity(0)?;
                 self.caught.last().cloned().unwrap_or(Value::Null)
             }
+            Builtin::WeakMake => {
+                arity(3)?;
+                let Some(hold) = crate::faint::hold_of(&args[0]) else {
+                    let kind = args[0].core_kind();
+                    let head = self.lang.weak_refused.first().cloned().unwrap_or_default();
+                    let tail = self.lang.weak_refused.get(1).cloned().unwrap_or_default();
+                    return Err(format!("{head}{kind}{tail}"));
+                };
+                let bearer = match &args[1] { Value::Object(o) => Rc::downgrade(o), _ => std::rc::Weak::new() };
+                let told = match &args[2] { Value::Null => None, other => Some(other.clone()) };
+                crate::faint::make(hold, bearer, told)
+            }
+            Builtin::WeakGet => {
+                arity(1)?;
+                let Value::Faint(faint) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()) };
+                faint.hold.revive().unwrap_or(Value::Null)
+            }
+            Builtin::Collect => {
+                arity(0)?;
+                Value::Small(self.collect_cycles() as i64)
+            }
             Builtin::FaultInHand => {
                 if args.len() > 1 { return Err(self.lang.module_helper_amiss.clone()); }
                 let held = match args.first() { Some(given) => Some(given.clone()), None => self.caught.last().cloned() };
@@ -14190,7 +14310,7 @@ impl Engine<'_> {
     }
 
     fn core_cursor(source: CursorSource) -> Value {
-        Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false, walked: None })))
+        Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false, origin: None, walked: None })))
     }
 
     fn core_cursor_walked(source: CursorSource, walked: Option<Rc<str>>) -> Value {
@@ -14323,6 +14443,7 @@ impl Engine<'_> {
         }
         let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
+        if let (Value::Cursor(state), Value::Object(_)) = (&walk, source) { state.borrow_mut().origin = Some(source.clone()); }
         Ok(walk)
     }
 

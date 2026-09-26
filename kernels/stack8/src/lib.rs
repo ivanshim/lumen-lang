@@ -20,6 +20,7 @@ pub mod lex;
 pub mod layout;
 pub mod value;
 pub mod code;
+pub mod faint;
 mod core;
 mod complex;
 

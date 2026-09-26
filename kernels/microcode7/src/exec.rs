@@ -189,14 +189,85 @@ pub struct Suspension {
     /// was made from, where that walk is not a program's own: a map
     /// walked backwards, say. Nothing for a generator the program wrote.
     pub(crate) walked: Option<&'static str>,
+    /// The thing of the program's own whose members these are, kept so
+    /// that it lives as long as the walk over it, as the reference has it.
+    stepping_through: Option<Value>,
 }
 
 impl Suspension {
+    /// Whether the body sleeps inside a try, so that shutting it is the
+    /// finalisation the language asks for when it is let go.
+    pub(crate) fn asleep(&self) -> bool {
+        self.begun && !self.ended && self.of.is_some()
+            && self.owed.iter().any(|owed| matches!(owed, Owed::Warding(..) | Owed::Lastly(..)))
+    }
+
+    /// Every knot the sleeping body holds: its frame first.
+    pub(crate) fn reaches(&self, out: &mut Vec<crate::ghost::Knot>) {
+        use crate::ghost::Knot;
+        out.push(Knot::Frame(self.frame.clone()));
+        if let Some(thing) = &self.trace_state { out.push(Knot::Held(Value::Thing(thing.clone()))); }
+        for v in &self.found { out.push(Knot::Held(v.clone())); }
+        out.push(Knot::Held(self.result.clone()));
+        if let Some(v) = &self.inner { out.push(Knot::Held(v.clone())); }
+        if let Some(members) = &self.members {
+            for v in members.as_slice() { out.push(Knot::Held(v.clone())); }
+        }
+        if let Some(v) = &self.ready { out.push(Knot::Held(v.clone())); }
+        if let Some((cell, _)) = &self.overseen { out.push(Knot::Held(Value::Shared(cell.clone()))); }
+        for v in &self.holding { out.push(Knot::Held(v.clone())); }
+        if let Some(v) = &self.stepping_through { out.push(Knot::Held(v.clone())); }
+        for owed in &self.owed {
+            if let Owed::Restore(outcome, _) = owed {
+                match &**outcome {
+                    Ok(v) | Err(Escape::Thrown(v)) | Err(Escape::Yield(v)) => out.push(Knot::Held(v.clone())),
+                    Err(_) => {}
+                }
+            }
+        }
+    }
+
+    /// Emptied of everything it holds, for a body nothing can reach.
+    pub(crate) fn sever(&mut self) -> Vec<Value> {
+        self.ended = true;
+        self.owed.clear();
+        let mut taken: Vec<Value> = self.found.drain(..).collect();
+        taken.push(std::mem::replace(&mut self.result, Value::Nil));
+        taken.extend(self.inner.take());
+        if let Some(members) = self.members.take() { taken.extend(members); }
+        taken.extend(self.ready.take());
+        self.overseen = None;
+        taken.extend(self.holding.drain(..));
+        taken.extend(self.stepping_through.take());
+        self.trace_state = None;
+        taken
+    }
+
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
         Self { trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
-            holding: Vec::new(), walked: None }
+            holding: Vec::new(), walked: None, stepping_through: None }
+    }
+}
+
+impl Drop for Suspension {
+    fn drop(&mut self) {
+        if self.asleep() && crate::ghost::bidding() {
+            let again = Suspension {
+                trace_state: self.trace_state.take(), frame: self.frame.clone(),
+                owed: std::mem::take(&mut self.owed), found: std::mem::take(&mut self.found),
+                begun: true, ended: false, receiving: self.receiving,
+                result: std::mem::replace(&mut self.result, Value::Nil),
+                inner: self.inner.take(), members: self.members.take(), ready: self.ready.take(),
+                overseen: self.overseen.take(), of: self.of.clone(),
+                holding: std::mem::take(&mut self.holding), walked: self.walked.take(),
+                stepping_through: self.stepping_through.take(),
+            };
+            self.ended = true;
+            crate::ghost::walk_departing(Rc::new(RefCell::new(again)));
+        }
+        crate::ghost::anything_departing();
     }
 }
 
@@ -975,6 +1046,7 @@ impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         let outermost = Env::make(idents.len(), None);
+        crate::ghost::set_farewell_name(table.single("ext.stmt.class.finaliser").map(str::to_string));
         if table.has_any("ext.stmt.catch.as") {
             if let Some(at) = find("ext.system.fault.class.value") {
                 let blueprint = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
@@ -1684,12 +1756,14 @@ impl<'a> Machine<'a> {
     /// class names for that, in the order the things were made. One made
     /// while another is being let go is let go in its own turn.
     pub fn let_things_go(&mut self) {
+        self.attend_to_gone();
         let Some(named) = self.table.single("ext.stmt.class.destructor").map(str::to_string) else { return };
         let mut reached = 0;
         while let Some(loosely) = { let all = self.things.borrow(); all.get(reached).cloned() } {
             reached += 1;
             let Some(thing) = loosely.upgrade() else { continue };
             let Some(program) = thing.of.program(&named).cloned() else { continue };
+            if !crate::ghost::first_farewell(&thing) { continue; }
             let _ = self.invoke(program, self.outermost.clone(), vec![Value::Thing(thing)]);
         }
         self.things.borrow_mut().clear();
@@ -1759,6 +1833,94 @@ impl<'a> Machine<'a> {
     /// The complaints still waiting go to the routine the program put in
     /// their way, oldest first. One that answers false is left to be
     /// written out as it would have been.
+    /// Whatever went since the last step is attended to: farewells are
+    /// bidden, sleeping walks shut, listeners told. What any of them
+    /// raises is written on the error channel and let go, since no
+    /// clause of the program stands where it could be taken.
+    fn attend_to_gone(&mut self) {
+        loop {
+            let (farewells, walks, notices) = crate::ghost::gather();
+            if farewells.is_empty() && walks.is_empty() && notices.is_empty() { return; }
+            for (thing, farewell) in farewells {
+                self.call_unheard(farewell, vec![Value::Thing(thing)]);
+            }
+            for walk in walks {
+                if let Err(away) = self.shut_generator(&walk) {
+                    self.report_unraisable(away, &Value::Generator(walk.clone()));
+                }
+            }
+            for (notify, bearer) in notices {
+                self.call_unheard(notify, vec![bearer]);
+            }
+        }
+    }
+
+    /// A call the run makes on its own account, whose raised value no
+    /// clause can take: it is reported and dropped.
+    fn call_unheard(&mut self, callee: Value, arguments: Vec<Value>) {
+        let about = callee.clone();
+        if let Err(away) = self.apply_held(callee, arguments) {
+            self.report_unraisable(away, &about);
+        }
+    }
+
+    fn report_unraisable(&mut self, away: Escape, about: &Value) {
+        let words = match away {
+            Escape::Thrown(raised) => match &raised {
+                Value::Thing(thing) => {
+                    let said = self.object_words(&raised, false).unwrap_or_default();
+                    if said.is_empty() { thing.of.name.clone() } else { format!("{}: {}", thing.of.name, said) }
+                }
+                _ => self.object_words(&raised, true).unwrap_or_default(),
+            },
+            Escape::Error(words) | Escape::Stopped(words) => words,
+            _ => return,
+        };
+        let shown = self.object_words(about, true).unwrap_or_default();
+        eprintln!("Exception ignored in: {shown}");
+        eprintln!("{words}");
+    }
+
+    /// The program asked for the rounds nothing reaches to be found and
+    /// cut. Their things bid farewell first and the web is woven again,
+    /// since a farewell may keep a thing about; then every knot still
+    /// unreachable is emptied, counting frees the rest, and the
+    /// listeners are told.
+    fn reap_rounds(&mut self) -> usize {
+        use crate::ghost::{Knot, Web};
+        loop {
+            let mut web = Web::from_notable();
+            let lost = web.unreachable();
+            let mut bade = false;
+            for knot in &lost {
+                match knot {
+                    Knot::Held(Value::Thing(thing)) => {
+                        let Some(farewell) = crate::ghost::farewell_of(&thing.of) else { continue };
+                        if crate::ghost::first_farewell(thing) {
+                            bade = true;
+                            self.call_unheard(farewell, vec![Value::Thing(thing.clone())]);
+                        }
+                    }
+                    Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |w| w.asleep()) => {
+                        bade = true;
+                        if let Err(away) = self.shut_generator(walk) {
+                            self.report_unraisable(away, &Value::Generator(walk.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if bade { continue; }
+            let found = lost.len();
+            let taken = Web::cut(&lost);
+            drop(lost);
+            drop(web);
+            drop(taken);
+            self.attend_to_gone();
+            return found;
+        }
+    }
+
     fn hand_over_unheard(&mut self) -> Res<()> {
         self.any_unheard.set(false);
         loop {
@@ -2828,6 +2990,7 @@ impl<'a> Machine<'a> {
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: Some(members.into_iter()), ready: None, overseen, of: None,
             walked: None,
+            stepping_through: matches!(source, Value::Thing(_)).then(|| source.clone()),
         })))
     }
 
@@ -3666,6 +3829,9 @@ impl<'a> Machine<'a> {
         // reach back into the program to hand it on.
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
+        }
+        if crate::ghost::stirred() {
+            self.attend_to_gone();
         }
         match node {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
@@ -4730,6 +4896,9 @@ impl<'a> Machine<'a> {
                     }
                     self.made += 1;
                     let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
+                    if crate::ghost::bidding() && crate::ghost::farewell_of(&class).is_some() {
+                        crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(&thing)));
+                    }
                     if self.table.single("ext.stmt.class.destructor").is_some() {
                         self.things.borrow_mut().push(Rc::downgrade(&thing));
                     }
@@ -9506,6 +9675,19 @@ impl<'a> Machine<'a> {
             if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
                 let outcome = self.prim(operation, &word, &settled);
+                // A walk over a thing's underlying members keeps the thing,
+                // as the reference's does, for as long as the walk lasts.
+                let outcome = match (operation, outcome, operands.first()) {
+                    (Prim::Iterator, Ok(Value::Generator(walk)), Some(thing @ Value::Thing(_))) => {
+                        walk.borrow_mut().stepping_through = Some(thing.clone());
+                        Ok(Value::Generator(walk))
+                    }
+                    (Prim::Iterator, Ok(Value::Iterator(state)), Some(thing @ Value::Thing(_))) => {
+                        state.borrow_mut().from_thing = Some(thing.clone());
+                        Ok(Value::Iterator(state))
+                    }
+                    (_, outcome, _) => outcome,
+                };
                 // A thing built on a native kind is named by its own
                 // blueprint where the refusal names the kinds it was
                 // handed, and not by the worth standing beneath it: an
@@ -11512,6 +11694,29 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
+            }
+            Prim::WeakMake => {
+                n(3)?;
+                let Some(ghost) = crate::ghost::ghost_of(&v[0]) else {
+                    let refusal = self.table.strings("ext.builtin.weak.refused");
+                    let kind = v[0].settled().kind_word();
+                    let (head, tail) = (refusal.first().map_or("", String::as_str), refusal.get(1).map_or("", String::as_str));
+                    return Err(format!("{head}{kind}{tail}"));
+                };
+                let bearer = match &v[1] { Value::Thing(thing) => Rc::downgrade(thing), _ => std::rc::Weak::new() };
+                let notify = match &v[2] { Value::Nil => None, told => Some(told.clone()) };
+                crate::ghost::dim(ghost, bearer, notify)
+            }
+            Prim::WeakGet => {
+                n(1)?;
+                match &v[0] {
+                    Value::Dim(dim) => dim.ghost.revive().unwrap_or(Value::Nil),
+                    _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                }
+            }
+            Prim::Collect => {
+                n(0)?;
+                Value::Small(self.reap_rounds() as i64)
             }
             Prim::FaultWhole => {
                 n(0)?;
@@ -16023,7 +16228,7 @@ impl Machine<'_> {
     }
 
     fn cursor_value(kind: IteratorKind) -> Value {
-        Value::Iterator(Rc::new(RefCell::new(IteratorState { kind, peek: None, done: false, walks: None })))
+        Value::Iterator(Rc::new(RefCell::new(IteratorState { kind, peek: None, done: false, from_thing: None, walks: None })))
     }
 
     fn cursor_value_walked(kind: IteratorKind, walks: Option<Rc<str>>) -> Value {
