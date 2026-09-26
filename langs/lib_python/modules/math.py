@@ -39,7 +39,11 @@ def _answers_own(x, name):
 
 def floor(x):
     if _answers_own(x, '__floor__'):
-        return x.__floor__()
+        answer = x.__floor__()
+        if type(answer) != type(1) and type(answer) != type(True):
+            raise 'TypeError: __floor__ returned non-Integral (type ' + type(answer).__name__ + ')'
+        return answer
+    _check_real(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer floor'
     n = int(x)
@@ -49,7 +53,11 @@ def floor(x):
 
 def ceil(x):
     if _answers_own(x, '__ceil__'):
-        return x.__ceil__()
+        answer = x.__ceil__()
+        if type(answer) != type(1) and type(answer) != type(True):
+            raise 'TypeError: __ceil__ returned non-Integral (type ' + type(answer).__name__ + ')'
+        return answer
+    _check_real(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer ceiling'
     n = int(x)
@@ -168,7 +176,11 @@ def isclose(a, b, rel_tol=0.000000001, abs_tol=0.0):
     if isinf(a) or isinf(b):
         return False
     difference = fabs(a - b)
-    return difference <= abs_tol or difference <= rel_tol * fabs(a) or difference <= rel_tol * fabs(b)
+    scale = fabs(a)
+    other = fabs(b)
+    if other > scale:
+        scale = other
+    return difference <= abs_tol or difference <= rel_tol * scale
 
 def copysign(x, y):
     _check_real(x)
@@ -282,6 +294,8 @@ def fsum(values):
         raise 'OverflowError: intermediate overflow in fsum'
     return __math('fdiv', high, 1.0)
 
+isclose = staticmethod(isclose)
+
 def prod(values, *, start=1):
     for x in values:
         start *= x
@@ -337,8 +351,14 @@ def hypot(*coordinates):
         result = __math('hypot', result, value)
     return result
 
+def _point_items(point):
+    items = []
+    for value in point:
+        items.append(value)
+    return items
+
 def dist(p, q):
-    p, q = list(p), list(q)
+    p, q = _point_items(p), _point_items(q)
     if len(p) != len(q):
         raise 'ValueError: both points must have the same number of dimensions'
     return hypot(*[p[i] - q[i] for i in range(len(p))])
@@ -435,7 +455,38 @@ def erfc(x):
 
 def gamma(x):
     _check_real(x)
-    raise 'NotImplementedError: gamma is not supported'
+    if not isfinite(x):
+        raise 'ValueError: math domain error'
+    if x <= 0 and x == int(x):
+        raise 'ValueError: math domain error'
+    if x == int(x):
+        return float(factorial(int(x) - 1))
+    if x * 2 == int(x * 2):
+        if x > 0.5:
+            result = __math('sqrt', pi)
+            step = 0.5
+            while step < x - 0.5:
+                result *= step
+                step += 1
+            return result
+        result = __math('sqrt', pi)
+        step = -0.5
+        while step >= x:
+            result /= step
+            step -= 1
+        return result
+    coefficients = [676.5203681218851, -1259.1392167224028,
+                    771.32342877765313, -176.61502916214059,
+                    12.507343278686905, -0.13857109526572012,
+                    0.000009984369578019572, 0.00000015056327351493116]
+    if x < 0.5:
+        return pi / (__math('sin', pi * x) * gamma(1 - x))
+    z = x - 1
+    acc = 0.99999999999980993
+    for i in range(len(coefficients)):
+        acc += coefficients[i] / (z + i + 1)
+    t = z + 7.5
+    return __math('sqrt', 2 * pi) * __math('pow', t, z + 0.5) * __math('exp', -t) * acc
 
 def lgamma(x):
     _check_real(x)
@@ -485,10 +536,27 @@ def fmod(x, y):
     return __math('fmod', x, y)
 
 def modf(x):
-    raise 'NotImplementedError: modf needs tuple values'
+    _check_real(x)
+    if x == 0:
+        return (x, x)
+    whole = trunc(x)
+    fraction = x - whole
+    return (fraction, __math('fdiv', whole, 1.0))
 
 def frexp(x):
-    raise 'NotImplementedError: frexp needs tuple values'
+    _check_real(x)
+    if x == 0 or not isfinite(x):
+        return (__math('fdiv', x, 1.0), 0)
+    sign = -1 if x < 0 else 1
+    value = fabs(x)
+    exponent = 0
+    while value >= 1:
+        value = __math('fdiv', value, 2.0)
+        exponent += 1
+    while value < 0.5:
+        value *= 2.0
+        exponent -= 1
+    return (sign * value, exponent)
 
 def ldexp(x, i):
     if type(i) != type(1) and type(i) != type(True):
