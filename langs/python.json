@@ -2621,6 +2621,86 @@
     " of '",
     "' object has no setter"
   ],
+  "ext.stmt.class.detail.namespace.amiss": [
+    "TypeError: __dict__ must be set to a dictionary, not a '",
+    "'"
+  ],
+  "ext.stmt.class.detail.namespace.kept": [
+    "TypeError: cannot delete __dict__"
+  ],
+  "ext.stmt.class.detail.text.amiss": [
+    "TypeError: ",
+    " must be set to a string object"
+  ],
+  "ext.stmt.class.detail.globals": [
+    "__globals__"
+  ],
+  "ext.stmt.class.detail.closure": [
+    "__closure__"
+  ],
+  "ext.stmt.class.detail.keywords": [
+    "__kwdefaults__"
+  ],
+  "ext.stmt.class.detail.defaults.amiss": [
+    "TypeError: __defaults__ must be set to a tuple object"
+  ],
+  "ext.stmt.class.detail.keywords.amiss": [
+    "TypeError: __kwdefaults__ must be set to a dict object"
+  ],
+  "ext.stmt.class.detail.code.amiss": [
+    "TypeError: __code__ must be set to a code object"
+  ],
+  "ext.stmt.class.detail.code.free": [
+    "ValueError: ",
+    "() requires a code object with ",
+    " free vars, not "
+  ],
+  "ext.stmt.class.detail.cell.contents": [
+    "cell_contents"
+  ],
+  "ext.stmt.class.detail.cell.empty": [
+    "ValueError: Cell is empty"
+  ],
+  "ext.stmt.class.detail.method.fixed": [
+    "AttributeError: attribute '",
+    "' of '",
+    "' objects is not writable"
+  ],
+  "ext.stmt.class.detail.kind.fixed": [
+    "TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses"
+  ],
+  "ext.stmt.class.detail.kind.kept": [
+    "TypeError: can't delete __class__ attribute"
+  ],
+  "ext.stmt.class.detail.arguments.none": [
+    "TypeError: ",
+    "() takes no arguments"
+  ],
+  "ext.stmt.class.detail.arguments.init": [
+    "TypeError: ",
+    ".__init__() takes exactly one argument (the instance to initialize)"
+  ],
+  "ext.stmt.class.detail.arguments.new": [
+    "TypeError: ",
+    ".__new__() takes exactly one argument (the type to instantiate)"
+  ],
+  "ext.stmt.class.detail.root.members": [
+    "__eq__",
+    "__ne__",
+    "__lt__",
+    "__le__",
+    "__gt__",
+    "__ge__",
+    "__hash__",
+    "__repr__",
+    "__str__",
+    "__dir__",
+    "__getstate__",
+    "__reduce__",
+    "__reduce_ex__",
+    "__sizeof__",
+    "__subclasshook__"
+  ],
   "ext.stmt.class.detail.varnames": [
     "co_varnames"
   ],

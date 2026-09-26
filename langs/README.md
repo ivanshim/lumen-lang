@@ -1424,6 +1424,28 @@ only. The extension labels so far, all from PHP:
   the same two, for a write or a removal upon a thing whose class names
   the members it holds and holds a value of its own under that name;
   `unready` refuses a working not yet furnished.
+- `ext.stmt.class.detail.globals`, `closure` and `keywords` name a
+  routine's global namespace, its tuple of cells and its keyword-only
+  spare arguments; `cell.contents` names what a cell holds, and
+  `cell.empty` refuses reading an empty one.
+  `namespace.amiss` gives two pieces around the kind of a value handed to
+  a routine as its namespace that is no dictionary, and `namespace.kept`
+  refuses taking the namespace away; `text.amiss` gives two pieces around
+  a routine's name or full name written over with anything but text;
+  `defaults.amiss`, `keywords.amiss` and `code.amiss` refuse the spare
+  arguments, the keyword-only spare arguments and the code written over
+  with a value of the wrong kind, and `code.free` gives three pieces
+  before the routine's name, the count of cells it closes over and the
+  count the code given it wants. `method.fixed` gives three pieces around
+  a member and the kind of a bound method that cannot be written;
+  `kind.fixed` and `kind.kept` refuse writing and taking away the class
+  of a value whose class cannot change. `arguments.none`,
+  `arguments.init` and `arguments.new` each give two pieces around a
+  class's name, for the root's making and constructing handed arguments
+  they do not take. `root.members` names, in order, the members every
+  thing has from the root: equal, unequal, below, at most, above, at
+  least, hash, representation, text, directory, state, reduction,
+  versioned reduction, size and subclass hook.
 - `ext.stmt.class.detail.descriptor.get`, `descriptor.set`,
   `descriptor.delete` and `descriptor.name`: the words a class member
   answers the descriptor protocol with, each a list of words. With
@@ -4892,12 +4914,21 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
 | `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.arguments.init` | - | - | `TypeError: ` `.__init__() takes exactly one argument (the instance to initialize)` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.arguments.new` | - | - | `TypeError: ` `.__new__() takes exactly one argument (the type to instantiate)` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.arguments.none` | - | - | `TypeError: ` `() takes no arguments` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.readonly` | - | - | `AttributeError: '` `' object attribute '` `' is read-only` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.cell.contents` | - | - | `cell_contents` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.cell.empty` | - | - | `ValueError: Cell is empty` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.delete` | - | - | `__delete__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.foreign` | - | - | `TypeError: descriptor '` `' for '` `' objects doesn't apply to a '` `' object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.get` | - | - | `__get__` | - | - | - | - | - | - | - |
@@ -4908,14 +4939,22 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.getitem` | - | - | `__class_getitem__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.globals` | - | - | `__globals__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.keywords` | - | - | `__kwdefaults__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.keywords.amiss` | - | - | `TypeError: __kwdefaults__ must be set to a dict object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.kind` | - | - | `__class__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.kind.fixed` | - | - | `TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.kind.kept` | - | - | `TypeError: can't delete __class__ attribute` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.locals` | - | - | `<locals>` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.main` | - | - | `__main__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.method.fixed` | - | - | `AttributeError: attribute '` `' of '` `' objects is not writable` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.module` | - | - | `__module__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro` | - | - | `__mro__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro.amiss` | - | - | `TypeError: cannot create a consistent method resolution order` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.doc` | - | - | `doc` | - | - | - | - | - | - | - |
@@ -4931,9 +4970,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.receiver` | - | - | `__self__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.remove` | - | - | `__delattr__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.root` | - | - | `object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.root.members` | - | - | `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__repr__` `__str__` `__dir__` `__getstate__` `__reduce__` `__reduce_ex__` `__sizeof__` `__subclasshook__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.set` | - | - | `__setattr__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.slots` | - | - | `__slots__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.subclass` | - | - | `__init_subclass__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.text.amiss` | - | - | `TypeError: ` ` must be set to a string object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
