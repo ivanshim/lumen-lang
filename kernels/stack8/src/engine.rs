@@ -2673,6 +2673,10 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        // A routine whose spare arguments or code the program wrote
+        // over runs as it now stands.
+        let revised = program.revised.borrow().clone();
+        if let Some(now) = revised { return self.invoke_top(&now, n); }
         // A call that would stand deeper than the language allows is
         // refused before anything of it runs, in the words the language
         // gives, so that a clause may take the fault and the run go on
@@ -5319,6 +5323,35 @@ impl<'a> Engine<'a> {
             return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
         }
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
+        // Two rows, or two tuples, holding things are alike member by
+        // member: the very same member is alike at once, and any other
+        // pair is asked as the program would ask it, so that a thing on
+        // either side answers for itself.
+        if let (Action::Eq | Action::Ne, Value::Array(x), Value::Array(y)) | (Action::Eq | Action::Ne, Value::Tuple(x), Value::Tuple(y)) = (op, a, b) {
+            if x.iter().chain(y.iter()).any(Self::holds_things) {
+                let mut alike = x.len() == y.len();
+                for (p, q) in x.iter().zip(y.iter()) {
+                    if !alike || Self::member_matches(p, q) { continue; }
+                    let told = self.special_dyad(&Action::Eq, p, q)?;
+                    alike = self.special_truth(&told)?;
+                }
+                return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
+            }
+        }
+        // Two cells stand as what they hold, an empty one before any
+        // other and alike only with another empty one.
+        if let (Value::Adapter(x), Value::Adapter(y)) = (a, b) {
+            if x.0 == 31 && y.0 == 31 && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                let (left, right) = (Self::cell_held(x), Self::cell_held(y));
+                return match (left, right) {
+                    (Some(left), Some(right)) => self.special_dyad(op, &left, &right),
+                    (left, right) => {
+                        let order = left.is_some().cmp(&right.is_some());
+                        Ok(Value::Flag(match op { Action::Eq => order.is_eq(), Action::Ne => order.is_ne(), Action::Lt => order.is_lt(), Action::Le => order.is_le(), Action::Gt => order.is_gt(), _ => order.is_ge() }))
+                    }
+                };
+            }
+        }
         // A view standing beside a set under a set sign, or ordered
         // against one, is turned into a set first, as the plain working
         // does, but through the road that asks a thing among its
@@ -9985,6 +10018,24 @@ impl<'a> Engine<'a> {
     }
 
     /// Membership asks identity before equality, and counts truth as one.
+    /// Whether a value is, or holds among its members however deep,
+    /// a thing that may answer equality for itself.
+    fn holds_things(value: &Value) -> bool {
+        match value {
+            Value::Object(_) => true,
+            Value::Array(items) | Value::Tuple(items) => items.iter().any(Self::holds_things),
+            Value::Collection(..) | Value::Bond(_) => Self::holds_things(&value.contents()),
+            _ => false,
+        }
+    }
+
+    /// What a cell holds, or nothing where it is empty.
+    pub(super) fn cell_held(cell: &(u8, Vec<Value>)) -> Option<Value> {
+        let (Some(Value::Binding(held)) | Some(Value::Bond(held))) = cell.1.first() else { return None };
+        let value = held.borrow().clone();
+        if matches!(value, Value::Blank | Value::Gap) { None } else { Some(value) }
+    }
+
     fn member_matches(a: &Value, b: &Value) -> bool {
         if let Value::Bond(cell) = a { return Self::member_matches(&cell.borrow(), b); }
         if let Value::Bond(cell) = b { return Self::member_matches(a, &cell.borrow()); }
@@ -10689,6 +10740,14 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Null);
                 }
             }
+        }
+        // A row lengthened by anything that walks takes what the walk
+        // yields, read out first as a `for` loop would read it: the
+        // free working knows only the kinds it lists by name.
+        let mut args = args;
+        if operation == "extend" && args.len() == 1 && matches!(receiver.contents(), Value::Array(_))
+            && !matches!(args[0].contents(), Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
+            args[0] = Value::array(self.comprehension_items(&args[0])?);
         }
         // A special member asked for by name on a value of a builtin
         // kind. Each hands its work to the builtin or the sign that

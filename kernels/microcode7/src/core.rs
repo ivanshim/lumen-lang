@@ -57,6 +57,8 @@ impl Value {
             // method of a thing the program laid out is not.
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
+            Self::Wrapped(35, _) => "cell",
+            Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
@@ -168,6 +170,12 @@ impl Value {
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
             Self::Method(program, receiver) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
+            // A routine bound to a value hashes by the routine and by
+            // where the value lies, never by asking the value itself.
+            Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => {
+                let lies = match parts.get(1) { Some(Self::Thing(thing)) => std::rc::Rc::as_ptr(thing) as usize / 16, Some(other) => other.hash_number()? as usize, None => 0 };
+                parts[0].hash_number()? ^ lies as i64
+            }
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
             // The bounds folded one after another, as a tuple's parts are,
