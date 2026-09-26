@@ -503,8 +503,16 @@ impl<'a> Machine<'a> {
                     // The maker of a native kind: the blueprint to make a
                     // thing of, then what the kind's primitive takes.
                     14 if !values.is_empty()=>{
-                        let Value::Blueprint(c)=values.remove(0) else{return Err(self.class_unready());};
+                        let target = values.remove(0);
                         let word=kept[0].bare();
+                        if let Value::Intrinsic(op, spelling) = &target {
+                            if matches!(op, Prim::Uniques | Prim::Unchanging) && spelling.as_ref() == word {
+                                if *op == Prim::Uniques { values.clear(); }
+                                return self.prim(*op, spelling, &values).map_err(Escape::from);
+                            }
+                        }
+                        let Value::Blueprint(c)=target else{return Err(self.class_unready());};
+                        if self.table.prims.get(&word) == Some(&Prim::Uniques) { values.clear(); }
                         self.thing_over_native(c,&word,values)
                     }
                     3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
@@ -634,7 +642,14 @@ impl<'a> Machine<'a> {
         }
         let created=match (allocator,&native) {
             (Some(allocator),_)=>{let mut args=vec![Value::Blueprint(class.clone())];args.extend(given.clone());self.apply_class_member(allocator,args)?},
-            (None,Some(word))=>self.thing_over_native(class.clone(),word,given.clone())?,
+            (None,Some(word))=>{
+                let initial = match self.table.prims.get(word) {
+                    Some(Prim::Uniques) => Vec::new(),
+                    Some(Prim::Unchanging) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
+                    _ => given.clone(),
+                };
+                self.thing_over_native(class.clone(),word,initial)?
+            },
             (None,None)=>{self.made+=1;Value::Thing(Rc::new(Thing{of:class.clone(),holds:RefCell::new(Vec::new()),turn:self.made}))},
         };
         if let Value::Thing(thing)=&created {
@@ -644,6 +659,10 @@ impl<'a> Machine<'a> {
                 if let Some(f)=constructor {
                     let bound=self.member_binding(f,Some(created.clone()),thing.of.clone())?;
                     if !matches!(self.apply_class_member(bound,given)?,Value::Nil){return Err(self.class_unready());}
+                }else if let Some(under @ Value::Set(_)) = Self::underlying(&created).filter(|v| !v.set_sealed()) {
+                    let (positional, named) = self.open_arguments(given)?;
+                    let key = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
+                    self.value_member(&under, &key, positional, named)?;
                 }else if !given.is_empty()&&native.is_none(){return Err(self.class_unready());}
             }
         }
@@ -1384,7 +1403,15 @@ impl<'a> Machine<'a> {
             // through the worth the thing keeps.
             if let Some(word)=Self::native_word(b) {
                 if key==self.detail("allocate"){return self.apply_class_member(Self::wrap(14,vec![Value::text(&word)]),args);}
-                if self.table.single("ext.stmt.class.constructor")==Some(key){return Ok(Value::Nil);}
+                if self.table.single("ext.stmt.class.constructor")==Some(key){
+                    return match Self::underlying(&receiver) {
+                        Some(under @ Value::Set(_)) => {
+                            let (positional, named) = self.open_arguments(args)?;
+                            self.value_member(&under, key, positional, named)
+                        }
+                        _ => Ok(Value::Nil),
+                    };
+                }
                 if let (Some(under),Some(operation))=(Self::underlying(&receiver),Self::kind_method_named(self.table,key)) {
                     let (given,named)=self.open_arguments(args)?;
                     return self.value_member(&under,&operation,given,named);
