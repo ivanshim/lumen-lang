@@ -161,6 +161,7 @@ enum Stepped {
 }
 
 pub struct Suspension {
+    pub(crate) titles: [String; 2],
     trace_state: Option<Rc<Thing>>,
     frame: Rc<Env>,
     owed: Vec<Owed>,
@@ -193,7 +194,7 @@ pub struct Suspension {
 
 impl Suspension {
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
-        Self { trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
+        Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
             holding: Vec::new(), walked: None }
@@ -2809,7 +2810,7 @@ impl<'a> Machine<'a> {
     /// is ended, and a walk of the program's own is told to end where it
     /// knows how, since it may have a last part of its own.
     fn end_delegate(&mut self, walk: &Value) -> Res<()> {
-        if let Value::Generator(inner) = walk { return self.end_generator(inner); }
+        if let Value::Generator(inner) = walk { self.shut_generator(inner)?; return Ok(()); }
         let thing = Self::walked_thing(walk);
         let shutting = thing.as_ref().and_then(|held| self.named_within(held, &self.table.strings("ext.stmt.yield.close").to_vec()));
         if let (Some(thing), Some((body, scope))) = (thing, shutting) {
@@ -2829,6 +2830,7 @@ impl<'a> Machine<'a> {
             _ => None,
         };
         Value::Generator(Rc::new(RefCell::new(Suspension {
+            titles: [String::new(), String::new()],
             trace_state: None,
             holding: Vec::new(),
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
@@ -2989,24 +2991,57 @@ impl<'a> Machine<'a> {
 
     /// What a throw hands a walk: a kind is made into one of its own,
     /// and a kind given with a value of that kind raises the value.
-    fn thrown_into(&mut self, mut values: Vec<Value>, frame: &Rc<Env>) -> Res {
-        let given = match values.len() {
-            1 => values.remove(0),
-            _ => match values.remove(1) {
-                Value::Nil => values.remove(0),
-                held @ Value::Thing(_) => held,
-                other => other,
-            },
-        };
-        // What is no exception at all is refused by its kind, which is
-        // not quite the refusal a raise of the same thing meets.
-        match self.raise_class(given.clone(), frame) {
-            Err(Escape::Error(words)) => match self.table.single("ext.stmt.yield.throw.invalid") {
-                Some(before) => Err(format!("{before}{}", given.kind_word()).into()),
-                None => Err(Escape::Error(words)),
-            },
-            other => other,
+    fn thrown_into(&mut self, mut values: Vec<Value>, _frame: &Rc<Env>) -> Res {
+        let notice = self.table.strings("ext.stmt.yield.throw.warning").to_vec();
+        if values.len() >= 2 && notice.len() == 4 {
+            let location = vec![Value::text(&self.written_in), Value::Small(self.row as i64)];
+            let namespace = self.load_namespace(&notice[0])?;
+            let function = self.namespace_item(&namespace, &notice[0], &notice[1])?;
+            if let Some(category) = self.fault_kinds.get(&notice[2]).cloned() {
+                let mut parameters = vec![Value::text(&notice[3]), category];
+                parameters.extend(location);
+                self.apply_class_member(function, parameters)?;
+            }
         }
+        let complaints = self.table.strings("ext.stmt.yield.throw.invalid").to_vec();
+        let complaint = |at: usize| complaints.get(at).cloned().unwrap_or_default();
+        if values.get(2).is_some_and(|v| !matches!(v, Value::Nil | Value::Backtrace(_))) {
+            return Err(complaint(2).into());
+        }
+        let exception = values.remove(0);
+        let argument = values.into_iter().next().unwrap_or(Value::Nil);
+        if let Value::Thing(object) = &exception {
+            if self.is_fault_kind(&object.of) {
+                return if matches!(argument, Value::Nil) { Ok(exception) } else { Err(complaint(1).into()) };
+            }
+        }
+        if let Value::Blueprint(class) = &exception {
+            if self.is_fault_kind(class) {
+                if matches!(&argument, Value::Thing(instance) if instance.of.goes_by(&class.name, false)) {
+                    return Ok(argument);
+                }
+                let arguments = match argument {
+                    Value::Nil => Vec::new(),
+                    Value::Tuple(parts) => parts.as_ref().clone(),
+                    item => vec![item],
+                };
+                let instance = if self.inherited_entry(class, self.detail("allocate")).is_some() || Self::fault_methods(class) {
+                    self.construct_ordered(class.clone(), arguments)?
+                } else {
+                    self.fault_from_call(class.clone(), arguments)?
+                };
+                return if matches!(&instance, Value::Thing(t) if self.is_fault_kind(&t.of)) {
+                    Ok(instance)
+                } else {
+                    self.as_raised(&complaint(3)).ok_or_else(|| Escape::Error(complaint(3)))
+                };
+            }
+        }
+        let type_name = match &exception {
+            Value::Intrinsic(op, _) if op.names_a_kind() => "type".to_owned(),
+            _ => exception.kind_word(),
+        };
+        Err(Escape::Error(complaint(0) + &type_name))
     }
 
     /// The kind raised at a suspension when a walk is ended.
@@ -3036,8 +3071,12 @@ impl<'a> Machine<'a> {
         };
         match self.step_into(generator, Value::Nil, Some(exit), &[]) {
             Ok(Some(_)) => {
-                self.end_generator(generator)?;
-                Err(self.generator_words("close.ignored").into())
+                let message = self.generator_words("close.ignored");
+                let failure = match self.as_raised(&message) {
+                    Some(value) => Escape::Thrown(value),
+                    None => Escape::Error(message),
+                };
+                Err(failure)
             }
             Ok(None) => {
                 let result = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.result.clone();
@@ -3179,8 +3218,8 @@ impl<'a> Machine<'a> {
         // The stop kind raised in the body is the generator's fault,
         // not the end of its walk.
         let outcome = match outcome {
-            Err(Escape::Thrown(Value::Thing(t))) if self.table.has_any("ext.stmt.yield.escaped") && self.is_stop_kind(&t.of) => Err(self.stop_got_out()),
-            Err(Escape::Error(said)) if self.table.has_any("ext.stmt.yield.escaped") && self.table.single("ext.builtin.core.exhausted") == Some(said.as_str()) => Err(self.stop_got_out()),
+            Err(Escape::Thrown(Value::Thing(t))) if self.table.has_any("ext.stmt.yield.escaped") && self.is_stop_kind(&t.of) => Err(self.stop_got_out(Value::Thing(t))),
+            Err(Escape::Error(said)) if self.table.has_any("ext.stmt.yield.escaped") && self.table.single("ext.builtin.core.exhausted") == Some(said.as_str()) => { let original = self.as_raised(&said).unwrap_or(Value::Nil); Err(self.stop_got_out(original)) },
             other => other,
         };
         if outcome.is_err() || matches!(outcome, Ok(None)) {
@@ -3199,9 +3238,26 @@ impl<'a> Machine<'a> {
     }
 
     /// The fault a generator raises when its body raised the stop kind.
-    fn stop_got_out(&mut self) -> Escape {
+    fn stop_got_out(&mut self, original: Value) -> Escape {
         let said = self.generator_words("escaped");
-        self.as_raised(&said).map_or(Escape::Error(said), Escape::Thrown)
+        match self.as_raised(&said) {
+            Some(value) => {
+                if let Value::Thing(thing) = &value {
+                    for label in ["ext.builtin.exceptions.cause", "ext.builtin.exceptions.context", "ext.builtin.exceptions.suppress"] {
+                        if let Some(key) = self.table.single(label) {
+                            let carried = if label.ends_with("suppress") { Value::Flag(true) } else { original.clone() };
+                            let mut entries = thing.holds.borrow_mut();
+                            match entries.iter_mut().find(|entry| entry.0 == key) {
+                                Some(entry) => entry.1 = carried,
+                                None => entries.push((key.to_owned(), carried)),
+                            }
+                        }
+                    }
+                }
+                Escape::Thrown(value)
+            }
+            None => Escape::Error(said),
+        }
     }
 
     /// One step of the owed work. The body is carried forward a piece at
@@ -3597,6 +3653,12 @@ impl<'a> Machine<'a> {
                 Ok(Stepped::Going) => {}
                 Ok(Stepped::Handed(item)) => return Ok(Some(item)),
                 Ok(Stepped::Over) => return Ok(None),
+                Err(Escape::Yield(returned)) => {
+                    // A return from a part evaluated without suspension still
+                    // finishes the generator through its remaining finalizers.
+                    state.found.push(returned);
+                    state.owed.push(Owed::Finish);
+                }
                 Err(met) => self.unwind(state, met)?,
             }
         }
@@ -4547,8 +4609,12 @@ impl<'a> Machine<'a> {
                         return self.make_instance(class.clone(), values);
                     }
                 }
+                let callable = stands.clone();
                 let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
+                if p.generator && self.table.flag("ext.stmt.yield.suspends") {
+                    return self.named_generator(callable, &p, callee);
+                }
                 self.drive(p, callee)
             }
             Form::Apply(Callee::Prim(op, name), args) => match op {
@@ -4762,6 +4828,8 @@ impl<'a> Machine<'a> {
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
                     if let Value::Generator(generator) = subject {
+                        let (mut values, named) = self.open_arguments(values)?;
+                        if !named.is_empty() { return Err(self.generator_words("unsupported").into()); }
                         if self.table.spells("ext.stmt.yield.close", &called) && values.is_empty() {
                             return self.shut_generator(&generator);
                         }
@@ -5902,6 +5970,14 @@ impl<'a> Machine<'a> {
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
         if let Value::Generator(state) = value {
+            if ["ext.stmt.yield.close", "ext.stmt.yield.send", "ext.stmt.yield.throw"].iter().any(|key| self.table.spells(key, name)) {
+                return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
+            }
+            for (index, part) in ["name", "qualified"].iter().enumerate() {
+                if name == self.detail(part) {
+                    return state.try_borrow().ok().map(|g| Value::text(&g.titles[index]));
+                }
+            }
             if self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| w == name) { return Some(Value::Flag(state.try_borrow().is_err())); }
         }
         let names = self.table.strings("ext.stmt.class.special");
@@ -6127,8 +6203,12 @@ impl<'a> Machine<'a> {
                     let given = self.value_list(args, frame)?;
                     return Ok(Next::Value(self.make_instance(class.clone(), given)?));
                 }
+                let callable = stands.clone();
                 let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
+                if p.generator && self.table.flag("ext.stmt.yield.suspends") {
+                    return self.named_generator(callable, &p, callee).map(Next::Value);
+                }
                 Ok(Next::Jump(p, callee))
             }
             Form::Apply(Callee::Prim(Prim::Seq, _), args) if !args.is_empty() => {
@@ -6344,6 +6424,16 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if matches!(receiver.settled(), Value::Generator(_)) {
+            let supported = ["ext.stmt.yield.send", "ext.stmt.yield.throw", "ext.stmt.yield.close"].iter().any(|label| self.table.spells(label, name));
+            if supported {
+                if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                let mut supplied = vec![Form::Const(receiver.settled()), Form::Const(Value::text(name))];
+                supplied.extend(arguments.into_iter().map(Form::Const));
+                let call = Form::Apply(Callee::Prim(Prim::Ask, Rc::from(name)), supplied);
+                return self.value_of(&call, &self.outermost.clone());
+            }
+        }
         // One more member set on the end of a list, in the place the
         // list already occupies. This comes first of all: further down
         // the contents are read out into a worth of their own, and a
@@ -7623,8 +7713,20 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn named_generator(&mut self, callable: Value, program: &Rc<Routine>, frame: Rc<Env>) -> Res {
+        let mut state = Suspension::body(program, frame);
+        state.titles[0] = self.read_class_member(callable.clone(), &self.detail("name").to_owned(), true)?.bare();
+        state.titles[1] = self.read_class_member(callable, &self.detail("qualified").to_owned(), true)?.bare();
+        Ok(Value::Generator(Rc::new(RefCell::new(state))))
+    }
+
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
+        let callable = Value::Bound(program.clone(), env.clone());
         let (program, env) = self.as_now_written(program, env);
+        let titles = if program.generator {
+            Some([self.read_class_member(callable.clone(), &self.detail("name").to_owned(), true)?.bare(),
+                  self.read_class_member(callable, &self.detail("qualified").to_owned(), true)?.bare()])
+        } else { None };
         if let Some(manners) = &program.taking {
             let fitted = self.fit_arguments(&program, manners, args)?;
             let frame = self.frame_for(&program, &env);
@@ -7634,7 +7736,9 @@ impl<'a> Machine<'a> {
                     if !matches!(value, Value::Unset) { cells[*slot] = value; }
                 }
             }
-            return self.drive(program, frame);
+            let result = self.drive(program, frame)?;
+            if let (Value::Generator(g), Some(names)) = (&result, titles) { g.borrow_mut().titles = names; }
+            return Ok(result);
         }
         let most = if self.reads_handed || program.gather_from.is_some() { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
@@ -7662,7 +7766,9 @@ impl<'a> Machine<'a> {
             }
             frame
         };
-        self.drive(program, frame)
+        let answer = self.drive(program, frame)?;
+        if let (Value::Generator(g), Some(names)) = (&answer, titles) { g.borrow_mut().titles = names; }
+        Ok(answer)
     }
 
     /// Run a program in a frame already built. A tail call replaces the
@@ -11444,7 +11550,7 @@ impl<'a> Machine<'a> {
                 let of_octets = matches!(v[0].settled(), Value::Octets { changeable, .. } if self.octet_member(&word, changeable).is_some());
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
-                let generator_running = matches!(&v[0], Value::Generator(_)) && self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| *w == word);
+                let generator_running = matches!(&v[0], Value::Generator(_)) && self.attribute(&v[0], &word).is_some();
                 Value::Flag(native || of_octets || generator_running || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
@@ -16867,6 +16973,10 @@ impl Machine<'_> {
                 }
             }
             if op == Prim::Quoted && matches!(input.first(), Some(Value::Text(_))) { return crate::text::apply(self.table, crate::text::Work::REPR, name, &input, self.wording()); }
+            if matches!(op, Prim::SetMember | Prim::DropMember) && matches!(input.first(), Some(Value::Generator(_))) {
+                let job = if op == Prim::SetMember { 4 } else { 5 };
+                return self.work_on_class(job, input).map_err(|fault| self.suspension_fault(fault));
+            }
             if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
                 if let Some(job) = job { return self.work_on_class(job, input).map_err(|e| self.suspension_fault(e)); }

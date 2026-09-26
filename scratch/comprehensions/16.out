@@ -1,6 +1,6 @@
 [1, 'hello']
 [1, 'hello']
-<generator>
+<generator object <genexpr> at 0x1>
 {1, 'hello'}
 [1, 'hello']
 {'a': [1, 'hello']}

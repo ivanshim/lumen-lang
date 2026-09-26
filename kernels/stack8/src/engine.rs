@@ -855,9 +855,19 @@ impl<'a> Engine<'a> {
 
     /// The fault raised for a generator whose body raised the
     /// exhaustion class.
-    fn escaped_stop(&mut self) -> Fault {
+    fn escaped_stop(&mut self, stopped: Value) -> Fault {
         let words = self.lang.yield_escaped.clone().unwrap_or_default();
-        self.as_fault(&words).map_or_else(|| Fault::Note(words), Fault::Thrown)
+        let Some(raised) = self.as_fault(&words) else { return Fault::Note(words) };
+        if let Value::Object(object) = &raised {
+            let mut fields = object.fields.borrow_mut();
+            for (name, value) in [(&self.lang.exception_cause, stopped.clone()), (&self.lang.exception_context, stopped), (&self.lang.exception_suppress, Value::Flag(true))] {
+                if let Some(key) = name {
+                    if let Some((_, slot)) = fields.iter_mut().find(|(n, _)| n == key) { *slot = value; }
+                    else { fields.push((key.clone(), value)); }
+                }
+            }
+        }
+        Fault::Thrown(raised)
     }
 
     /// The exhaustion a walk that is over raises: what the body returned
@@ -877,22 +887,59 @@ impl<'a> Engine<'a> {
     /// What a throw hands a walk: a class is made into one of its own,
     /// and a class given with a value of that class raises the value.
     fn thrown_into(&mut self, mut args: Vec<Value>) -> Flow<Value> {
-        let given = match args.len() {
-            1 => args.remove(0),
-            _ => match args.remove(1) {
-                Value::Null => args.remove(0),
-                held @ Value::Object(_) => held,
-                other => other,
-            },
-        };
-        // What is no exception at all is refused by its kind, which is
-        // not quite the refusal a raise of the same thing meets.
-        match self.prepare_raised(given.clone()) {
-            Err(Fault::Note(words)) => match self.lang.yield_throw_invalid.first() {
-                Some(before) => Err(format!("{before}{}", given.core_kind()).into()),
-                None => Err(Fault::Note(words)),
-            },
-            other => other,
+        if args.len() > 1 {
+            let warning = self.lang.yield_throw_warning.clone();
+            if warning.len() == 4 {
+                let file = Value::text(&self.source);
+                let line = Value::Small(self.line as i64);
+                let module = self.import_module(&warning[0])?;
+                let warn = self.import_member(&module, &warning[0], &warning[1])?;
+                if let Some(category) = self.native_exceptions.get(&warning[2]).cloned() {
+                    self.class_apply(warn, vec![Value::text(&warning[3]), category, file, line])?;
+                }
+            }
+        }
+        let invalid = self.lang.yield_throw_invalid.clone();
+        if args.len() == 3 && !matches!(args[2], Value::Null | Value::Trace(_)) {
+            return Err(invalid.get(2).cloned().unwrap_or_default().into());
+        }
+        let kind = args.remove(0);
+        let separate = args.first().cloned().unwrap_or(Value::Null);
+        match &kind {
+            Value::Object(object) if self.exception_class(&object.class) => {
+                if !matches!(separate, Value::Null) {
+                    return Err(invalid.get(1).cloned().unwrap_or_default().into());
+                }
+                Ok(kind)
+            }
+            Value::Class(class) if self.exception_class(class) => {
+                if let Value::Object(object) = &separate {
+                    if object.class.named(&class.name, false) { return Ok(separate); }
+                }
+                let values = match separate {
+                    Value::Null => Vec::new(),
+                    Value::Tuple(items) => items.as_ref().clone(),
+                    value => vec![value],
+                };
+                let made = if Self::exception_has_methods(class) || self.class_value(class, self.class_word("allocate")).is_some() {
+                    self.class_make(class.clone(), values)?
+                } else {
+                    self.exception_new(class.clone(), values)?
+                };
+                if matches!(&made, Value::Object(o) if self.exception_class(&o.class)) {
+                    Ok(made)
+                } else {
+                    let words = invalid.get(3).cloned().unwrap_or_default();
+                    self.as_fault(&words).ok_or_else(|| words.into())
+                }
+            }
+            _ => {
+                let tag = match &kind {
+                    Value::Native(builtin, _) if builtin.names_kind() => "type".to_string(),
+                    _ => kind.core_kind(),
+                };
+                Err(format!("{}{tag}", invalid.first().cloned().unwrap_or_default()).into())
+            }
         }
     }
 
@@ -2773,7 +2820,11 @@ impl<'a> Engine<'a> {
         for (at, cell) in &program.enclosed { frame[*at] = cell.clone(); }
         if program.generator && self.lang.yield_suspends {
             self.left_the_call(false, watching, noted);
-            self.data.push(Value::Generator(Rc::new(RefCell::new(Generator::new(Some(program.clone()), frame, Vec::new())))));
+            let mut generator = Generator::new(Some(program.clone()), frame, Vec::new());
+            let function = Value::Routine(program.clone());
+            generator.name = self.class_get(function.clone(), &self.class_word("name").to_string(), true)?.plain();
+            generator.qualified = self.class_get(function, &self.class_word("qualified").to_string(), true)?.plain();
+            self.data.push(Value::Generator(Rc::new(RefCell::new(generator))));
             return Ok(());
         }
         let base = self.data.len();
@@ -3300,9 +3351,9 @@ impl<'a> Engine<'a> {
         };
         match self.step_generator(held, Value::Null, Some(exit), &[]) {
             Ok(Some(_)) => {
-                self.shut_generator(held)?;
-                Err(self.lang.yield_close_ignored.first().cloned().unwrap_or_default().into())
-            }
+                let words = self.lang.yield_close_ignored.first().cloned().unwrap_or_default();
+                Err(self.as_fault(&words).map_or_else(|| Fault::Note(words), Fault::Thrown))
+            },
             Ok(None) => {
                 let returned = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.returned.clone();
                 self.shut_generator(held)?;
@@ -3335,7 +3386,7 @@ impl<'a> Engine<'a> {
     /// way a walk is ended, and a walk of the program's own is told to
     /// end where it knows how, since it may have a last part of its own.
     fn shut_delegate(&mut self, walk: &Value) -> Flow<()> {
-        if let Value::Generator(inner) = walk { return self.shut_generator(inner); }
+        if let Value::Generator(inner) = walk { return self.close_generator(inner).map(|_| ()); }
         let thing = Self::walked_thing(walk);
         let method = thing.as_ref().and_then(|held| self.named_method(held, &self.lang.yield_close));
         if let (Some(thing), Some(method)) = (thing, method) {
@@ -3513,8 +3564,8 @@ impl<'a> Engine<'a> {
         // The exhaustion class raised inside the body is a fault of the
         // generator, not the end of its walk.
         let result = match result {
-            Err(Fault::Thrown(Value::Object(object))) if self.lang.yield_escaped.is_some() && self.stop_class(&object.class) => Err(self.escaped_stop()),
-            Err(Fault::Note(words)) if self.lang.yield_escaped.is_some() && self.lang.core_words.get("core.exhausted").and_then(|w| w.first()) == Some(&words) => Err(self.escaped_stop()),
+            Err(Fault::Thrown(Value::Object(object))) if self.lang.yield_escaped.is_some() && self.stop_class(&object.class) => Err(self.escaped_stop(Value::Object(object))),
+            Err(Fault::Note(words)) if self.lang.yield_escaped.is_some() && self.lang.core_words.get("core.exhausted").and_then(|w| w.first()) == Some(&words) => { let stopped = self.as_fault(&words).unwrap_or(Value::Null); Err(self.escaped_stop(stopped)) },
             other => other,
         };
         self.inside.pop();
@@ -4495,6 +4546,13 @@ impl<'a> Engine<'a> {
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
         if let Value::Generator(held) = &held {
+            if [&self.lang.yield_close, &self.lang.yield_send, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)) {
+                return Ok(Some(Value::ValueMethod(Rc::new((Value::Generator(held.clone()), name.to_string())))));
+            }
+            if name == self.class_word("name") || name == self.class_word("qualified") {
+                let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
+                return Ok(Some(Value::text(if name == self.class_word("name") { &state.name } else { &state.qualified })));
+            }
             if self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
         }
         if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
@@ -7229,7 +7287,9 @@ impl<'a> Engine<'a> {
                 let kind_carries = self.loose_kind_member(&held, name).is_some();
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
-                let generator_running = matches!(&held, Value::Generator(_)) && self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref());
+                let generator_running = matches!(&held, Value::Generator(_)) && (self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref())
+                    || name.as_ref() == self.class_word("name") || name.as_ref() == self.class_word("qualified")
+                    || [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)));
                 Value::Flag(kind_named || kind_maker || kind_doc || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
@@ -7558,6 +7618,9 @@ impl<'a> Engine<'a> {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
                 if let Value::Generator(held) = subject {
+                    let opened = self.call_items(args)?;
+                    if opened.iter().any(|(name, _)| name.is_some()) { return Err(self.lang.yield_unsupported[0].clone().into()); }
+                    let mut args: Vec<Value> = opened.into_iter().map(|(_, value)| value).collect();
                     let result = if Lang::spells(&self.lang.yield_close, name) && args.is_empty() {
                         self.close_generator(&held)?
                     } else if Lang::spells(&self.lang.yield_send, name) && args.len() == 1 {
@@ -10848,6 +10911,16 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if matches!(receiver.contents(), Value::Generator(_)) && [&self.lang.yield_close, &self.lang.yield_send, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, operation)) {
+            if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            let count = args.len() + 1;
+            self.data.push(receiver.contents());
+            self.data.extend(args);
+            return match self.perform(&Action::Send(Rc::from(operation)), count) {
+                Ok(()) => self.drop_top(),
+                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+            };
+        }
         // A row lengthened where it lies, instead of copied out, added
         // to, and written back. It stands ahead of the reading below
         // because that reading would hold the row a second time, and a
@@ -14984,6 +15057,9 @@ impl Engine<'_> {
                 return self.special_text(&args[0], true).map(|text| Value::text(&text));
             }
             if b == Builtin::Repr && matches!(args.first(), Some(Value::Text(_))) { return crate::strings::run(crate::strings::TextOp::Repr, name, &args, self.lang, &self.wording()); }
+            if matches!(b, Builtin::SetAttr | Builtin::DelAttr) && matches!(args.first(), Some(Value::Generator(_))) {
+                return self.class_work(if b == Builtin::SetAttr { 4 } else { 5 }, args).map_err(|fault| fault.told(&self.wording()));
+            }
             if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
                 if let Some(work) = work { return self.class_work(work, args).map_err(|f| f.told(&self.wording())); }

@@ -5859,6 +5859,9 @@ impl<'a> Compiler<'a> {
         let after = self.pos;
         let mut left = begin;
         for sign in signs {
+            if Lang::spells(&self.lang.yield_words, &self.tokens[left].lexeme) {
+                return Err("SyntaxError: assignment to yield expression not possible".into());
+            }
             self.give_places(left, sign, &held)?;
             left = sign + 1;
         }
@@ -5957,6 +5960,13 @@ impl<'a> Compiler<'a> {
             self.pos = target_at;
             self.block_place()?;
             self.pos = end;
+        }
+        if self.on_writing() && !self.on_assign() && !self.lang.syntax_members.is_empty() {
+            let mut head = target_at;
+            while self.tokens[head].lexeme == "(" { head += 1; }
+            if Lang::spells(&self.lang.yield_words, &self.tokens[head].lexeme) {
+                return Err("SyntaxError: 'yield expression' is an illegal expression for augmented assignment".into());
+            }
         }
         if self.lang.assign_chain && self.on_assign()
             && self.look_ahead(1).shape == Shape::Instr
@@ -7113,7 +7123,8 @@ impl<'a> Compiler<'a> {
         }
         if self.on_keyword(&lang.yield_words) {
             let yield_at = self.pos;
-            let invalid = if self.piece().outermost || self.in_class_body() { Some("'yield' outside function".to_owned()) }
+            let operation = if self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.yield_from_words, &self.look_ahead(1).lexeme) { "yield from" } else { "yield" };
+            let invalid = if self.piece().outermost || self.in_class_body() { Some(format!("'{operation}' outside function")) }
                 else { self.piece().comprehension_kind.map(|kind| format!("'yield' inside {kind}")) };
             self.take();
             self.piece().generator = true;
@@ -8617,7 +8628,7 @@ impl<'a> Compiler<'a> {
         let source_end = self.pos;
         self.act(Action::WalkFrom, 1);
         let seed = self.gensym("generator_source");
-        let name = self.gensym("generator");
+        let name = "<genexpr>".to_string();
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let program = self.routine(&name, vec![seed], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");

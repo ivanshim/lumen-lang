@@ -189,6 +189,8 @@ pub struct Step {
 /// A walk keeps its own cells and the part of the stack still wanted.
 #[derive(Debug)]
 pub struct Generator {
+    pub name: String,
+    pub qualified: String,
     pub trace_frame: Option<Rc<Instance>>,
     pub program: Option<Rc<Routine>>,
     pub frame: Vec<Value>,
@@ -223,7 +225,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
@@ -1408,7 +1410,10 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }),
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
-            Value::Generator(_) => "<generator>".to_string(),
+            Value::Generator(cell) => match cell.try_borrow() {
+                Ok(g) if !g.qualified.is_empty() => format!("<generator object {} at 0x1>", g.qualified),
+                _ => "<generator>".to_string(),
+            },
             Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
             Value::Descriptor(_) => "<descriptor>".to_string(),
             Value::Trace(_) => "<traceback object>".to_string(),

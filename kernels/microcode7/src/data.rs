@@ -1312,7 +1312,14 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
-            Value::Generator(_) => "<generator>".into(),
+            Value::Generator(generator) => {
+                if let Ok(state) = generator.try_borrow() {
+                    if !state.titles[1].is_empty() {
+                        return format!("<generator object {} at 0x1>", state.titles[1]);
+                    }
+                }
+                "<generator>".into()
+            },
             Value::Adorned(_) => String::from("<descriptor>"),
             Value::Backtrace(_) => String::from("<traceback object>"),
             Value::Keyed(value, _) => value.bare(),

@@ -5743,6 +5743,9 @@ impl<'a> Builder<'a> {
         let name = self.gensym("given").ident.to_string();
         let mut forms = vec![self.write(&name, answer)];
         for sign in signs {
+            if self.table.spells("ext.stmt.yield", &self.tokens[left].lexeme) {
+                return Err(String::from("SyntaxError: assignment to yield expression not possible"));
+            }
             forms.push(self.distribute(left..sign, &name)?);
             left = sign + 1;
         }
@@ -5864,6 +5867,12 @@ impl<'a> Builder<'a> {
                 self.pos = began;
                 expr = self.deletion_place()?;
                 self.pos = assignment;
+            }
+        }
+        if self.on_writing() && !self.on_assign() && self.table.has_any("ext.builtin.exceptions.syntax") {
+            let first = self.tokens[began..self.pos].iter().find(|token| token.lexeme != "(");
+            if first.is_some_and(|token| self.table.spells("ext.stmt.yield", &token.lexeme)) {
+                return Err(String::from("SyntaxError: 'yield expression' is an illegal expression for augmented assignment"));
             }
         }
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
@@ -6795,7 +6804,7 @@ impl<'a> Builder<'a> {
         }
         if self.key("ext.stmt.yield") {
             let begins = self.pos;
-            let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(String::from("'yield' outside function")) }
+            let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(if table.spells("ext.stmt.yield.from", &self.glance(1).lexeme) { "'yield from' outside function" } else { "'yield' outside function" }.to_owned()) }
                 else { self.layers.last().and_then(|s| s.gathering_kind).map(|kind| format!("'yield' inside {kind}")) };
             self.advance();
             self.generator_seen = true;
@@ -8046,7 +8055,7 @@ impl<'a> Builder<'a> {
         let ends = self.pos;
         let parameter = self.gather_name("first_source");
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
-        let routine = self.routine("<generator>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
+        let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
             let before = r.gather_names.len();

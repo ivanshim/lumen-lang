@@ -1265,6 +1265,25 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        if let Value::Generator(g) = &subject {
+            if self.table.single("ext.stmt.yield.running") == Some(key) {
+                let words = self.table.strings("ext.stmt.class.detail.method.fixed");
+                return Err([words[0].as_str(), key, words[1].as_str(), &subject.kind_word(), words[2].as_str()].concat().into());
+            }
+            let slot = ["name", "qualified"].iter().position(|part| key == self.detail(part));
+            if let Some(slot) = slot {
+                match replacement.as_ref().map(Value::settled) {
+                    Some(Value::Text(text)) => {
+                        g.try_borrow_mut().map_err(|_| self.table.strings("ext.stmt.yield.busy")[0].clone())?.titles[slot] = text.to_string();
+                        return Ok(Value::Nil);
+                    }
+                    _ => {
+                        let refusal = self.table.strings("ext.stmt.class.detail.text.amiss");
+                        return Err(format!("{}{}{}", refusal[0], key, refusal[1]).into());
+                    }
+                }
+            }
+        }
         if self.table.single("ext.builtin.exceptions.traceback.member") == Some(key) {
             if let Value::Thing(thing) = &subject {
                 if self.is_fault_kind(&thing.of) {
