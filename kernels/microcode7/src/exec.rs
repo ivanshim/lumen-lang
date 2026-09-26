@@ -2683,6 +2683,15 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn enter_fault_handler(&mut self, raised: Value) {
+        // The program now owns this error and may rewrite its arguments.
+        if let Value::Thing(item) = &raised {
+            let mut members = item.holds.borrow_mut();
+            if let Some(at) = members.iter().position(|(key, _)| key == "\0report") { members.remove(at); }
+        }
+        self.holding_fault.push(raised);
+    }
+
     /// What a piece of the program raised, carried through a place that
     /// holds only words. A furnished kind goes as its name and its words
     /// behind the marker, so that the clause around the call and the
@@ -3444,7 +3453,7 @@ impl<'a> Machine<'a> {
                     let Some(last) = plan.last.clone() else { continue };
                     state.found.truncate(floor);
                     self.holding_fault.truncate(self.holding_below + held);
-                    if let Escape::Thrown(value) = &escape { self.holding_fault.push(value.clone()); }
+                    if let Escape::Thrown(value) = &escape { self.enter_fault_handler(value.clone()); }
                     state.owed.push(Owed::Unhold(held, None));
                     state.owed.push(Owed::Restore(Box::new(Err(escape)), floor));
                     state.owed.push(Owed::Find(last));
@@ -3474,7 +3483,7 @@ impl<'a> Machine<'a> {
                         }
                     }
                     self.holding_fault.truncate(self.holding_below + held);
-                    self.holding_fault.push(raised.clone());
+                    self.enter_fault_handler(raised.clone());
                     match self.taking_clause(&plan, &raised, &frame) {
                         Ok(Some((body, place, clears))) => {
                             self.under = None;
@@ -3505,7 +3514,7 @@ impl<'a> Machine<'a> {
             Some(_) => return Err(unready.into()),
         };
         let preceding = self.holding_fault.len();
-        if let Some(value) = raised { self.holding_fault.push(value.clone()); }
+        if let Some(value) = raised { self.enter_fault_handler(value.clone()); }
         // What got away from an earlier, unrelated call must not be
         // mistaken for what this one raises: only a fault this very
         // call sets belongs to it.
@@ -4228,7 +4237,7 @@ impl<'a> Machine<'a> {
                     // the body go, so whatever the leaving raises keeps it
                     // as context; and what the leaving raises comes back
                     // as raised rather than as a wrong answer.
-                    if let Err(Escape::Thrown(value)) = &body_result { self.holding_fault.push(value.clone()); }
+                    if let Err(Escape::Thrown(value)) = &body_result { self.enter_fault_handler(value.clone()); }
                     // What got away from an earlier, unrelated call must
                     // not be mistaken for what this one raises: only a
                     // fault this very call sets belongs to it.
@@ -4257,13 +4266,13 @@ impl<'a> Machine<'a> {
                         None => Ok(value),
                     },
                     Err(Escape::Thrown(raised)) if clauses.iter().any(|clause| clause.grouped) => {
-                        self.holding_fault.push(raised.clone());
+                        self.enter_fault_handler(raised.clone());
                         let outcome = self.grouped_clauses(clauses, raised, frame);
                         self.holding_fault.truncate(preceding);
                         outcome
                     }
                     Err(Escape::Thrown(raised)) => {
-                        self.holding_fault.push(raised.clone());
+                        self.enter_fault_handler(raised.clone());
                         let chosen = (|| {
                             for clause in clauses {
                                 if self.table.has_any("ext.builtin.exceptions.traceback") {
@@ -4337,7 +4346,7 @@ impl<'a> Machine<'a> {
                     other => other,
                 };
                 if let Some(limb) = last {
-                    if let Err(Escape::Thrown(value)) = &ending { self.holding_fault.push(value.clone()); }
+                    if let Err(Escape::Thrown(value)) = &ending { self.enter_fault_handler(value.clone()); }
                     let final_result = self.value_of(limb, frame);
                     let final_result = self.raised_if_error(final_result);
                     self.holding_fault.truncate(preceding);

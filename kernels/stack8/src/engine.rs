@@ -1743,6 +1743,15 @@ impl<'a> Engine<'a> {
         Some(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
     }
 
+    fn hold_exception(&mut self, value: Value) {
+        // A handler can change the exception before raising it again.
+        // Its later report must therefore come from the value itself.
+        if let Value::Object(object) = &value {
+            object.fields.borrow_mut().retain(|(name, _)| name != "\0diagnostic");
+        }
+        self.caught.push(value);
+    }
+
     /// Offer a fault of the kernel's own to the innermost guard as a
     /// raised value. Nothing where the language names no class for one,
     /// or where no guard is watching.
@@ -2852,7 +2861,7 @@ impl<'a> Engine<'a> {
             given.extend(args);
             // The raised value is held while the manager lets the body
             // go, so that whatever the leaving raises keeps it as context.
-            if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+            if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
             let body_line = self.line;
             if !self.lang.trace_fields.is_empty() {
                 self.line = context_line;
@@ -2893,14 +2902,14 @@ impl<'a> Engine<'a> {
                     },
                     Err(Fault::Thrown(raised)) if plan.clauses.iter().any(|arm| arm.grouped) => {
                         self.data.truncate(depth);
-                        self.caught.push(raised.clone());
+                        self.hold_exception(raised.clone());
                         let handled = self.grouped_attempt(program, frame, instrs, plan, raised);
                         self.caught.truncate(active);
                         handled
                     }
                     Err(Fault::Thrown(raised)) => {
                         self.data.truncate(depth);
-                        self.caught.push(raised.clone());
+                        self.hold_exception(raised.clone());
                         self.attempt_clauses(program, frame, instrs, plan, at, suspended.as_deref_mut(), raised, None, depth, active)
                     }
                     other => other,
@@ -3050,7 +3059,7 @@ impl<'a> Engine<'a> {
         let saved = match taken_up {
             Some(mark) => mark,
             None => {
-                if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+                if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
                 self.data.len()
             }
         };
