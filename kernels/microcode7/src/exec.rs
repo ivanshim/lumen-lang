@@ -6203,7 +6203,7 @@ impl<'a> Machine<'a> {
             }
             if options.len() > 2 { return Err(self.octet_error("arguments").into()); }
             options.insert(0, actual);
-            return self.octet_routine(2, &options).map_err(Escape::from);
+            return self.octet_routine(2, &options).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)));
         }
         if matches!(&actual, Value::Octets { .. }) || name == "encode" && matches!(&actual, Value::Text(_) | Value::Unpaired(_)) {
             // A working that writes where the row lies is asked of a
@@ -6226,7 +6226,7 @@ impl<'a> Machine<'a> {
                     let source = values[1].settled();
                     if let Ok(members) = self.core_collect(&source) { values[1] = Value::Vector(Rc::new(members)); }
                 }
-                return self.octet_routine(operation, &values).map_err(Escape::from);
+                return self.octet_routine(operation, &values).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)));
             }
         }
         if matches!(&actual, Value::Text(_)) {
