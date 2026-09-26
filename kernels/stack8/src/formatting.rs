@@ -28,6 +28,8 @@ impl Writer<'_> {
             "ext.op.rem.format.infinity" => &self.lang.fmt_op_rem_format_infinity,
             "ext.op.rem.format.nan" => &self.lang.fmt_op_rem_format_nan,
             "ext.text.format.invalid" => &self.lang.fmt_text_format_invalid,
+            "ext.text.format.invalid.detail" => &self.lang.fmt_text_format_invalid_detail,
+            "ext.text.format.group.conflict" => &self.lang.fmt_text_format_group_conflict,
             "ext.text.format.unknown" => &self.lang.fmt_text_format_unknown,
             "ext.text.format.kinds" => &self.lang.fmt_text_format_kinds,
             "ext.text.format.unready" => &self.lang.fmt_text_format_unready,
@@ -55,13 +57,21 @@ impl Writer<'_> {
             "ext.op.rem.format.few" => &self.lang.fmt_op_rem_format_few,
             "ext.op.rem.format.many" => &self.lang.fmt_op_rem_format_many,
             "ext.op.rem.format.mapping" => &self.lang.fmt_op_rem_format_mapping,
+            "ext.op.rem.format.mapping.key" => &self.lang.fmt_op_rem_format_mapping_key,
+            "ext.op.rem.format.mapping.star" => &self.lang.fmt_op_rem_format_mapping_star,
+            "ext.op.rem.format.width.big" => &self.lang.fmt_op_rem_format_width_big,
+            "ext.op.rem.format.precision.big" => &self.lang.fmt_op_rem_format_precision_big,
             "ext.op.rem.format.number" => &self.lang.fmt_op_rem_format_number,
             "ext.op.rem.format.integer" => &self.lang.fmt_op_rem_format_integer,
             "ext.op.rem.format.real" => &self.lang.fmt_op_rem_format_real,
             "ext.op.rem.format.character" => &self.lang.fmt_op_rem_format_character,
+            "ext.op.rem.format.character.range" => &self.lang.fmt_op_rem_format_character_range,
             "ext.op.rem.format.byte" => &self.lang.fmt_op_rem_format_byte,
             "ext.op.rem.format.star" => &self.lang.fmt_op_rem_format_star,
+            "ext.op.rem.format.star.big" => &self.lang.fmt_op_rem_format_star_big,
             "ext.op.rem.format.incomplete" => &self.lang.fmt_op_rem_format_incomplete,
+            "ext.op.rem.format.key.incomplete" => &self.lang.fmt_op_rem_format_key_incomplete,
+            "ext.op.rem.format.unexpected" => &self.lang.fmt_op_rem_format_unexpected,
             "ext.op.rem.format.code" => &self.lang.fmt_op_rem_format_code,
             "ext.stmt.class.format.amiss" => &self.lang.format_spec_amiss,
             "ext.text.format.complex.zero" => &self.lang.fmt_text_format_complex_zero,
@@ -147,7 +157,7 @@ impl Writer<'_> {
             return self.field(&Value::text(&text), spec, "");
         }
         if spec.is_empty() && !matches!(value, Value::Real(_)) { return self.representation_plain(value); }
-        let mut rule = self.parse(spec)?;
+        let mut rule = self.parse(spec, value)?;
         // The locale presentation writes the figures the plain
         // presentations write, this run keeping one locale only: a
         // whole number stays with the tens, everything else takes the
@@ -285,7 +295,7 @@ impl Writer<'_> {
         self.fault("ext.text.format.unknown", &[&code.to_string(), self.kind(value)])
     }
 
-    fn parse(&self, spec: &str) -> Result<Rule> {
+    fn parse(&self, spec: &str, value: &Value) -> Result<Rule> {
         let letters: Vec<char> = spec.chars().collect();
         let mut at = 0;
         let mut rule = Rule::default();
@@ -303,15 +313,29 @@ impl Writer<'_> {
         }
         rule.width = self.count(&letters, &mut at, "ext.text.format.width.big", true)?.unwrap_or(0);
         if letters.get(at).map_or(false, |c| matches!(c, ',' | '_')) { rule.group = letters[at]; at += 1; }
+        if letters.get(at).map_or(false, |c| matches!(c, ',' | '_')) {
+            let other = letters[at];
+            return Err(self.group_conflict(rule.group, other));
+        }
         if letters.get(at) == Some(&'.') {
             at += 1;
             rule.precision = self.count(&letters, &mut at, "ext.text.format.precision.big", true)?;
             if letters.get(at).map_or(false, |c| matches!(c, ',' | '_')) { rule.fraction_group = letters[at]; at += 1; }
             else if rule.precision.is_none() { return Err(self.fault("ext.text.format.precision.missing", &[])); }
         }
+        if letters.get(at).map_or(false, |c| matches!(c, ',' | '_')) {
+            let prior = rule.fraction_group;
+            if prior != '\0' { return Err(self.group_conflict(if rule.group != '\0' { rule.group } else { prior }, letters[at])); }
+        }
         if let Some(&c) = letters.get(at) { rule.code = c; at += 1; }
-        if at != letters.len() { return Err(self.fault("ext.text.format.invalid", &[])); }
+        if at != letters.len() { return Err(self.fault("ext.text.format.invalid.detail", &[spec, self.kind(value)])); }
         Ok(rule)
+    }
+
+    fn group_conflict(&self, first: char, second: char) -> String {
+        let words = if first == second { format!("'{first}' with '{second}'") }
+            else { String::from("both ',' and '_'") };
+        self.fault("ext.text.format.group.conflict", &[&words])
     }
 
     /// A run of decimal digits read as a width or a precision. CPython
@@ -471,7 +495,9 @@ impl Writer<'_> {
             at += 1;
             if c != '%' { out.push(c); continue; }
             if chars.get(at) == Some(&'%') { out.push('%'); at += 1; continue; }
+            let mark_position = at - 1;
             let mut keyed = None;
+            let mut named_key = None;
             if chars.get(at) == Some(&'(') {
                 at += 1;
                 let begin = at;
@@ -482,9 +508,10 @@ impl Writer<'_> {
                     if c == '(' { nesting += 1; }
                     at += 1;
                 }
-                if chars.get(at).is_none() { return Err(self.fault("ext.op.rem.format.incomplete", &[])); }
+                if chars.get(at).is_none() { return Err(self.fault("ext.op.rem.format.key.incomplete", &[&mark_position.to_string()])); }
                 let key: String = chars[begin..at].iter().collect(); at += 1;
-                let Value::Map(pairs) = argument else { return Err(self.fault("ext.op.rem.format.mapping", &[])); };
+                named_key = Some(key.clone());
+                let Value::Map(pairs) = argument else { return Err(self.fault("ext.op.rem.format.mapping", &[self.kind(argument)])); };
                 let named = |k: &Value| match k {
                     Value::Text(s) => !of_bytes && s.as_ref() == key,
                     Value::Bytes(row, ..) => of_bytes && row.borrow().iter().copied().map(char::from).eq(key.chars()),
@@ -495,6 +522,7 @@ impl Writer<'_> {
                 mapped = true;
                 used = args.len();
             }
+            if mapped && keyed.is_none() { return Err(self.fault("ext.op.rem.format.mapping.key", &[&mark_position.to_string()])); }
             let mut rule = Rule::default();
             while let Some(&flag) = chars.get(at).filter(|c| "-+ #0".contains(**c)) {
                 match flag {
@@ -507,30 +535,36 @@ impl Writer<'_> {
             if rule.align == '<' { rule.fill = ' '; }
             else if rule.fill == '0' { rule.align = '='; }
             rule.width = if chars.get(at) == Some(&'*') {
-                if keyed.is_some() { return Err(self.fault("ext.text.format.unready", &[])); }
+                if keyed.is_some() { return Err(self.fault("ext.op.rem.format.mapping.star", &[&mark_position.to_string()])); }
                 at += 1;
-                let n = self.star(&args, &mut used)?;
+                let n = self.star(&args, &mut used, "width")?;
                 if n < 0 { rule.align = '<'; rule.fill = ' '; }
                 n.unsigned_abs() as usize
-            } else { self.count(&chars, &mut at, "ext.text.format.width.big", false)?.unwrap_or(0) };
+            } else { self.count(&chars, &mut at, "ext.text.format.width.big", false)
+                .map_err(|_| self.fault("ext.op.rem.format.width.big", &[&mark_position.to_string()]))?.unwrap_or(0) };
             if chars.get(at) == Some(&'.') {
                 at += 1;
                 rule.precision = Some(if chars.get(at) == Some(&'*') {
-                    if keyed.is_some() { return Err(self.fault("ext.text.format.unready", &[])); }
-                    at += 1; self.star(&args, &mut used)?.max(0) as usize
-                } else { self.count(&chars, &mut at, "ext.text.format.precision.big", false)?.unwrap_or(0) });
+                    if keyed.is_some() { return Err(self.fault("ext.op.rem.format.mapping.star", &[&mark_position.to_string()])); }
+                    at += 1; self.star(&args, &mut used, "precision")?.max(0) as usize
+                } else { self.count(&chars, &mut at, "ext.text.format.precision.big", false)
+                    .map_err(|_| self.fault("ext.op.rem.format.precision.big", &[&mark_position.to_string()]))?.unwrap_or(0) });
             }
             if chars.get(at).map_or(false, |c| "hlL".contains(*c)) { at += 1; }
-            let code = *chars.get(at).ok_or_else(|| self.fault("ext.op.rem.format.incomplete", &[]))?;
+            let code = *chars.get(at).ok_or_else(|| self.fault("ext.op.rem.format.incomplete", &[&mark_position.to_string()]))?;
             at += 1;
             let value = match keyed { Some(v) => v, None => {
-                let v = args.get(used).copied().ok_or_else(|| self.fault("ext.op.rem.format.few", &[]))?;
+                let v = args.get(used).copied().ok_or_else(|| self.fault("ext.op.rem.format.few", &[&args.len().to_string()]))?;
                 used += 1; v
             }};
+            let location = if let Some(key) = named_key {
+                if of_bytes { format!(" b'{key}'") } else { format!(" '{key}'") }
+            } else if matches!(argument, Value::Tuple(_)) { format!(" {used}") }
+            else { String::new() };
             rule.code = code;
             let letters = if of_bytes { "sbrad iuoxXeEfFgGc" } else { "srad iuoxXeEfFgGc" };
             if !letters.replace(' ', "").contains(code) {
-                return Err(self.fault("ext.op.rem.format.code", &[&code.to_string(), &format!("{:x}", code as u32), &(at - 1).to_string()]));
+                return Err(self.percent_unknown(code, mark_position, at - 1, of_bytes));
             }
             let result = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
                 let shown = match offered(value, code)? {
@@ -545,8 +579,18 @@ impl Writer<'_> {
                 let shown = match value {
                     Value::Bytes(row, ..) if of_bytes && row.borrow().len() == 1 => char::from(row.borrow()[0]).to_string(),
                     Value::Text(s) if !of_bytes && s.chars().count() == 1 => s.to_string(),
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value, of_bytes)?,
-                    _ => return Err(self.fault("ext.op.rem.format.character", &[])),
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value, of_bytes)
+                        .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
+                    _ => {
+                        let required = if of_bytes { "an integer in range(256) or a single byte" }
+                            else { "an integer or a unicode character" };
+                        let subject = match value {
+                            Value::Text(s) if !of_bytes => format!("a string of length {}", s.chars().count()),
+                            Value::Bytes(row, mutable, _) if of_bytes => format!("a {} object of length {}", if *mutable { "bytearray" } else { "bytes" }, row.borrow().len()),
+                            _ => self.kind(value).to_string(),
+                        };
+                        return Err(self.fault("ext.op.rem.format.character", &[&location, required, &subject]));
+                    },
                 };
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
                 rule.pad("", &shown, '>')
@@ -560,7 +604,7 @@ impl Writer<'_> {
                 }
                 if !integral && !(decimal && matches!(value, Value::Real(r) if !r.outside())) {
                     let key = if decimal { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
-                    return Err(self.fault(key, &[&code.to_string(), self.kind(value)]));
+                    return Err(self.fault(key, &[&location, &code.to_string(), self.kind(value)]));
                 }
                 let n = value.as_big()?;
                 let mut digits = n.abs().to_str_radix(if decimal { 10 } else if code == 'o' { 8 } else { 16 });
@@ -573,7 +617,7 @@ impl Writer<'_> {
                 let n = match value {
                     Value::Real(r) => { let n = crate::value::as_binary(&r.p, &r.q); if r.below && n == 0.0 { -0.0 } else { n } },
                     Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big()?.to_f64().filter(|n| n.is_finite()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?,
-                    _ => return Err(self.fault("ext.op.rem.format.real", &[self.kind(value)])),
+                    _ => return Err(self.fault("ext.op.rem.format.real", &[&location, &code.to_string(), self.kind(value)])),
                 };
                 let mut body = if n.is_nan() { "nan".into() } else if n.is_infinite() { "inf".into() } else { decimal(n.abs(), &rule) };
                 if code.is_ascii_uppercase() { body.make_ascii_uppercase(); }
@@ -581,7 +625,7 @@ impl Writer<'_> {
             };
             out.push_str(&result);
         }
-        if !mapped && used != args.len() && !matches!(argument, Value::Map(_)) { return Err(self.fault("ext.op.rem.format.many", &[])); }
+        if !mapped && used != args.len() && !matches!(argument, Value::Map(_)) { return Err(self.fault("ext.op.rem.format.many", &[if of_bytes { "bytes" } else { "string" }, &used.to_string(), &args.len().to_string()])); }
         Ok(out)
     }
 
@@ -592,11 +636,33 @@ impl Writer<'_> {
         char::from_u32(n).map(|c| c.to_string()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))
     }
 
-    fn star(&self, args: &[&Value], used: &mut usize) -> Result<i64> {
-        let v = args.get(*used).ok_or_else(|| self.fault("ext.op.rem.format.few", &[]))?;
+    fn percent_unknown(&self, code: char, mark: usize, character: usize, bytes: bool) -> String {
+        if code.is_ascii_alphanumeric() {
+            return self.fault("ext.op.rem.format.code", &[&code.to_string(), &mark.to_string()]);
+        }
+        let name = if bytes {
+            if (code.is_ascii_graphic() || code == ' ') && code != '\'' { format!("'{code}'") }
+            else if code == '\'' { String::from("\"'\"") }
+            else { format!("with code 0x{:02x}", code as u32) }
+        } else if code.is_ascii_control() {
+            format!("U+{:04X}", code as u32)
+        } else if code.is_ascii() {
+            if code == '\'' { String::from("\"'\"") } else { format!("'{code}'") }
+        } else if code.is_control() {
+            format!("U+{:04X}", code as u32)
+        } else {
+            format!("'{code}' (U+{:04X})", code as u32)
+        };
+        self.fault("ext.op.rem.format.unexpected", &[&mark.to_string(), &name, &character.to_string()])
+    }
+
+    fn star(&self, args: &[&Value], used: &mut usize, measure: &str) -> Result<i64> {
+        if *used + 1 >= args.len() { return Err(self.fault("ext.op.rem.format.few", &[&args.len().to_string()])); }
+        let v = args[*used];
         *used += 1;
-        if !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.fault("ext.op.rem.format.star", &[])); }
-        v.as_big()?.to_i64().filter(|n| n.unsigned_abs() <= 100000).ok_or_else(|| self.fault("ext.text.format.unready", &[]))
+        if !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.fault("ext.op.rem.format.star", &[&used.to_string(), self.kind(v)])); }
+        v.as_big()?.to_i64().filter(|n| n.unsigned_abs() <= 1_000_000)
+            .ok_or_else(|| self.fault("ext.op.rem.format.star.big", &[&used.to_string(), measure]))
     }
 }
 
@@ -669,14 +735,26 @@ fn decimal(number: f64, rule: &Rule) -> String {
     let places = rule.precision.unwrap_or(6);
     let code = rule.code.to_ascii_lowercase();
     let mut body = match code {
-        'f' | '%' => format!("{number:.places$}"),
-        'e' => format!("{number:.places$e}"),
+        'f' | '%' => {
+            // A binary float has finished its nonzero decimal places by
+            // this point; build the remaining requested places directly.
+            let kept = places.min(1100);
+            let mut written = format!("{number:.kept$}");
+            written.push_str(&"0".repeat(places - kept));
+            written
+        },
+        'e' => {
+            let kept = places.min(1100);
+            let written = format!("{number:.kept$e}");
+            let (figures, power) = written.split_once('e').unwrap();
+            format!("{}{}e{}", figures, "0".repeat(places - kept), power)
+        },
         '\0' if rule.precision.is_none() => {
             if number != 0.0 && !(0.0001..1e16).contains(&number) { format!("{number:e}") }
             else { number.to_string() }
         }
         _ => {
-            let significant = places.max(1);
+            let significant = places.max(1).min(1100);
             let exponential = format!("{:.*e}", significant - 1, number);
             let (mantissa, exponent) = exponential.split_once('e').unwrap();
             let exponent: i32 = exponent.parse().unwrap();
@@ -716,6 +794,8 @@ pub fn names_fault(lang: &Lang, text: &str) -> bool {
         &lang.fmt_op_rem_format_infinity,
         &lang.fmt_op_rem_format_nan,
         &lang.fmt_text_format_invalid,
+        &lang.fmt_text_format_invalid_detail,
+        &lang.fmt_text_format_group_conflict,
         &lang.fmt_text_format_unknown,
         &lang.fmt_text_format_unready,
         &lang.fmt_text_format_digits,
@@ -742,12 +822,20 @@ pub fn names_fault(lang: &Lang, text: &str) -> bool {
         &lang.fmt_op_rem_format_few,
         &lang.fmt_op_rem_format_many,
         &lang.fmt_op_rem_format_mapping,
+        &lang.fmt_op_rem_format_mapping_key,
+        &lang.fmt_op_rem_format_mapping_star,
+        &lang.fmt_op_rem_format_width_big,
+        &lang.fmt_op_rem_format_precision_big,
         &lang.fmt_op_rem_format_number,
         &lang.fmt_op_rem_format_integer,
         &lang.fmt_op_rem_format_real,
         &lang.fmt_op_rem_format_character,
+        &lang.fmt_op_rem_format_character_range,
         &lang.fmt_op_rem_format_star,
+        &lang.fmt_op_rem_format_star_big,
         &lang.fmt_op_rem_format_incomplete,
+        &lang.fmt_op_rem_format_key_incomplete,
+        &lang.fmt_op_rem_format_unexpected,
         &lang.fmt_op_rem_format_code,
     ].iter().any(|parts| parts.first().map_or(false, |start| !start.is_empty() && text.starts_with(start)))
 }
