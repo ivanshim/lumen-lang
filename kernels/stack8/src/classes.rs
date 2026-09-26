@@ -501,9 +501,15 @@ impl<'a> Engine<'a> {
                 0 => Ok(w.1[0].clone()),
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
+                    if self.exception_class(c) { return Ok(self.exception_instance(c.clone(), args[1..].to_vec(), Value::Null)); }
                     if args.len()!=1 { self.root_refuses_arguments(c,true)?; }
                     self.made += 1;
                     Ok(Value::Object(Rc::new(Instance {class:c.clone(),fields:RefCell::new(vec![]),mark:self.made})))
+                }
+                2 if matches!(args.first(), Some(Value::Object(o)) if self.exception_class(&o.class)) => {
+                    let Value::Object(o) = args.remove(0) else { unreachable!() };
+                    let name = self.lang.constructor.clone().unwrap_or_default();
+                    self.exception_method(o, &name, &args)
                 }
                 2 if args.len()==1 => Ok(Value::Null),
                 2 => {
@@ -1060,6 +1066,7 @@ impl<'a> Engine<'a> {
         if name==self.class_word("kind") && !matches!(subject,Value::Object(_)) {
             if let Ok(kind)=self.class_type(vec![subject.clone()]) {return Ok(kind);}
         }
+        self.absent_member = Some((name.to_string(), subject.clone()));
         Err(self.missing_member(&subject,name))
     }
     /// A routine as it now stands, its spare arguments or code written
@@ -1226,6 +1233,41 @@ impl<'a> Engine<'a> {
                 _ => return Err("TypeError: __traceback__ must be a traceback or None".into()),
             }
         }
+        let mut value = value;
+        if let Value::Object(o) = &subject {
+            if self.exception_class(&o.class) {
+                let cause = self.lang.exception_cause.as_deref() == Some(name);
+                let context = self.lang.exception_context.as_deref() == Some(name);
+                if cause || context {
+                    match &value {
+                        None => return Err(format!("TypeError: {name} may not be deleted").into()),
+                        Some(v) if matches!(v.contents(), Value::Null) || matches!(v.contents(), Value::Object(e) if self.exception_class(&e.class)) => {},
+                        _ => return Err(format!("TypeError: exception {} must be None or derive from BaseException", if cause { "cause" } else { "context" }).into()),
+                    }
+                }
+                if self.lang.exception_suppress.as_deref() == Some(name) {
+                    match &value {
+                        None => return Err("TypeError: can't delete numeric/char attribute".into()),
+                        Some(v) if matches!(v.contents(), Value::Flag(_)) => {},
+                        _ => return Err("TypeError: attribute value type must be bool".into()),
+                    }
+                }
+                if value.is_none() {
+                    if self.lang.exception_args.as_deref() == Some(name) {
+                        return Err(format!("TypeError: {name} may not be deleted").into());
+                    }
+                    let member = (self.stands_on(&o.class, 36) && (self.lang.syntax_members.iter().any(|n| n == name) || name == "_metadata"))
+                        || (self.stands_on(&o.class, 19) && ["msg", "name", "path", "name_from"].contains(&name))
+                        || (self.stands_on(&o.class, 17) && name == "code")
+                        || (self.stop_class(&o.class) && self.lang.stop_value_member.as_deref() == Some(name))
+                        || ((self.stands_on(&o.class, 10) || self.stands_on(&o.class, 12)) && self.lang.absent_name_member.as_deref() == Some(name))
+                        || (self.stands_on(&o.class, 12) && self.lang.absent_object_member.as_deref() == Some(name))
+                        || (self.stands_on(&o.class, 20) && (self.lang.os_members.iter().any(|n| n == name) || name == "filename2"))
+                        || ((self.stands_on(&o.class, 43) || self.stands_on(&o.class, 44) || self.stands_on(&o.class, 45)) && ["encoding", "object", "reason"].contains(&name));
+                    if member { value = Some(Value::Null); }
+                }
+            }
+        }
         let absent=self.missing_member(&subject,name);
         match &subject {
             Value::Object(o) => {
@@ -1233,7 +1275,7 @@ impl<'a> Engine<'a> {
                     if let Some(v) = value.as_ref() {
                         let items = match v.contents() {
                             Value::Array(items) | Value::Tuple(items) => Value::Tuple(items),
-                            _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
+                            other => return Err(format!("TypeError: '{}' object is not iterable", Self::shown_kind(&other)).into()),
                         };
                         let mut fields = o.fields.borrow_mut();
                         for key in [name, "\0arguments"] { let _ = Self::write_members(&mut fields, key, Some(items.clone()), false); }
@@ -1745,6 +1787,9 @@ impl<'a> Engine<'a> {
                 continue;
             }
             if let Some(f)=Self::own_class_value(c,name){let mut all=if name==self.class_word("allocate"){vec![]}else{vec![subject.clone()]};all.extend(args);return self.class_apply(f,all);}
+            if self.exception_class(c) && self.lang.constructor.as_deref() == Some(name) {
+                if let Value::Object(o) = &subject { return self.exception_method(o.clone(), name, &args); }
+            }
             if c.name==self.class_word("root") && name==self.class_word("allocate"){let allocator=self.class_get(Value::Class(c.clone()),name,true)?;return self.class_apply(allocator,args);}
             if c.name==self.class_word("root") {
                 let f=self.class_get(Value::Class(c.clone()),name,true)?;
