@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: asynchronous comprehensions are not supported
+PythonError: SyntaxError: asynchronous comprehension outside of an asynchronous function

@@ -5,6 +5,7 @@
 // earns its place: an operator whose operands come straight from cells,
 // a cell stepped in place, and a comparison with its skip.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// What is put after a class's name to file it under: a class and a
@@ -284,6 +285,9 @@ pub enum Action {
     /// in its stead answers with that one; a thing that is its own walk
     /// is wound back and answers with itself; anything else is itself.
     WalkFrom,
+    Awaited,
+    AsyncGenerator,
+    AsyncWalk,
     /// Whether a walk has more to hand out, what stands at the place it
     /// has reached and what that is called, and the step onward. A thing
     /// that is its own walk is asked; anything else is counted through,
@@ -882,6 +886,10 @@ pub struct Routine {
     pub enclosing: Vec<(usize, Cell)>,
     pub enclosed: Vec<(usize, Value)>,
     pub instrs: Rc<Vec<Instr>>,
+    /// What a call of this very routine runs instead, once the program
+    /// has written its spare arguments or its code over: nothing until
+    /// then. A copy of the routine starts out with nothing here again.
+    pub revised: RefCell<Option<Rc<Routine>>>,
 }
 
 /// What a class declaration comes to: everything about the class that is

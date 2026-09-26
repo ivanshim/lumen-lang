@@ -69,7 +69,7 @@ class _FloatInfo:
     rounds = 1
 
 class _IntInfo:
-    bits_per_digit = 32
+    bits_per_digit = 30
     sizeof_digit = 4
     default_max_str_digits = 4300
     str_digits_check_threshold = 640

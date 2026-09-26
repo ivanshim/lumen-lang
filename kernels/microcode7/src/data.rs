@@ -712,7 +712,19 @@ impl Value {
         match self {
             Value::Arguments(row) => Self::argument_text(row, words),
             Value::Thing(thing) => match self.arguments_held() {
-                Some(row) => format!("{}({})", thing.of.name, row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+                Some(row) => {
+                    let mut shown: Vec<String> = row.iter().map(|x| x.representation(words)).collect();
+                    if thing.of.every_field().iter().any(|(k, _)| k == "\0import-fault") {
+                        for key in ["name", "path", "name_from"] {
+                            let value = thing.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+                            match value {
+                                None | Some(Value::Nil) => {},
+                                Some(v) => shown.push(format!("{key}={}", v.representation(words))),
+                            }
+                        }
+                    }
+                    format!("{}({})", thing.of.name, shown.join(", "))
+                },
                 None => self.render(words),
             },
             Value::Vector(row) => {
@@ -1026,11 +1038,22 @@ impl Value {
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
+            // Code read off two routines is the one code where both
+            // read the very same body.
+            (Value::Wrapped(7,x), Value::Wrapped(7,y)) => match (x.first(), y.first()) {
+                (Some(Value::Routine(p) | Value::Bound(p, _)), Some(Value::Routine(q) | Value::Bound(q, _))) => Rc::ptr_eq(p, q),
+                _ => Rc::ptr_eq(x, y),
+            },
+            // A routine bound to a value is the one bound method where it
+            // binds the one routine to the very same value.
+            (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
             // the same code bound in another frame is another closure,
             // with names and a namespace of its own, as CPython has it.
             (Value::Bound(a, here), Value::Bound(b, there)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(here, there),
+            // A routine not yet bound is itself alone.
+            (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
         }
