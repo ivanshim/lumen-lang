@@ -165,6 +165,7 @@ impl Value {
             Self::Octets { cell, changeable: false, .. } => {
                 cell.borrow().iter().fold(0i64, |total, octet| total.wrapping_mul(1_000_003) ^ i64::from(*octet))
             }
+            Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
             Self::Method(program, receiver) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,

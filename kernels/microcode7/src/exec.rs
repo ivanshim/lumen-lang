@@ -3969,7 +3969,7 @@ impl<'a> Machine<'a> {
             Form::ForgetWithin(under, place) => {
                 let holder = self.value_of(under, frame)?;
                 let named = self.value_of(place, frame)?;
-                let target = match &holder { Value::Shared(c) => c.borrow().clone(), value => value.clone() };
+                let target = holder.settled();
                 if let Value::Attributes(t) = &target {
                     let Value::Text(key) = named else { return Err(self.bad_answer().into()) };
                     let mut fields = t.holds.borrow_mut();
@@ -3979,8 +3979,9 @@ impl<'a> Machine<'a> {
                 }
                 if matches!(&target, Value::Dict(entries) if entries.iter().any(|(k, _)| matches!(k, Value::Keyed(..)))) {
                     let remaining = self.user_operation(Prim::Erase, &[target, named])?.ok_or_else(|| self.bad_answer())?;
-                    if let Value::Shared(cell) = holder { *cell.borrow_mut() = remaining; return Ok(Value::Nil); }
-                    return Err(self.bad_answer().into());
+                    let location = Self::dict_cell(&holder).ok_or_else(|| self.bad_answer())?;
+                    location.replace(remaining);
+                    return Ok(Value::Nil);
                 }
                 if self.appointed(&target, 13).is_some() {
                     let asked = self.ask_special(&target, 13, &[named]);
@@ -4932,6 +4933,18 @@ impl<'a> Machine<'a> {
                                         return Ok(Value::Nil);
                                     }
                                     Found::Unknown => {}
+                                }
+                            }
+                            if let Some(cell) = cell_here.and_then(|cell| Self::dict_cell(&Value::Shared(cell))) {
+                                loop {
+                                    let Value::Dict(snapshot) = cell.borrow().clone() else { return Err(self.bad_answer().into()); };
+                                    let (position, stored_key) = self.map_locate(&snapshot, Some(&snapshot), &key)?;
+                                    if Self::dict_extent(&cell).1 != snapshot.serial { continue; }
+                                    let mut updated = snapshot.clone();
+                                    if let Some(at) = position { Rc::make_mut(&mut updated).overwrite_at(at, value.clone()); }
+                                    else { store_insert_new(&mut updated, stored_key, value.clone()); }
+                                    cell.replace(Value::Dict(updated));
+                                    return Ok(Value::Nil);
                                 }
                             }
                             let mut entries = entries.to_vec();
@@ -6325,6 +6338,14 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "clear" {
+            if let Value::Attributes(object) = receiver.settled() {
+                if arguments.len() + keywords.len() != 0 { return Err(self.method_fault("arguments").into()); }
+                let mut slots = object.holds.borrow_mut();
+                slots.retain(|entry| entry.0.starts_with('\0'));
+                return Ok(Value::Nil);
+            }
+        }
         // One more member set on the end of a list, in the place the
         // list already occupies. This comes first of all: further down
         // the contents are read out into a worth of their own, and a
@@ -8873,9 +8894,15 @@ impl<'a> Machine<'a> {
     fn dict_key_method(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>) -> Result<Value, String> {
         if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments")); }
         if matches!(arguments[0].settled(), Value::Vector(_) | Value::Dict(_)) { return Err(self.method_fault("arguments")); }
-        let Value::Dict(store) = receiver.settled() else { return Err(self.method_fault("unready")); };
-        let pairs = store.to_vec();
-        let (found, keyed) = self.map_locate(&pairs, Some(store.as_ref()), &arguments[0])?;
+        let hashed = self.hash_key(&arguments[0])?;
+        let mut current = receiver.settled();
+        let (pairs, found, keyed) = loop {
+            let Value::Dict(store) = current else { return Err(self.method_fault("unready")); };
+            let located = self.map_locate(&store, Some(&store), &hashed)?;
+            current = receiver.settled();
+            if matches!(&current, Value::Dict(now) if now.serial != store.serial) { continue; }
+            break (store.to_vec(), located.0, located.1);
+        };
         if let Some(index) = found {
             let answer = pairs[index].1.clone();
             if name == "pop" {
@@ -8919,14 +8946,52 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                other => {
-                    let says = |kind: &str| self.method_fault(kind);
-                    for item in crate::members::gather(&other, &says)? {
-                        let says = |kind: &str| self.method_fault(kind);
-                        let values = crate::members::gather(&item, &says)?;
-                        if values.len() != 2 { stopped = Some(self.method_fault("arguments")); break; }
-                        self.map_enter(&mut entries, values[0].clone(), values[1].clone())?;
+                Value::Attributes(object) => {
+                    for (word, value) in object.holds.borrow().clone() {
+                        if word.starts_with('\0') || matches!(value, Value::Unset) { continue; }
+                        self.map_enter(&mut entries, Value::text(&word), value)?;
                     }
+                }
+                other => {
+                    let mapped = self.attribute(&other, "keys");
+                    let result = (|| -> Result<(), String> {
+                        let source = match mapped.as_ref() {
+                            Some(method) => {
+                                let offered = self.apply_within(method.clone(), Vec::new())?;
+                                let walk = self.iterated_value(&offered)?;
+                                let mut keys = Vec::new();
+                                loop {
+                                    match self.next_value(&walk)? {
+                                        None => break,
+                                        Some(key) => keys.push(key),
+                                    }
+                                }
+                                Value::Vector(Rc::new(keys))
+                            },
+                            None => other.clone(),
+                        };
+                        let cursor = self.iterated_value(&source)?;
+                        let mut position = 0usize;
+                        loop {
+                            let Some(item) = self.next_value(&cursor)? else { break };
+                            let (key, value) = if mapped.is_some() {
+                                let value = self.ask_special(&other, 11, &[item.clone()])?.ok_or_else(|| self.bad_answer())?;
+                                (item, value)
+                            } else {
+                                let fields = self.core_collect(&item)?;
+                                if fields.len() != 2 {
+                                    let parts = self.table.strings("ext.builtin.core.dict.pair");
+                                    return Err(format!("{}{}{}{}{}", parts[0], position, parts[1], fields.len(), parts[2]));
+                                }
+                                (fields[0].clone(), fields[1].clone())
+                            };
+                            self.map_enter(&mut entries, key, value)?;
+                            self.replace_dict(receiver, entries.clone())?;
+                            position += 1;
+                        }
+                        Ok(())
+                    })();
+                    stopped = result.err();
                 }
             }
         }
@@ -16723,7 +16788,14 @@ impl Machine<'_> {
                 let mut incoming = Vec::new();
                 if let Some(source) = input.first() {
                     if let Value::Dict(pairs) = source { incoming.extend(pairs.iter().cloned()); }
-                    else {
+                    else if let Some(method) = self.attribute(source, "keys").or_else(|| Self::underlying(source).and_then(|base| self.attribute(&base, "keys"))) {
+                        let offered = self.apply_within(method, Vec::new())?;
+                        let keys = self.core_collect(&offered)?;
+                        for key in keys {
+                            let value = self.prim(Prim::At, "", &[source.clone(), key.clone()])?;
+                            incoming.push((key, value));
+                        }
+                    } else {
                         for (position,row) in self.core_collect(source)?.into_iter().enumerate() {
                             let fields = self.core_collect(&row).map_err(|_| self.core_complaint("core.dict.sequence", &position.to_string()))?;
                             if fields.len() != 2 {
@@ -16770,6 +16842,13 @@ impl Machine<'_> {
             }
             Backwards => {
                 require(1, 1)?;
+                if let Value::Attributes(object) = &input[0] {
+                    let mut names = Vec::new();
+                    for (word, held) in object.holds.borrow().iter().rev() {
+                        if !word.starts_with('\0') && !matches!(held, Value::Unset) { names.push(Value::text(word)); }
+                    }
+                    return Ok(Self::cursor_value_walked(IteratorKind::Stored(names.into_iter().collect()), Some(Rc::from("dict_reversekeyiterator"))));
+                }
                 // Octets run backwards as well. A run forwards over them
                 // gives up the numbers they keep rather than any letters,
                 // so running the other way gives up those same numbers.
