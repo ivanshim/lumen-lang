@@ -15,6 +15,7 @@ pub enum Shape {
     WovenEnd,
     Field,
     Unheld,
+    CharacterRow,
     Sign,
     LineEnd,
     Lead,
@@ -603,6 +604,7 @@ struct Quotation<'a> {
     table: &'a Table,
     row: u32,
     made: Vec<Token>,
+    substitutes: std::collections::BTreeMap<usize, u32>,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -632,10 +634,13 @@ impl Quotation<'_> {
         self.made.push(Token { end_row: 0, end_column: 0, column: 1, row: self.row, shape: kind, lexeme: text, span: 0 });
     }
     fn flush(&mut self, text: &mut String, missing: &mut bool) {
-        let kind = if *missing { Shape::Unheld } else { Shape::Quote };
+        let kind = if *missing { Shape::Unheld } else if self.substitutes.is_empty() { Shape::Quote } else { Shape::CharacterRow };
         let value = if *missing {
             self.table.single("ext.lexical.escape.unavailable").unwrap_or("Unicode escape cannot be represented").to_owned()
+        } else if kind == Shape::CharacterRow {
+            text.char_indices().map(|(position, ch)| self.substitutes.get(&position).copied().unwrap_or(ch as u32).to_string()).collect::<Vec<_>>().join(" ")
         } else { std::mem::take(text) };
+        self.substitutes.clear();
         self.token(kind, value);
         text.clear();
         *missing = false;
@@ -731,7 +736,8 @@ impl Quotation<'_> {
                 value = value.checked_mul(16).and_then(|n| n.checked_add(digit)).ok_or_else(|| beyond.to_owned())?;
             }
             if value > 0x10ffff { return Err(beyond.to_owned()); }
-            if let Some(ch) = char::from_u32(value) { text.push(ch); } else { *missing = true; }
+            if let Some(ch) = char::from_u32(value) { text.push(ch); }
+            else { self.substitutes.insert(text.len(), value); text.push('?'); }
             self.forward(count + 2);
             return Ok(());
         }
@@ -1052,7 +1058,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 continue;
             }
             if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
-                let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new() };
+                let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
                 if let Err(mut words) = quote.literal(body, &end, raw, fields, 0) {
                     if !fields && table.has_any("ext.builtin.exceptions.syntax") && words.starts_with("SyntaxError: unterminated ") {
                         let mut detected = quote.row;

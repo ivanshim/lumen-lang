@@ -6740,6 +6740,10 @@ impl<'a> Builder<'a> {
             return Ok(constant(Value::Octets { cell: Rc::new(std::cell::RefCell::new(start.lexeme.chars().map(|c| c as u8).collect())), changeable: false,
                 lead: Rc::from(self.table.strings("ext.system.bytes.repr")[0].as_str()) }));
         }
+        if start.shape == Shape::CharacterRow {
+            let numbers = start.lexeme.split_whitespace().map(|word| word.parse().unwrap()).collect();
+            return Ok(constant(Value::characters(numbers)));
+        }
         if start.shape == Shape::Quote { return Ok(constant(Value::text(&start.lexeme))); }
         if start.shape == Shape::Unheld { return Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(&start.lexeme))])); }
         if start.shape != Shape::Woven {
@@ -6921,10 +6925,10 @@ impl<'a> Builder<'a> {
                 self.advance();
                 constant(numeral(&t.lexeme, table)?)
             }
-            Shape::ByteQuote | Shape::Quote | Shape::Woven | Shape::Unheld => {
+            Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld => {
                 let mut text = self.quotation()?;
                 if table.flag("ext.lexical.string.adjacent") {
-                    while matches!(self.look().shape, Shape::ByteQuote | Shape::Quote | Shape::Woven | Shape::Unheld) {
+                    while matches!(self.look().shape, Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld) {
                         if (t.shape == Shape::ByteQuote) != (self.look().shape == Shape::ByteQuote) {
                             return Err(table.single("ext.lexical.string.bytes.mixed").unwrap_or("").to_owned());
                         }

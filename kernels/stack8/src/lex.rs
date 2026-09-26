@@ -17,6 +17,7 @@ pub enum Shape {
     StringEnd,
     StringField,
     StringFault,
+    Codepoints,
     Sign,
     LineEnd,
     /// The indentation of a line that has something on it.
@@ -245,6 +246,7 @@ struct Cursor<'a> {
     column: usize,
     out: Vec<Token>,
     final_crlf: bool,
+    unpaired: Vec<(usize, u32)>,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -549,10 +551,16 @@ impl<'a> Cursor<'a> {
     fn string_text(&mut self, text: &mut String, fault: &mut bool, line: usize, col: usize) {
         if *fault {
             self.push(Shape::StringFault, self.lang.escape_unavailable.clone().unwrap_or_else(|| "Unicode escape cannot be represented".into()), 0, line, col);
+        } else if !self.unpaired.is_empty() {
+            let codes = text.char_indices().map(|(at, c)| {
+                self.unpaired.iter().find(|(offset, _)| *offset == at).map_or(c as u32, |(_, code)| *code).to_string()
+            }).collect::<Vec<_>>().join(",");
+            self.push(Shape::Codepoints, codes, 0, line, col);
         } else {
             self.push(Shape::Quote, std::mem::take(text), 0, line, col);
         }
         text.clear();
+        self.unpaired.clear();
         *fault = false;
     }
 
@@ -664,7 +672,10 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
             if number > 0x10ffff { return Err(lang.codepoint_beyond.clone().unwrap_or_else(|| self.string_words())); }
-            match char::from_u32(number) { Some(c) => text.push(c), None => *fault = true }
+            match char::from_u32(number) {
+                Some(c) => text.push(c),
+                None => { self.unpaired.push((text.len(), number)); text.push('�'); }
+            }
             return Ok(());
         }
         if Some(next) == lang.byte_letter {
@@ -805,7 +816,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringField, conversion, 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), final_crlf: false };
+        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false };
         inner.run(false)?;
         self.out.extend(inner.out.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd)));
         self.push(Shape::Sign, group.close.clone(), 0, line, col);
@@ -1055,7 +1066,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), final_crlf: false };
+            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1345,7 +1356,7 @@ pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, us
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), final_crlf };
+            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf };
             if let Err(said) = cur.run(true) {
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
@@ -1528,7 +1539,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), final_crlf: false };
+        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }
