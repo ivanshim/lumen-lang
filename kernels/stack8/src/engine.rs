@@ -5185,6 +5185,9 @@ impl<'a> Engine<'a> {
     /// in-place method's answer, unless it has none or declined.
     fn settled_in_place(&mut self, op: &Action, held: &Value, by: &Value) -> Res<Option<Value>> {
         let Some(place) = Self::in_place_method(op) else { return Ok(None) };
+        if place == 49 && self.lang.sequence_values {
+            if let Some(repeated) = self.sequence_in_place(true, held, by)? { return Ok(Some(repeated)); }
+        }
         let thing = held.contents();
         if !matches!(thing, Value::Object(_)) { return Ok(None); }
         Ok(match self.special_call(&thing, place, vec![by.clone()])? {
@@ -5314,7 +5317,7 @@ impl<'a> Engine<'a> {
         }
         // A thing standing for a whole number is that number wherever a
         // row, a text or a range is read at a place.
-        if let (Some((11, _)), Value::Object(_), true) = (places, b, Self::counts_places(a)) {
+        if let (Some((11, _)), Value::Object(_), true) = (places, b, Self::counts_places(a) || matches!(a, Value::Bytes(..))) {
             if let Some(index) = self.special_index(b)? { return self.special_dyad(op, a, &index); }
         }
         if let Some((direct, reflected)) = places {
@@ -5339,6 +5342,14 @@ impl<'a> Engine<'a> {
             let same_class = matches!((a, b), (Value::Object(x), Value::Object(y)) if Rc::ptr_eq(&x.class, &y.class));
             if !first_right && (direct < 8 || !same_class) {
                 if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
+            }
+            if matches!(op, Action::Mul) {
+                let sequence = |v: &Value| matches!(v, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Bytes(..));
+                if sequence(a) && Self::plain_thing(b) {
+                    if let Some(times) = self.special_index(b)? { return self.special_dyad(op, a, &times); }
+                } else if sequence(b) && Self::plain_thing(a) {
+                    if let Some(times) = self.special_index(a)? { return self.special_dyad(op, &times, b); }
+                }
             }
             // An arithmetic, matrix or bit working that a plain thing
             // stands in and neither side's methods took is refused with
@@ -8441,10 +8452,8 @@ impl<'a> Engine<'a> {
             // answered here, so that it is refused in these words.
             Action::Mul if texted(a) || texted(b) => {
                 let by = if texted(a) { b } else { a };
-                match by {
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(None),
-                    other => Err(self.sequence_repeat_fault(other)),
-                }
+                self.sequence_count(by)?;
+                Ok(None)
             }
             Action::Lt | Action::Le | Action::Gt | Action::Ge if rowed(a) && rowed(b) && a.core_kind() == b.core_kind() => {
                 let (left, right) = (items(a), items(b));
@@ -8484,7 +8493,9 @@ impl<'a> Engine<'a> {
         let (Value::Bond(cell) | Value::Collection(cell, _)) = target else { return Ok(None) };
         let Value::Array(items) = cell.borrow().clone() else { return Ok(None) };
         let row = if repeat {
-            self.sequence_repeated(&items, self.sequence_count(&given.contents())?)?
+            let given = given.contents();
+            let count = self.special_index(&given)?.unwrap_or(given);
+            self.sequence_repeated(&items, self.sequence_count(&count)?)?
         } else {
             let mut row = items.as_ref().clone();
             let taken = self.comprehension_items(given).map_err(|_| self.core_fault("core.uniterable", &given.core_kind()))?;
