@@ -33,6 +33,7 @@ enum Holds {
 /// `uncertain` holds those names, whose places are glanced at when the
 /// class is built rather than read outright.
 struct ClassParts {
+    lexical_members: Vec<String>,
     methods: Vec<(String, Rc<Routine>)>,
     attributes: Vec<String>,
     held: Vec<Form>,
@@ -182,6 +183,7 @@ pub struct Builder<'a> {
     /// the same, since the library may spell a builtin as a routine.
     past_library: bool,
     named_in_program: Vec<String>,
+    native_exports: HashSet<String>,
     /// The file this text came out of, where it was read as the run
     /// went, so that every program built from it carries it.
     written_in: Option<Rc<str>>,
@@ -247,6 +249,7 @@ pub struct Built {
     /// A name only ever read there, such as a builtin reached by its bare
     /// word, is not among these, though it too gets a global slot.
     pub bound_globally: Vec<String>,
+    native_exports: HashSet<String>,
 }
 
 /// What a run of postfix words is part of, which says where it stops.
@@ -341,10 +344,16 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
     let mark = Some((&at, &hard, &column));
     let mut words = HashMap::new();
+    let mut bound = shadowed.to_vec();
+    let mut exports = HashSet::new();
     if table.flag("ext.stmt.function.closes_over") {
-        build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed).map_err(|said| (said, at.get(), column.get()))?;
+        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new()).map_err(|said| (said, at.get(), column.get()))?;
+        exports = discovery.native_exports;
+        for name in discovery.bound_globally {
+            if !bound.contains(&name) { bound.push(name); }
+        }
     }
-    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, mark, None, None, true, &mut words, false, value_only, shadowed).map_err(|said| (said, at.get(), column.get()))
+    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, mark, None, None, true, &mut words, false, value_only, &bound, &exports).map_err(|said| (said, at.get(), column.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
@@ -352,10 +361,11 @@ type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool) -> Res<Built> {
     let mut words = HashMap::new();
-    if table.flag("ext.stmt.function.closes_over") {
-        build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[])?;
-    }
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false, value_only, &[])
+    let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
+        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new())?;
+        (pass.bound_globally, pass.native_exports)
+    } else { (Vec::new(), HashSet::new()) };
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports)
 }
 
 /// Every name a `global` statement names anywhere in this text, however
@@ -391,7 +401,7 @@ fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
     names
 }
 
-fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String]) -> Res<Built> {
+fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>) -> Res<Built> {
     let mut beginnings = seeded.to_vec();
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
@@ -426,7 +436,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { declarations: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { declarations: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -483,6 +493,16 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         while !r.exhausted() {
             let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
             let own_line = r.look().row > before;
+            if opening && own_line && before != 0 && within.is_none() && !read_in && !survey
+                && table.flag("ext.syntax.names.shadow_builtins") {
+                for word in r.named_in_program.clone() {
+                    if let Some(operation) = table.prims.get(&word).copied() {
+                        let address = r.global_address(&word);
+                        let native = constant(Value::Intrinsic(operation, Rc::from(word.as_str())));
+                        stmts.push(Form::Write(address, Box::new(native)));
+                    }
+                }
+            }
             // Where the reading stops, the row it had reached is kept,
             // so a language with a word for such a stopping names it.
             let stmt = match r.stmt() {
@@ -538,7 +558,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         None => top.idents.clone(),
     };
     let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
-    Ok(Built { program: Rc::new(program), globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program })
+    Ok(Built { program: Rc::new(program), globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
 /// Which parameters of each program are written with the reference sign.
@@ -1134,6 +1154,10 @@ impl<'a> Builder<'a> {
             }
         }
         if let Some(slot) = self.aliased(name) {
+            if self.past_library { self.native_exports.remove(name); }
+            if self.past_library && !self.named_in_program.iter().any(|word| word == name) {
+                self.named_in_program.push(name.to_owned());
+            }
             return slot;
         }
         let is_borrowed = self.layers.iter().rev().find(|l| l.holds == Holds::Every).map_or(false, |l| l.borrowed.iter().any(|word| word == name));
@@ -1155,6 +1179,7 @@ impl<'a> Builder<'a> {
                             scope.idents.len() - 1
                         }
                     };
+                    if i == 0 && self.past_library { self.native_exports.remove(name); }
                     if i == 0 && self.past_library && !self.named_in_program.iter().any(|word| word == name) {
                         self.named_in_program.push(name.to_string());
                     }
@@ -1342,7 +1367,16 @@ impl<'a> Builder<'a> {
     fn read(&mut self, name: &str) -> Form {
         if let Some((depth, names)) = self.class_bindings.last() {
             if *depth == self.layers.len() {
-                if let Some(slot) = names.get(name) { return Form::Read(slot.clone()); }
+                if let Some(slot) = names.get(name).cloned() {
+                    let conditional = self.table.flag("ext.syntax.names.shadow_builtins")
+                        && self.table.prims.contains_key(name)
+                        && self.under_way.last().is_some_and(|body| body.uncertain.iter().any(|word| word == name));
+                    if conditional {
+                        let fallback = self.read_fallback(name);
+                        return self.choose(Form::Missing(slot.clone()), fallback, Form::Read(slot));
+                    }
+                    return Form::Read(slot);
+                }
             }
         }
         // A name the class body has never bound at compile time may
@@ -1399,6 +1433,19 @@ impl<'a> Builder<'a> {
         ] {
             if self.table.single(label) == Some(name) {
                 return constant(Value::text(&said));
+            }
+        }
+        if self.in_class_body() && self.table.flag("ext.syntax.names.shadow_builtins") {
+            if let Some(operation) = self.table.prims.get(name).copied() {
+                let member = self.parts().lexical_members.iter().any(|word| word == name);
+                let address = if member && !self.declared_outside_class(name) {
+                    self.global_address(name)
+                } else { self.address_to_read(name) };
+                let global_depth = self.layers.iter().skip(1).filter(|layer| layer.holds != Holds::Nothing).count();
+                if address.up == global_depth && !self.named_in_program.iter().any(|word| word == name) {
+                    return constant(Value::Intrinsic(operation, Rc::from(name)));
+                }
+                return Form::Read(address);
             }
         }
         Form::Read(self.address_to_read(name))
@@ -3021,6 +3068,9 @@ impl<'a> Builder<'a> {
     /// conditional writes where the rest of the body reads; a name new
     /// to the body is given a place of its own.
     fn member_address(&mut self, word: &str, purpose: &str) -> Address {
+        if !self.parts().lexical_members.iter().any(|entry| entry == word) {
+            self.parts().lexical_members.push(word.to_owned());
+        }
         match self.class_bindings.last().and_then(|(_, names)| names.get(word)).cloned() {
             Some(place) => place,
             None => self.gensym(purpose),
@@ -3225,6 +3275,7 @@ impl<'a> Builder<'a> {
                 // statement of the body, not an annotated member.
                 self.pos += 2;
                 self.put_by_annotation(&["stmt.assign"])?;
+                self.parts().lexical_members.push(member.clone());
                 self.parts().annotated_names.push((Value::text(&member), Value::Nil));
                 if self.on_assign() {
                     self.advance();
@@ -3620,9 +3671,11 @@ impl<'a> Builder<'a> {
             self.advance();
             self.skip_line_ends();
         }
+        let body_source = self.pos;
+        let lexical_members = self.surveyed.get(&body_source).map(|scope| scope.bound.clone()).unwrap_or_default();
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         self.class_globals.push((self.layers.len(), Vec::new()));
-        self.under_way.push(ClassParts { methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { lexical_members, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -3658,6 +3711,10 @@ impl<'a> Builder<'a> {
         if !on_one_line {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.advance();
+        }
+        if self.survey {
+            let bound = self.parts().lexical_members.clone();
+            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
         }
         self.class_bindings.pop();
         self.class_globals.pop();
@@ -5787,6 +5844,20 @@ impl<'a> Builder<'a> {
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
+        let word = self.look().lexeme.to_owned();
+        let unchanged = self.layers.len() == 1 && !self.in_class_body()
+            && self.table.flag("ext.syntax.names.shadow_builtins")
+            && (self.table.prims.contains_key(&word) || self.table.spells("ext.stmt.class.parent", &word))
+            && self.glance(1).shape == Shape::Sign && self.table.spells("stmt.assign", &self.glance(1).lexeme)
+            && self.glance(2).shape == Shape::Bare && self.glance(2).lexeme == word
+            && matches!(self.glance(3).shape, Shape::LineEnd | Shape::Finish)
+            && (self.native_exports.contains(&word) || !self.named_in_program.contains(&word));
+        let built = self.binding_or_value()?;
+        if unchanged { self.native_exports.insert(word); }
+        Ok(built)
+    }
+
+    fn binding_or_value(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             if let Some(mark) = self.declaration_mark() {
                 if !self.divided_at(self.pos, mark, "ext.op.tuple").is_empty() {
@@ -6948,6 +7019,16 @@ impl<'a> Builder<'a> {
                 }
                 prim_call(Prim::Spawn, given)
             }
+            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme)
+                && self.uses_bound_callable(&t.lexeme) => {
+                self.advance();
+                let target = self.read(&t.lexeme);
+                if table.single("syntax.call.open").is_some_and(|open| self.sign(open)) {
+                    self.advance();
+                    let arguments = self.arguments_of(&t.lexeme, "syntax.call.close", "syntax.call.separator")?;
+                    invoke(target, arguments)
+                } else { target }
+            }
             // Beyond every class body the parent word the program has
             // bound, not opening a call, is an ordinary name, to be read,
             // listed or handed on. Unbound, it stands for the parent call
@@ -7008,6 +7089,7 @@ impl<'a> Builder<'a> {
                 } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.error", &t.lexeme) {
                     constant(Value::Channel(2))
                 } else if matches!(table.prims.get(&t.lexeme), Some(Prim::Octets(0 | 1)))
+                    && self.place_depth == 0 && !self.uses_bound_callable(&t.lexeme)
                     && !table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     let words = table.strings("ext.system.bytes.type");
                     constant(Value::OctetKind { changeable: table.prims.get(&t.lexeme) == Some(&Prim::Octets(1)),
@@ -8380,10 +8462,36 @@ impl<'a> Builder<'a> {
         Ok(items)
     }
 
+    fn uses_bound_callable(&self, word: &str) -> bool {
+        if !self.table.flag("ext.syntax.names.shadow_builtins") { return false; }
+        let depth = self.layers.len();
+        if self.in_class_body() {
+            if let Some(body) = self.under_way.last() {
+                if body.lexical_members.iter().any(|entry| entry == word) { return true; }
+                if body.book.is_some() && !matches!(self.table.prims.get(word), Some(Prim::HereBook | Prim::MembersOf)) { return true; }
+            }
+        }
+        let member = self.class_bindings.last().is_some_and(|(level, entries)| *level == depth && entries.contains_key(word));
+        let declared = self.class_globals.last().is_some_and(|(level, words)| *level == depth && words.iter().any(|entry| entry == word));
+        if member || declared || self.gather_names.iter().any(|entry| entry.0 == word) {
+            return true;
+        }
+        for layer in self.layers.iter().skip(1).rev() {
+            if layer.holds == Holds::Nothing { continue; }
+            if layer.aliases.iter().any(|entry| entry.0 == word)
+                || layer.borrowed.iter().any(|entry| entry == word)
+                || layer.idents.iter().any(|entry| entry == word) {
+                return true;
+            }
+            if layer.holds == Holds::Every && !self.table.flag("ext.stmt.function.closes_over") { break; }
+        }
+        !self.native_exports.contains(word) && self.named_in_program.iter().any(|entry| entry == word)
+    }
+
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
         // A name the program has bound is called as that name, in front
         // of any builtin word spelled the same, where the table says so.
-        if self.table.flag("ext.syntax.names.shadow_builtins") && self.named_in_program.iter().any(|word| word == name) {
+        if self.uses_bound_callable(name) {
             let target = self.read(name);
             return Ok(invoke(target, args));
         }

@@ -3808,7 +3808,10 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Flag(empty));
                 }
                 Instr::Unwritten(at) => {
-                    let empty = matches!(self.world[*at], Value::Blank);
+                    let empty = match &self.world[*at] {
+                        Value::Bond(cell) if self.lang.closes_over => matches!(*cell.borrow(), Value::Blank),
+                        value => matches!(value, Value::Blank),
+                    };
                     self.data.push(Value::Flag(empty));
                 }
                 Instr::Line(row) => {
@@ -15256,6 +15259,7 @@ impl Engine<'_> {
             let initial = if self.lang.module_names.contains(name) { Value::text(path) }
                 else if file_word.as_ref() == Some(name) { own_file.as_deref().map_or(Value::Null, Value::text) }
                 else if let Some(value) = self.native_exceptions.get(name) { value.clone() }
+                else if self.lang.explicit_this && Lang::spells(&self.lang.parent_words, name) { Self::adapter(9, Vec::new()) }
                 else { self.lang.builtins.get(name).map_or(Value::Blank, |builtin| Value::Native(*builtin, Rc::from(name.as_str()))) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();

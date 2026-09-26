@@ -4164,7 +4164,11 @@ impl<'a> Machine<'a> {
             }
             Form::Missing(slot) => {
                 let f = ascend(frame, slot.up);
-                let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
+                let values = f.cells.borrow();
+                let empty = match &values[slot.at] {
+                    Value::Shared(link) if self.table.flag("ext.stmt.function.closes_over") => matches!(*link.borrow(), Value::Unset),
+                    other => matches!(other, Value::Unset),
+                };
                 Ok(Value::Flag(empty))
             }
             Form::Fits { value, test, slots, tuple } => {
@@ -15170,6 +15174,9 @@ impl Machine<'_> {
                 let is_module_name = module_names.contains(name);
                 let initial = if is_module_name { Value::text(path) }
                     else if file_word == Some(name.as_str()) { own_file.as_deref().map_or(Value::Nil, Value::text) }
+                    else if self.table.flag("ext.stmt.class.this.explicit") && self.table.spells("ext.stmt.class.parent", name) {
+                        Value::Wrapped(9, Rc::new(Vec::new()))
+                    }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
