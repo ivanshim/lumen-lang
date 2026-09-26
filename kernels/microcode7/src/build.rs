@@ -5672,6 +5672,15 @@ impl<'a> Builder<'a> {
             self.place_depth -= 1;
             let place = reading?;
             if self.pos != hi { return Err(bad); }
+            if self.layers.last().unwrap().gathering_kind.is_some() && self.table.has_any("ext.builtin.slice") {
+                if let Form::Apply(Callee::Prim(Prim::At, _), mut operands) = place {
+                    let container = self.gather_name("target_object");
+                    let evaluate = self.write(&container, operands.remove(0));
+                    operands.insert(0, self.read(&container));
+                    operands.push(self.read(source));
+                    return Ok(sequence(vec![evaluate, prim_call(Prim::Replace, operands)]));
+                }
+            }
             let sign = self.look().clone();
             let old = self.waiting.replace(source.to_string());
             let written = self.write_into(place, false, None, sign);
@@ -8017,8 +8026,7 @@ impl<'a> Builder<'a> {
         if !self.table.flag("ext.stmt.yield.suspends") { return self.gather_comprehension(clause, end, false); }
         let head = self.pos;
         self.pos = clause;
-        while !self.on_any("ext.op.comprehension.in") && !self.exhausted() { self.advance(); }
-        self.advance();
+        self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or("Expected a comprehension source")? + 1;
         let begins = self.pos;
         let source = self.expr(1)?;
         let ends = self.pos;
@@ -8055,8 +8063,7 @@ impl<'a> Builder<'a> {
         if self.table.flag("ext.stmt.function.closes_over") && (self.table.has_any("ext.builtin.exceptions.syntax") || self.in_class_body()) {
             let entry = self.pos;
             self.pos = first_for;
-            while !self.on_any("ext.op.comprehension.in") && !self.exhausted() { self.advance(); }
-            self.advance();
+            self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or("Expected a comprehension source")? + 1;
             let begins = self.pos;
             let source = self.expr(1)?;
             let ends = self.pos;
@@ -8090,6 +8097,49 @@ impl<'a> Builder<'a> {
         self.need_sign(end, "to finish a comprehension")?;
         let answer = self.read(&name);
         Ok(sequence(vec![start, work, answer]))
+    }
+
+    fn gathering_bindings(&mut self, span: std::ops::Range<usize>) -> Res<()> {
+        let mut first = span.start;
+        let limit = span.end;
+        if first >= limit { return Ok(()); }
+        let commas = self.divided_at(first, limit, "ext.op.tuple");
+        if !commas.is_empty() {
+            for boundary in commas.into_iter().chain(std::iter::once(limit)) {
+                self.gathering_bindings(first..boundary)?;
+                first = boundary + 1;
+            }
+        } else if self.table.spells("ext.stmt.unpack.rest", &self.tokens[first].lexeme) {
+            self.gathering_bindings(first + 1..limit)?;
+        } else {
+            let token = &self.tokens[first];
+            let family = ["syntax.group", "syntax.array"].into_iter().find(|family|
+                token.shape == Shape::Sign && self.table.single(&format!("{family}.open")) == Some(token.lexeme.as_str()));
+            if let Some(family) = family {
+                let closing = self.table.single(&format!("{family}.close")).unwrap();
+                let mut level = 1;
+                let mut cursor = first + 1;
+                while cursor < limit {
+                    let next = &self.tokens[cursor];
+                    if next.shape == Shape::Sign {
+                        if next.lexeme == token.lexeme { level += 1; }
+                        if next.lexeme == closing { level -= 1; }
+                    }
+                    cursor += 1;
+                    if level == 0 { break; }
+                }
+                if cursor == limit && level == 0 { self.gathering_bindings(first + 1..limit - 1)?; }
+            } else if limit - first == 1 && token.shape == Shape::Bare {
+                let word = token.lexeme.clone();
+                if self.layers.last().unwrap().expression_targets.contains(&word) {
+                    return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{word}'"));
+                }
+                let binding = self.gather_name("gather_binding");
+                self.address_to_write(&binding);
+                self.gather_names.push((word, binding));
+            }
+        }
+        Ok(())
     }
 
     /// Build the clauses outside the expression they govern. Each walk
@@ -8131,41 +8181,10 @@ impl<'a> Builder<'a> {
             return Ok(self.write(answer, enlarged));
         }
         self.advance();
-        let grouped = self.on_any("syntax.group.open");
-        if grouped { self.advance(); }
-        let mut targets = Vec::new();
-        let mut taken_apart = false;
-        loop {
-            let target_at = self.pos;
-            let spelled = self.look().lexeme.clone();
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.layers.last().unwrap().expression_targets.contains(&spelled) {
-                return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{spelled}'"));
-            }
-            let target = self.monadic_expr()?;
-            targets.push(match target {
-                Form::Read(_) => Some(spelled),
-                Form::Apply(Callee::Prim(Prim::At, _), _) => None,
-                _ => {
-                    if self.table.has_any("ext.builtin.exceptions.syntax") {
-                        let final_word = &self.tokens[self.pos - 1];
-                        self.range_end = Some((final_word.column + final_word.lexeme.chars().count(), final_word.row));
-                        self.pos = target_at;
-                        if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == "(" {
-                            return Err("SyntaxError: cannot assign to function call".to_owned());
-                        }
-                    }
-                    return Err("Expected a name or indexed place as a comprehension target".into());
-                },
-            });
-            if !self.on_any("syntax.call.separator") { break; }
-            self.advance();
-            taken_apart = true;
-            if self.on_any("ext.op.comprehension.in") || self.on_any("syntax.group.close") { break; }
-        }
-        if grouped { self.need_sign(self.table.single("syntax.group.close").unwrap(), "after the target")?; }
-        if !self.on_any("ext.op.comprehension.in") { return Err("Expected the word before a comprehension source".into()); }
-        self.advance();
-        let unavailable = targets.iter().any(Option::is_none);
+        let target_begin = self.pos;
+        let target_stop = self.divided_at(target_begin, self.tokens.len(), "ext.op.comprehension.in")
+            .into_iter().next().ok_or("Expected the word before a comprehension source")?;
+        self.pos = target_stop + 1;
         let walks = self.table.flag("ext.stmt.yield.suspends");
         let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
             Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
@@ -8184,27 +8203,18 @@ impl<'a> Builder<'a> {
             else { prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]) };
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
-        let mut item = prim_call(if walks { Prim::AtHand } else { Prim::At }, vec![bag, index]);
-        if taken_apart { item = prim_call(Prim::CheckUnpack(targets.len()), vec![item]); }
+        let item = prim_call(if walks { Prim::AtHand } else { Prim::At }, vec![bag, index]);
         let item_name = self.gather_name("gather_item");
         let mut body = vec![self.write(&item_name, item)];
-        for (part, original) in targets.into_iter().enumerate() {
-            let private = self.gather_name("gather_binding");
-            let mut value = self.read(&item_name);
-            if taken_apart { value = prim_call(Prim::At, vec![value, constant(Value::Small(part as i64))]); }
-            body.push(self.write(&private, value));
-            if let Some(original) = original { self.gather_names.push((original, private)); }
-        }
+        let continue_at = self.pos;
+        self.gathering_bindings(target_begin..target_stop)?;
+        body.push(self.distribute(target_begin..target_stop, &item_name)?);
+        self.pos = continue_at;
         body.push(self.gather_tail(expression_at, answer, dictionary)?);
         let before = self.read(&cursor);
         let onward = self.write(&cursor, prim_call(Prim::Plus, vec![before, constant(Value::Small(1))]));
         let cycle = Form::Cycle { test: Box::new(test), body: Box::new(sequence(body)), step: Some(Box::new(onward)), after: false, otherwise: None };
-        let mut work = vec![hold, begin, cycle];
-        if unavailable {
-            let words = self.table.single("ext.op.comprehension.target.unavailable").unwrap_or("Indexed comprehension targets are not provided");
-            work.insert(0, prim_call(Prim::Raise, vec![constant(Value::text(words))]));
-        }
-        Ok(sequence(work))
+        Ok(sequence(vec![hold, begin, cycle]))
     }
 
     fn elements(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {

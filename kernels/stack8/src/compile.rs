@@ -5800,6 +5800,20 @@ impl<'a> Compiler<'a> {
             self.writing_place = reading;
             place?;
             if self.pos != end { return Err(amiss.clone()); }
+            if self.piece().comprehension_kind.is_some() && self.lang.slice_values()
+                && matches!(self.piece().instrs.last(), Some(Instr::Act(Action::At, 2))) {
+                self.piece().instrs.pop();
+                let key = self.gensym("target_index");
+                self.write(&key);
+                let container = self.gensym("target_container");
+                self.write(&container);
+                self.read(&key);
+                self.read(held);
+                self.read(&container);
+                self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3);
+                self.discard();
+                return Ok(());
+            }
             let previous = self.waiting.replace(held.to_string());
             let done = self.store_into(from, None, None, "=");
             self.waiting = previous;
@@ -8605,8 +8619,7 @@ impl<'a> Compiler<'a> {
         if !self.lang.yield_suspends { return self.comprehension(pair, clause, false); }
         let head = self.pos;
         self.pos = clause;
-        while !self.on_any(&self.lang.comprehension_in) && !self.exhausted() { self.take(); }
-        self.take();
+        self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or("Expected a comprehension source")? + 1;
         let source_at = self.pos;
         self.expr(1)?;
         let source_end = self.pos;
@@ -8648,8 +8661,7 @@ impl<'a> Compiler<'a> {
         if self.lang.closes_over && (self.in_class_body() || !self.lang.syntax_members.is_empty()) {
             let entry = self.pos;
             self.pos = clause;
-            while !self.on_any(&self.lang.comprehension_in) && !self.exhausted() { self.take(); }
-            self.take();
+            self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or("Expected a comprehension source")? + 1;
             let source_at = self.pos;
             self.expr(1)?;
             let source_end = self.pos;
@@ -8698,31 +8710,43 @@ impl<'a> Compiler<'a> {
     }
 
     /// The head is read last, once all its names have their own cells.
-    fn comprehension_target(&mut self) -> Res<Option<String>> {
-        let origin = self.pos;
-        let written = self.look().lexeme.clone();
-        if !self.lang.syntax_members.is_empty() && self.piece().named_expressions.contains(&written) {
-            return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{written}'"));
+    fn comprehension_locals(&mut self, mut start: usize, mut end: usize) -> Res<()> {
+        if start == end { return Ok(()); }
+        let (cuts, _) = self.outer_marks(start, end, &self.lang.tuple_marks);
+        if !cuts.is_empty() {
+            for stop in cuts.into_iter().chain(Some(end)) {
+                self.comprehension_locals(start, stop)?;
+                start = stop + 1;
+            }
+            return Ok(());
         }
-        let from = self.mark();
-        self.prefix()?;
-        let target: Vec<Instr> = self.piece().instrs.drain(from..).collect();
-        match target.as_slice() {
-            [Instr::Read(_)] => Ok(Some(written)),
-            [.., Instr::Act(Action::At, 2)] => Ok(None),
-            _ => {
-                if !self.lang.syntax_members.is_empty() {
-                    let tail = &self.tokens[self.pos.saturating_sub(1)];
-                    self.registry.stopped_end = tail.column + tail.lexeme.chars().count();
-                    self.registry.stopped_end_row = tail.row;
-                    self.pos = origin;
-                    if self.look().shape == Shape::Instr && self.look_ahead(1).is_lexeme(Shape::Sign, "(") {
-                        return Err("SyntaxError: cannot assign to function call".into());
-                    }
-                }
-                Err("Expected a name or indexed place as a comprehension target".to_string())
-            },
+        if Lang::spells(&self.lang.unpack_rest, &self.tokens[start].lexeme) { start += 1; }
+        if start == end { return Ok(()); }
+        let pair = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
+            .find(|p| self.tokens[start].is_lexeme(Shape::Sign, &p.open)).cloned();
+        if let Some(pair) = pair {
+            let mut depth = 0;
+            let mut close = start;
+            for at in start..end {
+                if self.tokens[at].is_lexeme(Shape::Sign, &pair.open) { depth += 1; }
+                if self.tokens[at].is_lexeme(Shape::Sign, &pair.close) { depth -= 1; }
+                if depth == 0 { close = at; break; }
+            }
+            if close + 1 == end {
+                end -= 1;
+                return self.comprehension_locals(start + 1, end);
+            }
         }
+        if end == start + 1 && self.tokens[start].shape == Shape::Instr {
+            let name = self.tokens[start].lexeme.clone();
+            if self.piece().named_expressions.contains(&name) {
+                return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{name}'"));
+            }
+            let own = self.gensym("comprehension_name");
+            self.cell_to_write(&own);
+            self.comprehension_names.push((name, own));
+        }
+        Ok(())
     }
 
     fn comprehension_clause(&mut self, head: usize, result: &str, map: bool) -> Res<()> {
@@ -8735,26 +8759,10 @@ impl<'a> Compiler<'a> {
         }
         if self.on_any(&self.lang.comprehension_for) {
             self.take();
-            let group = self.lang.grouping.clone();
-            let grouped = group.as_ref().map_or(false, |g| self.at_symbol(&g.open));
-            if grouped { self.take(); }
-            let mut names = vec![self.comprehension_target()?];
-            let separator = self.lang.calling.as_ref().and_then(|c| c.between.clone());
-            let mut unpack = false;
-            while separator.as_ref().map_or(false, |s| self.at_symbol(s)) {
-                self.take();
-                unpack = true;
-                if self.on_any(&self.lang.comprehension_in) || group.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
-                names.push(self.comprehension_target()?);
-            }
-            if grouped { self.want_sign(&group.expect("target group").close, "after comprehension names")?; }
-            if !self.on_any(&self.lang.comprehension_in) { return Err("Expected the comprehension's collection word".to_string()); }
-            self.take();
-            if names.iter().any(Option::is_none) {
-                let said = self.lang.comprehension_target_unavailable.first().cloned().unwrap_or_else(|| "Indexed comprehension targets are not provided".to_string());
-                self.constant(Value::text(&said));
-                self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
-            }
+            let target_start = self.pos;
+            let (joins, _) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in);
+            let target_end = *joins.first().ok_or("Expected the comprehension's collection word")?;
+            self.pos = target_end + 1;
             if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
                 self.read(&seed);
                 self.pos = end;
@@ -8783,18 +8791,11 @@ impl<'a> Compiler<'a> {
             self.read(&at);
             self.act(if self.lang.yield_suspends { Action::WalkThis } else { Action::At }, 2);
             let item = self.gensym("comprehension_item");
-            if unpack { self.act(Action::UnpackCount(names.len()), 1); }
             self.write(&item);
-            for (i, name) in names.into_iter().enumerate() {
-                let own = self.gensym("comprehension_name");
-                self.read(&item);
-                if unpack {
-                    self.constant(Value::Small(i as i64));
-                    self.act(Action::At, 2);
-                }
-                self.write(&own);
-                if let Some(name) = name { self.comprehension_names.push((name, own)); }
-            }
+            let resume = self.pos;
+            self.comprehension_locals(target_start, target_end)?;
+            self.give_places(target_start, target_end, &item)?;
+            self.pos = resume;
             self.comprehension_clause(head, result, map)?;
             self.read(&at);
             self.constant(Value::Small(1));
