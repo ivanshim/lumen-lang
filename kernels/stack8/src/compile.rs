@@ -3757,6 +3757,9 @@ impl<'a> Compiler<'a> {
     /// A colon body may stand on the same line as its head. This small
     /// reading belongs to the watched statement and each of its arms.
     fn attempt_body(&mut self) -> Res<(usize, usize)> {
+        if !self.lang.syntax_members.is_empty() && !self.on_any(&self.lang.block_intros) {
+            return Err("SyntaxError: expected ':'".into());
+        }
         let start = self.mark();
         // In a class body the arm names members, and is read as the
         // body around it is read.
@@ -3839,7 +3842,17 @@ impl<'a> Compiler<'a> {
             }
             let held = if self.on_keyword(&lang.catch_as) {
                 self.take();
+                let binding_at = self.pos;
                 let name = self.want_name("after the caught value's binding word")?;
+                if !lang.syntax_members.is_empty() && (self.at_symbol(".") || self.at_symbol("[")) {
+                    let kind = if self.at_symbol(".") { "attribute" } else { "subscript" };
+                    while !self.on_any(&lang.block_intros) && !self.on_sep() && !self.exhausted() { self.take(); }
+                    let last = &self.tokens[self.pos - 1];
+                    self.registry.stopped_end = last.column + last.lexeme.chars().count();
+                    self.registry.stopped_end_row = last.row;
+                    self.pos = binding_at;
+                    return Err(format!("SyntaxError: cannot use except{} statement with {kind}", if grouped { "*" } else { "" }));
+                }
                 self.claim(&name);
                 Some(self.cell_to_write(&name))
             } else { None };
@@ -6719,6 +6732,9 @@ impl<'a> Compiler<'a> {
                 self.rewritten(&name);
                 Ok(())
             }
+            _ if !self.lang.syntax_members.is_empty() => Err(if matches!(target.last(), Some(Instr::Act(Action::Invoke(_), _))) {
+                "SyntaxError: cannot assign to function call here. Maybe you meant '==' instead of '='?".into()
+            } else { "SyntaxError: cannot assign to expression here. Maybe you meant '==' instead of '='?".into() }),
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
         };
         self.waiting = was_waiting;
@@ -6794,6 +6810,15 @@ impl<'a> Compiler<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            if !lang.syntax_members.is_empty() && matches!(text.as_str(), "&" | "|")
+                && self.look_ahead(1).lexeme == text && self.look_ahead(1).row == t.row
+                && self.look_ahead(1).column == t.column + 1 {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                let word = if text == "&" { "and" } else { "or" };
+                return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{word}' or '{text}' instead of '{text}{text}'?"));
+            }
             if floor == 0 && lang.if_else_words.first() == Some(&text) {
                 self.take();
                 let yes: Vec<Instr> = self.piece().instrs.drain(from..).collect();
@@ -7726,12 +7751,24 @@ impl<'a> Compiler<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", call.close));
             }
+            if targets && !self.lang.syntax_members.is_empty() {
+                let word = self.look().lexeme.as_str();
+                let kind = if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("literal") }
+                    else if ["None", "True", "False"].contains(&word) { Some(word) }
+                    else if word == "*" { Some("starred") }
+                    else if ["+", "-", "~", "not"].contains(&word) { Some("expression") } else { None };
+                if let Some(kind) = kind { return Err(format!("SyntaxError: cannot delete {kind}")); }
+            }
             if targets && !self.grouped_holder() {
                 let pair = self.lang.grouping.clone().filter(|p| self.at_symbol(&p.open))
                     .or_else(|| self.lang.array_brackets.clone().filter(|p| self.at_symbol(&p.open)));
                 if let Some(mut pair) = pair {
                     pair.between = call.between.clone();
                     self.take();
+                    if !self.lang.syntax_members.is_empty() && pair.open == "(" && self.at_symbol("*")
+                        && !self.tokens[self.pos..].iter().take_while(|t| t.lexeme != pair.close).any(|t| t.lexeme == ",") {
+                        return Err("SyntaxError: cannot use starred expression here".into());
+                    }
                     self.forget_targets(&pair, true, true)?;
                     self.discard();
                     if call.between.as_ref().map_or(false, |s| self.at_symbol(s)) { self.take(); }
@@ -7740,7 +7777,15 @@ impl<'a> Compiler<'a> {
             }
             let from = self.mark();
             self.awkward_place = false;
-            if targets { self.block_place()?; } else { self.expr(0)?; }
+            if targets { self.block_place()?; self.called_on_value()?; } else { self.expr(0)?; }
+            if targets && !self.lang.syntax_members.is_empty() {
+                if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) { return Err("SyntaxError: cannot delete function call".into()); }
+                let next = self.look().lexeme.as_str();
+                let kind = if next == "if" { Some("conditional expression") }
+                    else if next == ":=" { Some("named expression") }
+                    else if self.lang.dyadic.contains_key(next) { Some("expression") } else { None };
+                if let Some(kind) = kind { return Err(format!("SyntaxError: cannot delete {kind}")); }
+            }
             let named: Vec<Instr> = self.piece().instrs.drain(from..).collect();
             if self.awkward_place {
                 self.constant(Value::text(&self.lang.del_unrun));
@@ -9026,6 +9071,10 @@ impl<'a> Compiler<'a> {
             if !matches!(t.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = t.lexeme.as_str();
             if depth == 0 && word == "=" && (i != start + 1 || self.tokens[start].shape != Shape::Instr) {
+                if i > start + 1 && self.tokens[start..i - 1].iter().all(|part| part.shape == Shape::Quote) {
+                    self.pos = i - 2;
+                    return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
+                }
                 self.registry.stopped_end = t.column + 1;
                 self.registry.stopped_end_row = t.row;
                 self.pos = start;
