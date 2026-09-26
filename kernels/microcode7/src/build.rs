@@ -27,12 +27,17 @@ enum Holds {
     Nothing,
 }
 
+thread_local! {
+    static PARENT_PAYLOAD: Rc<Vec<Value>> = Rc::new(Vec::new());
+}
+
 /// What reading a class body gathers. `arms` counts the arms of
 /// conditionals open around the member being read: only one arm of a
 /// conditional runs, so a member named within one may go unwritten, and
 /// `uncertain` holds those names, whose places are glanced at when the
 /// class is built rather than read outright.
 struct ClassParts {
+    completed_class: Address,
     methods: Vec<(String, Rc<Routine>)>,
     attributes: Vec<String>,
     held: Vec<Form>,
@@ -74,6 +79,8 @@ struct ScopeWords {
 }
 
 struct Layer {
+    permits_async: bool,
+    async_walk_seen: bool,
     gathering_kind: Option<&'static str>,
     expression_targets: Vec<String>,
     comprehension: bool,
@@ -399,7 +406,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
-    let top = Layer { gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let top = Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -410,7 +417,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
+        layers.push(Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
     if read_in && outer_layers > 1 {
@@ -1120,7 +1127,7 @@ impl<'a> Builder<'a> {
         }
         let private = self.gather_names.iter().rfind(|pair| pair.0 == name).map(|pair| pair.1.to_string());
         let name = private.as_deref().unwrap_or(name);
-        if self.table.flag("ext.stmt.function.closes_over") && !name.starts_with('#') {
+        if self.table.flag("ext.stmt.function.closes_over") && private.is_none() && !name.starts_with('#') {
             let here = self.layers.iter().rposition(|l| l.holds == Holds::Every).unwrap_or(0);
             if self.layers[here].comprehension {
                 let owner = (0..here).rev().find(|&i| self.layers[i].holds == Holds::Every && !self.layers[i].comprehension).unwrap_or(0);
@@ -1482,7 +1489,9 @@ impl<'a> Builder<'a> {
         }
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
-        self.layers.push(Layer { gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        let permits_async = (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>"))
+            && self.layers.last().map_or(false, |scope| scope.permits_async);
+        self.layers.push(Layer { async_walk_seen: false, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
                 if !self.table.has_any("ext.builtin.exceptions.syntax") && known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
@@ -2733,6 +2742,9 @@ impl<'a> Builder<'a> {
     /// A watched arm written beside its colon ends at the line end;
     /// one written below it follows the ordinary indentation reading.
     fn watched_body(&mut self) -> Res<Form> {
+        if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if !self.on_any("block.intro") { return Err(String::from("SyntaxError: expected ':'")); }
+        }
         // Standing in a class body, the arm names members and is read
         // the way the body around it is read.
         if self.in_class_body() { return self.class_limb(); }
@@ -2808,7 +2820,19 @@ impl<'a> Builder<'a> {
                 }
                 held = if self.key("ext.stmt.catch.as") {
                     self.advance();
+                    let start = self.pos;
                     let binding = self.need_word("after the caught value's binding word")?;
+                    if table.has_any("ext.builtin.exceptions.syntax") {
+                        let kind = match self.look().lexeme.as_str() { "." => Some("attribute"), "[" => Some("subscript"), _ => None };
+                        if let Some(kind) = kind {
+                            while !self.on_any("block.intro") && !self.on_stmt_end() && !self.exhausted() { self.advance(); }
+                            let tail = &self.tokens[self.pos - 1];
+                            self.range_end = Some((tail.column + tail.lexeme.chars().count(), tail.row));
+                            self.pos = start;
+                            let clause = if grouped { "except*" } else { "except" };
+                            return Err(format!("SyntaxError: cannot use {clause} statement with {kind}"));
+                        }
+                    }
                     self.claim(&binding);
                     Some(self.address_to_write(&binding))
                 } else { None };
@@ -3165,6 +3189,8 @@ impl<'a> Builder<'a> {
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }
+        let async_method = self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).lexeme);
+        if async_method { self.advance(); }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
@@ -3643,7 +3669,8 @@ impl<'a> Builder<'a> {
         }
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         self.class_globals.push((self.layers.len(), Vec::new()));
-        self.under_way.push(ClassParts { methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        let completed_class = self.gensym("completed_class");
+        self.under_way.push(ClassParts { completed_class, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -3684,7 +3711,7 @@ impl<'a> Builder<'a> {
         self.class_globals.pop();
         self.within = previous;
         self.named_before = named_outside;
-        let ClassParts { methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
+        let ClassParts { completed_class, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
@@ -3740,6 +3767,8 @@ impl<'a> Builder<'a> {
             ranking, has_book,
         };
         let declaration = Form::Class { plan: Rc::new(plan), values };
+        setup.push(Form::Write(completed_class.clone(), Box::new(declaration)));
+        let declaration = Form::Read(completed_class);
         if self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len()) {
             let slot = self.gensym("inner_class");
             self.class_bindings.last_mut().expect("an outer class").1.insert(named, slot.clone());
@@ -3950,6 +3979,8 @@ impl<'a> Builder<'a> {
     /// A method: a program whose first parameter is the thing it is for,
     /// under the name the definition gives it (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+        let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
+            .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
@@ -3995,6 +4026,8 @@ impl<'a> Builder<'a> {
         self.receiver = params.first().cloned();
         let local_defaults = spares.iter().map(|(place, _)| *place).collect();
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
+            r.layers.last_mut().unwrap().permits_async = deferred;
+            r.generator_seen = deferred;
             let mut items = r.spare_values(spares, &formals)?;
             // What a parameter that names a property was handed is put
             // into the thing before the body runs.
@@ -5251,6 +5284,8 @@ impl<'a> Builder<'a> {
     }
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
+        let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
+            .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
         self.type_names()?;
         if bound && matches!(self.table.prims.get(&name), Some(Prim::Octets(_))) {
             self.arg_names.entry(name.to_owned()).or_insert_with(Vec::new);
@@ -5295,6 +5330,8 @@ impl<'a> Builder<'a> {
         let declared = self.look().shape == Shape::Sign && table.separates(&self.look().lexeme);
         let statics_before = self.statics.len();
         let program = self.routine(&name, Holds::Every, Traps::Yields, params, least, |r| {
+            r.layers.last_mut().unwrap().permits_async = deferred;
+            r.generator_seen = deferred;
             // The names taken away sit in the slots after the
             // parameters, filled from what was taken when it is called.
             for (named, _) in &taken {
@@ -5679,6 +5716,11 @@ impl<'a> Builder<'a> {
                 ends += 1;
             }
             if ends + 1 != hi { break; }
+            if self.table.has_any("ext.builtin.exceptions.syntax") && !self.divided_at(lo + 1, hi - 1, "ext.op.comprehension.for").is_empty() {
+                return Err(String::from(if family == "syntax.array" {
+                    "SyntaxError: cannot assign to list comprehension here. Maybe you meant '==' instead of '='?"
+                } else { "SyntaxError: cannot assign to generator expression" }));
+            }
             array |= family == "syntax.array";
             lo += 1;
             hi -= 1;
@@ -5699,6 +5741,15 @@ impl<'a> Builder<'a> {
             self.place_depth -= 1;
             let place = reading?;
             if self.pos != hi { return Err(bad); }
+            if self.layers.last().unwrap().gathering_kind.is_some() && self.table.has_any("ext.builtin.slice") {
+                if let Form::Apply(Callee::Prim(Prim::At, _), mut operands) = place {
+                    let container = self.gather_name("target_object");
+                    let evaluate = self.write(&container, operands.remove(0));
+                    operands.insert(0, self.read(&container));
+                    operands.push(self.read(source));
+                    return Ok(sequence(vec![evaluate, prim_call(Prim::Replace, operands)]));
+                }
+            }
             let sign = self.look().clone();
             let old = self.waiting.replace(source.to_string());
             let written = self.write_into(place, false, None, sign);
@@ -6482,6 +6533,10 @@ impl<'a> Builder<'a> {
                     _ => return Err("Invalid assignment target".to_string()),
                 }
             }
+            other if self.table.has_any("ext.builtin.exceptions.syntax") => {
+                let kind = match other { Form::Apply(Callee::Code(_), _) => "function call", _ => "expression" };
+                return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?"));
+            }
             _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
         };
         let made = match before_bounds {
@@ -6540,6 +6595,14 @@ impl<'a> Builder<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            if table.has_any("ext.builtin.exceptions.syntax") && (text == "|" || text == "&") {
+                let following = self.glance(1);
+                if following.lexeme == text && (following.row, following.column) == (t.row, t.column + 1) {
+                    self.range_end = Some((t.column + 2, t.row));
+                    let keyword = if text == "|" { "or" } else { "and" };
+                    return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{keyword}' or '{text}' instead of '{text}{text}'?"));
+                }
+            }
             let conditional = table.strings("ext.op.if_else");
             if floor == 0 && conditional.first() == Some(&text) {
                 self.advance();
@@ -6796,8 +6859,11 @@ impl<'a> Builder<'a> {
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
+            let scope = self.layers.last_mut().unwrap();
+            if scope.gathering_kind.is_some() { scope.async_walk_seen = true; }
             self.advance();
-            return self.monadic_expr();
+            let pending = self.monadic_expr()?;
+            return Ok(prim_call(Prim::AwaitResult, vec![pending]));
         }
         if self.key("ext.stmt.yield") {
             let begins = self.pos;
@@ -6991,7 +7057,8 @@ impl<'a> Builder<'a> {
             }
             Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.lexeme)
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
-                self.advance();constant(Value::Wrapped(9,Rc::new(Vec::new())))
+                self.advance();
+                constant(Value::Wrapped(9, PARENT_PAYLOAD.with(|value| value.clone())))
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
@@ -7005,6 +7072,12 @@ impl<'a> Builder<'a> {
                 let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
+                    (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
+                        let private = self.parts().completed_class.ident.to_string();
+                        let args = vec![self.read(&private), self.read(&receiver)];
+                        let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone)));
+                        invoke(parent_word, args)
+                    }
                     (true, Some(base), Some(receiver), Some(_)) => {
                         self.advance();
                         let called = self.need_word("as the parent's member")?;
@@ -7018,6 +7091,14 @@ impl<'a> Builder<'a> {
                     }
                     _ => self.class_not_ready(),
                 }
+            }
+            Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
+                && table.spells("ext.stmt.class.detail.kind", &t.lexeme)
+                && !self.layers.last().unwrap().idents.contains(&t.lexeme)
+                && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
+                self.advance();
+                let hidden = self.parts().completed_class.ident.to_string();
+                self.read(&hidden)
             }
             Shape::Bare if table.spells("ext.stmt.class.self", &t.lexeme) || table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
@@ -7210,18 +7291,50 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
+            if targets && table.has_any("ext.builtin.exceptions.syntax") {
+                let token = self.look();
+                let description = match token.lexeme.as_str() {
+                    "None" | "False" | "True" => Some(token.lexeme.as_str()),
+                    "*" => Some("starred"),
+                    "not" | "~" | "-" | "+" => Some("expression"),
+                    _ if matches!(token.shape, Shape::Quote | Shape::Numeral | Shape::ByteQuote) => Some("literal"),
+                    _ => None,
+                };
+                if let Some(description) = description { return Err(format!("SyntaxError: cannot delete {description}")); }
+            }
             if targets && !self.bracketed_holder() {
                 let closes = if self.on_any("syntax.group.open") { table.single("syntax.group.close") }
                     else if self.on_any("syntax.array.open") { table.single("syntax.array.close") } else { None };
                 if let Some(closes) = closes {
+                    let parentheses = self.on_any("syntax.group.open");
                     self.advance();
+                    if table.has_any("ext.builtin.exceptions.syntax") && parentheses && self.sign("*") {
+                        let comma = self.tokens[self.pos..].iter().take_while(|part| part.lexeme != closes).any(|part| part.lexeme == ",");
+                        if !comma { return Err(String::from("SyntaxError: cannot use starred expression here")); }
+                    }
                     items.push(self.forget_list(true, true, Some(closes.to_string()))?);
                     if self.on_any("syntax.call.separator") { self.advance(); }
                     continue;
                 }
             }
             self.unsupported_place = false;
-            let named = if targets { self.deletion_place()? } else { self.expr(0)? };
+            let named = if targets {
+                let place = self.deletion_place()?;
+                self.called_on_value(place)?
+            } else { self.expr(0)? };
+            if targets && table.has_any("ext.builtin.exceptions.syntax") {
+                if matches!(&named, Form::Apply(Callee::Code(_), _)) {
+                    return Err(String::from("SyntaxError: cannot delete function call"));
+                }
+                let word = &self.look().lexeme;
+                let invalid = match word.as_str() {
+                    ":=" => Some("named expression"),
+                    "if" => Some("conditional expression"),
+                    _ if table.dyadic.contains_key(word) => Some("expression"),
+                    _ => None,
+                };
+                if let Some(kind) = invalid { return Err(format!("SyntaxError: cannot delete {kind}")); }
+            }
             items.push(if self.unsupported_place {
                 prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.del.unrun").unwrap_or_default()))])
             } else { match named {
@@ -7816,6 +7929,9 @@ impl<'a> Builder<'a> {
                         }
                         return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]));
                     }
+                    if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(14))) {
+                        return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(Value::text(&named))]));
+                    }
                     if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(_))) {
                         args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
                         return Ok(sequence(args));
@@ -8045,25 +8161,30 @@ impl<'a> Builder<'a> {
         if !self.table.flag("ext.stmt.yield.suspends") { return self.gather_comprehension(clause, end, false); }
         let head = self.pos;
         self.pos = clause;
-        while !self.on_any("ext.op.comprehension.in") && !self.exhausted() { self.advance(); }
-        self.advance();
+        self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or("Expected a comprehension source")? + 1;
         let begins = self.pos;
         let source = self.expr(1)?;
         let ends = self.pos;
         let parameter = self.gather_name("first_source");
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
+        let mut async_result = false;
         let routine = self.routine("<generator>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
             let before = r.gather_names.len();
+            r.reserve_gathering(clause)?;
             let body = r.gather_tail(head, "", false)?;
             r.gather_names.truncate(before);
             r.need_sign(end, "after a generator expression")?;
+            r.reject_gathering_assignment("generator expression")?;
+            async_result = r.layers.last().unwrap().async_walk_seen;
             r.generator_seen = true;
             Ok(body)
         })?;
         self.source_before = previous;
-        Ok(Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(Prim::Walked, vec![source])]))
+        let walk = if self.table.spells("ext.op.comprehension.async", &self.tokens[clause].lexeme) { Prim::AsyncWalked } else { Prim::Walked };
+        let value = Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(walk, vec![source])]);
+        Ok(if async_result { prim_call(Prim::AsyncGathered, vec![value]) } else { value })
     }
 
     fn gather_comprehension(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
@@ -8083,8 +8204,7 @@ impl<'a> Builder<'a> {
         if self.table.flag("ext.stmt.function.closes_over") && (self.table.has_any("ext.builtin.exceptions.syntax") || self.in_class_body()) {
             let entry = self.pos;
             self.pos = first_for;
-            while !self.on_any("ext.op.comprehension.in") && !self.exhausted() { self.advance(); }
-            self.advance();
+            self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or("Expected a comprehension source")? + 1;
             let begins = self.pos;
             let source = self.expr(1)?;
             let ends = self.pos;
@@ -8095,7 +8215,9 @@ impl<'a> Builder<'a> {
                 |reader| reader.gather_in_scope(first_for, end, dictionary))?;
             self.source_before = previous;
             let walks = self.table.flag("ext.stmt.yield.suspends");
-            return Ok(Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(if walks { Prim::Walked } else { Prim::Iterated }, vec![source])]));
+            let begin = if self.table.spells("ext.op.comprehension.async", &self.tokens[first_for].lexeme) { Prim::AsyncWalked }
+                else if walks { Prim::Walked } else { Prim::Iterated };
+            return Ok(Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(begin, vec![source])]));
         }
         if self.table.flag("ext.stmt.function.closes_over") {
             let routine = self.routine("<gathering>", Holds::Every, Traps::Yields, Vec::new(), 0,
@@ -8110,18 +8232,106 @@ impl<'a> Builder<'a> {
         let expression_at = self.pos;
         self.pos = first_for;
         let old_names = self.gather_names.len();
+        self.reserve_gathering(first_for)?;
         let name = self.gather_name("gathered");
         let empty = prim_call(if dictionary { Prim::MakeMap } else if self.table.flag("ext.syntax.set") && self.table.spells("syntax.map.close", end) { Prim::EmptySet } else { Prim::MakeArray }, Vec::new());
         let start = self.write(&name, empty);
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);
         self.need_sign(end, "to finish a comprehension")?;
+        self.reject_gathering_assignment(if dictionary { "dict comprehension" } else if end == "]" { "list comprehension" } else { "set comprehension" })?;
         let answer = self.read(&name);
         Ok(sequence(vec![start, work, answer]))
     }
 
+    fn gathering_bindings(&mut self, span: std::ops::Range<usize>, first_binding: usize) -> Res<()> {
+        let mut first = span.start;
+        let limit = span.end;
+        if first >= limit { return Ok(()); }
+        let commas = self.divided_at(first, limit, "ext.op.tuple");
+        if !commas.is_empty() {
+            for boundary in commas.into_iter().chain(std::iter::once(limit)) {
+                self.gathering_bindings(first..boundary, first_binding)?;
+                first = boundary + 1;
+            }
+        } else if self.table.spells("ext.stmt.unpack.rest", &self.tokens[first].lexeme) {
+            self.gathering_bindings(first + 1..limit, first_binding)?;
+        } else {
+            let token = &self.tokens[first];
+            let family = ["syntax.group", "syntax.array"].into_iter().find(|family|
+                token.shape == Shape::Sign && self.table.single(&format!("{family}.open")) == Some(token.lexeme.as_str()));
+            if let Some(family) = family {
+                let closing = self.table.single(&format!("{family}.close")).unwrap();
+                let mut level = 1;
+                let mut cursor = first + 1;
+                while cursor < limit {
+                    let next = &self.tokens[cursor];
+                    if next.shape == Shape::Sign {
+                        if next.lexeme == token.lexeme { level += 1; }
+                        if next.lexeme == closing { level -= 1; }
+                    }
+                    cursor += 1;
+                    if level == 0 { break; }
+                }
+                if cursor == limit && level == 0 { self.gathering_bindings(first + 1..limit - 1, first_binding)?; }
+            } else if limit - first == 1 && token.shape == Shape::Bare {
+                let word = token.lexeme.clone();
+                if self.layers.last().unwrap().expression_targets.contains(&word) {
+                    return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{word}'"));
+                }
+                if self.gather_names.iter().skip(first_binding).any(|pair| pair.0 == word) { return Ok(()); }
+                let binding = match self.table.flag("ext.stmt.function.closes_over") && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    true => word.to_string(),
+                    false => self.gather_name("gather_binding"),
+                };
+                self.gather_names.push((word, binding.clone()));
+                self.address_to_write(&binding);
+            }
+        }
+        Ok(())
+    }
+
     /// Build the clauses outside the expression they govern. Each walk
     /// owns its names; the first source still sees the names outside it.
+    fn reject_gathering_assignment(&self, description: &str) -> Res<()> {
+        if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.on_assign() {
+                let hint = match description { "generator expression" => "", _ => " here. Maybe you meant '==' instead of '='?" };
+                return Err(format!("SyntaxError: cannot assign to {description}{hint}"));
+            }
+            if self.look().shape == Shape::Sign && self.table.compound.contains_key(&self.look().lexeme) {
+                return Err(format!("SyntaxError: '{description}' is an illegal expression for augmented assignment"));
+            }
+        }
+        Ok(())
+    }
+
+    fn reserve_gathering(&mut self, start: usize) -> Res<()> {
+        let own = self.gather_names.len();
+        let mut cursor = start;
+        let mut closing = Vec::new();
+        while let Some(word) = self.tokens.get(cursor) {
+            if word.shape == Shape::Finish { break; }
+            if closing.is_empty() && word.shape == Shape::Bare && self.table.spells("ext.op.comprehension.for", &word.lexeme) {
+                let end = self.divided_at(cursor + 1, self.tokens.len(), "ext.op.comprehension.in")
+                    .into_iter().next().ok_or("Expected a comprehension source")?;
+                self.gathering_bindings(cursor + 1..end, own)?;
+                cursor = end + 1;
+                continue;
+            }
+            if word.shape == Shape::Sign {
+                let pairs = [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close")];
+                if let Some((_, end)) = pairs.iter().find(|(begin, _)| self.table.spells(begin, &word.lexeme)) {
+                    closing.push(*end);
+                } else if pairs.iter().any(|(_, end)| self.table.spells(end, &word.lexeme)) && closing.pop().is_none() {
+                    break;
+                }
+            }
+            cursor += 1;
+        }
+        Ok(())
+    }
+
     fn gather_tail(&mut self, expression_at: usize, answer: &str, dictionary: bool) -> Res<Form> {
         if self.on_any("ext.op.comprehension.if") {
             self.advance();
@@ -8130,12 +8340,13 @@ impl<'a> Builder<'a> {
             return Ok(self.choose(condition, accepted, constant(Value::Nil)));
         }
         if self.on_any("ext.op.comprehension.async") {
+            self.layers.last_mut().unwrap().async_walk_seen = true;
             self.advance();
             if !self.on_any("ext.op.comprehension.for") { return Err("Expected a walk after the asynchronous word".into()); }
-            let words = self.table.single("ext.op.comprehension.async.unavailable").unwrap_or("Asynchronous walks are not provided");
-            let refusal = prim_call(Prim::Raise, vec![constant(Value::text(words))]);
-            let read = self.gather_tail(expression_at, answer, dictionary)?;
-            return Ok(sequence(vec![refusal, read]));
+            if !answer.is_empty() && !self.layers.last().unwrap().permits_async {
+                return Err(String::from("SyntaxError: asynchronous comprehension outside of an asynchronous function"));
+            }
+            return self.gather_tail(expression_at, answer, dictionary);
         }
         if !self.on_any("ext.op.comprehension.for") {
             let after_clauses = self.pos;
@@ -8158,48 +8369,19 @@ impl<'a> Builder<'a> {
             let enlarged = prim_call(Prim::ExtendLiteral(dictionary, spread), vec![so_far, term]);
             return Ok(self.write(answer, enlarged));
         }
+        let asynchronous = self.pos > 0 && self.table.spells("ext.op.comprehension.async", &self.tokens[self.pos - 1].lexeme);
         self.advance();
-        let grouped = self.on_any("syntax.group.open");
-        if grouped { self.advance(); }
-        let mut targets = Vec::new();
-        let mut taken_apart = false;
-        loop {
-            let target_at = self.pos;
-            let spelled = self.look().lexeme.clone();
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.layers.last().unwrap().expression_targets.contains(&spelled) {
-                return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{spelled}'"));
-            }
-            let target = self.monadic_expr()?;
-            targets.push(match target {
-                Form::Read(_) => Some(spelled),
-                Form::Apply(Callee::Prim(Prim::At, _), _) => None,
-                _ => {
-                    if self.table.has_any("ext.builtin.exceptions.syntax") {
-                        let final_word = &self.tokens[self.pos - 1];
-                        self.range_end = Some((final_word.column + final_word.lexeme.chars().count(), final_word.row));
-                        self.pos = target_at;
-                        if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == "(" {
-                            return Err("SyntaxError: cannot assign to function call".to_owned());
-                        }
-                    }
-                    return Err("Expected a name or indexed place as a comprehension target".into());
-                },
-            });
-            if !self.on_any("syntax.call.separator") { break; }
-            self.advance();
-            taken_apart = true;
-            if self.on_any("ext.op.comprehension.in") || self.on_any("syntax.group.close") { break; }
-        }
-        if grouped { self.need_sign(self.table.single("syntax.group.close").unwrap(), "after the target")?; }
-        if !self.on_any("ext.op.comprehension.in") { return Err("Expected the word before a comprehension source".into()); }
-        self.advance();
-        let unavailable = targets.iter().any(Option::is_none);
+        let target_begin = self.pos;
+        let target_stop = self.divided_at(target_begin, self.tokens.len(), "ext.op.comprehension.in")
+            .into_iter().next().ok_or("Expected the word before a comprehension source")?;
+        self.gathering_bindings(target_begin..target_stop, 0)?;
+        self.pos = target_stop + 1;
         let walks = self.table.flag("ext.stmt.yield.suspends");
         let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
             Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
             None => {
                 let value = self.expr(1)?;
-                prim_call(if walks { Prim::Walked } else { Prim::Iterated }, vec![value])
+                prim_call(if asynchronous { Prim::AsyncWalked } else if walks { Prim::Walked } else { Prim::Iterated }, vec![value])
             }
         };
         let source_name = self.gather_name("gather_source");
@@ -8212,27 +8394,17 @@ impl<'a> Builder<'a> {
             else { prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]) };
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
-        let mut item = prim_call(if walks { Prim::AtHand } else { Prim::At }, vec![bag, index]);
-        if taken_apart { item = prim_call(Prim::CheckUnpack(targets.len()), vec![item]); }
+        let item = prim_call(if walks { Prim::AtHand } else { Prim::At }, vec![bag, index]);
         let item_name = self.gather_name("gather_item");
         let mut body = vec![self.write(&item_name, item)];
-        for (part, original) in targets.into_iter().enumerate() {
-            let private = self.gather_name("gather_binding");
-            let mut value = self.read(&item_name);
-            if taken_apart { value = prim_call(Prim::At, vec![value, constant(Value::Small(part as i64))]); }
-            body.push(self.write(&private, value));
-            if let Some(original) = original { self.gather_names.push((original, private)); }
-        }
+        let continue_at = self.pos;
+        body.push(self.distribute(target_begin..target_stop, &item_name)?);
+        self.pos = continue_at;
         body.push(self.gather_tail(expression_at, answer, dictionary)?);
         let before = self.read(&cursor);
         let onward = self.write(&cursor, prim_call(Prim::Plus, vec![before, constant(Value::Small(1))]));
         let cycle = Form::Cycle { test: Box::new(test), body: Box::new(sequence(body)), step: Some(Box::new(onward)), after: false, otherwise: None };
-        let mut work = vec![hold, begin, cycle];
-        if unavailable {
-            let words = self.table.single("ext.op.comprehension.target.unavailable").unwrap_or("Indexed comprehension targets are not provided");
-            work.insert(0, prim_call(Prim::Raise, vec![constant(Value::text(words))]));
-        }
-        Ok(sequence(work))
+        Ok(sequence(vec![hold, begin, cycle]))
     }
 
     fn elements(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
@@ -8322,6 +8494,11 @@ impl<'a> Builder<'a> {
             let word = token.lexeme.as_str();
             if nesting.is_empty() {
                 if word == "=" && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
+                    let strings = &self.tokens[begins..at.saturating_sub(1).max(begins)];
+                    if !strings.is_empty() && strings.iter().all(|entry| entry.shape == Shape::Quote) {
+                        self.pos = at - 2;
+                        return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
+                    }
                     self.range_end = Some((token.column + 1, token.row));
                     self.pos = begins;
                     return Err(String::from("SyntaxError: expression cannot contain assignment, perhaps you meant \"==\"?"));
@@ -8353,6 +8530,9 @@ impl<'a> Builder<'a> {
     fn args(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
         if self.table.has_any("ext.builtin.exceptions.syntax") { self.unparenthesized_generator()?; }
         if let Some(at) = self.ahead_in_item("ext.op.comprehension.for") {
+            if self.table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == "=" {
+                return Err(String::from("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?"));
+            }
             let end = self.table.single(close_key).unwrap().to_string();
             return Ok(vec![self.generator_comprehension(at, &end)?]);
         }
@@ -8879,7 +9059,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
+            self.layers.push(Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {

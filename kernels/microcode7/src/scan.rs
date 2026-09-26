@@ -1106,6 +1106,13 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                         let mut detected = quote.row;
                         if !paired_ending && quote.next >= src.len() && src.last() == Some(&'\n') { detected = detected.saturating_sub(1); }
                         words.push_str(&format!(" (detected at line {detected})"));
+                        let mut stop = quote.next.min(src.len());
+                        if stop != 0 && src[stop - 1] == '\n' { stop -= 1; }
+                        if end.len() == 1 && stop > 1 && src[stop - 1] == end[0] {
+                            let mut slash_at = stop - 1;
+                            while slash_at > 0 && src[slash_at - 1] == '\\' { slash_at -= 1; }
+                            if (stop - 1 - slash_at) % 2 != 0 { words.push_str("; perhaps you escaped the end quote?"); }
+                        }
                     }
                     return Err(words);
                 }

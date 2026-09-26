@@ -1272,6 +1272,11 @@ impl<'a> Cursor<'a> {
                             let final_newline = !self.final_crlf && self.at == self.text.len() && self.text.last() == Some(&'\n');
                             let detected = self.row.saturating_sub(usize::from(final_newline));
                             said.push_str(&format!(" (detected at line {})", detected));
+                            let tail = self.at.saturating_sub(usize::from(self.at > 0 && self.text[self.at - 1] == '\n'));
+                            if mark.chars().count() == 1 && tail >= 2 && self.text[tail - 1] == mark.chars().next().unwrap() {
+                                let slashes = self.text[..tail - 1].iter().rev().take_while(|c| **c == '\\').count();
+                                if slashes % 2 == 1 { said.push_str("; perhaps you escaped the end quote?"); }
+                            }
                         }
                         let missing_quote = lang.fstring_unterminated.as_deref() == Some(said.as_str())
                             || lang.fstring_unterminated_triple.as_deref() == Some(said.as_str());

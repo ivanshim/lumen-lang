@@ -386,6 +386,10 @@ pub fn fused(a: f64, b: f64, c: f64) -> Result<f64, String> {
 pub fn binary_work(op: Calc, first: &Value, second: &Value) -> Option<Result<Value, String>> {
     let a = ratio_of(first)?;
     let b = ratio_of(second)?;
+    if op == Calc::OverReal && a.places.is_none() && b.places.is_none()
+        && a.beneath.is_one() && b.beneath.is_one() {
+        return Some(divide_integers(&a.above, &b.above));
+    }
     if a.places.or(b.places).is_none() { return None; }
     let read = |r: &Ratio| if r.under && r.above.is_zero() { -0.0 }
         else { crate::data::nearest_binary(&r.above, &r.beneath) };
@@ -399,4 +403,35 @@ pub fn binary_work(op: Calc, first: &Value, second: &Value) -> Option<Result<Val
         Calc::Remainder | Calc::IntDiv | Calc::Power => return None,
     };
     Some(Ok(crate::data::worth_of_binary(answer, DEFAULT_PLACES)))
+}
+
+/// Choose the binary unit before dividing, retaining the exact remainder.
+fn divide_integers(dividend: &BigInt, divisor: &BigInt) -> Result<Value, String> {
+    if divisor.is_zero() { return Err(String::from("Division by zero")); }
+    let sign = if dividend.is_negative() == divisor.is_negative() { 1.0 } else { -1.0 };
+    let mut top = dividend.abs();
+    let mut bottom = divisor.abs();
+    let distance = top.bits() as i64 - bottom.bits() as i64;
+    let too_large = String::from("OverflowError: integer division result too large for a float");
+    if distance > 1024 { return Err(too_large); }
+    if distance < -1075 || top.is_zero() {
+        return Ok(crate::data::worth_of_binary(0.0 * sign, DEFAULT_PLACES));
+    }
+    let reaches = match distance.cmp(&0) {
+        Ordering::Less => (&top << -distance as usize) >= bottom,
+        _ => top >= (&bottom << distance as usize),
+    };
+    let power = (distance - i64::from(!reaches) - 52).max(-1074);
+    if power < 0 { top <<= -power as usize; } else { bottom <<= power as usize; }
+    let (whole, tail) = top.div_rem(&bottom);
+    let comparison = (&tail + &tail).cmp(&bottom);
+    let up = comparison == Ordering::Greater || comparison == Ordering::Equal && whole.bit(0);
+    let rounded = whole + u8::from(up);
+    let scale = match power {
+        -1074..=-1023 => f64::from_bits(1 << (power + 1074)),
+        _ => 2f64.powi(power as i32),
+    };
+    let answer = rounded.to_f64().unwrap_or(f64::INFINITY) * scale * sign;
+    if !answer.is_finite() { Err(too_large) }
+    else { Ok(crate::data::worth_of_binary(answer, DEFAULT_PLACES)) }
 }

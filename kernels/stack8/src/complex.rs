@@ -202,11 +202,11 @@ pub fn construct(lang: &Lang, values: &[Value]) -> Result<Value,String> {
         let (a,b) = read(text).ok_or_else(|| fault(lang, "invalid"))?;
         return Ok(made(lang, a,b));
     }
-    let (a,b) = parts(&values[0]).ok_or_else(|| fault(lang, "arguments"))?;
+    let (a,b) = parts(&values[0]).ok_or_else(|| if matches!(values[0], Value::Huge(_)) { conversion_fault(lang, &values[0]) } else { fault(lang, "arguments") })?;
     if values.len() == 1 {
         return Ok(if matches!(values[0], Value::Complex(_)) { values[0].clone() } else { made(lang, a,b) });
     }
-    let (c,d) = parts(&values[1]).ok_or_else(|| fault(lang, "arguments"))?;
+    let (c,d) = parts(&values[1]).ok_or_else(|| if matches!(values[1], Value::Huge(_)) { conversion_fault(lang, &values[1]) } else { fault(lang, "arguments") })?;
     Ok(made(lang, if matches!(values[1], Value::Complex(_)) { a-d } else { a },
         if matches!(values[0], Value::Complex(_)) { b+c } else { c }))
 }
