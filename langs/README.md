@@ -1787,7 +1787,14 @@ only. The extension labels so far, all from PHP:
   a context block so marked is entered and left by the asynchronous
   words. The four words stand at places 79 to 82 of
   `ext.stmt.class.special` (`__aiter__`, `__anext__`, `__aenter__`,
-  `__aexit__`), before `__match_args__` at place 83.
+  `__aexit__`), before `__match_args__` at place 83. Either marked form
+  outside a function so marked is refused as the reference refuses it
+  ("'async for' outside async function"); a subject without the
+  asynchronous walk word is refused with the reference's TypeError. A
+  value refused as a manager, by either form, is told the protocol and
+  the method it misses in the reference's words
+  (`ext.stmt.with.invalid` followed by "(missed __exit__ method)"), and
+  one keeping the other protocol whole is told which statement was meant.
 - `ext.stmt.loop.else`: the block reader's switch for a last arm after a
   loop. Exhaustion reaches it; a break passes over it. A continue leaves
   the last arm still to be reached when the loop is done.

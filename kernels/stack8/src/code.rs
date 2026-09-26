@@ -157,6 +157,9 @@ pub enum Action {
     /// Ask a thing for its asynchronous walk, marked so that each step
     /// asks that walk's own word for the next member.
     WalkAsync,
+    /// An asynchronous context manager's leaving method, bound (true),
+    /// or the value its entering method answers (false).
+    AsyncContext(bool),
     /// Keep a real's point after a compound write.
     KeepPoint,
     Suspend,

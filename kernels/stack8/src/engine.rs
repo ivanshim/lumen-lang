@@ -557,10 +557,21 @@ impl<'a> Engine<'a> {
     /// named between them; the plain protocol complaint where the
     /// language gives no such words.
     fn unmanaged(&self, kind: &str) -> String {
-        match self.lang.with_invalid.as_slice() {
-            [before, after] => format!("\0{}{}{}", before, kind, after),
-            _ => self.special_fault(),
+        self.manager_refused(kind, false, "__exit__", false)
+    }
+
+    /// Why a value cannot be a context manager: which protocol, the
+    /// method it lacks, and -- where it keeps the other protocol whole
+    /// -- which statement was meant instead.
+    fn manager_refused(&self, kind: &str, asynchronous: bool, missed: &str, other_protocol: bool) -> String {
+        let [before, after] = self.lang.with_invalid.as_slice() else { return self.special_fault() };
+        let protocol = if asynchronous { after.replace("the context manager", "the asynchronous context manager") } else { after.clone() };
+        let mut told = format!("\0{before}{kind}{protocol} (missed {missed} method)");
+        if other_protocol {
+            let (other, meant) = if asynchronous { ("the context manager", "with") } else { ("the asynchronous context manager", "async with") };
+            told.push_str(&format!(" but it supports {other} protocol. Did you mean to use '{meant}'?"));
         }
+        told
     }
 
     fn exception_class(&self, class: &Class) -> bool {
@@ -6095,10 +6106,13 @@ impl<'a> Engine<'a> {
                 // The thing is asked for its asynchronous walk, and what
                 // it hands over is marked, so that each step asks that
                 // walk's own word for the next member.
-                let subject = self.drop_top()?;
+                let subject = self.drop_top()?.contents();
                 let told = self.special_call(&subject, 79, Vec::new());
                 if let Some(fled) = self.carried.take() { return Err(fled); }
-                let walker = told?.ok_or_else(|| self.special_fault())?;
+                let Some(walker) = told? else {
+                    let kind = match &subject { Value::Object(o) => o.class.name.clone(), other => other.core_kind() };
+                    return Err(format!("TypeError: 'async for' requires an object with __aiter__ method, got {kind}").into());
+                };
                 Value::Adapter(Rc::new((30, vec![walker])))
             }
             Action::ByteAssign(repeat) => {
@@ -7791,11 +7805,38 @@ impl<'a> Engine<'a> {
             }
             // A thing may be its own walk, or may hand another over to
             // be walked in its stead. Either way the walk begins here.
+            Action::AsyncContext(leaving) => {
+                let object = self.drop_top()?;
+                let held = object.contents();
+                let Value::Object(o) = &held else {
+                    if self.lang.with_invalid.len() != 2 { return Err(self.special_fault().into()); }
+                    return Err(self.manager_refused(&held.core_kind(), true, "__aexit__", false).into());
+                };
+                // The leaving method is looked for first, as the reference
+                // looks; a manager keeping the plain protocol is told which
+                // statement was meant.
+                let plain = self.special_value(&held, 33).is_some() && self.special_value(&held, 34).is_some();
+                if self.special_value(&held, 82).is_none() { return Err(self.manager_refused(&o.class.name, true, "__aexit__", plain).into()); }
+                if self.special_value(&held, 81).is_none() { return Err(self.manager_refused(&o.class.name, true, "__aenter__", plain).into()); }
+                if *leaving {
+                    let word = self.lang.class_special[82].clone();
+                    self.class_get(held.clone(), &word, false)?
+                } else {
+                    let told = self.special_call(&held, 81, Vec::new());
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    told?.ok_or_else(|| self.special_fault())?
+                }
+            }
             Action::ContextEnter => {
                 let object = self.drop_top()?;
                 let held = object.contents();
                 if let Value::Object(o) = &held {
-                    if self.special_value(&held, 34).is_none() { return Err(self.unmanaged(&o.class.name).into()); }
+                    // The leaving method is looked for before the entering
+                    // one, as the reference looks; a manager keeping the
+                    // asynchronous protocol is told which statement was meant.
+                    let asynchronous = self.special_value(&held, 81).is_some() && self.special_value(&held, 82).is_some();
+                    if self.special_value(&held, 34).is_none() { return Err(self.manager_refused(&o.class.name, false, "__exit__", asynchronous).into()); }
+                    if self.special_value(&held, 33).is_none() { return Err(self.manager_refused(&o.class.name, false, "__enter__", asynchronous).into()); }
                     // What the opening method raised is raised on, so that
                     // it reaches the arms standing round the whole block,
                     // and not the words that stand in for a method giving

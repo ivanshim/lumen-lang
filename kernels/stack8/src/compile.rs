@@ -197,6 +197,10 @@ pub struct Compiler<'a> {
     annotation_target: Option<usize>,
     /// Whether the statement being read was marked asynchronous.
     asynchronous: bool,
+    /// Whether the routine being read is a coroutine, and whether the
+    /// next routine read is to be one.
+    in_coroutine: bool,
+    coroutine_next: bool,
     /// How many values a case's pattern has read ahead of the subject.
     pattern_values: usize,
     lang: &'a Lang,
@@ -457,7 +461,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, asynchronous: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1349,6 +1353,9 @@ impl<'a> Compiler<'a> {
         // What the routine around this one carries is put aside while
         // this one is put together, so that each keeps its own.
         let around = std::mem::take(&mut self.carrying);
+        // Whether this routine is a coroutine was settled by the word
+        // before it; a scope within it is one only by its own word.
+        let coroutine_outside = std::mem::replace(&mut self.in_coroutine, std::mem::take(&mut self.coroutine_next));
         // The classes the parameters were declared to take, gathered as
         // they were read. A method is given the object it is for before
         // them, so the list is brought level with the names.
@@ -1433,6 +1440,7 @@ impl<'a> Compiler<'a> {
         }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
+        self.in_coroutine = coroutine_outside;
         Ok(Rc::new(Routine { qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)) }))
     }
 
@@ -1953,9 +1961,14 @@ impl<'a> Compiler<'a> {
                 if !(self.on_keyword(&lang.function_words) || self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words)) {
                     return Err(format!("Expected a function, for loop or with block after '{}', got '{}'", w, self.look().lexeme));
                 }
-                // A function so marked runs as any function does; a loop
-                // or a context block so marked is read asynchronous.
+                // A function so marked runs as any function does, and is
+                // a coroutine; a loop or a context block so marked is read
+                // asynchronous, and stands only within a coroutine.
+                self.coroutine_next = self.on_keyword(&lang.function_words);
                 self.asynchronous = self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words);
+                if self.asynchronous && !self.in_coroutine && !lang.syntax_members.is_empty() {
+                    return Err(format!("SyntaxError: '{} {}' outside async function", w, self.look().lexeme));
+                }
                 return self.stmt();
             }
             if Lang::spells(&lang.with_words, &w) { return self.with_stmt(); }
@@ -2158,15 +2171,12 @@ impl<'a> Compiler<'a> {
                     // An asynchronous manager is entered by its own word,
                     // and its leaving method, bound now, stands in the
                     // watched place to be called with the outcome.
-                    let enter = lang.class_special.get(81).cloned().unwrap_or_default();
-                    let leave = lang.class_special.get(82).cloned().unwrap_or_default();
                     let leaving = self.gensym("leaving");
                     self.read(&manager);
-                    self.act(Action::Grab(Rc::from(leave.as_str())), 1);
+                    self.act(Action::AsyncContext(true), 1);
                     self.write(&leaving);
                     self.read(&manager);
-                    self.act(Action::Grab(Rc::from(enter.as_str())), 1);
-                    self.act(Action::Invoke(Rc::from("")), 1);
+                    self.act(Action::AsyncContext(false), 1);
                     leaving
                 } else {
                     self.read(&manager);
@@ -2503,7 +2513,7 @@ impl<'a> Compiler<'a> {
             }
         }
         let a_class = self.on_keyword(&lang.class_words) && lang.explicit_this;
-        if self.on_keyword(&lang.async_words) { self.take(); }
+        if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
         let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
             let name = self.look_ahead(1).lexeme.clone();
             if self.explicit_class()? {
@@ -3889,10 +3899,10 @@ impl<'a> Compiler<'a> {
                 for w in relocated(source, -(from as i64) + self.mark() as i64) {
                     self.put(w);
                 }
-                if !lang.comprehension_for.is_empty() {
-                    self.act(Action::ComprehensionItems, 1);
-                }
+                // An asynchronous walk is asked of the thing itself, in
+                // place of the gathering an ordinary walk begins with.
                 if asynchronous { self.act(Action::WalkAsync, 1); }
+                else if !lang.comprehension_for.is_empty() { self.act(Action::ComprehensionItems, 1); }
                 self.write(&bag);
                 return self.walk(&bag, None, &var, false, target);
             }
@@ -4360,7 +4370,7 @@ impl<'a> Compiler<'a> {
             self.explicit_class()?;
             self.read(&named);
         } else {
-            if self.on_keyword(&lang.async_words) { self.take(); }
+            if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
             self.take();
             named = self.want_name("as the method name")?;
@@ -4593,7 +4603,7 @@ impl<'a> Compiler<'a> {
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }
-        if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).lexeme) { self.take(); }
+        if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).lexeme) { self.take(); self.coroutine_next = true; }
         if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {self.gathering().unready=true;}
         if self.on_keyword(&lang.function_words) {
             self.take();

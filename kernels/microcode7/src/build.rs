@@ -136,6 +136,10 @@ pub struct Builder<'a> {
     stopped_fatally: bool,
     /// Whether the statement under way was marked asynchronous.
     asynchronous: bool,
+    /// Whether the routine under way is a coroutine, and whether the
+    /// routine read next is to be one.
+    in_coroutine: bool,
+    coroutine_next: bool,
     /// The values a case's pattern works out ahead of the subject.
     pattern_kinds: Vec<Form>,
     /// What the reference warns of in how a statement is written, found
@@ -438,7 +442,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { declarations: Vec::new(), asynchronous: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { declarations: Vec::new(), asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -1464,6 +1468,9 @@ impl<'a> Builder<'a> {
         // What the routine around this one carries is set aside while
         // this one is built, so that each keeps only its own.
         let around = std::mem::take(&mut self.carrying);
+        // The word before a routine makes it a coroutine; a scope inside
+        // it is a coroutine only by a word of its own.
+        let coroutine_around = std::mem::replace(&mut self.in_coroutine, std::mem::take(&mut self.coroutine_next));
         self.naming.push(name.to_string());
         // The classes the parameters were written to take, gathered as
         // they were read. A method is handed the thing it is for before
@@ -1523,6 +1530,7 @@ impl<'a> Builder<'a> {
         }
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
+        self.in_coroutine = coroutine_around;
         Ok(constant(Value::Routine(Rc::new(Routine { qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
     }
 
@@ -2137,9 +2145,14 @@ impl<'a> Builder<'a> {
                 if !self.key("stmt.function") && !self.key("stmt.for") && !self.key("ext.stmt.with") {
                     return Err(format!("Expected a function, for loop or with block after '{}', got '{}'", word, self.look().lexeme));
                 }
-                // A marked function runs as functions do; a marked loop or
-                // context block is read as asynchronous.
+                // A marked function runs as functions do and is a
+                // coroutine; a marked loop or context block is read as
+                // asynchronous, and may stand only within a coroutine.
+                self.coroutine_next = self.key("stmt.function");
                 self.asynchronous = self.key("stmt.for") || self.key("ext.stmt.with");
+                if self.asynchronous && !self.in_coroutine && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    return Err(format!("SyntaxError: '{} {}' outside async function", word, self.look().lexeme));
+                }
                 return self.stmt();
             }
             if self.key("ext.stmt.with") { return self.with_block(); }
@@ -2528,7 +2541,7 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
-        if self.key("ext.stmt.async") { self.advance(); }
+        if self.key("ext.stmt.async") { self.advance(); self.coroutine_next = true; }
         let named;
         let class_binding = self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit");
         if self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit") {
@@ -2595,12 +2608,9 @@ impl<'a> Builder<'a> {
                     // An asynchronous manager is entered by its own word;
                     // its leaving method, bound now, stands in the watched
                     // place and is called with the outcome at the end.
-                    let specials = table.strings("ext.stmt.class.special");
-                    let word = |at: usize| constant(Value::text(specials.get(at).map(String::as_str).unwrap_or_default()));
                     let leaving = self.gensym("leaving");
-                    steps.push(Form::Write(leaving.clone(), Box::new(prim_call(Prim::Of, vec![manager_read.clone(), word(82)]))));
-                    let entering = prim_call(Prim::Of, vec![manager_read, word(81)]);
-                    value = Form::Apply(Callee::Code(Box::new(entering)), vec![]);
+                    steps.push(Form::Write(leaving.clone(), Box::new(prim_call(Prim::AsyncContext(true), vec![manager_read.clone()]))));
+                    value = prim_call(Prim::AsyncContext(false), vec![manager_read]);
                     leaving
                 } else {
                     value = prim_call(Prim::StartContext, vec![manager_read]);
@@ -3425,7 +3435,7 @@ impl<'a> Builder<'a> {
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }
-        if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).lexeme) { self.advance(); }
+        if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).lexeme) { self.advance(); self.coroutine_next = true; }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
@@ -3817,7 +3827,7 @@ impl<'a> Builder<'a> {
             setup.push(self.class_with_receiver()?.0);
             decorated = self.read(&word);
         } else {
-            if self.key("ext.stmt.async") { self.advance(); }
+            if self.key("ext.stmt.async") { self.advance(); self.coroutine_next = true; }
             if !self.key("stmt.function") {
                 return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
             }

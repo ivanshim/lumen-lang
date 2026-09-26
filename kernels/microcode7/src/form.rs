@@ -56,6 +56,9 @@ pub enum Prim {
     Pointed,
     Adorn(char),
     StartContext,
+    /// An asynchronous manager's leaving method, bound (true), or what
+    /// its entering method answers (false).
+    AsyncContext(bool),
     DistinctObjects,
     Repr,
     Iterate,

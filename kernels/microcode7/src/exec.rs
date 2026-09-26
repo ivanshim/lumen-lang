@@ -658,10 +658,21 @@ impl<'a> Machine<'a> {
     /// between them, or the plain wrong-answer complaint where the table
     /// gives no such words.
     fn no_manager(&self, kind: &str) -> String {
-        match self.table.strings("ext.stmt.with.invalid") {
-            [before, after] => format!("\0{before}{kind}{after}"),
-            _ => self.bad_answer(),
-        }
+        self.manager_declined(kind, false, "__exit__", false)
+    }
+
+    /// The words for a value that is no context manager: the protocol,
+    /// the method missed, and -- where the other protocol is whole --
+    /// which statement was meant.
+    fn manager_declined(&self, kind: &str, asynchronous: bool, missed: &str, other_protocol: bool) -> String {
+        let [before, after] = self.table.strings("ext.stmt.with.invalid") else { return self.bad_answer() };
+        let protocol = if asynchronous { after.replacen("the context manager", "the asynchronous context manager", 1) } else { after.to_owned() };
+        let hint = match (other_protocol, asynchronous) {
+            (false, _) => String::new(),
+            (true, true) => " but it supports the context manager protocol. Did you mean to use 'with'?".to_owned(),
+            (true, false) => " but it supports the asynchronous context manager protocol. Did you mean to use 'async with'?".to_owned(),
+        };
+        format!("\0{before}{kind}{protocol} (missed {missed} method){hint}")
     }
 
     fn fault_descends(kind: &Rc<Blueprint>, ancestor: &Rc<Blueprint>) -> bool {
@@ -9502,8 +9513,12 @@ impl<'a> Machine<'a> {
     /// the next member rather than the ordinary one.
     fn async_walk(&mut self, v: &[Value]) -> Result<Value, Escape> {
         let [subject] = v else { return Err(Escape::Error(format!("an asynchronous walk expects 1 argument, got {}", v.len()))) };
-        let asked = self.ask_special(subject, 79, &[]).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)))?;
-        let walker = asked.ok_or_else(|| Escape::Error(self.bad_answer()))?;
+        let subject = subject.settled();
+        let asked = self.ask_special(&subject, 79, &[]).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)))?;
+        let Some(walker) = asked else {
+            let kind = match &subject { Value::Thing(t) => t.of.name.clone(), other => other.kind_word() };
+            return Err(Escape::Error(format!("TypeError: 'async for' requires an object with __aiter__ method, got {kind}")));
+        };
         Ok(Value::Wrapped(61, Rc::new(vec![walker])))
     }
 
@@ -9861,10 +9876,37 @@ impl<'a> Machine<'a> {
                 };
                 Value::text(&shown)
             }
+            (Prim::AsyncContext(leaving), [manager]) => {
+                let plain = manager.settled();
+                let Value::Thing(thing) = &plain else {
+                    if self.table.strings("ext.stmt.with.invalid").len() != 2 { return Err(self.bad_answer()); }
+                    return Err(self.manager_declined(&plain.kind_word(), true, "__aexit__", false));
+                };
+                // The leaving word is sought first, as the reference seeks
+                // it; a thing keeping the plain protocol is told what was meant.
+                let plain_protocol = self.appointment(&plain, 33).is_some() && self.appointment(&plain, 34).is_some();
+                if self.appointment(&plain, 82).is_none() { return Err(self.manager_declined(&thing.of.name, true, "__aexit__", plain_protocol)); }
+                if self.appointment(&plain, 81).is_none() { return Err(self.manager_declined(&thing.of.name, true, "__aenter__", plain_protocol)); }
+                if leaving {
+                    let word = self.table.strings("ext.stmt.class.special")[82].clone();
+                    match self.read_class_member(plain.clone(), &word, true) {
+                        Ok(bound) => bound,
+                        Err(Escape::Error(told)) => return Err(told),
+                        Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                    }
+                } else {
+                    self.ask_special(&plain, 81, &[])?.ok_or_else(|| self.bad_answer())?
+                }
+            }
             (Prim::StartContext, [manager]) => {
                 let plain = manager.settled();
                 if let Value::Thing(thing) = &plain {
-                    if self.appointment(&plain, 34).is_none() { return Err(self.no_manager(&thing.of.name)); }
+                    // The leaving word is sought before the entering one, as
+                    // the reference seeks; a thing keeping the asynchronous
+                    // protocol is told which statement was meant.
+                    let asynchronous = self.appointment(&plain, 81).is_some() && self.appointment(&plain, 82).is_some();
+                    if self.appointment(&plain, 34).is_none() { return Err(self.manager_declined(&thing.of.name, false, "__exit__", asynchronous)); }
+                    if self.appointment(&plain, 33).is_none() { return Err(self.manager_declined(&thing.of.name, false, "__enter__", asynchronous)); }
                     self.ask_special(&plain, 33, &[])?.ok_or_else(|| self.no_manager(&thing.of.name))?
                 } else if self.table.strings("ext.stmt.with.invalid").len() == 2 {
                     // What is no thing has no such methods at all, and a
@@ -10877,7 +10919,7 @@ impl<'a> Machine<'a> {
             }
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
-            Prim::StartContext | Prim::DistinctObjects => return Err(self.bad_answer()),
+            Prim::StartContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let values: Vec<Value> = v.iter().map(|x| match x.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect();
                 // A word of the text kind spelled with the method after
