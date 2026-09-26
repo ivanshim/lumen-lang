@@ -16190,8 +16190,8 @@ impl Machine<'_> {
         // A summoned callable may reach back into this very iterator
         // before it answers, so the iterator is not marked busy while it
         // runs, and what it answers is weighed once it is back.
-        let summons = match &cell.borrow().kind { IteratorKind::Summoned { work, stop } => Some((work.clone(), stop.clone())), _ => None };
-        if let Some((work, stop)) = summons {
+        let summons = match &cell.borrow().kind { IteratorKind::Summoned { work, stop, stop_exception } => Some((work.clone(), stop.clone(), stop_exception.clone())), _ => None };
+        if let Some((work, stop, stop_exception)) = summons {
             {
                 let mut held = cell.borrow_mut();
                 if held.done { return Ok(None); }
@@ -16199,7 +16199,7 @@ impl Machine<'_> {
             }
             let answer = match self.core_run(&work, Vec::new()) {
                 Ok(value) => value,
-                Err(complaint) => return if self.walk_halted() { cell.borrow_mut().done = true; Ok(None) } else { Err(complaint) },
+                Err(complaint) => return if self.walk_halted() || stop_exception.as_ref().map_or(false, |types| self.selected_walk_halted(types)) { cell.borrow_mut().done = true; Ok(None) } else { Err(complaint) },
             };
             let mut held = cell.borrow_mut();
             if held.done { return Ok(None); }
@@ -16361,6 +16361,27 @@ impl Machine<'_> {
 
     /// Whether what got away from a call is the fault that ends a walk;
     /// if so it is taken back, and the walk simply ends.
+    fn valid_stop_types(value: &Value) -> bool {
+        match value {
+            Value::Blueprint(_) => true,
+            Value::Tuple(items) => items.iter().all(Self::valid_stop_types),
+            _ => false,
+        }
+    }
+
+    fn selected_walk_halted(&mut self, selected: &Value) -> bool {
+        fn accepts(selected: &Value, thrown: &Blueprint) -> bool {
+            match selected {
+                Value::Blueprint(wanted) => thrown.goes_by(&wanted.name, false),
+                Value::Tuple(items) => items.iter().any(|item| accepts(item, thrown)),
+                _ => false,
+            }
+        }
+        let caught = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thrown))) if accepts(selected, &thrown.of));
+        if caught { self.got_away = None; }
+        caught
+    }
+
     fn walk_halted(&mut self) -> bool {
         let halted = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thrown))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| thrown.of.goes_by(name, false)));
         if halted { self.got_away = None; }
@@ -16559,8 +16580,20 @@ impl Machine<'_> {
         let mut fallback = None;
         let mut exact = false;
         let mut additions = Vec::new();
+        let mut iter_stop_value = None;
+        let mut iter_stop_exception = None;
         for (label, value) in keywords {
             let is = |tail: &str| self.table.spells(&format!("ext.builtin.{}", tail), &label);
+            if op == Prim::Iterator && is("iter.stop_value") {
+                if iter_stop_value.is_some() || input.len() != 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
+                iter_stop_value = Some(value);
+                continue;
+            }
+            if op == Prim::Iterator && is("iter.stop_exception") {
+                if iter_stop_exception.is_some() { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&label))); }
+                iter_stop_exception = Some(value);
+                continue;
+            }
             match op {
                 Dictionary => { additions.push((Value::text(&label), value)); continue; }
                 Ordered | Least | Greatest if is("key") => { ordering = Some(value); continue; }
@@ -16589,6 +16622,7 @@ impl Machine<'_> {
             if input.len() <= slot { input.resize(slot + 1, Value::Unset); }
             input[slot] = value;
         }
+                if let Some(stop) = iter_stop_value { input.push(stop); }
         let require = |lower, upper| -> Result<(), String> {
             if input.len() < lower || input.len() > upper || input.iter().any(|v| matches!(v, Value::Unset)) {
                 let which = if lower == 1 && upper == 1 { "core.arity.one" } else if lower == upper { "core.arity.exact" } else { "core.arity" };
@@ -16751,7 +16785,16 @@ impl Machine<'_> {
             }
             Iterator => {
                 require(1, 2)?;
-                if input.len() == 2 { return Ok(Self::cursor_value(IteratorKind::Summoned { work: input[0].clone(), stop: input[1].clone() })); }
+                if let Some(types) = &iter_stop_exception {
+                    if !Self::valid_stop_types(types) { return Err("TypeError: stop_exception must be an exception class or tuple of exception classes".into()); }
+                    let callable = matches!(input.first(), Some(Value::Intrinsic(..) | Value::Routine(_) | Value::Bound(..) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..) | Value::Thing(_)))
+                        || input.first().map_or(false, |value| self.appointed(value, 16).is_some());
+                    if !callable { return Err("TypeError: iter(v, stop_exception=...) requires a callable".into()); }
+                }
+                if input.len() == 2 || iter_stop_exception.is_some() {
+                    let sentinel = input.get(1).cloned().unwrap_or(Value::Nil);
+                    return Ok(Self::cursor_value(IteratorKind::Summoned { work: input[0].clone(), stop: sentinel, stop_exception: iter_stop_exception.clone() }));
+                }
                 match live { Some(kind) => Ok(Self::cursor_value(kind)), None => self.iterated_value(&input[0]) }
             }
             NextItem => {

@@ -266,7 +266,7 @@ pub enum CursorSource {
     /// keeps no `__reversed__` of its own.
     IndexedBack(Value, BigInt),
     /// A callable asked again and again until it answers the sentinel.
-    Called(Value, Value),
+    Called(Value, Value, Option<Value>),
     /// A thing of the program's own, asked for each member the way a
     /// loop asks it.
     Handed(Value),

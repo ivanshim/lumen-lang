@@ -14354,8 +14354,8 @@ impl Engine<'_> {
         // for members before it answers, so it is asked with the cursor
         // left free, and its answer is judged against the state the
         // cursor is in once it has answered.
-        let summoned = match &cell.borrow().source { CursorSource::Called(work, stop) => Some((work.clone(), stop.clone())), _ => None };
-        if let Some((work, stop)) = summoned {
+        let summoned = match &cell.borrow().source { CursorSource::Called(work, stop, types) => Some((work.clone(), stop.clone(), types.clone())), _ => None };
+        if let Some((work, stop, types)) = summoned {
             {
                 let mut state = cell.borrow_mut();
                 if let Some(value) = state.pending.take() { return Ok(Some(value)); }
@@ -14363,7 +14363,7 @@ impl Engine<'_> {
             }
             let answered = match self.core_apply(&work, Vec::new()) {
                 Ok(value) => value,
-                Err(words) => { if self.stop_raised() { cell.borrow_mut().finished = true; return Ok(None); } return Err(words); }
+                Err(words) => { if self.stop_raised() || types.as_ref().map_or(false, |types| self.selected_stop_raised(types)) { cell.borrow_mut().finished = true; return Ok(None); } return Err(words); }
             };
             let mut state = cell.borrow_mut();
             if state.finished { return Ok(None); }
@@ -14670,6 +14670,27 @@ impl Engine<'_> {
         Ok(self.kind_holds(&b, &word, value))
     }
 
+    fn valid_stop_types(value: &Value) -> bool {
+        match value {
+            Value::Class(_) => true,
+            Value::Tuple(items) => items.iter().all(Self::valid_stop_types),
+            _ => false,
+        }
+    }
+
+    fn selected_stop_raised(&mut self, selected: &Value) -> bool {
+        fn accepts(selected: &Value, class: &Rc<Class>) -> bool {
+            match selected {
+                Value::Class(wanted) => Engine::exception_beneath(class, wanted),
+                Value::Tuple(items) => items.iter().any(|item| accepts(item, class)),
+                _ => false,
+            }
+        }
+        let caught = matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if accepts(selected, &object.class));
+        if caught { self.carried = None; }
+        caught
+    }
+
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
@@ -14721,7 +14742,21 @@ impl Engine<'_> {
         let mut default = None;
         let mut exact = false;
         let mut dict_kw = Vec::new();
+        let mut iter_stop_value = None;
+        let mut iter_stop_exception = None;
         for (word, value) in named {
+            if b == Builtin::Iter && Lang::spells(&self.lang.iter_stop_value, &word) {
+                if iter_stop_value.is_some() || args.len() != 1 {
+                    return Err(self.core_fault("core.arity", name));
+                }
+                iter_stop_value = Some(value);
+                continue;
+            }
+            if b == Builtin::Iter && Lang::spells(&self.lang.iter_stop_exception, &word) {
+                if iter_stop_exception.is_some() { return Err(Self::named_fault(&self.lang.call_duplicate, &word)); }
+                iter_stop_exception = Some(value);
+                continue;
+            }
             let spells = |label: &str| self.lang.core_words.get(label).map_or(false, |words| Lang::spells(words, &word));
             if b == Builtin::Dict { dict_kw.push((Value::text(&word), value)); continue; }
             if matches!(b, Builtin::Sorted | Builtin::Minimum | Builtin::Maximum) && spells("key") { key = value; continue; }
@@ -14748,6 +14783,7 @@ impl Engine<'_> {
             args.resize_with(place.max(args.len()), || Value::Gap);
             if args.len() == place { args.push(value); } else { args[place] = value; }
         }
+        if let Some(stop) = iter_stop_value { args.push(stop); }
         let arity = |lo, hi| if (lo..=hi).contains(&args.len()) && !args.iter().any(|v| matches!(v, Value::Gap)) { Ok(()) }
             else {
                 let label = if lo == 1 && hi == 1 { "core.arity.one" } else if lo == hi { "core.arity.exact" } else { "core.arity" };
@@ -14758,6 +14794,14 @@ impl Engine<'_> {
             };
         let number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), other => other.clone() };
         let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.integer", &v.core_kind())) };
+        if let Some(types) = &iter_stop_exception {
+            if !Self::valid_stop_types(types) {
+                return Err("TypeError: stop_exception must be an exception class or tuple of exception classes".into());
+            }
+            let callable = matches!(args.first(), Some(Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::Method(..) | Value::Adapter(_) | Value::Object(_)))
+                || args.first().map_or(false, |value| self.special_value(value, 16).is_some());
+            if !callable { return Err("TypeError: iter(v, stop_exception=...) requires a callable".into()); }
+        }
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
@@ -14898,7 +14942,10 @@ impl Engine<'_> {
             }
             Builtin::Iter => {
                 arity(1, 2)?;
-                if args.len() == 2 { return Ok(Self::core_cursor(CursorSource::Called(args[0].clone(), args[1].clone()))); }
+                if args.len() == 2 || iter_stop_exception.is_some() {
+                    let sentinel = args.get(1).cloned().unwrap_or(Value::Null);
+                    return Ok(Self::core_cursor(CursorSource::Called(args[0].clone(), sentinel, iter_stop_exception.clone())));
+                }
                 if matches!(args[0], Value::Cursor(_)) { return Ok(args[0].clone()); }
                 match living { Some(source) => Self::core_cursor(source), None => self.core_iterator(&args[0])? }
             }

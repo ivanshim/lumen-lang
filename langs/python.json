@@ -3338,5 +3338,11 @@
   ],
   "ext.text.format.zero.string": [
     "ValueError: Negative zero coercion (z) not allowed in string format specifier"
+  ],
+  "ext.builtin.iter.stop_value": [
+    "stop_value"
+  ],
+  "ext.builtin.iter.stop_exception": [
+    "stop_exception"
   ]
 }

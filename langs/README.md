@@ -4312,6 +4312,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.issubclass` | - | - | `issubclass` | - | - | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
+| `ext.builtin.iter.stop_exception` | - | - | `stop_exception` | - | - | - | - | - | - | - |
+| `ext.builtin.iter.stop_value` | - | - | `stop_value` | - | - | - | - | - | - | - |
 | `ext.builtin.iterable` | - | - | `iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
@@ -5239,3 +5241,6 @@ The `ext.builtin.exceptions.traceback` roster starts with the traceback class
 name, followed by the line, next and frame members, frame line and code members,
 code name, filename and first-line members, frame class name and module code name.
 Frames are allocated on demand when an exception first records its location.
+
+Python iter() also names its sentinel as stop_value and accepts a
+stop_exception class or tuple of classes for callable iterators.

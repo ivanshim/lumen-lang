@@ -179,7 +179,7 @@ pub enum IteratorKind {
     /// `__reversed__` of its own.
     PlacedBack(Value, BigInt),
     /// A callable summoned for each member until it answers the sentinel.
-    Summoned { work: Value, stop: Value },
+    Summoned { work: Value, stop: Value, stop_exception: Option<Value> },
     /// A thing of the program's own, asked for each member the way a
     /// loop asks it.
     Handed(Value),
