@@ -808,7 +808,9 @@
     "UnicodeDecodeError",
     "UnicodeTranslateError",
     "IndentationError",
-    "TabError"
+    "TabError",
+    "MemoryError",
+    "BufferError"
   ],
   "ext.builtin.exceptions.args": [
     "args"

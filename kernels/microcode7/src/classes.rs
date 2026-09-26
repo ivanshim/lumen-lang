@@ -500,8 +500,14 @@ impl<'a> Machine<'a> {
                     0=>Ok(kept[0].clone()),
                     1 if !values.is_empty()=>{
                         let Some(Value::Blueprint(c))=values.first() else{return Err(self.class_unready())};
+                        if self.is_fault_kind(c) { return Ok(self.make_fault(c.clone(), values[1..].to_vec(), Value::Nil)); }
                         if values.len()>1{self.root_turns_away(c,'n')?;}
                         self.made+=1;Ok(Value::Thing(Rc::new(Thing{of:c.clone(),holds:RefCell::new(vec![]),turn:self.made})))
+                    }
+                    2 if matches!(values.first(), Some(Value::Thing(t)) if self.is_fault_kind(&t.of)) => {
+                        let Value::Thing(receiver) = values.remove(0) else { unreachable!() };
+                        let key = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
+                        self.fault_method(receiver, &key, &values)
                     }
                     2 if values.len()==1=>Ok(Value::Nil),
                     2 if values.len()>1=>{
@@ -1245,6 +1251,7 @@ impl<'a> Machine<'a> {
         if key==self.detail("kind")&&!matches!(value,Value::Thing(_)) {
             if let Ok(kind)=self.class_from_type(vec![value.clone()]) {return Ok(kind);}
         }
+        self.sought_in_vain = Some((key.to_owned(), value.clone()));
         Err(self.absent_attribute(&value,key))
     }
     /// Whether the blueprint, or one it stands on, names the entries its
@@ -1273,6 +1280,41 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        let mut replacement = replacement;
+        if let Value::Thing(t) = &subject {
+            if self.is_fault_kind(&t.of) {
+                for (label, description) in [("ext.builtin.exceptions.cause", "cause"), ("ext.builtin.exceptions.context", "context")] {
+                    if self.table.single(label) != Some(key) { continue; }
+                    let Some(v) = &replacement else { return Err(format!("TypeError: {key} may not be deleted").into()); };
+                    let valid = match v.settled() {
+                        Value::Nil => true,
+                        Value::Thing(e) => self.is_fault_kind(&e.of),
+                        _ => false,
+                    };
+                    if !valid { return Err(format!("TypeError: exception {description} must be None or derive from BaseException").into()); }
+                }
+                if self.table.single("ext.builtin.exceptions.suppress") == Some(key) {
+                    if replacement.is_none() { return Err(String::from("TypeError: can't delete numeric/char attribute").into()); }
+                    if !matches!(replacement.as_ref().map(Value::settled), Some(Value::Flag(_))) {
+                        return Err(String::from("TypeError: attribute value type must be bool").into());
+                    }
+                }
+                if replacement.is_none() {
+                    if self.table.single("ext.builtin.exceptions.args") == Some(key) { return Err(format!("TypeError: {key} may not be deleted").into()); }
+                    let reset = match key {
+                        "msg" | "filename" | "lineno" | "offset" | "text" | "end_lineno" | "end_offset" | "print_file_and_line" | "_metadata" if self.stands_under(&t.of, 36) => true,
+                        "msg" | "name" | "path" | "name_from" if self.stands_under(&t.of, 19) => true,
+                        "code" if self.stands_under(&t.of, 17) => true,
+                        "value" if self.is_stop_kind(&t.of) => true,
+                        "name" if self.stands_under(&t.of, 10) || self.stands_under(&t.of, 12) => true,
+                        "obj" if self.stands_under(&t.of, 12) => true,
+                        "encoding" | "object" | "reason" if (43..=45).any(|i| self.stands_under(&t.of, i)) => true,
+                        _ => self.stands_under(&t.of, 20) && (key == "filename2" || self.table.strings("ext.builtin.exceptions.os").iter().any(|n| n == key)),
+                    };
+                    if reset { replacement = Some(Value::Nil); }
+                }
+            }
+        }
         let writing=replacement.is_some();
         let success=match &subject {
             Value::Thing(t)=>{
@@ -1280,7 +1322,7 @@ impl<'a> Machine<'a> {
                     if let Some(supplied) = replacement.as_ref() {
                         let sequence = match supplied.settled() {
                             Value::Arguments(items) | Value::Tuple(items) | Value::Vector(items) => Value::Arguments(items),
-                            _ => return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()),
+                            other => return Err(format!("TypeError: '{}' object is not iterable", other.kind_word()).into()),
                         };
                         let mut storage = t.holds.borrow_mut();
                         Self::change_entry(&mut storage, key, Some(sequence.clone()));
@@ -1780,6 +1822,9 @@ impl<'a> Machine<'a> {
                 continue;
             }
             if let Some(f)=Self::own_entry(b,key){if key!=self.detail("allocate"){args.insert(0,receiver.clone());}return self.apply_class_member(f,args);}
+            if self.table.single("ext.stmt.class.constructor") == Some(key) && self.is_fault_kind(b) {
+                if let Value::Thing(t) = &receiver { return self.fault_method(t.clone(), key, &args); }
+            }
             if b.name==self.detail("root") && key==self.detail("allocate"){let f=self.read_class_member(Value::Blueprint((*b).clone()),key,true)?;return self.apply_class_member(f,args);}
             if b.name==self.detail("root") {
                 let builtin=self.read_class_member(Value::Blueprint((*b).clone()),key,true)?;
