@@ -10641,7 +10641,7 @@ impl<'a> Engine<'a> {
         }
         // More figures than the definition allows, in a base whose reading
         // is slow, are refused before the reading starts.
-        if let (Some(limit), false) = (self.lang.integer_digits, radix.is_power_of_two()) {
+        if let (Some(limit), false) = (self.current_digit_limit(), radix.is_power_of_two()) {
             if limit > 0 && cleaned.len() > limit { return Err(self.digits_refused(limit)); }
         }
         let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(invalid)?;
@@ -10650,9 +10650,29 @@ impl<'a> Engine<'a> {
 
     /// A whole number is refused as text when it has more figures than
     /// the definition allows to be written out.
+    fn current_digit_limit(&self) -> Option<usize> {
+        if let [module, field] = self.lang.integer_digits_state.as_slice() {
+            if let Some(Value::Object(object)) = self.modules.get(module) {
+                if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == field) {
+                    if let Value::Small(limit) = held.contents() {
+                        if limit >= 0 { return Some(limit as usize); }
+                    }
+                }
+            }
+        }
+        self.lang.integer_digits
+    }
+
     fn digits_shown(&self, value: &Value) -> Res<()> {
-        if let (Some(limit), Value::Huge(whole)) = (self.lang.integer_digits, value.contents()) {
-            if limit > 0 && num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit { return Err(self.digits_refused(limit)); }
+        if let (Some(limit), Value::Huge(whole)) = (self.current_digit_limit(), value.contents()) {
+            if limit > 0 {
+                // A lower bound on decimal digits rejects large values
+                // without paying for the conversion being limited.
+                let lower = whole.bits().saturating_sub(1).saturating_mul(30102) / 100000;
+                if lower >= limit as u64 || num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit {
+                    return Err(self.digits_refused(limit));
+                }
+            }
         }
         Ok(())
     }
@@ -12343,6 +12363,22 @@ impl<'a> Engine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Builtin::Clock => {
+                #[cfg(target_os = "linux")]
+                if self.lang.clock_parts && args.len() == 2 {
+                    let [Value::Flag(steady), Value::Flag(true)] = args.as_slice() else {
+                        return Err(self.lang.module_helper_amiss.clone());
+                    };
+                    #[repr(C)]
+                    struct Resolution { seconds: i64, nanos: i64 }
+                    extern "C" { fn clock_getres(clock: i32, result: *mut Resolution) -> i32; }
+                    let mut resolution = Resolution { seconds: 0, nanos: 0 };
+                    // Linux CLOCK_REALTIME is zero, CLOCK_MONOTONIC is one.
+                    if unsafe { clock_getres(i32::from(*steady), &mut resolution) } != 0 {
+                        return Err("OSError: clock resolution is unavailable".to_string());
+                    }
+                    return Ok(crate::value::real_of(resolution.seconds as f64 + resolution.nanos as f64 / 1e9,
+                        self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)));
+                }
                 // Handed a flag where the definition allows, the clock
                 // answers in seconds and their parts, and the flag says
                 // from where: the run's own start, a clock that never

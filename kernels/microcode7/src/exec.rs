@@ -6778,7 +6778,7 @@ impl<'a> Machine<'a> {
             }
             // Too many figures in a base that is slow to read are refused
             // before the reading, with the limit named.
-            if let Some(limit) = self.table.count("ext.builtin.to_int.digits") {
+            if let Some(limit) = self.figure_limit() {
                 if limit > 0 && !base.is_power_of_two() && digits.len() > limit { return Err(self.too_many_figures(limit)); }
             }
             let mut number = BigInt::parse_bytes(digits.as_bytes(), base).ok_or_else(|| invalid_text())?;
@@ -6799,12 +6799,32 @@ impl<'a> Machine<'a> {
 
     /// Whether a whole number may be written out at all: the table may
     /// put a limit on how many figures it is allowed to have.
+    fn figure_limit(&self) -> Option<usize> {
+        let names = self.table.strings("ext.builtin.to_int.digits.state");
+        let changed = (|| {
+            let Value::Thing(module) = self.imported.get(names.first()?)? else { return None };
+            let name = names.get(1)?;
+            let fields = module.holds.borrow();
+            let (_, slot) = fields.iter().find(|(key, _)| key == name)?;
+            match slot.settled() {
+                Value::Small(number) => usize::try_from(number).ok(),
+                _ => None,
+            }
+        })();
+        changed.or_else(|| self.table.count("ext.builtin.to_int.digits"))
+    }
+
     fn figures_allowed(&self, value: &Value) -> Result<(), String> {
-        let Some(limit) = self.table.count("ext.builtin.to_int.digits") else { return Ok(()) };
-        match value.settled() {
-            Value::Huge(whole) if limit > 0 && num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit => Err(self.too_many_figures(limit)),
-            _ => Ok(()),
-        }
+        let limit = self.figure_limit().unwrap_or(0);
+        if limit == 0 { return Ok(()) }
+        let Value::Huge(number) = value.settled() else { return Ok(()) };
+        // log10(2) exceeds 30102/100000. Only numbers near the
+        // boundary need to be rendered to settle their digit count.
+        let bits = number.bits().saturating_sub(1) as u128;
+        let definitely_large = bits * 30102 >= (limit as u128) * 100000;
+        if definitely_large || number.to_str_radix(10).trim_start_matches('-').len() > limit {
+            Err(self.too_many_figures(limit))
+        } else { Ok(()) }
     }
 
     /// The words refusing a whole number of more figures than the table
@@ -11433,6 +11453,22 @@ impl<'a> Machine<'a> {
                 // With one flag, where the table allows, the answer is a
                 // real: seconds since the machine's own steady origin
                 // when the flag stands, seconds since the epoch when not.
+                #[cfg(target_os = "linux")]
+                if v.len() == 2 && self.table.flag("ext.builtin.clock.parts") {
+                    let clock_id = match (&v[0], &v[1]) {
+                        (Value::Flag(false), Value::Flag(true)) => 0,
+                        (Value::Flag(true), Value::Flag(true)) => 1,
+                        _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                    };
+                    #[repr(C)]
+                    struct Tick { whole: i64, fraction: i64 }
+                    extern "C" { fn clock_getres(which: i32, tick: *mut Tick) -> i32; }
+                    let mut tick = Tick { whole: 0, fraction: 0 };
+                    let status = unsafe { clock_getres(clock_id, &mut tick) };
+                    if status != 0 { return Err(String::from("OSError: clock resolution is unavailable")); }
+                    let seconds = tick.whole as f64 + (tick.fraction as f64 * 0.000000001);
+                    return Ok(crate::data::worth_of_binary(seconds, self.table.count("ext.system.real.digits").unwrap_or(15)));
+                }
                 if v.len() == 1 && self.table.flag("ext.builtin.clock.parts") {
                     let Value::Flag(steady) = v[0] else {
                         return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string());
