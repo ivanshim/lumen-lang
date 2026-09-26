@@ -5308,7 +5308,7 @@ impl<'a> Machine<'a> {
             return Some(Self::cursor_value_walked(empty, Some(Rc::from(word))));
         }
         let portion = match word {
-            "dict_items" => Some('i'), "dict_values" => Some('v'), "dict_keys" => Some('k'), _ => None,
+            "dict_items" => Some('i'), "dict_values" => Some('v'), "dict_keys" => Some('k'), "mappingproxy" => Some('m'), _ => None,
         };
         if let Some(part) = portion {
             let dictionary = Value::Dict(Rc::new(Vec::new().into()));

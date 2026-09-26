@@ -557,7 +557,7 @@ impl<'a> Engine<'a> {
                     // the way a flag stands under the whole-number kind,
                     // still reaches the member as before.
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
-                        .map_or(true, |op| self.kind_holds(&op, &word, &receiver.contents()));
+                        .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
                     let found = if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
                     match found {
                         Some(bound) => self.class_apply(bound,args),

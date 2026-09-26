@@ -552,7 +552,7 @@ impl<'a> Machine<'a> {
                         // under the whole-number kind, still reaches
                         // the entry as before.
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
-                            .map_or(true,|op|self.kind_covers(&op,&word,&receiver.settled()));
+                            .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
                         let found=if of_own_kind{self.attribute(&receiver,&entry)}else{None};
                         match found {
                             Some(bound)=>self.apply_class_member(bound,values),
