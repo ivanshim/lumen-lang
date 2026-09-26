@@ -551,7 +551,7 @@ fn compile_pass(
     }
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1321,12 +1321,19 @@ impl<'a> Compiler<'a> {
     /// The name a routine or class goes by in full: the class it is
     /// written in, then each routine opened since that class was
     /// entered, each marked as the holder of locals, then its own name.
+    /// A routine declared global where it is written goes by its own
+    /// name alone, and the routines written inside it by names that
+    /// start again from it.
     fn qualified(&self, name: &str) -> String {
         let local = self.lang.class_details.get("locals").and_then(|v| v.first()).cloned().unwrap_or_default();
         let mut full = self.within.as_ref().map_or(String::new(), |(n, _)| format!("{n}."));
-        for piece in self.pieces.iter().skip(self.class_depth).filter(|p| !p.outermost) {
+        let opened: Vec<&Piece> = self.pieces.iter().skip(self.class_depth).filter(|p| !p.outermost).collect();
+        let declared_global = |at: usize, named: &str| at > 0 && opened[at - 1].globals.iter().any(|(g, _)| g == named);
+        for (at, piece) in opened.iter().enumerate() {
+            if declared_global(at, &piece.ident) { full.clear(); }
             full.push_str(&format!("{}.{local}.", piece.ident));
         }
+        if declared_global(opened.len(), name) { full.clear(); }
         full.push_str(name);
         full
     }
@@ -1425,7 +1432,7 @@ impl<'a> Compiler<'a> {
         }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(Rc::new(Routine { qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)) }))
+        Ok(Rc::new(Routine { qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
     // ---------- statements ----------
@@ -5910,7 +5917,8 @@ impl<'a> Compiler<'a> {
         if self.tuple_assignment()? { return Ok(()); }
         if !self.lang.tuple_marks.is_empty() && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty()
             && !self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty() {
-            self.tuple_value()?;
+            self.tuple_read(false)?;
+            if self.on_writing() { return Err("SyntaxError: 'tuple' is an illegal expression for augmented assignment".into()); }
             self.piece().result_touched = true;
             self.write(RESULT_CELL);
             return Ok(());
@@ -6207,9 +6215,6 @@ impl<'a> Compiler<'a> {
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
         // A slice write works out its value before it asks for bounds.
         let was_waiting = self.waiting.clone();
-        if compound.is_some() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
-            self.act(Action::SliceUnavailable, 0);
-        }
         // A language with slice values works the value out before any
         // key, as it does for a slice.
         let keyed_place = matches!(target.last(), Some(Instr::Act(Action::At, 2)) | Some(Instr::Act(Action::AtEnd, 1)));
@@ -8964,6 +8969,9 @@ impl<'a> Compiler<'a> {
         // twice is refused while the program is read, as the reference
         // refuses it.
         let mut spelled: Vec<String> = Vec::new();
+        // Whether a named argument, or a spread of pairs, has been
+        // written yet: what stands in order may not follow either.
+        let (mut after_name, mut after_pairs) = (false, false);
         while !self.at_symbol(&pair.close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
@@ -8979,6 +8987,14 @@ impl<'a> Compiler<'a> {
             let spread = marker && self.lang.bind_names && !labelled
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
+            if let [follows, unpacking, spread_late] = self.lang.call_order.as_slice() {
+                if !tagged && !named_spread && after_pairs {
+                    return Err(if spread { spread_late.clone() } else { format!("{follows}{unpacking}") });
+                }
+                if !tagged && !spread && after_name { return Err(follows.clone()); }
+            }
+            after_name |= tagged;
+            after_pairs |= named_spread && self.lang.bind_names;
             if tagged {
                 let word = self.look().lexeme.clone();
                 let twice = &self.lang.call_keyword_repeated;

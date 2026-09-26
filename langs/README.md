@@ -71,10 +71,10 @@ starred subscript, after the entire subscript has been read.
   `ext.builtin.complex.real` and `ext.builtin.complex.imag` name the two
   read-only parts; `ext.builtin.method.conjugate` names the method which
   turns the imaginary sign about. Arithmetic admits whole, real and complex
-  operands; powers admit real and complex exponents. Powers beyond
-  the finite range, nonfinite powers other than real zero or one, and
-  nonfinite multiplication or division between complex
-  operands still say the unready words. The ordinary real writer supplies
+  operands; powers admit real and complex exponents. Multiplication and
+  division recover infinities and signed zeros when intermediate products
+  lose them. Small integer powers retain the signs of zero components.
+  The ordinary real writer supplies
   the figures, preserving signed noughts and nonfinite parts.
 - `ext.builtin.complex.invalid`,
   `ext.builtin.complex.integer`, `ext.builtin.complex.zero`,
@@ -84,10 +84,15 @@ starred subscript, after the entire subscript has been read.
   still owed. Each is a list holding one message. Wrong constructor
   arguments borrow `ext.builtin.core.arity`; wrong method arguments borrow
   `ext.builtin.method.error.arguments`.
+- `ext.builtin.complex.power.overflow`, `ext.builtin.complex.power.modulo`
+  and `ext.builtin.complex.integer.overflow` name the complaints for a
+  power outside the finite range, a third non-null power argument, and
+  an integer too large to convert to a complex component.
 - `ext.builtin.complex.order` holds four pieces surrounding the sign and
   the two operand kinds in an ordering complaint. `ext.builtin.complex.floor`
-  holds three pieces surrounding the kinds for floor division, remainder
-  and divmod. Neither operation is reckoned for complex operands.
+  retains the three-piece floor-division complaint. Floor division,
+  remainder and divmod refuse complex operands using the shared binary
+  complaint, which includes the actual operation requested.
 
 ## Format rules
 
@@ -1424,6 +1429,28 @@ only. The extension labels so far, all from PHP:
   the same two, for a write or a removal upon a thing whose class names
   the members it holds and holds a value of its own under that name;
   `unready` refuses a working not yet furnished.
+- `ext.stmt.class.detail.globals`, `closure` and `keywords` name a
+  routine's global namespace, its tuple of cells and its keyword-only
+  spare arguments; `cell.contents` names what a cell holds, and
+  `cell.empty` refuses reading an empty one.
+  `namespace.amiss` gives two pieces around the kind of a value handed to
+  a routine as its namespace that is no dictionary, and `namespace.kept`
+  refuses taking the namespace away; `text.amiss` gives two pieces around
+  a routine's name or full name written over with anything but text;
+  `defaults.amiss`, `keywords.amiss` and `code.amiss` refuse the spare
+  arguments, the keyword-only spare arguments and the code written over
+  with a value of the wrong kind, and `code.free` gives three pieces
+  before the routine's name, the count of cells it closes over and the
+  count the code given it wants. `method.fixed` gives three pieces around
+  a member and the kind of a bound method that cannot be written;
+  `kind.fixed` and `kind.kept` refuse writing and taking away the class
+  of a value whose class cannot change. `arguments.none`,
+  `arguments.init` and `arguments.new` each give two pieces around a
+  class's name, for the root's making and constructing handed arguments
+  they do not take. `root.members` names, in order, the members every
+  thing has from the root: equal, unequal, below, at most, above, at
+  least, hash, representation, text, directory, state, reduction,
+  versioned reduction, size and subclass hook.
 - `ext.stmt.class.detail.descriptor.get`, `descriptor.set`,
   `descriptor.delete` and `descriptor.name`: the words a class member
   answers the descriptor protocol with, each a list of words. With
@@ -1530,7 +1557,9 @@ only. The extension labels so far, all from PHP:
   specification and showing as its text; rounding, asked with the
   places if any were given; complex conversion, which must answer a
   complex; and the directory, whose answer the dir builtin sorts. An
-  absent list leaves ordinary operations as they stood.
+  absent list leaves ordinary operations as they stood. The trailing entries
+  name instance and subclass checks, an iterator length hint, and the
+  reconstruction arguments returned by a complex value as two real parts.
   `ext.stmt.class.special.amiss` gives the words for a method answering
   with a value of the wrong kind. An object with neither text method is
   shown as `<C object>`, where C is its class name.
@@ -1834,7 +1863,10 @@ only. The extension labels so far, all from PHP:
   the count of values there were, and a fourth that stands before the
   count of places where one of them is starred, since such a place
   takes what is left over and the count is then only a floor. The long
-  one holds two pieces around the count of places. The unwalkable one
+  one holds two pieces around the count of places, with an optional third
+  piece introducing the actual length for builtin lists, tuples and maps.
+  Iterators keep only the expected count and are not consumed for a length.
+  The unwalkable one
   holds two pieces around the name of the kind that could not be
   walked. Where the pieces open with the name of an exception class the
   complaint is raised as one of that class, and a guard about the
@@ -3003,6 +3035,39 @@ only. The extension labels so far, all from PHP:
   and the place's. Where a definition leaves it unsaid the plainer
   `ext.syntax.call.amiss.duplicate` is said instead, so the complaint
   names the place alone.
+  Five more labels word the other mishaps of a call to a routine the
+  program wrote, each naming the routine by the name it goes by where
+  it was written, as the reference does; where one is left unsaid the
+  plainer words above are said instead.
+  `ext.syntax.call.amiss.absent` words places left empty in seven
+  pieces: the words before the routine's name, between it and the count,
+  after the count, after the kind when one place is empty, after the
+  kind when more are, and the two kinds — places filled in order, then
+  places filled only by name. The empty places' names follow, listed as
+  `ext.syntax.call.amiss.absent.names` has it: the marks before and after
+  each name, the words between names, between the two of a pair, and
+  before the last of three or more. Places filled in order are spoken of
+  first; only when none of them is empty are the named ones.
+  `ext.syntax.call.amiss.excess` words more arguments in order than
+  there are places for, in twelve pieces: before the routine's name,
+  after it, before and after the fewest places when some have defaults,
+  after the count of places when it is one and when it is otherwise
+  (these two also follow the count given, when some places filled only
+  by name were given too), before the count given, the endings when one
+  was given and otherwise, and the words before the count of places
+  filled by name and after it, when it is one and otherwise.
+  `ext.syntax.call.amiss.unexpected` takes three pieces about the
+  routine's name and a keyword no place answers to, and
+  `ext.syntax.call.amiss.ordered`, four — before the name, after it,
+  between the names and after the last — for places taken only in order
+  that the call named, which are listed in the order they were written;
+  it is said rather than the former when any such place was named.
+  These are checked in the reference's order: keywords first, then too
+  many arguments in order, then empty places.
+  `ext.syntax.call.amiss.order` refuses, as the text is read, an argument
+  written in order after a named one: its first piece is said, with the
+  second after it where a spread of pairs came before. Its third is said
+  for a spread of items written after a spread of pairs.
 - `ext.stmt.function.anonymous`: the name a routine written with
   `ext.stmt.function.short` answers to on its own — Python's `<lambda>`
   — in place of the word every other anonymous routine is compiled
@@ -3099,7 +3164,10 @@ only. The extension labels so far, all from PHP:
   the count of values there were, and a fourth that stands before the
   count of places where one of them is starred, since such a place
   takes what is left over and the count is then only a floor. The long
-  one holds two pieces around the count of places. The unwalkable one
+  one holds two pieces around the count of places, with an optional third
+  piece introducing the actual length for builtin lists, tuples and maps.
+  Iterators keep only the expected count and are not consumed for a length.
+  The unwalkable one
   holds two pieces around the name of the kind that could not be
   walked. Where the pieces open with the name of an exception class the
   complaint is raised as one of that class, and a guard about the
@@ -4201,8 +4269,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complex.floor` | - | - | `TypeError: unsupported operand type(s) for //: '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.imag` | - | - | `imag` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.integer` | - | - | `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'complex'` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.integer.overflow` | - | - | `OverflowError: int too large to convert to float` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.invalid` | - | - | `ValueError: complex() arg is a malformed string` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.order` | - | - | `TypeError: '` `' not supported between instances of '` `' and '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.power.modulo` | - | - | `ValueError: complex modulo` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.power.overflow` | - | - | `OverflowError: complex exponentiation` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.power.zero` | - | - | `ZeroDivisionError: 0.0 to a negative or complex power` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.real` | - | - | `real` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.unready` | - | - | `NotImplementedError: this complex operation is not supported` | - | - | - | - | - | - | - |
@@ -4892,12 +4963,21 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
 | `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.arguments.init` | - | - | `TypeError: ` `.__init__() takes exactly one argument (the instance to initialize)` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.arguments.new` | - | - | `TypeError: ` `.__new__() takes exactly one argument (the type to instantiate)` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.arguments.none` | - | - | `TypeError: ` `() takes no arguments` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.readonly` | - | - | `AttributeError: '` `' object attribute '` `' is read-only` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.cell.contents` | - | - | `cell_contents` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.cell.empty` | - | - | `ValueError: Cell is empty` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.delete` | - | - | `__delete__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.foreign` | - | - | `TypeError: descriptor '` `' for '` `' objects doesn't apply to a '` `' object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.get` | - | - | `__get__` | - | - | - | - | - | - | - |
@@ -4908,14 +4988,22 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.getitem` | - | - | `__class_getitem__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.globals` | - | - | `__globals__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.keywords` | - | - | `__kwdefaults__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.keywords.amiss` | - | - | `TypeError: __kwdefaults__ must be set to a dict object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.kind` | - | - | `__class__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.kind.fixed` | - | - | `TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.kind.kept` | - | - | `TypeError: can't delete __class__ attribute` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.locals` | - | - | `<locals>` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.main` | - | - | `__main__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.method.fixed` | - | - | `AttributeError: attribute '` `' of '` `' objects is not writable` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.module` | - | - | `__module__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro` | - | - | `__mro__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro.amiss` | - | - | `TypeError: cannot create a consistent method resolution order` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.doc` | - | - | `doc` | - | - | - | - | - | - | - |
@@ -4931,9 +5019,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.receiver` | - | - | `__self__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.remove` | - | - | `__delattr__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.root` | - | - | `object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.root.members` | - | - | `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__repr__` `__str__` `__dir__` `__getstate__` `__reduce__` `__reduce_ex__` `__sizeof__` `__subclasshook__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.set` | - | - | `__setattr__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.slots` | - | - | `__slots__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.subclass` | - | - | `__init_subclass__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.text.amiss` | - | - | `TypeError: ` ` must be set to a string object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
@@ -4954,7 +5044,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` `__getnewargs__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
@@ -5036,7 +5126,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
 | `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack.long` | - | - | `ValueError: too many values to unpack (expected ` `)` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.long` | - | - | `ValueError: too many values to unpack (expected ` `)` `, got ` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.rest` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.short` | - | - | `ValueError: not enough values to unpack (expected ` `, got ` `)` `at least ` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.unwalkable` | - | - | `TypeError: cannot unpack non-iterable ` ` object` | - | - | - | - | - | - | - |
@@ -5065,12 +5155,18 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield.unsupported` | - | - | `NotImplementedError: suspension in this form is not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.absent` | - | - | `TypeError: ` `() missing ` ` required ` ` argument: ` ` arguments: ` `positional` `keyword-only` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.absent.names` | - | - | `'` `'` `, ` ` and ` `, and ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: ` `() takes no keyword arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.excess` | - | - | `TypeError: ` `() takes ` `from ` ` to ` ` positional argument` ` positional arguments` ` but ` ` was given` ` were given` ` (and ` ` keyword-only argument)` ` keyword-only arguments)` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.keyword` | - | - | `TypeError: ` `() got multiple values for keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.order` | - | - | `SyntaxError: positional argument follows keyword argument` ` unpacking` `SyntaxError: iterable argument unpacking follows keyword argument unpacking` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.ordered` | - | - | `TypeError: ` `() got some positional-only arguments passed as keyword arguments: '` `, ` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.positional` | - | - | `TypeError: ` `() got multiple values for argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.repeated` | - | - | `SyntaxError: keyword argument repeated: ` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.unexpected` | - | - | `TypeError: ` `() got an unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |

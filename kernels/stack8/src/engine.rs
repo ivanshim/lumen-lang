@@ -2480,7 +2480,7 @@ impl<'a> Engine<'a> {
             Some(module) if !program.qualified.is_empty() => format!("{}.{}", module, program.qualified),
             _ => program.qualified.clone(),
         };
-        format!("{}{}{}{}{}", words[0], called, words[1], name, words[2])
+        self.said_whole(format!("{}{}{}{}{}", words[0], called, words[1], name, words[2]))
     }
 
     /// The words for a place filled twice over: once by an argument
@@ -2489,8 +2489,84 @@ impl<'a> Engine<'a> {
     /// it was written, and the words carry that name before the place.
     fn place_twice(&self, program: &Routine, name: &str) -> String {
         match self.lang.call_place_twice.as_slice() {
-            [opening, between, closing] => format!("{}{}{}{}{}", opening, program.qualified, between, name, closing),
+            [opening, between, closing] => self.said_whole(format!("{}{}{}{}{}", opening, Self::called_as(program), between, name, closing)),
             _ => Self::named_fault(&self.lang.call_duplicate, name),
+        }
+    }
+
+    /// Words that open with the class they belong to are marked as told
+    /// whole, where the language furnishes exceptions, so that nothing
+    /// is put over them.
+    fn said_whole(&self, said: String) -> String {
+        if self.lang.exceptions.is_empty() { said } else { format!("\0{said}") }
+    }
+
+    /// The name a routine goes by in the words about a call to it.
+    fn called_as(program: &Routine) -> &str {
+        if program.qualified.is_empty() { &program.ident } else { &program.qualified }
+    }
+
+    /// Names of places, each set between its marks, then joined: a pair
+    /// by its own words, three or more by commas with other words
+    /// before the last.
+    fn names_listed(&self, names: &[&str]) -> String {
+        let marks = &self.lang.call_absent_names;
+        let mark = |at: usize| marks.get(at).map_or("", String::as_str);
+        let each: Vec<String> = names.iter().map(|name| format!("{}{name}{}", mark(0), mark(1))).collect();
+        match each.as_slice() {
+            [] => String::new(),
+            [alone] => alone.clone(),
+            [first, second] => format!("{first}{}{second}", mark(3)),
+            [earlier @ .., second_last, last] => format!("{}{}{second_last}{}{last}", earlier.join(mark(2)), mark(2), mark(4)),
+        }
+    }
+
+    /// The words for places a call left empty: those filled in order,
+    /// or else those filled only by name.
+    fn places_empty(&self, program: &Routine, names: &[&str], by_name: bool) -> String {
+        let [before, missing, required, one, more, ordered, named] = self.lang.call_absent.as_slice() else {
+            return Self::named_fault(&self.lang.call_missing, names[0]);
+        };
+        let kind = if by_name { named } else { ordered };
+        let ending = if names.len() == 1 { one } else { more };
+        self.said_whole(format!("{before}{}{missing}{}{required}{kind}{ending}{}", Self::called_as(program), names.len(), self.names_listed(names)))
+    }
+
+    /// The words for more arguments in order than a routine has places
+    /// for, saying how many it takes (a span where some carry defaults)
+    /// and how many were given, with the named places filled beside.
+    fn places_exceeded(&self, program: &Routine, rules: &[u8], frame: &[Value], given: usize) -> String {
+        let words = &self.lang.call_excess;
+        if words.len() < 12 { return self.lang.call_amiss[0].clone(); }
+        let places = rules.iter().filter(|rule| **rule < 2).count();
+        let defaulted = program.carried.iter().filter(|at| rules.get(**at).map_or(false, |rule| *rule < 2)).count();
+        let by_name = rules.iter().zip(frame).filter(|(rule, held)| **rule == 2 && !matches!(held, Value::Blank)).count();
+        let mut said = format!("{}{}{}", words[0], Self::called_as(program), words[1]);
+        if defaulted > 0 { said.push_str(&format!("{}{}{}", words[2], places - defaulted, words[3])); }
+        said.push_str(&places.to_string());
+        said.push_str(if places == 1 && defaulted == 0 { &words[4] } else { &words[5] });
+        said.push_str(&format!("{}{}", words[6], given));
+        if by_name > 0 {
+            said.push_str(if given == 1 { &words[4] } else { &words[5] });
+            said.push_str(&format!("{}{}{}", words[9], by_name, if by_name == 1 { &words[10] } else { &words[11] }));
+        }
+        said.push_str(if given == 1 && by_name == 0 { &words[7] } else { &words[8] });
+        self.said_whole(said)
+    }
+
+    /// The words for a keyword no place answers to. Where the call named
+    /// places taken only in order, those are what is spoken of, in the
+    /// order the routine wrote them.
+    fn keyword_stray(&self, program: &Routine, rules: &[u8], spoken: &[String], name: &str) -> String {
+        let only_ordered: Vec<&str> = program.formals.iter().zip(rules)
+            .filter(|(formal, rule)| **rule == 1 && spoken.contains(formal))
+            .map(|(formal, _)| formal.as_str()).collect();
+        if let ([before, after, between, closing], false) = (self.lang.call_ordered.as_slice(), only_ordered.is_empty()) {
+            return self.said_whole(format!("{before}{}{after}{}{closing}", Self::called_as(program), only_ordered.join(between.as_str())));
+        }
+        match self.lang.call_unexpected.as_slice() {
+            [before, after, closing] => self.said_whole(format!("{before}{}{after}{name}{closing}", Self::called_as(program))),
+            _ => Self::named_fault(&self.lang.call_unknown, name),
         }
     }
 
@@ -2523,11 +2599,18 @@ impl<'a> Engine<'a> {
         let rest = rules.iter().position(|r| *r == 3);
         let pairs = rules.iter().position(|r| *r == 4);
         let mut tail = Vec::new();
+        // Arguments in order beyond the places are refused only once the
+        // named ones are placed, as the reference refuses them, so that a
+        // place named as well is what is spoken of first.
+        let mut in_order = 0;
         for (at, (_, value)) in items.iter().filter(|(name, _)| name.is_none()).enumerate() {
+            in_order = at + 1;
             if let Some(slot) = slots.get(at) { frame[*slot] = value.clone(); }
             else if rest.is_some() { tail.push(value.clone()); }
-            else { return Err(self.lang.call_amiss[0].clone().into()); }
         }
+        // The names the call gave, kept only where some place may be
+        // taken in order alone and a stray keyword must be told apart.
+        let spoken: Vec<String> = if rules.contains(&1) { items.iter().filter_map(|(name, _)| name.clone()).collect() } else { Vec::new() };
         let mut keywords = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for (name, value) in items {
@@ -2540,17 +2623,23 @@ impl<'a> Engine<'a> {
                 Some(i) if matches!(frame[i], Value::Blank) => frame[i] = value,
                 Some(_) => return Err(self.place_twice(program, &name).into()),
                 None if pairs.is_some() => keywords.push((Value::text(&name), value)),
-                None => return Err(Self::named_fault(&self.lang.call_unknown, &name).into()),
+                None => return Err(self.keyword_stray(program, rules, &spoken, &name).into()),
             }
+        }
+        if rest.is_none() && in_order > slots.len() {
+            return Err(self.places_exceeded(program, rules, &frame, in_order).into());
         }
         // What a gathering place takes is a tuple, as the language has
         // it: the spare worths stand together and cannot be changed.
         if let Some(i) = rest { frame[i] = Value::Tuple(Rc::new(tail)); }
         if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords.into())); }
-        for (i, value) in frame.iter().enumerate() {
-            if matches!(value, Value::Blank) && !program.carried.contains(&i) {
-                return Err(Self::named_fault(&self.lang.call_missing, &program.formals[i]).into());
-            }
+        // Empty places are spoken of all together: those filled in order
+        // first, and only when none of them is empty those filled by name.
+        for by_name in [false, true] {
+            let empty: Vec<&str> = frame.iter().enumerate()
+                .filter(|(i, held)| matches!(held, Value::Blank) && !program.carried.contains(i) && (rules[*i] == 2) == by_name)
+                .map(|(i, _)| program.formals[i].as_str()).collect();
+            if !empty.is_empty() { return Err(self.places_empty(program, &empty, by_name).into()); }
         }
         Ok(frame)
     }
@@ -2584,6 +2673,10 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        // A routine whose spare arguments or code the program wrote
+        // over runs as it now stands.
+        let revised = program.revised.borrow().clone();
+        if let Some(now) = revised { return self.invoke_top(&now, n); }
         // A call that would stand deeper than the language allows is
         // refused before anything of it runs, in the words the language
         // gives, so that a clause may take the fault and the run go on
@@ -4516,6 +4609,7 @@ impl<'a> Engine<'a> {
             // Every value is written to a specification, the writer
             // having marks of its own for each kind or words against
             // the kinds that take none.
+            74 | 79 => matches!(family, Kindred::Complex),
             72 => true,
             // A walk answers a guess at how many members it has left,
             // where the reference keeps one for a walk of its kind.
@@ -4593,6 +4687,16 @@ impl<'a> Engine<'a> {
         };
         if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
         let family = Self::native_family(receiver).ok_or_else(|| self.special_fault())?;
+        if family == Kindred::Complex {
+            if place == 74 { return Ok(receiver.contents()); }
+            if place == 79 {
+                let (r,i) = crate::complex::parts(&receiver.contents()).expect("complex receiver");
+                return Ok(Value::Tuple(Rc::new(vec![crate::complex::real(r), crate::complex::real(i)])));
+            }
+            if (4..=7).contains(&place) {
+                return Ok(Value::Declined(Rc::from(self.lang.special_declined.first().map_or("", String::as_str))));
+            }
+        }
         // A working handed a value of a kind it cannot take turns that
         // value down, leaving the other side of the pair to answer.
         if wanted == 1 && Self::family_turns_down(family, place) && !Self::family_takes(family, Self::native_family(&args[0])) {
@@ -4717,10 +4821,16 @@ impl<'a> Engine<'a> {
                 Err(fled) => { self.data.truncate(depth); self.carried = Some(fled); Err(String::new()) }
             };
         }
-        let held = receiver.contents();
+        let held = if (2..=7).contains(&place) && Self::sequence_row(receiver).is_some() {
+            receiver.clone()
+        } else { receiver.contents() };
         // Membership reads the other way round: the member stands before
-        // the container it is sought in.
-        if place == 14 { return self.special_dyad(&Action::Contains, &args[0], &held); }
+        // the container it is sought in. Keep a list's cell so equality
+        // can change the sequence while it is being searched.
+        if place == 14 {
+            let sequence = if Self::sequence_row(receiver).is_some() { receiver } else { &held };
+            return self.special_dyad(&Action::Contains, &args[0], sequence);
+        }
         // The signs of a pair. A reflected member is the same sign with
         // the value it was asked of on the right.
         let (sign, turned) = match place {
@@ -4742,7 +4852,9 @@ impl<'a> Engine<'a> {
             66 => (Action::BitOne, false), 71 => (Action::BitOne, true),
             _ => return Err(self.lang.method_errors["arguments"].clone()),
         };
-        let other = args[0].contents();
+        let other = if (2..=7).contains(&place) && Self::sequence_row(&args[0]).is_some() {
+            args[0].clone()
+        } else { args[0].contents() };
         if turned { self.special_dyad(&sign, &other, &held) } else { self.special_dyad(&sign, &held, &other) }
     }
 
@@ -5185,6 +5297,9 @@ impl<'a> Engine<'a> {
     /// in-place method's answer, unless it has none or declined.
     fn settled_in_place(&mut self, op: &Action, held: &Value, by: &Value) -> Res<Option<Value>> {
         let Some(place) = Self::in_place_method(op) else { return Ok(None) };
+        if place == 49 && self.lang.sequence_values {
+            if let Some(repeated) = self.sequence_in_place(true, held, by)? { return Ok(Some(repeated)); }
+        }
         let thing = held.contents();
         if !matches!(thing, Value::Object(_)) { return Ok(None); }
         Ok(match self.special_call(&thing, place, vec![by.clone()])? {
@@ -5193,7 +5308,71 @@ impl<'a> Engine<'a> {
         })
     }
 
+    fn sequence_row(value: &Value) -> Option<bool> {
+        match value {
+            Value::Array(_) => Some(true),
+            Value::Tuple(_) => Some(false),
+            Value::Collection(cell, _) | Value::Bond(cell) => Self::sequence_row(&cell.borrow()),
+            _ => None,
+        }
+    }
+
+    fn sequence_comparison(&mut self, op: &Action, left: &Value, right: &Value) -> Res<Value> {
+        if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
+        }
+        self.reaching += 1;
+        let answer = (|| {
+            let mut at = 0;
+            loop {
+                let (a, b) = (left.contents(), right.contents());
+                let (Value::Array(x) | Value::Tuple(x), Value::Array(y) | Value::Tuple(y)) = (&a, &b) else { unreachable!() };
+                if at == 0 && matches!(a, Value::Array(_)) && x.len() != y.len() && matches!(op, Action::Eq | Action::Ne) {
+                    return Ok(Value::Flag(matches!(op, Action::Ne)));
+                }
+                let (Some(one), Some(other)) = (x.get(at), y.get(at)) else {
+                    let order = x.len().cmp(&y.len());
+                    return Ok(Value::Flag(match op {
+                        Action::Eq => order.is_eq(), Action::Ne => !order.is_eq(),
+                        Action::Lt => order.is_lt(), Action::Le => order.is_le(),
+                        Action::Gt => order.is_gt(), _ => order.is_ge(),
+                    }));
+                };
+                if !self.sequence_equal_item(one, other)? {
+                    return match op {
+                        Action::Eq | Action::Ne => Ok(Value::Flag(matches!(op, Action::Ne))),
+                        _ => self.special_dyad(op, one, other),
+                    };
+                }
+                at += 1;
+            }
+        })();
+        self.reaching -= 1;
+        answer
+    }
+
+    fn sequence_equal_item(&mut self, stored: &Value, wanted: &Value) -> Res<bool> {
+        if stored.same_place(wanted) { return Ok(true); }
+        let answer = self.special_dyad(&Action::Eq, stored, wanted)?;
+        self.special_truth(&answer)
+    }
+
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.lang.sequence_values && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
+            && Self::sequence_row(a).is_some() && Self::sequence_row(a) == Self::sequence_row(b) {
+            return self.sequence_comparison(op, a, b);
+        }
+        if self.lang.sequence_values && matches!(op, Action::Contains | Action::Lacks)
+            && Self::sequence_row(b).is_some() {
+            let mut position = 0;
+            let found = loop {
+                let (Value::Array(row) | Value::Tuple(row)) = b.contents() else { break false };
+                let Some(item) = row.get(position).cloned() else { break false };
+                if self.sequence_equal_item(&item, a)? { break true; }
+                position += 1;
+            };
+            return Ok(Value::Flag(found == matches!(op, Action::Contains)));
+        }
         // A map written into with the bit-or sign is written in its own
         // cell, so every name for it sees the pairs it took. The right
         // side may be a map or any row of pairs; the pairs before an
@@ -5230,6 +5409,35 @@ impl<'a> Engine<'a> {
             return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
         }
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
+        // Two rows, or two tuples, holding things are alike member by
+        // member: the very same member is alike at once, and any other
+        // pair is asked as the program would ask it, so that a thing on
+        // either side answers for itself.
+        if let (Action::Eq | Action::Ne, Value::Array(x), Value::Array(y)) | (Action::Eq | Action::Ne, Value::Tuple(x), Value::Tuple(y)) = (op, a, b) {
+            if x.iter().chain(y.iter()).any(Self::holds_things) {
+                let mut alike = x.len() == y.len();
+                for (p, q) in x.iter().zip(y.iter()) {
+                    if !alike || Self::member_matches(p, q) { continue; }
+                    let told = self.special_dyad(&Action::Eq, p, q)?;
+                    alike = self.special_truth(&told)?;
+                }
+                return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
+            }
+        }
+        // Two cells stand as what they hold, an empty one before any
+        // other and alike only with another empty one.
+        if let (Value::Adapter(x), Value::Adapter(y)) = (a, b) {
+            if x.0 == 31 && y.0 == 31 && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                let (left, right) = (Self::cell_held(x), Self::cell_held(y));
+                return match (left, right) {
+                    (Some(left), Some(right)) => self.special_dyad(op, &left, &right),
+                    (left, right) => {
+                        let order = left.is_some().cmp(&right.is_some());
+                        Ok(Value::Flag(match op { Action::Eq => order.is_eq(), Action::Ne => order.is_ne(), Action::Lt => order.is_lt(), Action::Le => order.is_le(), Action::Gt => order.is_gt(), _ => order.is_ge() }))
+                    }
+                };
+            }
+        }
         // A view standing beside a set under a set sign, or ordered
         // against one, is turned into a set first, as the plain working
         // does, but through the road that asks a thing among its
@@ -5314,7 +5522,7 @@ impl<'a> Engine<'a> {
         }
         // A thing standing for a whole number is that number wherever a
         // row, a text or a range is read at a place.
-        if let (Some((11, _)), Value::Object(_), true) = (places, b, Self::counts_places(a)) {
+        if let (Some((11, _)), Value::Object(_), true) = (places, b, Self::counts_places(a) || matches!(a, Value::Bytes(..))) {
             if let Some(index) = self.special_index(b)? { return self.special_dyad(op, a, &index); }
         }
         if let Some((direct, reflected)) = places {
@@ -5339,6 +5547,14 @@ impl<'a> Engine<'a> {
             let same_class = matches!((a, b), (Value::Object(x), Value::Object(y)) if Rc::ptr_eq(&x.class, &y.class));
             if !first_right && (direct < 8 || !same_class) {
                 if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
+            }
+            if matches!(op, Action::Mul) {
+                let sequence = |v: &Value| matches!(v, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Bytes(..));
+                if sequence(a) && Self::plain_thing(b) {
+                    if let Some(times) = self.special_index(b)? { return self.special_dyad(op, a, &times); }
+                } else if sequence(b) && Self::plain_thing(a) {
+                    if let Some(times) = self.special_index(a)? { return self.special_dyad(op, &times, b); }
+                }
             }
             // An arithmetic, matrix or bit working that a plain thing
             // stands in and neither side's methods took is refused with
@@ -5449,6 +5665,11 @@ impl<'a> Engine<'a> {
                 }
             }
             let outcome = self.special_dyad(op, left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
+            if let (Action::Mul, Ok(Value::Tuple(row))) = (op, &outcome) {
+                let from_subclass = left.iter().chain(right.iter())
+                    .any(|worth| matches!(worth, Value::Tuple(source) if Rc::ptr_eq(source, row)));
+                if from_subclass { return Ok(Value::Tuple(Rc::new(row.as_ref().clone()))); }
+            }
             // A thing standing on a builtin kind is named by its own
             // class where the working is refused by the kinds it was
             // handed, rather than by the kind of the worth beneath it:
@@ -5638,7 +5859,11 @@ impl<'a> Engine<'a> {
         }
         if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
             let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
-            return Ok(Some(self.builtin(op, &word, &mut settled)?));
+            let answer = self.builtin(op, &word, &mut settled)?;
+            if let (Builtin::Tuple, Value::Tuple(row)) = (op, &answer) {
+                return Ok(Some(Value::Tuple(Rc::new(row.as_ref().clone()))));
+            }
+            return Ok(Some(answer));
         }
         let args: &[Value] = if changed { &settled } else { args };
         let first = if changed { args.first() } else { first };
@@ -5699,7 +5924,10 @@ impl<'a> Engine<'a> {
                 match self.special_call(&args[0], 74, Vec::new())? {
                     Some(answer @ Value::Complex(_)) => answer,
                     Some(_) => return Err(self.special_fault()),
-                    None => return Ok(None),
+                    None => match Self::worth_of(&args[0]).filter(|v| matches!(v, Value::Complex(_))) {
+                        Some(value) => value,
+                        None => return Ok(None),
+                    },
                 }
             }
             Builtin::Format if matches!(args.first(), Some(Value::Object(_))) && args.len() <= 2 => {
@@ -6296,6 +6524,7 @@ impl<'a> Engine<'a> {
                     self.data.push(answer);
                     return Ok(());
                 }
+                let v = Self::worth_of(&v).filter(|n| matches!(n, Value::Complex(_))).unwrap_or(v);
                 match v {
                     Value::Imaginary(_, words) => return Err(words.to_string().into()),
                     Value::Flag(flag) => Value::Small(i64::from(flag)),
@@ -6536,6 +6765,7 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?);
+                let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
                         let mut found = Vec::new();
@@ -6582,7 +6812,14 @@ impl<'a> Engine<'a> {
                     let middle = items.drain(*at..until).collect();
                     items.insert(*at, Value::array(middle));
                 } else if items.len() > *count {
-                    let told = self.apart_fault(&self.lang.unpack_long, &[count.to_string()]);
+                    let mut expected = count.to_string();
+                    if sized_builtin {
+                        if let Some(join) = self.lang.unpack_long.get(2) {
+                            expected.push_str(join);
+                            expected.push_str(&items.len().to_string());
+                        }
+                    }
+                    let told = self.apart_fault(&self.lang.unpack_long, &[expected]);
                     return Err(told.unwrap_or_else(|| "Too many values".to_string()).into());
                 }
                 Value::array(items)
@@ -8433,7 +8670,9 @@ impl<'a> Engine<'a> {
             }
             Action::Mul if rowed(a) || rowed(b) => {
                 let (row, by) = if rowed(a) { (a, b) } else { (b, a) };
-                let repeated = self.sequence_repeated(&items(row), self.sequence_count(by)?)?;
+                let count = self.sequence_count(by)?;
+                if matches!(row, Value::Tuple(_)) && count == 1 { return Ok(Some(row.clone())); }
+                let repeated = self.sequence_repeated(&items(row), count)?;
                 Ok(Some(match row { Value::Tuple(_) => Value::Tuple(Rc::new(repeated)), _ => Value::array(repeated) }))
             }
             // Text repeated stands apart, since the count it takes is
@@ -8441,10 +8680,8 @@ impl<'a> Engine<'a> {
             // answered here, so that it is refused in these words.
             Action::Mul if texted(a) || texted(b) => {
                 let by = if texted(a) { b } else { a };
-                match by {
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(None),
-                    other => Err(self.sequence_repeat_fault(other)),
-                }
+                self.sequence_count(by)?;
+                Ok(None)
             }
             Action::Lt | Action::Le | Action::Gt | Action::Ge if rowed(a) && rowed(b) && a.core_kind() == b.core_kind() => {
                 let (left, right) = (items(a), items(b));
@@ -8484,7 +8721,9 @@ impl<'a> Engine<'a> {
         let (Value::Bond(cell) | Value::Collection(cell, _)) = target else { return Ok(None) };
         let Value::Array(items) = cell.borrow().clone() else { return Ok(None) };
         let row = if repeat {
-            self.sequence_repeated(&items, self.sequence_count(&given.contents())?)?
+            let given = given.contents();
+            let count = self.special_index(&given)?.unwrap_or(given);
+            self.sequence_repeated(&items, self.sequence_count(&count)?)?
         } else {
             let mut row = items.as_ref().clone();
             let taken = self.comprehension_items(given).map_err(|_| self.core_fault("core.uniterable", &given.core_kind()))?;
@@ -8562,7 +8801,7 @@ impl<'a> Engine<'a> {
             // rows do; two of different kinds, or of a kind with no order
             // at all, cannot. The two kinds of set are one kind here,
             // since either holds members the other may hold as well.
-            let orderless = Self::order_family(a) != Self::order_family(b) || matches!(a, Value::Null | Value::Map(_));
+            let orderless = Self::order_family(a) != Self::order_family(b) || matches!(a, Value::Null | Value::Map(_) | Value::Counted(_));
             if orderless && !(numeric(a) && numeric(b)) && !matches!((a, b), (Value::Text(_), Value::Text(_))) && arith::order_values(a, b).is_none() {
                 let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", _ => ">=" };
                 let words = &self.lang.order_unsupported;
@@ -9896,6 +10135,24 @@ impl<'a> Engine<'a> {
     }
 
     /// Membership asks identity before equality, and counts truth as one.
+    /// Whether a value is, or holds among its members however deep,
+    /// a thing that may answer equality for itself.
+    fn holds_things(value: &Value) -> bool {
+        match value {
+            Value::Object(_) => true,
+            Value::Array(items) | Value::Tuple(items) => items.iter().any(Self::holds_things),
+            Value::Collection(..) | Value::Bond(_) => Self::holds_things(&value.contents()),
+            _ => false,
+        }
+    }
+
+    /// What a cell holds, or nothing where it is empty.
+    pub(super) fn cell_held(cell: &(u8, Vec<Value>)) -> Option<Value> {
+        let (Some(Value::Binding(held)) | Some(Value::Bond(held))) = cell.1.first() else { return None };
+        let value = held.borrow().clone();
+        if matches!(value, Value::Blank | Value::Gap) { None } else { Some(value) }
+    }
+
     fn member_matches(a: &Value, b: &Value) -> bool {
         if let Value::Bond(cell) = a { return Self::member_matches(&cell.borrow(), b); }
         if let Value::Bond(cell) = b { return Self::member_matches(a, &cell.borrow()); }
@@ -10533,17 +10790,21 @@ impl<'a> Engine<'a> {
                     destination = self.member_of(module, &route[1])?.unwrap_or(Value::Null);
                     if matches!(destination, Value::Null) { return Ok(Value::Null); }
                 }
-                let mut parts = Vec::new();
-                for value in &args { parts.push(self.special_text(value, false)?); }
-                let text = parts.join(&between) + &ending;
                 let writer = match self.member_of(destination.clone(), &route[2])? {
                     Some(writer) => writer,
-                    None => return Err(self.lang.print_file_unready[0].clone()),
+                    None => return Err(self.member_amiss(&destination, &route[2])),
                 };
-                self.call_held(writer, vec![Value::text(&text)])?;
+                for (index, value) in args.iter().enumerate() {
+                    if index > 0 { self.call_held(writer.clone(), vec![Value::text(&between)])?; }
+                    let text = self.special_text(value, false)?;
+                    self.call_held(writer.clone(), vec![Value::text(&text)])?;
+                }
+                self.call_held(writer, vec![Value::text(&ending)])?;
                 if flushed {
                     let word = self.lang.print_flush[0].clone();
-                    if let Some(method) = self.member_of(destination, &word)? { self.call_held(method, Vec::new())?; }
+                    let method = self.member_of(destination.clone(), &word)?
+                        .ok_or_else(|| self.member_amiss(&destination, &word))?;
+                    self.call_held(method, Vec::new())?;
                 }
                 return Ok(Value::Null);
             }
@@ -10601,6 +10862,14 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        // A row lengthened by anything that walks takes what the walk
+        // yields, read out first as a `for` loop would read it: the
+        // free working knows only the kinds it lists by name.
+        let mut args = args;
+        if operation == "extend" && args.len() == 1 && matches!(receiver.contents(), Value::Array(_))
+            && !matches!(args[0].contents(), Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
+            args[0] = Value::array(self.comprehension_items(&args[0])?);
+        }
         // A special member asked for by name on a value of a builtin
         // kind. Each hands its work to the builtin or the sign that
         // already does it, so that the answer and the refusal are the
@@ -10635,7 +10904,7 @@ impl<'a> Engine<'a> {
         // A tuple answers to the two methods that only look through it,
         // and a row searched for a value it does not hold names that
         // value; both are worded by the definition.
-        if self.lang.sequence_values && matches!(operation, "index" | "count") && matches!(&contents, Value::Tuple(_) | Value::Array(_)) {
+        if self.lang.sequence_values && matches!(operation, "index" | "count" | "remove") && matches!(&contents, Value::Tuple(_) | Value::Array(_)) && (operation != "remove" || matches!(&contents, Value::Array(_))) {
             let (Value::Tuple(items) | Value::Array(items)) = &contents else { unreachable!() };
             let most = if operation == "index" { 3 } else { 1 };
             if !named.is_empty() || args.is_empty() || args.len() > most {
@@ -10643,27 +10912,45 @@ impl<'a> Engine<'a> {
             }
             let whole = |v: &Value| -> Res<i64> { match v.contents() {
                 Value::Small(n) => Ok(n), Value::Flag(t) => Ok(i64::from(t)),
-                Value::Huge(n) => Ok(n.to_i64().unwrap_or(i64::MAX)),
+                Value::Huge(n) => Ok(n.to_i64().unwrap_or_else(|| if n.sign() == num_bigint::Sign::Minus { i64::MIN } else { i64::MAX })),
                 _ => Err(self.lang.method_errors["arguments"].clone()),
             }};
             let within = |n: i64| -> usize {
                 let place = if n < 0 { n.saturating_add(items.len() as i64) } else { n };
-                place.clamp(0, items.len() as i64) as usize
+                place.max(0) as usize
             };
             let from = match args.get(1) { Some(v) => within(whole(v)?), None => 0 };
             let upto = match args.get(2) { Some(v) => within(whole(v)?), None => items.len() };
-            let found = (from..upto.max(from)).filter(|i| Self::member_matches(&args[0], &items[*i]));
-            if operation == "count" { return Ok(Value::Small(found.count() as i64)); }
+            let stop = if args.get(2).is_none() { usize::MAX } else { upto };
+            let mut at = from;
+            let mut count = 0;
+            while at < stop {
+                let (Value::Array(current) | Value::Tuple(current)) = receiver.contents() else { break };
+                let Some(item) = current.get(at).cloned() else { break };
+                if self.sequence_equal_item(&item, &args[0])? {
+                    if operation == "index" { return Ok(Value::Small(at as i64)); }
+                    if operation == "remove" {
+                        if let Value::Collection(cell, _) = receiver {
+                            if let Value::Array(row) = &mut *cell.borrow_mut() {
+                                if at < row.len() { Rc::make_mut(row).remove(at); }
+                            }
+                        }
+                        return Ok(Value::Null);
+                    }
+                    count += 1;
+                }
+                at += 1;
+            }
+            if operation == "count" { return Ok(Value::Small(count)); }
+            if operation == "remove" { return Err(self.lang.method_errors["remove"].clone()); }
             let words = &self.lang.sequence_missing;
             let piece = |i: usize| words.get(i).map_or("", String::as_str);
-            return match found.into_iter().next() {
-                Some(at) => Ok(Value::Small(at as i64)),
-                None => Err(match &contents {
-                    Value::Tuple(_) => piece(2).to_string(),
-                    _ => format!("{}{}{}", piece(0), args[0].representation(&self.wording()), piece(1)),
-                }),
-            };
+            return Err(match &contents {
+                Value::Tuple(_) => piece(2).to_string(),
+                _ => format!("{}{}{}", piece(0), args[0].representation(&self.wording()), piece(1)),
+            });
         }
+
         if operation == "encode" && matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             let mut supplied = args;
             for (key, value) in named {
@@ -12547,6 +12834,9 @@ impl<'a> Engine<'a> {
             }
             Builtin::CopyValue => {
                 arity(2)?;
+                if matches!(args[0], Value::Generator(_)) {
+                    return Err("TypeError: cannot pickle 'generator' object".into());
+                }
                 duplicate_value(&args[0], matches!(args[1], Value::Flag(true)), &mut HashMap::new(), &mut self.made)
             }
             Builtin::CallOutcome => {
@@ -14687,7 +14977,8 @@ impl Engine<'_> {
         if named.is_empty() {
             if b == Builtin::Hash && matches!(args.first(), Some(Value::Bytes(..))) { return self.byte_call(17, &args); }
             if b == Builtin::InstanceOf && matches!(args.get(1), Some(Value::ByteKind(..))) { return self.byte_call(16, &args); }
-            if b == Builtin::Repr && args.len() == 1 && matches!(args[0], Value::Map(_)) {
+            if b == Builtin::Repr && args.len() == 1 && (matches!(args[0], Value::Map(_))
+                || window.is_none() && matches!(args[0], Value::Array(_) | Value::Tuple(_))) {
                 return self.special_text(&args[0], true).map(|text| Value::text(&text));
             }
             if b == Builtin::Repr && matches!(args.first(), Some(Value::Text(_))) { return crate::strings::run(crate::strings::TextOp::Repr, name, &args, self.lang, &self.wording()); }
@@ -14824,6 +15115,9 @@ impl Engine<'_> {
             }
             Builtin::Tuple | Builtin::Set | Builtin::Frozen => {
                 arity(0, 1)?;
+                if b == Builtin::Tuple {
+                    if let Some(value @ Value::Tuple(_)) = args.first() { return Ok(value.clone()); }
+                }
                 // A set that cannot be changed, handed to the maker of
                 // its own kind, is handed straight back: nothing may
                 // alter it, so a fresh one would be the same set under
@@ -15051,7 +15345,7 @@ impl Engine<'_> {
             }
             Builtin::Divmod => {
                 arity(2, 2)?;
-                if args.iter().any(|v| matches!(v, Value::Complex(_))) { return Err(crate::complex::floor_fault(self.lang, &args[0], &args[1])); }
+                if args.iter().any(|v| matches!(v, Value::Complex(_))) { return Err(crate::complex::floor_fault(self.lang, &args[0], &args[1], "divmod()")); }
                 let (a,z) = (number(&args[0]), number(&args[1]));
                 if matches!(a, Value::Small(_) | Value::Huge(_)) && matches!(z, Value::Small(_) | Value::Huge(_)) {
                     let divisor = z.as_big()?;
@@ -15076,7 +15370,7 @@ impl Engine<'_> {
             Builtin::Power => {
                 arity(2, 3)?;
                 if args.iter().any(|v| matches!(v, Value::Complex(_))) {
-                    if args.len() != 2 { return Err(crate::complex::fault(self.lang, "unready")); }
+                    if args.len() == 3 && !matches!(args[2], Value::Null) { return Err(crate::complex::fault(self.lang, "power.modulo")); }
                     return crate::complex::work(self.lang, &Action::Power, &args[0], &args[1]);
                 }
                 if args.len() == 3 && !matches!(args[2], Value::Null) {
@@ -15093,17 +15387,7 @@ impl Engine<'_> {
                     if modulus.is_negative() && !n.is_zero() { n -= positive; }
                     Value::of_big(n)
                 } else {
-                    let base = number(&args[0]); let exp = number(&args[1]);
-                    let (ep,eq) = arith::parts(&exp).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    if ep.is_negative() || eq != BigInt::from(1) || matches!(base, Value::Real(_)) || matches!(exp, Value::Real(_)) {
-                        let (bp,bq) = arith::parts(&base).ok_or_else(|| self.core_fault("core.unready", name))?;
-                        let (x,y) = (crate::value::as_binary(&bp,&bq),crate::value::as_binary(&ep,&eq));
-                        if x == 0.0 && y < 0.0 { return Err(self.core_fault("core.power.zero", "")); }
-                        let answer = x.powf(y);
-                        if answer.is_nan() { return Err(self.core_fault("core.unready", name)); }
-                        if answer.is_infinite() { return Err(self.core_fault("core.power.overflow", "")); }
-                        crate::value::real_of(answer,arith::DEFAULT_PLACES)
-                    } else { arith::calculate(Operation::Raise, &base, &exp).ok_or_else(|| self.core_fault("core.unready", name))?? }
+                    self.special_dyad(&Action::Power, &args[0], &args[1])?
                 }
             }
             Builtin::Round => {
