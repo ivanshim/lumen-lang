@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: print file objects are not supported
+PythonError: AttributeError: 'str' object has no attribute 'write'

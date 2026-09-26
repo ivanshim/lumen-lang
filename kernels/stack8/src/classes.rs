@@ -499,12 +499,18 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) => match w.0 {
                 0 => Ok(w.1[0].clone()),
                 1 => {
-                    if args.len()!=1{return Err(self.class_refusal());}
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
+                    if args.len()!=1 { self.root_refuses_arguments(c,true)?; }
                     self.made += 1;
                     Ok(Value::Object(Rc::new(Instance {class:c.clone(),fields:RefCell::new(vec![]),mark:self.made})))
                 }
                 2 if args.len()==1 => Ok(Value::Null),
+                2 => {
+                    let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()); };
+                    self.root_refuses_arguments(&o.class,false)?;
+                    Ok(Value::Null)
+                }
+                30 => self.root_work(&w.1[0].plain(),args),
                 // The maker of a builtin kind: given the class to make a
                 // thing of and what the kind's builtin takes.
                 14 if !args.is_empty() => {
@@ -656,10 +662,101 @@ impl<'a> Engine<'a> {
                     let bound=self.bind_class_value(f,Some(object.clone()),o.class.clone())?;
                     let answer = self.class_apply(bound,args)?;
                     if !matches!(answer,Value::Null) { return Err(self.class_refusal()); }
-                } else if !args.is_empty() && kind.is_none() { return Err(self.class_refusal()); }
+                } else if !args.is_empty() && kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() {
+                    self.root_refuses_arguments(&c,true)?;
+                }
             }
         }
         Ok(object)
+    }
+    /// The root's making (`allocating`) or constructing, handed more
+    /// than the class or the thing: refused as CPython refuses it,
+    /// naming the root where the class wrote over the one working and
+    /// the class where it wrote over neither.
+    fn root_refuses_arguments(&self, c: &Rc<Class>, allocating: bool) -> Flow<()> {
+        let made_own = self.class_value(c,self.class_word("allocate")).is_some();
+        let built_own = self.lang.constructor.as_deref().map_or(false,|n| self.class_value(c,n).is_some());
+        let (own, other, part) = if allocating {(made_own, built_own, "arguments.new")} else {(built_own, made_own, "arguments.init")};
+        let (part, named) = if own {(part, self.class_word("root").to_string())}
+            else if !other {(if allocating {"arguments.none"} else {part}, c.name.clone())}
+            else {return Ok(())};
+        let pieces = self.lang.class_details.get(part).cloned().unwrap_or_default();
+        if pieces.len() != 2 { return Err(self.class_refusal()); }
+        Err(format!("{}{named}{}", pieces[0], pieces[1]).into())
+    }
+    /// A member every thing and every class has from the root, where
+    /// the name is one: the members the language names for it, and the
+    /// hooks for making, constructing, reading, writing, removing and
+    /// formatting. Given the class of a thing, the hooks come bare, to
+    /// be bound to the thing.
+    fn root_member(&self, name: &str, of: Option<&Rc<Class>>) -> Option<Value> {
+        if name.is_empty() { return None; }
+        if self.lang.class_details.get("root.members").map_or(false,|names| names.iter().any(|n| n==name)) {
+            return Some(Self::adapter(30,vec![Value::text(name)]));
+        }
+        of?;
+        let hook = if name==self.class_word("allocate") {1}
+            else if self.lang.constructor.as_deref()==Some(name) || name==self.class_word("subclass") {2}
+            else if name==self.class_word("get") {10} else if name==self.class_word("set") {11}
+            else if name==self.class_word("remove") {12}
+            else if self.lang.class_special.get(72).map_or(false,|word| word==name) {19}
+            else {return None};
+        Some(Self::adapter(hook,vec![]))
+    }
+    /// The root's own working of one of its members, handed the value
+    /// it works upon first.
+    fn root_work(&mut self, name: &str, args: Vec<Value>) -> Flow<Value> {
+        let place = self.lang.class_details.get("root.members").and_then(|names| names.iter().position(|n| n==name)).unwrap_or(usize::MAX);
+        let declined = || Value::Declined(Rc::from(self.lang.special_declined.first().map(String::as_str).unwrap_or("NotImplemented")));
+        let Some(subject) = args.first().cloned() else { return Err(self.class_refusal()); };
+        let other = args.get(1).cloned();
+        Ok(match place {
+            // Alike only with itself; unlike wherever it is not alike.
+            0 => match other { Some(v) if Self::member_matches(&subject,&v) => Value::Flag(true), _ => declined() },
+            1 => {
+                let Some(v) = other else { return Err(self.class_refusal()); };
+                match self.special_call(&subject,2,vec![v.clone()]).map_err(Fault::Note)? {
+                    Some(told @ Value::Declined(_)) => told,
+                    Some(told) => Value::Flag(!self.special_truth(&told).map_err(Fault::Note)?),
+                    None => if Self::member_matches(&subject,&v) {Value::Flag(false)} else {declined()},
+                }
+            }
+            2..=5 | 14 => declined(),
+            6 => match &subject {
+                Value::Object(o) => Value::Small(o.mark as i64),
+                other => other.core_hash().map(Value::Small).ok_or_else(|| self.core_fault("core.unhashable",&other.core_kind()))?,
+            },
+            7 | 8 => match &subject {
+                Value::Object(o) if place == 7 => {
+                    let module = self.class_word("main");
+                    Value::text(&if module.is_empty() { format!("<{} object>", o.class.name) } else { format!("<{module}.{} object at 0x1>", o.class.name) })
+                }
+                other => Value::text(&self.special_text(other,true).map_err(Fault::Note)?),
+            },
+            9 => {
+                let mut names: Vec<String> = Vec::new();
+                if let Value::Object(o) = &subject {
+                    names.extend(o.fields.borrow().iter().filter(|(n,_)| !n.starts_with('\0')).map(|(n,_)| n.clone()));
+                    for c in std::iter::once(&o.class).chain(o.class.lineage.iter()) { names.extend(c.shared.borrow().iter().map(|(n,_)| n.clone())); }
+                }
+                names.sort(); names.dedup();
+                Value::array(names.iter().map(|n| Value::text(n)).collect())
+            }
+            10 => self.root_state(&subject),
+            11 | 12 => {
+                let class = match &subject { Value::Object(o) => Value::Class(o.class.clone()), other => self.class_type(vec![other.clone()])? };
+                Value::Tuple(Rc::new(vec![class, Value::Tuple(Rc::new(Vec::new())), self.root_state(&subject)]))
+            }
+            13 => Value::Small(match &subject { Value::Object(o) if o.class.name != self.class_word("root") => 24, _ => 16 }),
+            _ => return Err(self.class_refusal()),
+        })
+    }
+    /// What a thing holds of its own, as a dictionary, or nothing where
+    /// it holds nothing.
+    fn root_state(&self, subject: &Value) -> Value {
+        let Value::Object(o) = subject else { return Value::Null };
+        let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with('\0') && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
+        if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) }
     }
     fn missing_member(&self, subject: &Value, name: &str) -> Fault {
         // A module and a kind are named by their own name in words of
@@ -819,6 +916,7 @@ impl<'a> Engine<'a> {
                         else if name==self.class_word("remove") {Some(12)} else {None};
                     if let Some(i)=index {return Ok(Self::adapter(i,vec![]));}
                 }
+                if let Some(root)=self.root_member(name,None) {return Ok(root);}
             }
             Value::Object(o) => {
                 if !plain { if let Some(f)=self.class_value(&o.class,self.class_word("get")) {
@@ -844,6 +942,9 @@ impl<'a> Engine<'a> {
                     if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }
                 }
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|!matches!(v.contents(),Value::Set(_))) {
+                    if matches!(worth.contents(), Value::Complex(_)) && self.native_special(&worth, name) {
+                        return Ok(Value::ValueMethod(Rc::new((worth, name.to_string()))));
+                    }
                     if let Some(op)=self.lang.value_methods.get(name).cloned() {
                         // The parts of a complex number are read rather
                         // than called, as they are on the number itself.
@@ -868,6 +969,14 @@ impl<'a> Engine<'a> {
                         return Ok(Self::adapter(3,vec![Value::text(name),worth]));
                     }
                 }
+                if let Some(root)=self.root_member(name,Some(&o.class)) {
+                    // The root's own maker takes the class rather than a
+                    // thing, and the hook for a class stood on hears
+                    // from the class; any other is bound to the thing.
+                    if name==self.class_word("allocate") {return Ok(root);}
+                    let receiver=if name==self.class_word("subclass") {Value::Class(o.class.clone())} else {subject.clone()};
+                    return Ok(Self::adapter(3,vec![root,receiver]));
+                }
             }
             Value::Method(o,f) => {
                 if name==self.class_word("receiver") {return Ok(Value::Object(o.clone()));}
@@ -875,9 +984,9 @@ impl<'a> Engine<'a> {
                 return self.class_get(Value::Routine(f.clone()),name,true);
             }
             Value::Routine(f) => {
-                if let Some((_,members))=self.function_members.iter().find(|(v,_)| v.equals(&subject)) {
-                    if let Some((_,v))=members.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
-                }
+                let f=&Self::routine_now(f);
+                if let Some(v)=self.routine_member(&subject,name) {return Ok(v);}
+                if name==self.class_word("globals") && f.written_in.is_none() {return Ok(Value::Bond(self.outer_book_made()));}
                 if name==self.class_word("name") {return Ok(Value::text(&f.ident));}
                 if name==self.class_word("qualified") {return Ok(Value::text(&f.qualified));}
                 if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
@@ -887,8 +996,21 @@ impl<'a> Engine<'a> {
                     if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
                     return Ok(if values.is_empty(){Value::Null}else{Value::Tuple(Rc::new(values))});
                 }
+                if name==self.class_word("keywords") {
+                    let pairs=Self::spare_arguments(f,true);
+                    return Ok(if pairs.is_empty(){Value::Null}else{Value::Map(Rc::new(pairs.into_iter().map(|(i,v)|(Value::text(&f.formals[i]),v)).collect()))});
+                }
                 if name==self.class_word("code") {return Ok(Self::adapter(7,vec![subject.clone()]));}
                 if name==self.class_word("namespace") { let at=self.function_storage(&subject); return Ok(Value::Fields(self.function_members[at].1.clone())); }
+                // The cells a routine closes over, in the order of the
+                // names they stand for, or nothing where it closes over
+                // none.
+                if name==self.class_word("closure") {
+                    if f.enclosed.is_empty() {return Ok(Value::Null);}
+                    let mut named:Vec<(&str,&Value)>=f.enclosed.iter().map(|(at,cell)|(f.idents.get(*at).map_or("",String::as_str),cell)).collect();
+                    named.sort_by(|x,y|x.0.cmp(y.0));
+                    return Ok(Value::Tuple(Rc::new(named.into_iter().map(|(_,cell)|Self::adapter(31,vec![cell.clone()])).collect())));
+                }
                 // A routine answers its own call, so reading it back and
                 // calling it does what calling the routine does.
                 if name==self.class_word("call") { return Ok(Value::Routine(f.clone())); }
@@ -901,6 +1023,7 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
+                    let f=&Self::routine_now(f);
                     if name==self.class_word("argcount") {return Ok(Value::Small(f.parameter_rules.as_ref().map_or(f.formals.len(),|rules|rules.iter().filter(|r|**r<2).count()) as i64));}
                     if name==self.class_word("varnames") {return Ok(Value::Tuple(Rc::new(f.idents.iter().filter(|n|!n.starts_with('#')).map(|n|Value::text(n)).collect())));}
                 }
@@ -908,13 +1031,168 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) if w.0==4 || w.0==5 => {
                 if name==self.class_word("function"){return Ok(w.1[0].clone());}
             }
+            Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
+                return Self::cell_held(w).ok_or_else(||self.class_word("cell.empty").to_string().into());
+            }
             Value::Adapter(w) if w.0==3 => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
             }
             _ => {}
         }
+        // Whatever is not a thing is of the kind the kind builtin names
+        // for it, where it names one.
+        if name==self.class_word("kind") && !matches!(subject,Value::Object(_)) {
+            if let Ok(kind)=self.class_type(vec![subject.clone()]) {return Ok(kind);}
+        }
         Err(self.missing_member(&subject,name))
+    }
+    /// A routine as it now stands, its spare arguments or code written
+    /// over by the program or not.
+    fn routine_now(f: &Rc<Routine>) -> Rc<Routine> {
+        f.revised.borrow().clone().unwrap_or_else(|| f.clone())
+    }
+    /// The spare arguments a routine carries, slot by slot in the order
+    /// they were written: those taken by position, or those taken by
+    /// name alone.
+    fn spare_arguments(f: &Routine, named: bool) -> Vec<(usize, Value)> {
+        f.carried.iter().zip(&f.held)
+            .filter(|(i,_)| **i<f.formals.len() && (f.parameter_rules.as_ref().map_or(0,|rules|rules[**i])==2)==named)
+            .map(|(i,v)|(*i,v.clone())).collect()
+    }
+    /// A copy of a routine carrying other spare arguments: those taken
+    /// by position laid over the last such parameters, and those taken
+    /// by name alone over the parameters so named. Nothing given keeps
+    /// what it carried.
+    fn with_spare_arguments(base: &Routine, by_place: Option<Vec<Value>>, by_name: Option<Vec<(String,Value)>>) -> Routine {
+        let mut made = base.clone();
+        made.revised = RefCell::new(None);
+        let rules = base.parameter_rules.clone().unwrap_or_else(|| vec![0; base.formals.len()]);
+        let placed: Vec<usize> = (0..base.formals.len()).filter(|i| rules[*i] < 2).collect();
+        let mut kept: Vec<(usize, Value)> = base.carried.iter().zip(&base.held)
+            .filter(|(i,_)| **i >= base.formals.len() || if rules[**i] == 2 { by_name.is_none() } else { by_place.is_none() })
+            .map(|(i,v)| (*i, v.clone())).collect();
+        let mut wanted = placed.len();
+        if let Some(values) = by_place {
+            let fitted = values.len().min(placed.len());
+            wanted = placed.len() - fitted;
+            kept.extend(placed[wanted..].iter().copied().zip(values[values.len()-fitted..].iter().cloned()));
+        } else {
+            wanted -= kept.iter().filter(|(i,_)| placed.contains(i)).count();
+        }
+        for (key, value) in by_name.unwrap_or_default() {
+            if let Some(i) = (0..base.formals.len()).find(|i| rules[*i] == 2 && base.formals[*i] == key) { kept.push((i, value)); }
+        }
+        kept.sort_by_key(|(i,_)| *i);
+        made.carried = kept.iter().map(|(i,_)| *i).collect();
+        made.held = kept.into_iter().map(|(_,v)| v).collect();
+        made.least = wanted;
+        made.parameter_rules = Some(rules);
+        made
+    }
+    /// The routine as it stands once the program writes its spare
+    /// arguments, its keyword-only spare arguments or its code over, or
+    /// takes them away; a value of the wrong kind is refused with
+    /// CPython's words, as is code closing over another count of cells.
+    fn routine_rewritten(&self, f: &Rc<Routine>, name: &str, value: Option<Value>) -> Flow<Routine> {
+        let now = Self::routine_now(f);
+        let refused = |part: &str| -> Fault { self.class_word(part).to_string().into() };
+        if name == self.class_word("code") {
+            let Some(Value::Adapter(code)) = value.as_ref().map(Value::contents) else { return Err(refused("code.amiss")) };
+            let (7, Some(Value::Routine(source))) = (code.0, code.1.first()) else { return Err(refused("code.amiss")) };
+            let source = Self::routine_now(source);
+            if source.enclosing.len() != now.enclosing.len() {
+                let pieces = self.lang.class_details.get("code.free").cloned().unwrap_or_default();
+                if pieces.len() != 3 { return Err(self.class_refusal()); }
+                return Err(format!("{}{}{}{}{}{}", pieces[0], now.ident, pieces[1], now.enclosing.len(), pieces[2], source.enclosing.len()).into());
+            }
+            let mut made = (*source).clone();
+            made.ident = now.ident.clone();
+            made.qualified = now.qualified.clone();
+            made.doc = now.doc.clone();
+            made.enclosed = source.enclosing.iter().zip(&now.enclosed).map(|((at,_),(_,cell))| (*at, cell.clone())).collect();
+            let by_place = Self::spare_arguments(&now, false).into_iter().map(|(_,v)| v).collect();
+            let by_name = Self::spare_arguments(&now, true).into_iter().map(|(i,v)| (now.formals[i].clone(), v)).collect();
+            return Ok(Self::with_spare_arguments(&made, Some(by_place), Some(by_name)));
+        }
+        if name == self.class_word("keywords") {
+            let pairs = match value.as_ref().map(Value::contents) {
+                None | Some(Value::Null) => Vec::new(),
+                Some(Value::Map(pairs)) => pairs.iter().map(|(k,v)| (k.plain(), v.clone())).collect(),
+                Some(_) => return Err(refused("keywords.amiss")),
+            };
+            return Ok(Self::with_spare_arguments(&now, None, Some(pairs)));
+        }
+        let values = match value.as_ref().map(Value::contents) {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Tuple(items)) => items.to_vec(),
+            Some(_) => return Err(refused("defaults.amiss")),
+        };
+        Ok(Self::with_spare_arguments(&now, Some(values), None))
+    }
+    /// Where a routine keeps the namespace the program handed it in
+    /// place of the one it was made with.
+    const HANDED_BOOK: &'static str = "\0 namespace";
+    /// A member a routine holds of its own: its name, full name or
+    /// account of itself as the program wrote them over, the namespace
+    /// handed to it, or an entry of whichever namespace it keeps.
+    fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
+        let (_,members)=self.function_members.iter().find(|(v,_)| v.equals(subject))?;
+        let fields=members.fields.borrow();
+        if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") {
+            let own=format!("\0{name}");
+            if let Some((_,v))=fields.iter().find(|(n,_)| *n==own) {return Some(v.clone());}
+        }
+        match fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
+            Some((_,book)) if name==self.class_word("namespace") => Some(book.clone()),
+            Some((_,book)) => match book.contents() {
+                Value::Map(pairs) => pairs.iter().find(|(k,_)| matches!(k,Value::Text(t) if t.as_ref()==name)).map(|(_,v)|v.clone()),
+                _ => None,
+            },
+            None => fields.iter().find(|(n,_)| n==name).map(|(_,v)|v.clone()),
+        }
+    }
+    /// The names a routine's own namespace holds, for its directory.
+    fn routine_member_names(&self, subject: &Value) -> Vec<String> {
+        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.equals(subject)) else {return Vec::new()};
+        let fields=members.fields.borrow();
+        if let Some((_,book))=fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
+            let Value::Map(pairs)=book.contents() else {return Vec::new()};
+            return pairs.iter().filter_map(|(k,_)| match k {Value::Text(t)=>Some(t.to_string()),_=>None}).collect();
+        }
+        fields.iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()).collect()
+    }
+    /// A namespace handed to a routine: a dictionary it keeps from then
+    /// on, the very one handed over; anything else, or taking it away,
+    /// is refused as CPython refuses it.
+    fn routine_namespace_write(&mut self, at: usize, value: Option<Value>) -> Flow<Value> {
+        let Some(book)=value else {return Err(self.class_word("namespace.kept").to_string().into())};
+        if !matches!(book.contents(),Value::Map(_)) {
+            let pieces=self.lang.class_details.get("namespace.amiss").cloned().unwrap_or_default();
+            if pieces.len()!=2 {return Err(self.class_refusal());}
+            return Err(format!("{}{}{}",pieces[0],Self::shown_kind(&book.contents()),pieces[1]).into());
+        }
+        let mut fields=self.function_members[at].1.fields.borrow_mut();
+        fields.retain(|(n,_)| n.starts_with('\0'));
+        let _=Self::write_members(&mut fields,Self::HANDED_BOOK,Some(book),false);
+        Ok(Value::Null)
+    }
+    /// An entry written into, or taken out of, a namespace handed to a
+    /// routine, through the cell it is held in so every name for it
+    /// sees the change. False where there was nothing to take away.
+    fn book_write(book: &Value, name: &str, value: Option<Value>) -> bool {
+        let (Value::Collection(cell,_)|Value::Bond(cell)|Value::Binding(cell))=book else {return false};
+        let mut held=cell.borrow_mut();
+        let Value::Map(pairs)=&mut *held else {return false};
+        let rows=Rc::make_mut(pairs);
+        let at=rows.iter().position(|(k,_)| matches!(k,Value::Text(t) if t.as_ref()==name));
+        match (at,value) {
+            (Some(i),Some(v)) => rows[i].1=v,
+            (None,Some(v)) => rows.push((Value::text(name),v)),
+            (Some(i),None) => {rows.remove(i);}
+            (None,None) => return false,
+        }
+        true
     }
     fn function_storage(&mut self, function: &Value) -> usize {
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
@@ -980,7 +1258,24 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("namespace") {
                     if let Some(Value::Fields(view))=&value {if Rc::ptr_eq(view,o){return Ok(Value::Null);}}
                 }
-                if name==self.class_word("kind") || name==self.class_word("namespace"){return Err(self.class_refusal());}
+                // A thing's namespace taken away leaves it with an empty
+                // one, and a dictionary handed to it becomes its entries.
+                if name==self.class_word("namespace") {
+                    let entries=match value.as_ref().map(Value::contents) {
+                        None => Vec::new(),
+                        Some(Value::Map(pairs)) => pairs.iter().filter_map(|(k,v)| match k {Value::Text(t)=>Some((t.to_string(),v.clone())),_=>None}).collect(),
+                        Some(other) => {
+                            let pieces=self.lang.class_details.get("namespace.amiss").cloned().unwrap_or_default();
+                            if pieces.len()!=2 {return Err(self.class_refusal());}
+                            return Err(format!("{}{}{}",pieces[0],Self::shown_kind(&other),pieces[1]).into());
+                        }
+                    };
+                    let mut fields=o.fields.borrow_mut();
+                    fields.retain(|(n,_)| n.starts_with('\0'));
+                    fields.extend(entries);
+                    return Ok(Value::Null);
+                }
+                if name==self.class_word("kind"){return Err(self.class_refusal());}
                 // A class naming the members its things hold, and holding
                 // a value of its own under a name not among them, has
                 // that name read-only: the class's own holding is not
@@ -1004,10 +1299,57 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("namespace") {
                     let at = self.function_storage(&subject);
                     if matches!(&value, Some(Value::Fields(fields)) if Rc::ptr_eq(fields, &self.function_members[at].1)) { return Ok(Value::Null); }
+                    return self.routine_namespace_write(at, value);
                 }
-                if ["defaults","code","namespace"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_refusal());}
+                if ["globals","closure"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_word("property.readonly").to_string().into());}
+                if name==self.class_word("defaults") || name==self.class_word("keywords") || name==self.class_word("code") {
+                    let Value::Routine(f)=&subject else {return Err(self.class_refusal())};
+                    let now=self.routine_rewritten(f,name,value)?;
+                    *f.revised.borrow_mut()=Some(Rc::new(now));
+                    return Ok(Value::Null);
+                }
                 let at=self.function_storage(&subject);
-                Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value,false).map_err(|_|absent)?;
+                // Its name and full name take text alone, and its account
+                // of itself anything at all; the three stand apart from
+                // the namespace, and taking the account away leaves none.
+                if name==self.class_word("name") || name==self.class_word("qualified") {
+                    let Some(Value::Text(_))=value.as_ref().map(Value::contents) else {
+                        let pieces=self.lang.class_details.get("text.amiss").cloned().unwrap_or_default();
+                        return Err(if pieces.len()==2 {format!("{}{name}{}",pieces[0],pieces[1]).into()} else {self.class_refusal()});
+                    };
+                }
+                if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") {
+                    let own=format!("\0{name}");
+                    Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),&own,Some(value.unwrap_or(Value::Null)),false).map_err(|_|absent)?;
+                    return Ok(Value::Null);
+                }
+                let book=self.function_members[at].1.fields.borrow().iter().find(|(n,_)|n==Self::HANDED_BOOK).map(|(_,v)|v.clone());
+                match book {
+                    Some(book) => if !Self::book_write(&book,name,value) {return Err(absent);},
+                    None => Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value,false).map_err(|_|absent)?,
+                }
+            }
+            // A cell takes what it holds, and taking that away leaves it
+            // empty; it keeps nothing else.
+            Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
+                let (Some(Value::Binding(held)) | Some(Value::Bond(held)))=w.1.first() else {return Err(absent)};
+                *held.borrow_mut()=value.unwrap_or(Value::Blank);
+                return Ok(Value::Null);
+            }
+            // A method keeps nothing of its own: the thing and routine
+            // it binds are fixed, its account of itself is the
+            // routine's, and nothing else can be written or taken away.
+            Value::Method(..) => {
+                if name==self.class_word("receiver") || name==self.class_word("function") {return Err(self.class_word("property.readonly").to_string().into());}
+                if name==self.class_word("kind") {
+                    let part=if value.is_some(){"kind.fixed"}else{"kind.kept"};
+                    return Err(self.class_word(part).to_string().into());
+                }
+                if name==self.class_word("doc") {
+                    let pieces=self.lang.class_details.get("method.fixed").cloned().unwrap_or_default();
+                    if pieces.len()==3 {return Err(format!("{}{name}{}{}{}",pieces[0],pieces[1],subject.core_kind(),pieces[2]).into());}
+                }
+                return Err(if value.is_some() {self.unwritable_member(&subject,name)} else {absent});
             }
             // A value of a builtin kind keeps no namespace: a write
             // says so outright, while a taking-away only reports the
@@ -1065,6 +1407,7 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if w.0==31=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Array(bases),Value::Map(members)] | [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){if let Value::Class(c)=b{parents.push(c.clone());}else{return Err(self.class_refusal());}}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}
@@ -1258,10 +1601,13 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
-            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
+            3|6 if args.len()>=2=>{
+                // A name standing on text is asked after as the text it keeps.
+                let asked=match &args[1] {Value::Object(_)=>Self::worth_of(&args[1]).map(|w|w.contents()).filter(|w|matches!(w,Value::Text(_))),_=>None}.unwrap_or_else(||args[1].clone());
+                let Value::Text(name)=&asked else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
                 if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)])?;return self.drop_top().map_err(|words|Fault::Note(words));}}
                 Err(fault)},Err(e)=>Err(e)}},
@@ -1282,13 +1628,14 @@ impl<'a> Engine<'a> {
                 }
                 // A routine lists the members it can honestly answer
                 // for, alongside any it was given of its own.
-                if let Value::Routine(_)=&one {
+                if let Value::Routine(_)|Value::Method(..)=&one {
                     let mut names:Vec<String>=vec![];
                     for part in ["name","qualified","doc","module","defaults","call"] {
                         let word=self.class_word(part);
                         if !word.is_empty() { names.push(word.to_string()); }
                     }
-                    if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}
+                    let routine=match &one {Value::Method(_,f)=>Value::Routine(f.clone()),other=>other.clone()};
+                    names.extend(self.routine_member_names(&routine));
                     names.sort();names.dedup();
                     return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
                 }
@@ -1313,7 +1660,7 @@ impl<'a> Engine<'a> {
                 }
                 let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));Some(&o.class)},_=>None};
                 if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().map(|(n,_)|n.clone()));}}
-                else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}
+                else {names.extend(self.routine_member_names(&one));}
                 names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
             }
             8=>Err(self.arity_told(&self.class_tool_word(8),1,args.len())),

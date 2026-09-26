@@ -201,6 +201,9 @@ pub struct Builder<'a> {
     /// The routines being built, the innermost last, so a word standing
     /// for the one a piece is written in knows which that is.
     naming: Vec<String>,
+    /// For each routine being built, whether it was declared global
+    /// where it was written, so that its full name starts afresh.
+    named_afresh: Vec<bool>,
     /// How many of those were being named when the class now being read
     /// was entered: a full name goes on from there.
     named_before: usize,
@@ -426,7 +429,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { declarations: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { declarations: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -1433,11 +1436,20 @@ impl<'a> Builder<'a> {
     fn full_name_of(&self, name: &str) -> String {
         let local = self.table.single("ext.stmt.class.detail.locals").unwrap_or("");
         let mut path = self.within.as_ref().map(|(c, _)| format!("{c}.")).unwrap_or_default();
-        for outer in self.naming.iter().skip(self.named_before) {
+        for (outer, afresh) in self.naming.iter().zip(&self.named_afresh).skip(self.named_before) {
+            if *afresh { path.clear(); }
             path.push_str(outer); path.push('.'); path.push_str(local); path.push('.');
         }
+        if self.global_where_written(name) { path.clear(); }
         path.push_str(name);
         path
+    }
+
+    /// Whether the routine being built declared this name global: a
+    /// routine written under it then goes by that name alone.
+    fn global_where_written(&self, name: &str) -> bool {
+        self.naming.len() > self.named_before
+            && self.layers.last().map_or(false, |layer| layer.aliases.iter().any(|(said, meant)| said == name && meant == name))
     }
 
     /// A program value: its body reduced in a scope of its own.
@@ -1452,7 +1464,9 @@ impl<'a> Builder<'a> {
         // What the routine around this one carries is set aside while
         // this one is built, so that each keeps only its own.
         let around = std::mem::take(&mut self.carrying);
+        let afresh = self.global_where_written(name);
         self.naming.push(name.to_string());
+        self.named_afresh.push(afresh);
         // The classes the parameters were written to take, gathered as
         // they were read. A method is handed the thing it is for before
         // them, so the list is brought level with the names.
@@ -1510,6 +1524,7 @@ impl<'a> Builder<'a> {
             if borrows_enclosing(&body, &names) { body = self.scope_unrun("ext.stmt.yield.unsupported"); }
         }
         self.naming.pop();
+        self.named_afresh.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
         Ok(constant(Value::Routine(Rc::new(Routine { qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
     }
@@ -5426,7 +5441,13 @@ impl<'a> Builder<'a> {
                 b.pos = keyword_at;
                 return Err(String::from("SyntaxError: cannot assign to lambda"));
             }
-            steps.push(body);
+            // A lambda gives its expression back exactly as `return
+            // expr` would: falling off a generator's body with the
+            // value merely computed, and not handed back through the
+            // same escape a `return` statement takes, would lose it
+            // (a lambda generator's exhaustion then answers `None`
+            // where the expression's own value belongs).
+            steps.push(prim_call(Prim::Yield, vec![body]));
             Ok(sequence(steps))
         })?;
         self.outside_lambda = prior;
@@ -5812,7 +5833,12 @@ impl<'a> Builder<'a> {
         }
         if let Some(write) = self.chained_places()? { return Ok(write); }
         if self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty()
-            && !self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty() { return self.comma_value(); }
+            && !self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty() {
+            let tuple = self.comma_expression(false)?;
+            return if self.on_writing() {
+                Err(String::from("SyntaxError: 'tuple' is an illegal expression for augmented assignment"))
+            } else { Ok(tuple) };
+        }
         let began = self.pos;
         let boundary = began.checked_sub(1).map_or(true, |at| {
             let prior = &self.tokens[at];
@@ -6024,7 +6050,6 @@ impl<'a> Builder<'a> {
             }
         }
         let plain = compound.is_none();
-        let refused_slice = !plain && slice_target(&expr);
         // `b = &a`: b is tied to a's cell rather than given a copy.
         let tied_to_a_cell = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain;
         let mut shared_value: Option<Form> = None;
@@ -6453,9 +6478,6 @@ impl<'a> Builder<'a> {
             }
             _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
         };
-        let made = if refused_slice {
-            sequence(vec![prim_call(Prim::SliceRefused, Vec::new()), made])
-        } else { made };
         let made = match before_bounds {
             Some(first) => sequence(vec![first, made]),
             None => made,
@@ -8336,6 +8358,11 @@ impl<'a> Builder<'a> {
         // twice is refused as the text is read, as the reference
         // refuses it.
         let mut spelled: Vec<String> = Vec::new();
+        // Once a keyword or a spread of pairs is written, nothing may
+        // follow in order; the words for that come from this label.
+        let misplaced = self.table.strings("ext.syntax.call.amiss.order").to_vec();
+        let mut keyword_written = false;
+        let mut pairs_written = false;
         while !self.sign(&close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
@@ -8361,6 +8388,16 @@ impl<'a> Builder<'a> {
                 if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
                 else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }
                 if tag.is_some() { self.advance(); }
+            }
+            if bind && misplaced.len() == 3 {
+                match &tag {
+                    Some(Value::Flag(false)) if pairs_written => return Err(misplaced[2].clone()),
+                    None if pairs_written => return Err(misplaced[0].clone() + &misplaced[1]),
+                    None if keyword_written => return Err(misplaced[0].clone()),
+                    Some(Value::Text(_)) => keyword_written = true,
+                    Some(Value::Flag(true)) => pairs_written = true,
+                    _ => {}
+                }
             }
             let value = self.expr(0)?;
             let named = matches!(tag, Some(Value::Text(_) | Value::Flag(true)));

@@ -52,8 +52,12 @@ class MemberDescriptorType:
     pass
 
 
-class GeneratorType:
-    pass
+def __generator_probe():
+    yield
+
+
+GeneratorType = type(__generator_probe())
+del __generator_probe
 
 
 class CoroutineType:
@@ -104,14 +108,20 @@ class CellType:
         return '<cell: ' + repr(self._contents[0]) + '>'
 
 
-# A function and the thing it is bound to, called as one.
-class MethodType:
+# A function bound to a thing, called as one: reading through it reads the
+# function, and it keeps no namespace to write anything else into.
+class method:
+    __slots__ = ('__func__', '__self__')
+
     def __init__(self, function, instance):
         self.__func__ = function
         self.__self__ = instance
 
     def __call__(self, *args, **keywords):
         return self.__func__(self.__self__, *args, **keywords)
+
+    def __getattr__(self, name):
+        return getattr(self.__func__, name)
 
     def __eq__(self, other):
         if isinstance(other, MethodType):
@@ -120,6 +130,9 @@ class MethodType:
 
     def __repr__(self):
         return '<bound method of ' + repr(self.__self__) + '>'
+
+
+MethodType = method
 
 
 # A place to hang names on, which is all a module is from here.
