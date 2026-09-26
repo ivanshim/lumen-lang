@@ -3003,6 +3003,39 @@ only. The extension labels so far, all from PHP:
   and the place's. Where a definition leaves it unsaid the plainer
   `ext.syntax.call.amiss.duplicate` is said instead, so the complaint
   names the place alone.
+  Five more labels word the other mishaps of a call to a routine the
+  program wrote, each naming the routine by the name it goes by where
+  it was written, as the reference does; where one is left unsaid the
+  plainer words above are said instead.
+  `ext.syntax.call.amiss.absent` words places left empty in seven
+  pieces: the words before the routine's name, between it and the count,
+  after the count, after the kind when one place is empty, after the
+  kind when more are, and the two kinds — places filled in order, then
+  places filled only by name. The empty places' names follow, listed as
+  `ext.syntax.call.amiss.absent.names` has it: the marks before and after
+  each name, the words between names, between the two of a pair, and
+  before the last of three or more. Places filled in order are spoken of
+  first; only when none of them is empty are the named ones.
+  `ext.syntax.call.amiss.excess` words more arguments in order than
+  there are places for, in twelve pieces: before the routine's name,
+  after it, before and after the fewest places when some have defaults,
+  after the count of places when it is one and when it is otherwise
+  (these two also follow the count given, when some places filled only
+  by name were given too), before the count given, the endings when one
+  was given and otherwise, and the words before the count of places
+  filled by name and after it, when it is one and otherwise.
+  `ext.syntax.call.amiss.unexpected` takes three pieces about the
+  routine's name and a keyword no place answers to, and
+  `ext.syntax.call.amiss.ordered`, four — before the name, after it,
+  between the names and after the last — for places taken only in order
+  that the call named, which are listed in the order they were written;
+  it is said rather than the former when any such place was named.
+  These are checked in the reference's order: keywords first, then too
+  many arguments in order, then empty places.
+  `ext.syntax.call.amiss.order` refuses, as the text is read, an argument
+  written in order after a named one: its first piece is said, with the
+  second after it where a spread of pairs came before. Its third is said
+  for a spread of items written after a spread of pairs.
 - `ext.stmt.function.anonymous`: the name a routine written with
   `ext.stmt.function.short` answers to on its own — Python's `<lambda>`
   — in place of the word every other anonymous routine is compiled
@@ -5065,12 +5098,18 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield.unsupported` | - | - | `NotImplementedError: suspension in this form is not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.absent` | - | - | `TypeError: ` `() missing ` ` required ` ` argument: ` ` arguments: ` `positional` `keyword-only` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.absent.names` | - | - | `'` `'` `, ` ` and ` `, and ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: ` `() takes no keyword arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.excess` | - | - | `TypeError: ` `() takes ` `from ` ` to ` ` positional argument` ` positional arguments` ` but ` ` was given` ` were given` ` (and ` ` keyword-only argument)` ` keyword-only arguments)` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.keyword` | - | - | `TypeError: ` `() got multiple values for keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.order` | - | - | `SyntaxError: positional argument follows keyword argument` ` unpacking` `SyntaxError: iterable argument unpacking follows keyword argument unpacking` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.ordered` | - | - | `TypeError: ` `() got some positional-only arguments passed as keyword arguments: '` `, ` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.positional` | - | - | `TypeError: ` `() got multiple values for argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.repeated` | - | - | `SyntaxError: keyword argument repeated: ` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.unexpected` | - | - | `TypeError: ` `() got an unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |

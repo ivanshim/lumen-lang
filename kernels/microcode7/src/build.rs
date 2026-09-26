@@ -8342,6 +8342,11 @@ impl<'a> Builder<'a> {
         // twice is refused as the text is read, as the reference
         // refuses it.
         let mut spelled: Vec<String> = Vec::new();
+        // Once a keyword or a spread of pairs is written, nothing may
+        // follow in order; the words for that come from this label.
+        let misplaced = self.table.strings("ext.syntax.call.amiss.order").to_vec();
+        let mut keyword_written = false;
+        let mut pairs_written = false;
         while !self.sign(&close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
@@ -8367,6 +8372,16 @@ impl<'a> Builder<'a> {
                 if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
                 else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }
                 if tag.is_some() { self.advance(); }
+            }
+            if bind && misplaced.len() == 3 {
+                match &tag {
+                    Some(Value::Flag(false)) if pairs_written => return Err(misplaced[2].clone()),
+                    None if pairs_written => return Err(misplaced[0].clone() + &misplaced[1]),
+                    None if keyword_written => return Err(misplaced[0].clone()),
+                    Some(Value::Text(_)) => keyword_written = true,
+                    Some(Value::Flag(true)) => pairs_written = true,
+                    _ => {}
+                }
             }
             let value = self.expr(0)?;
             let named = matches!(tag, Some(Value::Text(_) | Value::Flag(true)));

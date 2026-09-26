@@ -2480,7 +2480,7 @@ impl<'a> Engine<'a> {
             Some(module) if !program.qualified.is_empty() => format!("{}.{}", module, program.qualified),
             _ => program.qualified.clone(),
         };
-        format!("{}{}{}{}{}", words[0], called, words[1], name, words[2])
+        self.said_whole(format!("{}{}{}{}{}", words[0], called, words[1], name, words[2]))
     }
 
     /// The words for a place filled twice over: once by an argument
@@ -2489,8 +2489,84 @@ impl<'a> Engine<'a> {
     /// it was written, and the words carry that name before the place.
     fn place_twice(&self, program: &Routine, name: &str) -> String {
         match self.lang.call_place_twice.as_slice() {
-            [opening, between, closing] => format!("{}{}{}{}{}", opening, program.qualified, between, name, closing),
+            [opening, between, closing] => self.said_whole(format!("{}{}{}{}{}", opening, Self::called_as(program), between, name, closing)),
             _ => Self::named_fault(&self.lang.call_duplicate, name),
+        }
+    }
+
+    /// Words that open with the class they belong to are marked as told
+    /// whole, where the language furnishes exceptions, so that nothing
+    /// is put over them.
+    fn said_whole(&self, said: String) -> String {
+        if self.lang.exceptions.is_empty() { said } else { format!("\0{said}") }
+    }
+
+    /// The name a routine goes by in the words about a call to it.
+    fn called_as(program: &Routine) -> &str {
+        if program.qualified.is_empty() { &program.ident } else { &program.qualified }
+    }
+
+    /// Names of places, each set between its marks, then joined: a pair
+    /// by its own words, three or more by commas with other words
+    /// before the last.
+    fn names_listed(&self, names: &[&str]) -> String {
+        let marks = &self.lang.call_absent_names;
+        let mark = |at: usize| marks.get(at).map_or("", String::as_str);
+        let each: Vec<String> = names.iter().map(|name| format!("{}{name}{}", mark(0), mark(1))).collect();
+        match each.as_slice() {
+            [] => String::new(),
+            [alone] => alone.clone(),
+            [first, second] => format!("{first}{}{second}", mark(3)),
+            [earlier @ .., second_last, last] => format!("{}{}{second_last}{}{last}", earlier.join(mark(2)), mark(2), mark(4)),
+        }
+    }
+
+    /// The words for places a call left empty: those filled in order,
+    /// or else those filled only by name.
+    fn places_empty(&self, program: &Routine, names: &[&str], by_name: bool) -> String {
+        let [before, missing, required, one, more, ordered, named] = self.lang.call_absent.as_slice() else {
+            return Self::named_fault(&self.lang.call_missing, names[0]);
+        };
+        let kind = if by_name { named } else { ordered };
+        let ending = if names.len() == 1 { one } else { more };
+        self.said_whole(format!("{before}{}{missing}{}{required}{kind}{ending}{}", Self::called_as(program), names.len(), self.names_listed(names)))
+    }
+
+    /// The words for more arguments in order than a routine has places
+    /// for, saying how many it takes (a span where some carry defaults)
+    /// and how many were given, with the named places filled beside.
+    fn places_exceeded(&self, program: &Routine, rules: &[u8], frame: &[Value], given: usize) -> String {
+        let words = &self.lang.call_excess;
+        if words.len() < 12 { return self.lang.call_amiss[0].clone(); }
+        let places = rules.iter().filter(|rule| **rule < 2).count();
+        let defaulted = program.carried.iter().filter(|at| rules.get(**at).map_or(false, |rule| *rule < 2)).count();
+        let by_name = rules.iter().zip(frame).filter(|(rule, held)| **rule == 2 && !matches!(held, Value::Blank)).count();
+        let mut said = format!("{}{}{}", words[0], Self::called_as(program), words[1]);
+        if defaulted > 0 { said.push_str(&format!("{}{}{}", words[2], places - defaulted, words[3])); }
+        said.push_str(&places.to_string());
+        said.push_str(if places == 1 && defaulted == 0 { &words[4] } else { &words[5] });
+        said.push_str(&format!("{}{}", words[6], given));
+        if by_name > 0 {
+            said.push_str(if given == 1 { &words[4] } else { &words[5] });
+            said.push_str(&format!("{}{}{}", words[9], by_name, if by_name == 1 { &words[10] } else { &words[11] }));
+        }
+        said.push_str(if given == 1 && by_name == 0 { &words[7] } else { &words[8] });
+        self.said_whole(said)
+    }
+
+    /// The words for a keyword no place answers to. Where the call named
+    /// places taken only in order, those are what is spoken of, in the
+    /// order the routine wrote them.
+    fn keyword_stray(&self, program: &Routine, rules: &[u8], spoken: &[String], name: &str) -> String {
+        let only_ordered: Vec<&str> = program.formals.iter().zip(rules)
+            .filter(|(formal, rule)| **rule == 1 && spoken.contains(formal))
+            .map(|(formal, _)| formal.as_str()).collect();
+        if let ([before, after, between, closing], false) = (self.lang.call_ordered.as_slice(), only_ordered.is_empty()) {
+            return self.said_whole(format!("{before}{}{after}{}{closing}", Self::called_as(program), only_ordered.join(between.as_str())));
+        }
+        match self.lang.call_unexpected.as_slice() {
+            [before, after, closing] => self.said_whole(format!("{before}{}{after}{name}{closing}", Self::called_as(program))),
+            _ => Self::named_fault(&self.lang.call_unknown, name),
         }
     }
 
@@ -2523,11 +2599,18 @@ impl<'a> Engine<'a> {
         let rest = rules.iter().position(|r| *r == 3);
         let pairs = rules.iter().position(|r| *r == 4);
         let mut tail = Vec::new();
+        // Arguments in order beyond the places are refused only once the
+        // named ones are placed, as the reference refuses them, so that a
+        // place named as well is what is spoken of first.
+        let mut in_order = 0;
         for (at, (_, value)) in items.iter().filter(|(name, _)| name.is_none()).enumerate() {
+            in_order = at + 1;
             if let Some(slot) = slots.get(at) { frame[*slot] = value.clone(); }
             else if rest.is_some() { tail.push(value.clone()); }
-            else { return Err(self.lang.call_amiss[0].clone().into()); }
         }
+        // The names the call gave, kept only where some place may be
+        // taken in order alone and a stray keyword must be told apart.
+        let spoken: Vec<String> = if rules.contains(&1) { items.iter().filter_map(|(name, _)| name.clone()).collect() } else { Vec::new() };
         let mut keywords = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for (name, value) in items {
@@ -2540,17 +2623,23 @@ impl<'a> Engine<'a> {
                 Some(i) if matches!(frame[i], Value::Blank) => frame[i] = value,
                 Some(_) => return Err(self.place_twice(program, &name).into()),
                 None if pairs.is_some() => keywords.push((Value::text(&name), value)),
-                None => return Err(Self::named_fault(&self.lang.call_unknown, &name).into()),
+                None => return Err(self.keyword_stray(program, rules, &spoken, &name).into()),
             }
+        }
+        if rest.is_none() && in_order > slots.len() {
+            return Err(self.places_exceeded(program, rules, &frame, in_order).into());
         }
         // What a gathering place takes is a tuple, as the language has
         // it: the spare worths stand together and cannot be changed.
         if let Some(i) = rest { frame[i] = Value::Tuple(Rc::new(tail)); }
         if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords.into())); }
-        for (i, value) in frame.iter().enumerate() {
-            if matches!(value, Value::Blank) && !program.carried.contains(&i) {
-                return Err(Self::named_fault(&self.lang.call_missing, &program.formals[i]).into());
-            }
+        // Empty places are spoken of all together: those filled in order
+        // first, and only when none of them is empty those filled by name.
+        for by_name in [false, true] {
+            let empty: Vec<&str> = frame.iter().enumerate()
+                .filter(|(i, held)| matches!(held, Value::Blank) && !program.carried.contains(i) && (rules[*i] == 2) == by_name)
+                .map(|(i, _)| program.formals[i].as_str()).collect();
+            if !empty.is_empty() { return Err(self.places_empty(program, &empty, by_name).into()); }
         }
         Ok(frame)
     }

@@ -3031,6 +3031,52 @@
   "ext.syntax.call.amiss.repeated": [
     "SyntaxError: keyword argument repeated: "
   ],
+  "ext.syntax.call.amiss.absent": [
+    "TypeError: ",
+    "() missing ",
+    " required ",
+    " argument: ",
+    " arguments: ",
+    "positional",
+    "keyword-only"
+  ],
+  "ext.syntax.call.amiss.absent.names": [
+    "'",
+    "'",
+    ", ",
+    " and ",
+    ", and "
+  ],
+  "ext.syntax.call.amiss.excess": [
+    "TypeError: ",
+    "() takes ",
+    "from ",
+    " to ",
+    " positional argument",
+    " positional arguments",
+    " but ",
+    " was given",
+    " were given",
+    " (and ",
+    " keyword-only argument)",
+    " keyword-only arguments)"
+  ],
+  "ext.syntax.call.amiss.unexpected": [
+    "TypeError: ",
+    "() got an unexpected keyword argument '",
+    "'"
+  ],
+  "ext.syntax.call.amiss.order": [
+    "SyntaxError: positional argument follows keyword argument",
+    " unpacking",
+    "SyntaxError: iterable argument unpacking follows keyword argument unpacking"
+  ],
+  "ext.syntax.call.amiss.ordered": [
+    "TypeError: ",
+    "() got some positional-only arguments passed as keyword arguments: '",
+    ", ",
+    "'"
+  ],
   "ext.syntax.call.bind_names": true,
   "ext.syntax.call.chained": true,
   "ext.syntax.call.spread": [
