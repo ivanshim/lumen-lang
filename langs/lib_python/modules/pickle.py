@@ -1,5 +1,6 @@
 # Pickle reductions use the Python reconstruction protocol. The byte
-# envelope remains the runtime's private marshal-based representation.
+# envelope remains the runtime's private marshal-based representation,
+# except for boolean roots using standard pickle encodings for protocols 0--5.
 import marshal
 import sys
 
@@ -112,8 +113,20 @@ def _global_name(value):
     return None
 
 
+def _reduction_hook(value, name):
+    # The final MRO entry is the root object, whose native hooks have a
+    # separate fallback. Keep hooks declared by every more specific class.
+    lineage = getattr(type(value), '__mro__', None)
+    if lineage is None:
+        return getattr(value, name, None)
+    for cls in lineage[:-1]:
+        if name in getattr(cls, '__dict__', {}):
+            return getattr(value, name, None)
+    return None
+
+
 def _state(value):
-    method = getattr(value, '__getstate__', None)
+    method = _reduction_hook(value, '__getstate__')
     if method is not None:
         return method()
     namespace = __reduce_native__(value, True)
@@ -141,10 +154,10 @@ def _reduce(value, protocol):
     forwarded = __reduce_native__(value)
     if forwarded is not None and forwarded[0] == 'handed':
         return _reduce(forwarded[1], protocol)
-    method = getattr(value, '__reduce_ex__', None)
+    method = _reduction_hook(value, '__reduce_ex__')
     if method is not None:
         return method(protocol)
-    method = getattr(value, '__reduce__', None)
+    method = _reduction_hook(value, '__reduce__')
     if method is not None:
         return method()
     native = __reduce_native__(value)
@@ -155,7 +168,7 @@ def _reduce(value, protocol):
         if isinstance(value, base) and cls is not base:
             return (_new_builtin, (cls, __reduce_native__(value, False)), _state(value))
     slots = getattr(cls, '__slots__', ())
-    if protocol < 2 and slots and not hasattr(value, '__getstate__'):
+    if protocol < 2 and slots and _reduction_hook(value, '__getstate__') is None:
         raise TypeError('a class that defines __slots__ without defining __getstate__ cannot be pickled')
     args = ()
     method = getattr(value, '__getnewargs__', None)
@@ -274,12 +287,26 @@ class _Reader(marshal._Reader):
 
 
 def dumps(obj, protocol=None, *, fix_imports=True, buffer_callback=None):
-    writer = _Writer(_reach(protocol))
+    protocol = _reach(protocol)
+    if type(obj) is bool:
+        if protocol < 2:
+            return b'I01\n.' if obj else b'I00\n.'
+        return b'\x80' + bytes([protocol]) + (b'\x88.' if obj else b'\x89.')
+    writer = _Writer(protocol)
     writer.put(obj)
     return b'LP1\n' + writer.text().encode()
 
 
 def loads(data, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=None):
+    if data == b'I01\n.':
+        return True
+    if data == b'I00\n.':
+        return False
+    if len(data) == 4 and data[0] == 128 and 2 <= data[1] <= HIGHEST_PROTOCOL and data[3] == 46:
+        if data[2] == 136:
+            return True
+        if data[2] == 137:
+            return False
     if isinstance(data, str):
         raise TypeError('a bytes-like object is required, not str')
     if data[:4] == b'LP1\n':
