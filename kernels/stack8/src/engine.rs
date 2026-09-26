@@ -4991,6 +4991,10 @@ impl<'a> Engine<'a> {
                 Some(Value::Text(text)) => Ok(text.to_string()),
                 Some(_) => Err(self.special_fault()),
                 None => {
+                    if let Some(path) = self.module_holding(value) {
+                        let origin = self.module_file_path(&path).map_or_else(|| " (built-in)".to_owned(), |file| format!(" from '{file}'"));
+                        return Ok(format!("<module '{path}'{origin}>"));
+                    }
                     let module = self.class_word("main");
                     Ok(if module.is_empty() { format!("<{} object>", object.class.name) }
                         else { format!("<{module}.{} object at 0x1>", object.class.name) })
@@ -16137,6 +16141,25 @@ impl Engine<'_> {
         Ok(Rc::from(decoded))
     }
 
+    fn source_escape_warnings(&mut self, source: &str, file: &str) -> Res<()> {
+        let warnings = crate::lex::escape_warnings(source, self.lang);
+        if warnings.is_empty() { return Ok(()); }
+        let route = self.lang.escape_warning.clone();
+        let module = self.route_module(&route[0])?;
+        let Some(handler) = self.member_of(module, &route[1])? else { return Err(self.source_unready()); };
+        let Some(category) = self.native_exceptions.get(&route[2]).cloned() else { return Err(self.source_unready()); };
+        for (message, line) in warnings {
+            if let Err(words) = self.call_held(handler.clone(), vec![Value::text(&message), category.clone(), Value::text(file), Value::Small(line as i64)]) {
+                if matches!(&self.carried, Some(Fault::Thrown(Value::Object(error))) if error.class.name == route[2]) {
+                    self.carried = None;
+                    return Err(self.text_syntax(0, format!("SyntaxError: {message}"), file, line, 1, None, source));
+                }
+                return Err(words);
+            }
+        }
+        Ok(())
+    }
+
     fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
         if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
         let (Value::Text(file), Value::Text(manner)) = (args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
@@ -16153,6 +16176,7 @@ impl Engine<'_> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
+        self.source_escape_warnings(&source, &file)?;
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
@@ -16184,6 +16208,7 @@ impl Engine<'_> {
             _ => return Err(self.source_unready()),
         };
         if args.len() > 3 { return Err(self.source_unready()); }
+        if file.is_none() { self.source_escape_warnings(&source, "<string>")?; }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_string() } else { source };
         let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {

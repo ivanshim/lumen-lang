@@ -9342,6 +9342,12 @@ impl<'a> Machine<'a> {
                 let chosen = usize::from(quoted || self.appointment(subject, 0).is_none());
                 match self.ask_special(subject, chosen, &[])? {
                     None => {
+                        if let Some(name) = self.namespace_holding(subject) {
+                            return Ok(match self.namespace_file_path(&name) {
+                                Some(file) => format!("<module '{name}' from '{file}'>"),
+                                None => format!("<module '{name}' (built-in)>"),
+                            });
+                        }
                         let module = self.detail("main");
                         Ok(if module.is_empty() { format!("<{} object>", t.of.name) }
                             else { format!("<{module}.{} object at 0x1>", t.of.name) })
@@ -16107,6 +16113,28 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn report_escape_notices(&mut self, code: &str, filename: &str) -> Result<(), String> {
+        let notices = crate::scan::escape_notices(code, self.table);
+        if notices.is_empty() { return Ok(()); }
+        let names = self.table.strings("ext.lexical.escape.warning").to_vec();
+        let owner = self.load_namespace(&names[0])?;
+        let report = self.attribute(&owner, &names[1]).ok_or_else(|| self.source_refused())?;
+        let category = self.fault_kinds.get(&names[2]).cloned().ok_or_else(|| self.source_refused())?;
+        for (words, row) in notices {
+            let arguments = vec![Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row))];
+            match self.core_run(&report, arguments) {
+                Ok(_) => {}
+                Err(failure) => {
+                    let promoted = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(error))) if error.of.name == names[2]);
+                    if !promoted { return Err(failure); }
+                    self.got_away.take();
+                    return Err(self.text_unreadable_at(0, format!("SyntaxError: {words}"), filename, row, 1, None, code));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn text_prepared(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
@@ -16120,6 +16148,7 @@ impl<'a> Machine<'a> {
         // Flags and inheritance are read and let be; optimisation beyond
         // the ordinary setting is not honoured.
         if v.get(5).map_or(false, |worth| !matches!(worth, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(self.source_refused()); }
+        self.report_escape_notices(&source, &file)?;
         let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
@@ -16150,6 +16179,7 @@ impl<'a> Machine<'a> {
             _ => return Err(self.source_refused()),
         };
         if v.len() > 3 { return Err(self.source_refused()); }
+        if file.is_none() { self.report_escape_notices(&source, "<string>")?; }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };
         let mut books = Vec::new();

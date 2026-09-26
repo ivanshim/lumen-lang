@@ -1457,7 +1457,13 @@ impl<'a> Builder<'a> {
         let began = self.pos;
         let mut start = self.pos;
         while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.lexeme)) { start += 1; }
-        let doc = self.tokens.get(start).filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.to_owned());
+        let mut doc = None;
+        let mut finish = start;
+        while let Some(token) = self.tokens.get(finish).filter(|t| t.shape == Shape::Quote) {
+            doc.get_or_insert_with(String::new).push_str(&token.lexeme);
+            finish += 1;
+        }
+        if self.tokens.get(finish).map_or(false, |t| t.shape == Shape::Woven) { doc = None; }
         let qualification=self.full_name_of(name);
         let taking = self.taking.take();
         let declared_on = self.declared_at;

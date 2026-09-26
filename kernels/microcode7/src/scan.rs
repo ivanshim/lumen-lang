@@ -15,6 +15,7 @@ pub enum Shape {
     WovenEnd,
     Field,
     Unheld,
+    EscapeNotice,
     Sign,
     LineEnd,
     Lead,
@@ -438,6 +439,22 @@ fn code_gives_out(after: &str, closing: &str, table: &Table) -> Option<usize> {
 
 /// The same, saying besides which row the reading stopped on.
 pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)> {
+    let mut read = scan_notices(source, table)?;
+    read.retain(|item| item.shape != Shape::EscapeNotice);
+    Ok(read)
+}
+
+pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
+    if !source.contains('\\') || !table.has_any("ext.lexical.escape.warning") { return vec![]; }
+    match scan_notices(source, table) {
+        Ok(read) => read.into_iter().filter_map(|item| {
+            (item.shape == Shape::EscapeNotice).then_some((item.lexeme, item.row))
+        }).collect(),
+        Err(_) => vec![],
+    }
+}
+
+fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)> {
     if !table.flag("ext.lexical.template") {
         return scan_code_marking(source, table, 1);
     }
@@ -647,10 +664,12 @@ impl Quotation<'_> {
     /// end of the text, so it does not keep this word for text so
     /// deeply nested that it is likelier to hold some other fault.
     fn literal(&mut self, body: usize, end: &[char], raw: bool, fields: bool, depth: u32) -> Result<(), String> {
+        if fields && depth >= 150 { return Err(self.table.single("ext.builtin.source.syntax").unwrap_or("Invalid string literal").to_owned()); }
         let bytes = self.source[self.next..body - end.len()].iter().any(|c|
             self.table.spells("ext.lexical.string.prefix.bytes", &c.to_string()));
         self.forward(body - self.next);
         if fields { self.token(Shape::Woven, String::new()); }
+        let mut noticed = false;
         let mut saved = String::new();
         let mut missing = false;
         while !self.source[self.next..].starts_with(end) {
@@ -677,15 +696,17 @@ impl Quotation<'_> {
                     } else { None };
                     return Err(complaint.unwrap_or_else(|| self.bad()));
                 },
-                '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing)?,
+                '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing, &mut noticed)?,
                 '{' | '}' if fields => {
                     if self.source.get(self.next + 1) == Some(&ch) {
                         saved.push(ch);
                         self.forward(2);
+                        noticed = false;
                     } else {
                         if ch == '}' { return Err(self.field_fault(1, &[])); }
                         self.flush(&mut saved, &mut missing);
-                        self.field(raw, depth, end)?;
+                        self.field(raw, depth, end, 0)?;
+                        noticed = false;
                     }
                 }
                 _ => { saved.push(ch); self.forward(1); }
@@ -696,9 +717,21 @@ impl Quotation<'_> {
         if fields { self.token(Shape::WovenEnd, String::new()); }
         Ok(())
     }
-    fn slash(&mut self, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool) -> Result<(), String> {
+    fn slash(&mut self, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool, noticed: &mut bool) -> Result<(), String> {
         let begin = self.next;
         let ch = *self.source.get(begin + 1).ok_or_else(|| self.bad())?;
+        if !raw && !*noticed && self.table.strings("ext.lexical.escape.warning").len() == 4 {
+            let mut recognized = self.table.letters("lexical.string_escapes");
+            for key in ["lexical.string_quotes", "ext.lexical.escape.controls", "ext.lexical.escape.named",
+                "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide", "ext.lexical.escape.byte"] {
+                recognized.extend(self.table.letters(key));
+            }
+            if !recognized.contains(&ch) && !ch.is_digit(8) && !['\\', '\r', '\n'].contains(&ch) {
+                let text = self.table.strings("ext.lexical.escape.warning")[3].replace("{}", &ch.to_string());
+                self.token(Shape::EscapeNotice, text);
+                *noticed = true;
+            }
+        }
         if raw || fields && matches!(ch, '{' | '}') {
             text.push('\\');
             self.forward(1);
@@ -712,13 +745,26 @@ impl Quotation<'_> {
             self.forward(2);
             return Ok(());
         }
-        if table.spells("ext.lexical.escape.named", &letter) && self.source.get(begin + 2) == Some(&'{') {
-            self.forward(3);
-            while self.here().map_or(false, |c| c != '}') { self.forward(1); }
-            if self.here().is_none() { return Err(self.bad()); }
-            self.forward(1);
-            *missing = true;
-            return Ok(());
+        if table.spells("ext.lexical.escape.named", &letter) {
+            self.forward(2);
+            if self.here() == Some('{') {
+                self.forward(1);
+                while let Some(c) = self.here() {
+                    if c == '}' || c == '\n' || table.letters("lexical.string_quotes").contains(&c) { break; }
+                    self.forward(1);
+                }
+                if self.here() == Some('}') && self.next != begin + 3 {
+                    self.forward(1);
+                    *missing = true;
+                    return Ok(());
+                }
+            }
+            let consumed: String = self.source[begin..self.next].iter().collect();
+            let mut message = table.single("ext.lexical.escape.named.amiss").unwrap_or("Invalid string literal").to_owned();
+            for offset in [text.len(), text.len() + consumed.len() - 1] {
+                message = message.replacen("{}", &offset.to_string(), 1);
+            }
+            return Err(message);
         }
         let count = ["ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter()
             .find(|key| table.spells(key, &letter)).and_then(|key| table.count(&format!("{key}.digits")));
@@ -794,7 +840,8 @@ impl Quotation<'_> {
         for insert in inserts { words = words.replacen("{}", insert, 1); }
         words
     }
-    fn field(&mut self, raw: bool, depth: u32, delimiter: &[char]) -> Result<(), String> {
+    fn field(&mut self, raw: bool, depth: u32, delimiter: &[char], levels: usize) -> Result<(), String> {
+        if levels >= 3 { return Err(self.field_fault(18, &[])); }
         self.forward(1);
         let origin = self.next;
         let mut nesting = Vec::new();
@@ -917,6 +964,7 @@ impl Quotation<'_> {
         self.made.extend(tokens.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)));
         self.token(Shape::Sign, right);
         self.token(Shape::Woven, String::new());
+        let mut noticed = false;
         let mut specification = String::new();
         let mut missing = false;
         if self.here() == Some(':') {
@@ -925,8 +973,8 @@ impl Quotation<'_> {
                 if self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[])); }
                 match self.here().ok_or_else(|| self.field_fault(0, &[]))? {
                     '\n' | '\r' if delimiter.len() == 1 => return Err(self.field_fault(17, &[])),
-                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw, depth, delimiter)?; }
-                    '\\' => self.slash(raw, true, false, &mut specification, &mut missing)?,
+                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw, depth, delimiter, levels + 1)?; noticed = false; }
+                    '\\' => self.slash(raw, true, false, &mut specification, &mut missing, &mut noticed)?,
                     c => { specification.push(c); self.forward(1); }
                 }
             }
@@ -1032,7 +1080,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 k += 1;
             }
             let line_end = src[k..].iter().position(|c| *c == '\n').map_or(src.len(), |p| k + p);
-            if src[k..line_end].iter().all(|c| c.is_whitespace())
+            if src[k..line_end].iter().all(|c| c.is_ascii_whitespace() || !table.has_any("ext.builtin.exceptions.syntax") && c.is_whitespace())
                 || table.strings("lexical.comment_line").iter().any(|mark| src[k..].starts_with(&mark.chars().collect::<Vec<_>>())) {
                 if line_end < src.len() {
                     row += 1;
@@ -1106,6 +1154,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             pos += 1;
             at_bol = true;
             continue;
+        }
+        if c == '\u{a0}' && table.has_any("ext.lexical.string.format.errors") {
+            return Err(table.strings("ext.lexical.string.format.errors")[15].clone());
         }
         if c.is_whitespace() {
             pos += 1;
@@ -1636,7 +1687,9 @@ pub fn scan_position(source: &str, table: &Table) -> Result<Vec<Token>, (String,
         return scan_at(source, table).map_err(|(message, row)| (message, row, 1));
     }
     let mut cursor = (1, 1);
-    scan_code_from(source, table, 1, &mut cursor).map_err(|message| (message, cursor.0, cursor.1))
+    let mut read = scan_code_from(source, table, 1, &mut cursor).map_err(|message| (message, cursor.0, cursor.1))?;
+    read.retain(|item| item.shape != Shape::EscapeNotice);
+    Ok(read)
 }
 
 
