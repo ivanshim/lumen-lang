@@ -6071,7 +6071,7 @@ impl<'a> Builder<'a> {
             let saved = format!("#slice_value{}", self.gensyms);
             let first = self.write(&saved, value);
             value = self.read(&saved);
-            Some(first)
+            Some((first, saved))
         } else {
             None
         };
@@ -6456,8 +6456,10 @@ impl<'a> Builder<'a> {
         let made = if refused_slice {
             sequence(vec![prim_call(Prim::SliceRefused, Vec::new()), made])
         } else { made };
+        // The value worked out ahead of the bounds is forgotten once
+        // written, so that its last holder is never a hidden cell.
         let made = match before_bounds {
-            Some(first) => sequence(vec![first, made]),
+            Some((first, saved)) => sequence(vec![first, made, Form::Forget(self.address_to_write(&saved))]),
             None => made,
         };
         Ok(match keep {
@@ -6530,8 +6532,12 @@ impl<'a> Builder<'a> {
                     if floor > level { break; }
                     let saved = self.gensym("middle");
                     let keep = Form::Write(saved.clone(), Box::new(left));
-                    let links = self.comparison_tail(saved, operation, level, words)?;
-                    left = sequence(vec![keep, links]);
+                    let links = self.comparison_tail(saved.clone(), operation, level, words)?;
+                    // The middle is forgotten once the links are judged,
+                    // so that a value's last holder is never a cell no
+                    // name reaches.
+                    let judged = self.gensym("judged");
+                    left = sequence(vec![keep, Form::Write(judged.clone(), Box::new(links)), Form::Forget(saved), Form::Read(judged)]);
                     continue;
                 }
             }
@@ -6688,12 +6694,13 @@ impl<'a> Builder<'a> {
         let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
         let answer = match self.comparison_head() {
             Some((following, tier, width)) if tier == level => {
-                let rest = self.comparison_tail(far, following, tier, width)?;
+                let rest = self.comparison_tail(far.clone(), following, tier, width)?;
                 self.choose(test, rest, constant(Value::Flag(false)))
             }
             _ => test,
         };
-        Ok(sequence(vec![put, answer]))
+        let judged = self.gensym("judged");
+        Ok(sequence(vec![put, Form::Write(judged.clone(), Box::new(answer)), Form::Forget(far), Form::Read(judged)]))
     }
 
     /// `++p` and `p--` over any place a write reaches: the place is
@@ -7809,7 +7816,10 @@ impl<'a> Builder<'a> {
                     Ok(fallback)
                 })?;
                 let branch = self.choose(test, yes, no);
-                node = sequence(vec![save, branch]);
+                // The subject is forgotten once the member is reached or
+                // called: what it holds must go when the program lets go.
+                let reached = self.gensym("reached");
+                node = sequence(vec![save, Form::Write(reached.clone(), Box::new(branch)), Form::Forget(held), Form::Take(reached)]);
                 continue;
             }
             let mut given = vec![node];

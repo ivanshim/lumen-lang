@@ -4168,6 +4168,7 @@ impl<'a> Compiler<'a> {
         for (from, to) in spans {
             self.give_places(from, to, &held)?;
         }
+        self.let_go(&held);
         self.pos = after;
         Ok(Some(bound))
     }
@@ -5855,6 +5856,7 @@ impl<'a> Compiler<'a> {
             self.give_places(left, sign, &held)?;
             left = sign + 1;
         }
+        self.let_go(&held);
         self.pos = after;
         Ok(true)
     }
@@ -6080,6 +6082,7 @@ impl<'a> Compiler<'a> {
             self.read(&saved);
             self.write(place);
         }
+        self.let_go(&saved);
         Ok(())
     }
 
@@ -6108,8 +6111,15 @@ impl<'a> Compiler<'a> {
     /// What a store answered with, put away: a write is not a value,
     /// so nothing of it stands where the store was written.
     fn put_away(&mut self) {
-        let held = self.gensym("stored");
-        self.write(&held);
+        self.discard();
+    }
+
+    /// A temporary done with is emptied, so that what it held goes when
+    /// the program lets go of it and not when the frame does: a value's
+    /// last holder may otherwise be a cell no name can reach.
+    fn let_go(&mut self, held: &str) {
+        let slot = self.cell_to_read(held, false);
+        self.put(Instr::Forget(slot));
     }
 
     fn kept(&mut self, keep: Option<&str>) {
@@ -6219,6 +6229,7 @@ impl<'a> Compiler<'a> {
             self.write(&value);
             self.waiting = Some(value);
         }
+        let worked_out = self.waiting.clone().filter(|_| was_waiting.is_none());
         let done = match target.as_slice() {
             // `b = &a`: b is fastened to a's cell, not given a copy.
             [Instr::Read(slot)]
@@ -6675,6 +6686,10 @@ impl<'a> Compiler<'a> {
             }
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
         };
+        // The value worked out ahead of the keys is let go once written.
+        if let (Some(value), true) = (worked_out, done.is_ok()) {
+            self.let_go(&value);
+        }
         self.waiting = was_waiting;
         if hushed || silenced {
             self.put(match silenced {
@@ -6933,6 +6948,10 @@ impl<'a> Compiler<'a> {
             for _ in 0..width { self.take(); }
             self.expr(tier + 1)?;
             self.write(&far);
+            // Each side is moved out of its temporary at its last use, so
+            // that the temporaries hold nothing once the link is judged:
+            // a value's last holder may be one of them, and it must go
+            // when the program lets it go.
             self.read(&near);
             self.read(&far);
             self.act(op, 2);
@@ -6947,6 +6966,8 @@ impl<'a> Compiler<'a> {
             width = words;
         }
         for exit in exits { self.land(exit); }
+        self.let_go(&near);
+        self.let_go(&far);
         self.read(&answer);
         Ok(())
     }
@@ -8221,6 +8242,7 @@ impl<'a> Compiler<'a> {
             self.take();
             let argc = self.arguments(&call)?;
             self.read(&callee);
+            self.let_go(&callee);
             self.act(Action::Invoke(Rc::from("the value the group came to")), argc + 1);
         }
         Ok(())
@@ -8328,6 +8350,7 @@ impl<'a> Compiler<'a> {
                     self.take();
                     let argc = self.arguments_of("the method", &call)?;
                     self.read(&held);
+                    self.let_go(&held);
                     self.act(Action::SummonNamed(argc), argc + 3);
                     continue;
                 }
@@ -8366,6 +8389,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::HasMember(named.as_str().into()), 1);
                 let fallback = self.skip();
                 self.read(&held);
+                self.let_go(&held);
                 if let Some(brackets) = &call {
                     self.act(Action::Grab(named.as_str().into()), 1);
                     let callee = self.gensym("method_value");
@@ -8373,6 +8397,7 @@ impl<'a> Compiler<'a> {
                     self.take();
                     let argc = self.arguments_of(&named, brackets)?;
                     self.read(&callee);
+                    self.let_go(&callee);
                     self.act(Action::Invoke(named.as_str().into()), argc + 1);
                 } else { self.act(Action::Grab(named.as_str().into()), 1); }
                 let finish = self.leap();
@@ -8380,6 +8405,7 @@ impl<'a> Compiler<'a> {
                 self.pos = resume;
                 if let Some(operation) = lang.value_methods.get(&named) {
                     self.read(&held);
+                    self.let_go(&held);
                     self.act(Action::BindValueMethod(Rc::from(operation.as_str())), 1);
                     if let Some(brackets) = &call {
                         let callable = self.gensym("value_member");
@@ -8387,6 +8413,7 @@ impl<'a> Compiler<'a> {
                         self.take();
                         let argc = self.arguments_of(&named, brackets)?;
                         self.read(&callable);
+                        self.let_go(&callable);
                         self.act(Action::Invoke(named.as_str().into()), argc + 1);
                     }
                     self.land(finish);
@@ -8394,7 +8421,7 @@ impl<'a> Compiler<'a> {
                 }
                 let native = lang.builtins.get(&named).copied();
                 let changes = matches!(native, Some(Builtin::Append | Builtin::Replace));
-                if !changes { self.read(&held); }
+                if !changes { self.read(&held); self.let_go(&held); }
                 let argc = if let Some(brackets) = &call {
                     self.take();
                     self.arguments(brackets)?
@@ -8404,6 +8431,7 @@ impl<'a> Compiler<'a> {
                     if let (Some(target), true) = (target, argc == needed) {
                         self.mutation(&named, &held, argc + 1)?;
                         self.read(&held);
+                        self.let_go(&held);
                         self.write(&target);
                     } else { self.class_cannot_run(); }
                 } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
@@ -8511,6 +8539,7 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let argc = self.arguments(&call)?;
                 self.read(&callee);
+                self.let_go(&callee);
                 self.act(Action::Invoke(Rc::from("the value a look came to")), argc + 1);
                 return self.indexing(from);
             }

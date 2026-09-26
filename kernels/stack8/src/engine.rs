@@ -7917,6 +7917,9 @@ impl<'a> Engine<'a> {
                     let items = self.call_items(std::mem::take(&mut args))?;
                     self.builtin_call(*builtin, name, items)
                 } else { self.builtin(*builtin, name, &mut args) };
+                // What the builtin was given is let go now, not when the
+                // next builtin is called: a value's last holder may be here.
+                args.clear();
                 self.buffer = args;
                 match self.carried.take() {
                     Some(fled) => return Err(fled),
