@@ -63,6 +63,10 @@ pub struct Engine<'a> {
     fresh_routines: bool,
     pub module_sources: HashMap<String, String>,
     modules: HashMap<String, Value>,
+    // Only names actually supplied by an import need a runtime check;
+    // an empty table leaves ordinary builtin calls on their fast path.
+    wildcard_slots: HashMap<Rc<str>, HashMap<String, usize>>,
+    module_slots: HashMap<Rc<str>, (usize, String)>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
     /// `builtins` asks for itself this way -- is handed the instance
@@ -994,6 +998,8 @@ impl<'a> Engine<'a> {
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
             modules: HashMap::new(),
+            wildcard_slots: HashMap::new(),
+            module_slots: HashMap::new(),
             importing: std::collections::HashSet::new(),
             fetching_names: false,
             registry,
@@ -3571,6 +3577,10 @@ impl<'a> Engine<'a> {
                     }
                     self.data.push(Value::Routine(Rc::new(closed)));
                 }
+                Instr::Const(Value::ByteKind(changeable, shown)) if !self.wildcard_slots.is_empty() && (program.body_of_all || program.declared_on != 0) => {
+                    let word = self.byte_kind_word(*changeable);
+                    self.data.push(self.wildcard_value(word).unwrap_or_else(|| Value::ByteKind(*changeable, shown.clone())));
+                }
                 Instr::Const(v) => {
                     // A definition reached again makes a function of its
                     // own, the same words though it has.
@@ -3641,6 +3651,11 @@ impl<'a> Engine<'a> {
                     // names, as the reference has it, and only the
                     // outermost body has none but the globals.
                     let done = match op {
+                        Action::Builtin(native, name) if !self.wildcard_slots.is_empty()
+                            && (program.body_of_all || program.declared_on != 0) && self.wildcard_callable(name, *native).is_some() => {
+                            self.data.push(self.wildcard_callable(name, *native).unwrap());
+                            self.perform(&Action::Invoke(name.clone()), argc + 1)
+                        }
                         Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 && self.lang.compile_modes.is_empty() => self.run_text_here(program, frame),
                         // Where the language has manners of reading as
                         // well, the reading is done past here, so the
@@ -6958,9 +6973,29 @@ impl<'a> Engine<'a> {
                         if name.starts_with('_') || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
                         let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
                         if matches!(value, Value::Blank) { continue; }
-                        let at = self.registry.slot(&name);
+                        let destination = self.module_slots.get(&self.source).and_then(|(base, path)| self.modules.get(path).cloned().map(|module| (*base, module)));
+                        let at = if let Some((base, Value::Object(target))) = &destination {
+                            let prefix = format!("\0module:{base}:");
+                            let suffix = format!(":{name}");
+                            self.registry.idents.iter().position(|word| word.starts_with(&prefix) && word.ends_with(&suffix))
+                                .unwrap_or_else(|| self.registry.slot(&format!("{prefix}{}:{name}", target.class.name)))
+                        } else { self.registry.slot(&name) };
                         self.world.resize(self.registry.idents.len(), Value::Blank);
-                        self.world[at] = value;
+                        if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone())); }
+                        match &self.world[at] {
+                            Value::Bond(cell) => *cell.borrow_mut() = value,
+                            _ if destination.is_some() => self.world[at] = Value::Bond(Rc::new(RefCell::new(value))),
+                            _ => self.world[at] = value,
+                        }
+                        if let Some((_, Value::Object(target))) = destination {
+                            let mut fields = target.fields.borrow_mut();
+                            if let Some((_, held)) = fields.iter_mut().find(|(word, _)| word == &name) {
+                                *held = self.world[at].clone();
+                            } else { fields.push((name.clone(), self.world[at].clone())); }
+                        }
+                        if self.lang.shadow_builtins {
+                            self.wildcard_slots.entry(self.source.clone()).or_default().insert(name, at);
+                        }
                     }
                 }
                 Value::Null
@@ -15210,6 +15245,22 @@ impl Engine<'_> {
 }
 
 impl Engine<'_> {
+    fn wildcard_value(&self, name: &str) -> Option<Value> {
+        let at = self.wildcard_slots.get(&self.source)?.get(name)?;
+        let held = match self.world.get(*at)? {
+            Value::Bond(cell) => cell.borrow().clone(),
+            value => value.clone(),
+        };
+        (!matches!(held, Value::Blank)).then_some(held)
+    }
+
+    fn wildcard_callable(&self, name: &str, native: Builtin) -> Option<Value> {
+        let held = self.wildcard_value(name)?;
+        if matches!(&held, Value::Native(operation, _) if *operation == native) { return None; }
+        if matches!((&held, native), (Value::ByteKind(changeable, _), Builtin::Bytes(tag @ 0..=1)) if *changeable == (tag == 1)) { return None; }
+        Some(held)
+    }
+
     /// A module owns cells in the same world, under names no source can
     /// spell. Its routines keep those addresses after the reader returns.
     fn import_module(&mut self, path: &str) -> Flow<Value> {
@@ -15303,6 +15354,7 @@ impl Engine<'_> {
         });
         let module = Value::Object(object);
         self.modules.insert(path.to_string(), module.clone());
+        self.module_slots.insert(Rc::from(filename), (offset, path.to_string()));
         self.importing.insert(path.to_string());
         let saved_depth = self.data.len();
         let result = self.invoke(&program, Vec::new());
