@@ -1750,3 +1750,105 @@ Pull request #505 merged into main at b5edcd4 on 25 September (all six
 jobs green on 178addd). This was the last batch run from the cloud
 session; from here the coordinator runs on the AWS instance
 (HANDOVER.md §5).
+
+### 1aa. Batch 18 merged as #505; batch 19 is the first batch run from the instance
+
+Pull request #505 merged into main at b5edcd4 and the handover follow-up
+#506 at 15dd89f. Batch 19 is the first batch coordinated on the AWS
+instance, first a c8g.4xlarge and, after an hour pinned at 100% CPU, a
+c8g.8xlarge (32 cores): the coordinator is a Claude Code session, and the
+workers are Codex sessions (GPT-6 Astra) working over SSH in worktrees on
+the instance, with Claude Sonnet, Opus and Fable workers standing in once
+the Codex weekly limit was spent.
+
+The first hour on the new machine: the debug build and the independence
+check clean; `scripts/suite/scratchcheck.py` and `count_run.py` now run
+one process per core, each program in its own working directory (the
+test library's `@test` files would otherwise meet), which brought the full
+scratch check to about 10 minutes and the count to about 5; every scratch
+record matched on ARM. The count matched the batch-18 table on 49 of 50
+files. The fiftieth, test_cmath, was one test short on both kernels: the
+library's textbook `acos`/`asin` gave an imaginary part of 1e-16 for a
+real on ARM where x86's last digits cancelled. fix/cmath replaced them.
+
+Batch 19 folds eight branches, all counts both kernels unless noted.
+fix/fstring-fields: CPython's own wording for malformed f-string fields
+(test_fstring 45 to 57, 58 once merged with source-lines).
+fix/set-semantics: `bytes` and callables hashable, set lookup and
+inherited members, and 3.14's "cannot use 'list' as a set element"
+wording (test_set 490 to 568, 573 merged; records sets/5, 7, 8, 11 and
+sequence-ops/19 moved to the wording test_set asks for). fix/cmath:
+CPython's complex algorithms, special-value tables and signed zeros,
+exact on both architectures (test_cmath 12 to 32 of 33; the last is
+CPython-only). fix/test-support: the thirteen stubbed test.support helpers
+done as CPython does them, the unsupported ones skipping as CPython's do,
+and integer string conversion reading the configured digit limit
+(test_int 15 to 30). fix/codecs: the standard codecs and every error
+handler for `str.encode`/`bytes.decode` with CPython's exception objects
+(test_str 81 to 91 on stack8, 90 to 100 on microcode7).
+fix/iterator-abc: native iterators are `collections.abc` Iterators with
+CPython's type names (test_iter 36 to 43). fix/dict-mutation: a dict
+changed while walked raises RuntimeError; value-only updates keep the
+walk valid (test_dict 80 to 86 on stack8, 81 to 87 on microcode7).
+fix/source-lines: SyntaxError positions (lineno, offset, end_lineno,
+end_offset, text) and exception tracebacks with frames and line numbers,
+the uncaught-error first line kept as the records and the reference
+runner read it (test_exceptions 32 to 50, test_syntax 6 to 50,
+test_eof 0 to 4; file-strings/14 moved to "unterminated string literal
+(detected at line 1)").
+
+Merges: microcode7's EXT_TAGS roster line collided between fstring-fields
+and source-lines and was resolved as the union of both sides' labels;
+reader-tail/1 and reader-tail/4 were regenerated from the merged binary
+(both kernels agreeing, no pass lost against either side). A ninth branch,
+fix/int-digit-limits, duplicated work already in fix/test-support and was
+stopped.
+
+The batch-19 count stands at stack8 1,774 of 2,738 and microcode7 1,781
+of 2,738 (+230 and +229 against the same code's count on this machine),
+no file losing a pass. The examples gates held (python 384, php 318,
+lumen 522 with stream35's known timeouts rerun alone), and the full
+scratch check matched every record. The PHP reference row was checked on
+the debug binary with the runner's timeout raised: 398 pass and 23
+skipped, the one other test (basic/bug67198) wanting a PHP web server the
+local harness does not start, failing the same way on the base; CI's run
+is the measure.
+
+The repository now carries an MIT licence for its own code (`LICENSE`);
+the CPython and PHP tests under `tests/` keep their own licences.
+`docs/OVERVIEW.md` is a one-page account of the project.
+
+### 1ab. Batch 19 merged as #507; batch 20a is the first batch checked on Lambda
+
+Pull request #507 merged into main at 8a13986 (batch 19, the MIT licence
+and docs/OVERVIEW.md). Batch 20 grew to seventeen branches, so it goes in
+as smaller pull requests; 20a folds the eight that merge with one another
+without conflicts. All counts both kernels unless noted.
+
+fix/generators: generator and coroutine corners (test_generators 27 to
+29). fix/call-arguments: positional-only and keyword-only parameters,
+their errors and CPython's wording (test_positional_only_arg 7 to 20,
+test_keywordonlyarg 8 to 10, test_syntax 50 to 56). fix/class-operations:
+function and class attributes (test_funcattrs 13 to 32, test_class 16/17
+to 21). fix/complex: the complex type's construction, arithmetic and
+formatting (test_complex 19 to 32). fix/sequences: list and tuple
+semantics, with CPython's own LyingTuple/LyingList helpers restored in the
+test library's seq_tests (test_list 44/45 to 55/56, test_tuple 26 to 32).
+fix/fractions: the fractions module (test_fractions 19 to 26). fix/operators: augmented assignment and comparison
+(test_augassign 5 to 7, test_compare +1). fix/small-files: index
+conversion, print's writer calls, bool's pickle forms and unpacking errors
+(test_index 36/37 to 55 of 55, test_print +1, test_bool +1).
+
+Merged, the fifty files count 1882 passing tests on stack8 and 1894 on
+microcode7, up from 1774 and 1781, with no passing test lost on either.
+
+How it was checked. The instance was replaced blue/green by a c8g.4xlarge
+built from its image and then stepped down to a c8g.2xlarge (8 cores):
+the bursty checks moved to AWS Lambda (arm64, one vCPU each, the build
+box's own glibc shipped with the binary). The full scratch check runs as
+about 700 invocations at once in under two minutes, the example gates
+(1,224 runs) in about one, and forty-nine of the fifty reference files
+in about twelve; test_set and scratch/reader-tail/4 stay on the instance.
+The Lambda results matched the instance's run of the same tree exactly.
+fix/relocatable-library lets a binary find its library through
+LUMEN_ROOT, so any worktree's own build can be checked on Lambda.

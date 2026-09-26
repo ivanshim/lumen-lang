@@ -3,9 +3,56 @@ class error(Exception):
     pass
 
 def pack(format, *values):
+    if format == '<q' or format == '>q' or format == '!q':
+        if len(values) != 1:
+            raise error('pack expected 1 items for packing (got ' + str(len(values)) + ')')
+        return int(values[0]).to_bytes(8, 'little' if format == '<q' else 'big', signed=True)
+    if format == '<d' or format == '>d' or format == '!d':
+        if len(values) != 1:
+            raise error('pack expected 1 items for packing (got ' + str(len(values)) + ')')
+        import math
+        value = float(values[0])
+        if math.isnan(value):
+            bits = 9221120237041090560
+        elif math.isinf(value):
+            bits = 9218868437227405312
+        else:
+            mantissa, exponent = math.frexp(abs(value))
+            if value == 0:
+                bits = 0
+            elif exponent < -1021:
+                fraction = int(math.ldexp(mantissa, exponent + 1074))
+                bits = fraction
+            else:
+                fraction = int(math.ldexp(mantissa, 53)) - 4503599627370496
+                bits = (exponent + 1022) * 4503599627370496 + fraction
+            if math.copysign(1.0, value) < 0:
+                bits += 9223372036854775808
+        return bits.to_bytes(8, 'little' if format == '<d' else 'big')
     raise 'NotImplementedError: struct.pack needs byte values'
 
 def unpack(format, buffer):
+    if format == '<q' or format == '>q' or format == '!q':
+        if len(buffer) != 8:
+            raise error('unpack requires a buffer of 8 bytes')
+        return (int.from_bytes(buffer, 'little' if format == '<q' else 'big', signed=True),)
+    if format == '<d' or format == '>d' or format == '!d':
+        if len(buffer) != 8:
+            raise error('unpack requires a buffer of 8 bytes')
+        import math
+        bits = int.from_bytes(buffer, 'little' if format == '<d' else 'big')
+        negative = bits >= 9223372036854775808
+        if negative:
+            bits -= 9223372036854775808
+        exponent = bits // 4503599627370496
+        fraction = bits % 4503599627370496
+        if exponent == 2047:
+            value = math.inf if fraction == 0 else math.nan
+        elif exponent == 0:
+            value = math.ldexp(fraction, -1074)
+        else:
+            value = math.ldexp(fraction + 4503599627370496, exponent - 1075)
+        return (-value if negative else value,)
     raise 'NotImplementedError: struct.unpack needs byte values'
 
 def calcsize(format):
