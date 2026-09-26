@@ -3300,7 +3300,12 @@ impl<'a> Engine<'a> {
             if !matches!(sent, Value::Null) { return Err(self.lang.yield_unsupported[0].clone().into()); }
             // A map that changed size under the walk stops the next step.
             if let (Some((cell, size)), Some(said)) = (&kept.watched, &self.lang.map_resized) {
-                if Self::map_size(cell) != *size { kept.closed = true; return Err(format!("\0{said}").into()); }
+                let now = Self::map_size(cell);
+                if now != *size {
+                    let words = if now.0 != size.0 { said.clone() } else { self.lang.core_words["core.dict.changed"][1].clone() };
+                    kept.closed = true;
+                    return Err(format!("\0{words}").into());
+                }
             }
             let item = kept.items.get(kept.pc).cloned();
             kept.pc += usize::from(item.is_some());
@@ -3944,7 +3949,16 @@ impl<'a> Engine<'a> {
         let mut amiss = None;
         if let Some(v) = args.first() {
             match v.contents() {
-                Value::Map(p) => { for (k, v) in p.iter() { self.map_enter(&mut pairs, k.clone(), v.clone())?; } }
+                Value::Map(p) => {
+                    let watch = Self::map_cell(v).map(|cell| { let start = Self::map_size(&cell); (cell, start) });
+                    for (k, v) in p.iter() {
+                        self.map_enter(&mut pairs, k.clone(), v.clone())?;
+                        if watch.as_ref().is_some_and(|(cell, start)| Self::map_size(cell) != *start) {
+                            self.replace_map(receiver, pairs)?;
+                            return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][2]));
+                        }
+                    }
+                }
                 other => {
                     for item in crate::methods::members(&other, &|k| self.lang.method_errors[k].clone())? {
                         let pair = crate::methods::members(&item, &|k| self.lang.method_errors[k].clone())?;
@@ -8058,11 +8072,11 @@ impl<'a> Engine<'a> {
     }
 
     /// How many pairs the map in a cell holds at this moment.
-    fn map_size(cell: &Rc<RefCell<Value>>) -> usize {
+    fn map_size(cell: &Rc<RefCell<Value>>) -> (usize, u64) {
         match &*cell.borrow() {
-            Value::Map(pairs) => pairs.len(),
+            Value::Map(pairs) => (pairs.len(), pairs.revision),
             Value::Bond(within) | Value::Collection(within, _) => Self::map_size(within),
-            _ => 0,
+            _ => (0, 0),
         }
     }
 
@@ -14071,7 +14085,8 @@ impl Engine<'_> {
                     return Ok(found);
                 }
                 CursorSource::Viewed(window, place, size) => {
-                    if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                    let now = Self::window_size(window);
+                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
                     let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
                     if found.is_some() { *place += 1; } else { state.finished = true; }
                     return Ok(found);
@@ -14098,7 +14113,8 @@ impl Engine<'_> {
                 Ok(found)
             }
             CursorSource::Viewed(window, place, size) => {
-                if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                let now = Self::window_size(window);
+                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
                 let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
                 if found.is_some() { *place += 1; }
                 Ok(found)
@@ -14220,8 +14236,8 @@ impl Engine<'_> {
     }
 
     /// The size of the map a window looks upon.
-    fn window_size(window: &Value) -> usize {
-        match window { Value::View(view) => match view.0.contents() { Value::Map(pairs) => pairs.len(), _ => 0 }, _ => 0 }
+    fn window_size(window: &Value) -> (usize, u64) {
+        match window { Value::View(view) => match view.0.contents() { Value::Map(pairs) => (pairs.len(), pairs.revision), _ => (0, 0) }, _ => (0, 0) }
     }
 
     /// What iter is handed before its cell is opened: a list's own cell,

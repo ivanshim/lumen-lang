@@ -171,7 +171,7 @@ pub enum IteratorKind {
     Living(Rc<RefCell<Value>>, usize),
     /// A window upon a dictionary, and the size the dictionary had at
     /// the start: a different size later stops the walk.
-    Watching { window: Value, at: usize, size: usize },
+    Watching { window: Value, at: usize, size: (usize, u64) },
     /// A thing read place by place from nought, until the reading fails.
     Placed(Value, BigInt),
     /// A thing read place by place from its last down to nought, for
@@ -363,6 +363,12 @@ pub enum Found {
     Unknown,
 }
 
+thread_local! { static DICTIONARY_TURN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+fn dictionary_turn() -> u64 {
+    DICTIONARY_TURN.with(|counter| { counter.set(counter.get().wrapping_add(1)); counter.get() })
+}
+
 /// A map's pairs, kept in the order they were written, with a place
 /// that answers where a key of a given address stands among them —
 /// built the first time one is asked for, from every entry already
@@ -381,6 +387,7 @@ pub enum Found {
 /// it again.
 pub struct MapStore {
     pairs: Vec<(Value, Value)>,
+    pub serial: u64,
     place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
 }
 
@@ -433,6 +440,7 @@ impl MapStore {
     pub fn insert_known_absent(&mut self, key: Value, address: String, value: Value) {
         self.ensure_place();
         let at = self.pairs.len();
+        self.serial = dictionary_turn();
         self.pairs.push((key, value));
         self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
     }
@@ -440,7 +448,7 @@ impl MapStore {
 
 impl From<Vec<(Value, Value)>> for MapStore {
     fn from(pairs: Vec<(Value, Value)>) -> MapStore {
-        MapStore { pairs, place: RefCell::new(None) }
+        MapStore { pairs, serial: dictionary_turn(), place: RefCell::new(None) }
     }
 }
 
@@ -456,7 +464,7 @@ impl std::iter::FromIterator<(Value, Value)> for MapStore {
 /// again and answers for the copy's own pairs, never the original's.
 impl Clone for MapStore {
     fn clone(&self) -> MapStore {
-        MapStore { pairs: self.pairs.clone(), place: RefCell::new(None) }
+        MapStore { pairs: self.pairs.clone(), serial: self.serial, place: RefCell::new(None) }
     }
 }
 
@@ -467,6 +475,7 @@ impl std::ops::Deref for MapStore {
 
 impl std::ops::DerefMut for MapStore {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        self.serial = dictionary_turn();
         *self.place.borrow_mut() = None;
         &mut self.pairs
     }

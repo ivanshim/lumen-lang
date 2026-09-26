@@ -174,7 +174,7 @@ pub struct Suspension {
     /// The cell of the map the members were taken from, and how many
     /// pairs it held then, so a step may notice the map has grown or
     /// shrunk under the walk.
-    overseen: Option<(Rc<RefCell<Value>>, usize)>,
+    overseen: Option<(Rc<RefCell<Value>>, (usize, u64))>,
     /// The routine the body belongs to, where the walk is a routine's
     /// body and not a row of members already in hand. A step back into
     /// it stands inside that routine, so it is named while the step
@@ -2766,11 +2766,11 @@ impl<'a> Machine<'a> {
     }
 
     /// How many pairs the map in a cell holds now.
-    fn dict_extent(cell: &Rc<RefCell<Value>>) -> usize {
+    fn dict_extent(cell: &Rc<RefCell<Value>>) -> (usize, u64) {
         match &*cell.borrow() {
-            Value::Dict(entries) => entries.len(),
+            Value::Dict(entries) => (entries.len(), entries.serial),
             Value::Mutable(deeper, _) | Value::Shared(deeper) => Self::dict_extent(deeper),
-            _ => 0,
+            _ => (0, 0),
         }
     }
 
@@ -3042,9 +3042,12 @@ impl<'a> Machine<'a> {
         if state.ready.is_some() { return Ok(state.ready.take()); }
         // A map that changed size under the walk stops the step.
         if let (Some(_), Some((cell, size))) = (&state.members, &state.overseen) {
-            if Self::dict_extent(cell) != *size {
+            let current = Self::dict_extent(cell);
+            if current != *size {
+                let which = usize::from(current.0 == size.0);
+                let complaint = self.table.strings("ext.builtin.core.dict.changed")[which].clone();
                 state.ended = true;
-                return Err(format!("\0{}", self.table.single("ext.syntax.map.resized").unwrap_or_default()).into());
+                return Err(format!("\0{complaint}").into());
             }
         }
         if let Some(members) = &mut state.members {
@@ -8610,7 +8613,17 @@ impl<'a> Machine<'a> {
         let mut stopped = None;
         if let Some(source) = arguments.first() {
             match source.settled() {
-                Value::Dict(d) => { for (key, value) in d.iter() { self.map_enter(&mut entries, key.clone(), value.clone())?; } }
+                Value::Dict(d) => {
+                    let cell = Self::dict_cell(source);
+                    let initial = cell.as_ref().map(Self::dict_extent);
+                    for (key, value) in d.iter() {
+                        self.map_enter(&mut entries, key.clone(), value.clone())?;
+                        if cell.as_ref().map(Self::dict_extent) != initial {
+                            self.replace_dict(receiver, entries)?;
+                            return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[2]));
+                        }
+                    }
+                }
                 other => {
                     let says = |kind: &str| self.method_fault(kind);
                     for item in crate::members::gather(&other, &says)? {
@@ -15676,7 +15689,11 @@ impl Machine<'_> {
                     return Ok(item);
                 }
                 IteratorKind::Watching { window, at, size } => {
-                    if Self::window_extent(window) != *size { return Err(self.core_complaint("core.dict.changed", "")); }
+                    let current = Self::window_extent(window);
+                    if current != *size {
+                        let index = if current.0 == size.0 { 1 } else { 0 };
+                        return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[index]));
+                    }
                     let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
                     if item.is_some() { *at += 1; }
                     held.done = item.is_none();
@@ -15702,7 +15719,11 @@ impl Machine<'_> {
                     Ok(item)
                 }
                 IteratorKind::Watching { window, at, size } => {
-                    if Self::window_extent(window) != *size { return Err(self.core_complaint("core.dict.changed", "")); }
+                    let current = Self::window_extent(window);
+                    if current != *size {
+                        let index = if current.0 == size.0 { 1 } else { 0 };
+                        return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[index]));
+                    }
                     let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
                     if item.is_some() { *at += 1; }
                     Ok(item)
@@ -15828,8 +15849,8 @@ impl Machine<'_> {
     }
 
     /// How many entries the dictionary behind a window holds.
-    fn window_extent(window: &Value) -> usize {
-        match window { Value::Window(owner, _) => match owner.settled() { Value::Dict(entries) => entries.len(), _ => 0 }, _ => 0 }
+    fn window_extent(window: &Value) -> (usize, u64) {
+        match window { Value::Window(owner, _) => match owner.settled() { Value::Dict(entries) => (entries.len(), entries.serial), _ => (0, 0) }, _ => (0, 0) }
     }
 
     /// The cell a list lives in, or a window upon a dictionary, taken as

@@ -629,7 +629,9 @@
     " to a sequence"
   ],
   "ext.builtin.core.dict.changed": [
-    "RuntimeError: dictionary changed size during iteration"
+    "RuntimeError: dictionary changed size during iteration",
+    "RuntimeError: dictionary keys changed during iteration",
+    "RuntimeError: dict mutated during update"
   ],
   "ext.builtin.core.empty": [
     "ValueError: ",
