@@ -52,8 +52,12 @@ class MemberDescriptorType:
     pass
 
 
-class GeneratorType:
-    pass
+def __generator_probe():
+    yield
+
+
+GeneratorType = type(__generator_probe())
+del __generator_probe
 
 
 class CoroutineType:
