@@ -191,6 +191,8 @@ pub struct Compiler<'a> {
     plans: HashMap<usize, BindingPlan>,
     discovering: bool,
     annotation_target: Option<usize>,
+    /// Whether the statement being read was marked asynchronous.
+    asynchronous: bool,
     lang: &'a Lang,
     tokens: &'a [Token],
     pos: usize,
@@ -449,7 +451,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, asynchronous: false, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1730,11 +1732,22 @@ impl<'a> Compiler<'a> {
             if !lang.do_words.is_empty() && Lang::spells(&lang.do_words, &w) {
                 return self.do_stmt();
             }
+            // A deferring word before an import: the import is read as
+            // it stands without the word, and answered at once.
+            if !lang.import_lazy_words.is_empty() && Lang::spells(&lang.import_lazy_words, &w)
+                && self.look_ahead(1).shape == Shape::Instr
+                && (Lang::spells(&lang.import_words, &self.look_ahead(1).lexeme) || Lang::spells(&lang.import_from_words, &self.look_ahead(1).lexeme)) {
+                self.take();
+                return self.stmt();
+            }
             if Lang::spells(&lang.async_words, &w) {
                 self.take();
                 if !(self.on_keyword(&lang.function_words) || self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words)) {
                     return Err(format!("Expected a function, for loop or with block after '{}', got '{}'", w, self.look().lexeme));
                 }
+                // A function so marked runs as any function does; a loop
+                // or a context block so marked is read asynchronous.
+                self.asynchronous = self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words);
                 return self.stmt();
             }
             if Lang::spells(&lang.with_words, &w) { return self.with_stmt(); }
@@ -1906,6 +1919,7 @@ impl<'a> Compiler<'a> {
     fn with_stmt(&mut self) -> Res<()> {
         self.take();
         let lang = self.lang;
+        let asynchronous = std::mem::take(&mut self.asynchronous);
         let group = lang.grouping.clone().expect("group marks");
         let mut bracketed = false;
         if self.at_symbol(&group.open) {
@@ -1932,9 +1946,26 @@ impl<'a> Compiler<'a> {
             if lang.class_special.get(33).is_some() {
                 let manager = self.gensym("context");
                 self.write(&manager);
-                self.read(&manager);
-                self.act(Action::ContextEnter, 1);
-                let cell = self.cell_to_write(&manager);
+                let watched = if asynchronous {
+                    // An asynchronous manager is entered by its own word,
+                    // and its leaving method, bound now, stands in the
+                    // watched place to be called with the outcome.
+                    let enter = lang.class_special.get(81).cloned().unwrap_or_default();
+                    let leave = lang.class_special.get(82).cloned().unwrap_or_default();
+                    let leaving = self.gensym("leaving");
+                    self.read(&manager);
+                    self.act(Action::Grab(Rc::from(leave.as_str())), 1);
+                    self.write(&leaving);
+                    self.read(&manager);
+                    self.act(Action::Grab(Rc::from(enter.as_str())), 1);
+                    self.act(Action::Invoke(Rc::from("")), 1);
+                    leaving
+                } else {
+                    self.read(&manager);
+                    self.act(Action::ContextEnter, 1);
+                    manager
+                };
+                let cell = self.cell_to_write(&watched);
                 let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
                 watchers.push(mark);
             }
@@ -3583,6 +3614,7 @@ impl<'a> Compiler<'a> {
     /// `for v in a..b block`: a counted loop with the bound in a hidden slot.
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
+        let asynchronous = std::mem::take(&mut self.asynchronous);
         self.take();
         if !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { return Err("SyntaxError: cannot assign to literal".into()); }
         let target = if !lang.tuple_marks.is_empty() && !lang.unpack_words.is_empty() {
@@ -3644,6 +3676,7 @@ impl<'a> Compiler<'a> {
                 if !lang.comprehension_for.is_empty() {
                     self.act(Action::ComprehensionItems, 1);
                 }
+                if asynchronous { self.act(Action::WalkAsync, 1); }
                 self.write(&bag);
                 return self.walk(&bag, None, &var, false, target);
             }
@@ -4344,6 +4377,7 @@ impl<'a> Compiler<'a> {
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }
+        if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).lexeme) { self.take(); }
         if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {self.gathering().unready=true;}
         if self.on_keyword(&lang.function_words) {
             self.take();

@@ -1222,6 +1222,8 @@ impl<'a> Machine<'a> {
             // be walked for it. Either way a walk begins here.
             Prim::Walked => {
                 n(1)?;
+                // A marked asynchronous walk is taken up as it stands.
+                if matches!(&v[0], Value::Wrapped(61, _)) { return Ok(Value::Traversal(Rc::new(v[0].clone()), Rc::new(RefCell::new(None)))); }
                 if let Value::Blueprint(kind) = &v[0] {
                     // What the class hands over is walked as any walk begins,
                     // here, where the walking is done.
@@ -3506,11 +3508,25 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The watched place holds the manager, whose leaving word is asked,
+    /// or -- for an asynchronous block -- the leaving method itself,
+    /// already bound, which is called as it stands.
+    fn ask_leaving(&mut self, watched: &Value, arguments: &[Value]) -> Result<Option<Value>, String> {
+        match watched {
+            Value::Bound(..) | Value::Method(..) | Value::Routine(_) => match self.apply_class_member(watched.clone(), arguments.to_vec()) {
+                Ok(value) => Ok(Some(value)),
+                Err(Escape::Error(message)) => Err(message),
+                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+            },
+            _ => self.ask_special(watched, 34, arguments),
+        }
+    }
+
     /// The manager of a watched body is told the body is done with. It
     /// answers whether a value raised there is to be let go.
     fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
-        if !matches!(&manager, Value::Thing(_)) { return Ok(false); }
+        if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
         let unready = self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned();
         let arguments = match raised {
             None => vec![Value::Nil; 3],
@@ -3523,7 +3539,7 @@ impl<'a> Machine<'a> {
         // mistaken for what this one raises: only a fault this very
         // call sets belongs to it.
         self.got_away = None;
-        let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
+        let asked = self.ask_leaving(&manager, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
         let asked = self.raised_if_error(asked);
         self.holding_fault.truncate(preceding);
         let answer = asked?.ok_or_else(|| self.bad_answer())?;
@@ -4229,7 +4245,7 @@ impl<'a> Machine<'a> {
                 let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
-                    if !matches!(&manager, Value::Thing(_)) { return body_result; }
+                    if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return body_result; }
                     if matches!(&body_result, Err(Escape::Error(_))) || matches!(&body_result, Err(Escape::Thrown(value)) if !matches!(value, Value::Thing(_))) {
                         return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned().into());
                     }
@@ -4251,7 +4267,7 @@ impl<'a> Machine<'a> {
                         self.row = context_line;
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
                     }
-                    let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
+                    let asked = self.ask_leaving(&manager, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
                     if asked.is_ok() && self.table.has_any("ext.builtin.exceptions.traceback") {
                         self.row = body_line;
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
@@ -4577,6 +4593,10 @@ impl<'a> Machine<'a> {
                 Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                     let v = self.value_list(args, frame)?;
                     self.walking(op, name, &v)
+                }
+                Prim::AsyncWalk => {
+                    let v = self.value_list(args, frame)?;
+                    self.async_walk(&v)
                 }
                 // Text read while the run goes is read where it stands:
                 // inside a routine it knows that routine's names, as the
@@ -9269,6 +9289,7 @@ impl<'a> Machine<'a> {
         if matches!(source, Value::Iterator(_) | Value::Generator(_)) { return self.next_value(source); }
         match source {
             Value::Cursor(c) => Ok(c.borrow_mut().pop_front()),
+            Value::Wrapped(61, parts) => self.awaited_step(&parts[0]),
             _ => {
                 let (routine, scope) = self.appointed_within(source, 16).ok_or_else(|| self.bad_answer())?;
                 // A walk the method itself steps on through another
@@ -9290,6 +9311,32 @@ impl<'a> Machine<'a> {
                     Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
                 }
             }
+        }
+    }
+
+    /// The thing is asked for its asynchronous walk, and what it hands
+    /// over is marked, so that each step asks that walk's own word for
+    /// the next member rather than the ordinary one.
+    fn async_walk(&mut self, v: &[Value]) -> Result<Value, Escape> {
+        let [subject] = v else { return Err(Escape::Error(format!("an asynchronous walk expects 1 argument, got {}", v.len()))) };
+        let asked = self.ask_special(subject, 79, &[]).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)))?;
+        let walker = asked.ok_or_else(|| Escape::Error(self.bad_answer()))?;
+        Ok(Value::Wrapped(61, Rc::new(vec![walker])))
+    }
+
+    /// One step of an asynchronous walk: the walk's own word for the next
+    /// member is asked, and the fault that ends such a walk ends it.
+    fn awaited_step(&mut self, walker: &Value) -> Result<Option<Value>, String> {
+        let (routine, scope) = self.appointed_within(walker, 80).ok_or_else(|| self.bad_answer())?;
+        let stepped = match self.invoke(routine, scope, vec![walker.clone()]) {
+            Err(Escape::Error(_)) if self.got_away.is_some() => Err(self.got_away.take().expect("what got away")),
+            other => other,
+        };
+        match stepped {
+            Ok(v) => Ok(Some(v)),
+            Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.async.stop").iter().any(|name| t.of.goes_by(name, false)) => Ok(None),
+            Err(Escape::Error(s)) => Err(s),
+            Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
         }
     }
 
@@ -9855,7 +9902,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Vector(Rc::new(ordered)).keep(true)
             }
-            (Prim::Iterated, [one @ Value::Thing(_)]) => one.clone(),
+            (Prim::Iterated, [one @ (Value::Thing(_) | Value::Wrapped(61, _))]) => one.clone(),
             (Prim::Listed, [one]) => {
                 let result = Value::Vector(Rc::new(self.object_members(one)?));
                 // Members an iterator hands out are kept quoted, as a window's are.
@@ -10913,7 +10960,7 @@ impl<'a> Machine<'a> {
             }
             // The steps of a walk that a thing may answer for itself are
             // worked out where a call can be made, not here.
-            Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
+            Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld | Prim::AsyncWalk => {
                 return Err(format!("{}() is worked out where a call can be made", name))
             }
             Prim::Kept => {

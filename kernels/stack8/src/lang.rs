@@ -741,6 +741,8 @@ pub struct Lang {
     pub import_relative_unready: String,
     pub import_words: Vec<String>,
     pub import_from_words: Vec<String>,
+    /// The word that may stand before an import, deferring it.
+    pub import_lazy_words: Vec<String>,
     pub import_as_words: Vec<String>,
     pub math_floating: bool,
     pub module_helper_amiss: String,
@@ -782,6 +784,8 @@ pub struct Lang {
     pub match_unready: Vec<String>,
     /// Words that were once statements of their own (`print`, `exec`).
     pub legacy_call: Vec<String>,
+    /// The fault that ends an asynchronous walk.
+    pub async_stop: Vec<String>,
     pub match_invalid: Vec<String>,
     pub switch_words: Vec<String>,
     pub case_words: Vec<String>,
@@ -1261,9 +1265,9 @@ w ext.builtin.module.helper.amiss | w ext.builtin.member.absent | w ext.builtin.
 b ext.builtin.math.floating
 w ext.builtin.class.derive
 w ext.builtin.call.outcome
-w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
+w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.lazy | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
-w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stmt.match.or | w ext.stmt.match.guard | w ext.stmt.match.as | w ext.stmt.match.unready | w ext.stmt.legacy_call | w ext.stmt.match.invalid
+w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stmt.match.or | w ext.stmt.match.guard | w ext.stmt.match.as | w ext.stmt.match.unready | w ext.stmt.legacy_call | w ext.stmt.async.stop | w ext.stmt.match.invalid
 
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
@@ -2602,6 +2606,7 @@ impl Lang {
             import_relative_unready: r.head("ext.stmt.import.relative.unready")?.unwrap_or_default(),
             import_words: r.strings("ext.stmt.import")?,
             import_from_words: r.strings("ext.stmt.import.from")?,
+            import_lazy_words: r.strings("ext.stmt.import.lazy")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
             math_floating: r.flag("ext.builtin.math.floating")?,
             module_helper_amiss: r.head("ext.builtin.module.helper.amiss")?.unwrap_or_default(),
@@ -2636,6 +2641,7 @@ impl Lang {
             match_as: r.strings("ext.stmt.match.as")?,
             match_unready: r.strings("ext.stmt.match.unready")?,
             legacy_call: r.strings("ext.stmt.legacy_call")?,
+            async_stop: r.strings("ext.stmt.async.stop")?,
             match_invalid: r.strings("ext.stmt.match.invalid")?,
             switch_words: r.strings("ext.stmt.switch")?,
             case_words: r.strings("ext.stmt.case")?,

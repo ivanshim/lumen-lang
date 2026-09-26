@@ -376,7 +376,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -2845,7 +2845,10 @@ impl<'a> Engine<'a> {
                 };
         if let Some(cell) = &plan.context {
             let object = self.load_cell(cell, frame)?;
-            if !matches!(object, Value::Object(_)) {
+            // The watched place holds the manager or, for an asynchronous
+            // block, its leaving method already bound to it.
+            let leaving_bound = matches!(object, Value::Method(..));
+            if !matches!(object, Value::Object(_)) && !leaving_bound {
                 return ending.map(|end| match end { Passage::Along(at) if at == plan.body.1 => Passage::Along(plan.after), other => other });
             }
             if matches!(&ending, Err(Fault::Note(_))) || matches!(&ending, Err(Fault::Thrown(value)) if !matches!(value, Value::Object(_))) {
@@ -2855,9 +2858,12 @@ impl<'a> Engine<'a> {
                 Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class.clone()), value.clone(), self.trace_of(value)],
                 _ => vec![Value::Null, Value::Null, Value::Null],
             };
-            let method = self.special_method(&object, 34).ok_or_else(|| self.special_fault())?;
+            let (method, receiver) = match &object {
+                Value::Method(o, p) => (p.clone(), Value::Object(o.clone())),
+                _ => (self.special_method(&object, 34).ok_or_else(|| self.special_fault())?, object.clone()),
+            };
             let kept = self.data.len();
-            let mut given = vec![object];
+            let mut given = vec![receiver];
             given.extend(args);
             // The raised value is held while the manager lets the body
             // go, so that whatever the leaving raises keeps it as context.
@@ -5838,6 +5844,7 @@ impl<'a> Engine<'a> {
 
     fn special_step(&mut self, value: &Value) -> Res<Option<Value>> {
         if matches!(value, Value::Cursor(_) | Value::Generator(_)) { return self.core_step(value); }
+        if let Value::Adapter(w) = value { if w.0 == 30 { return self.async_step(&w.1[0]); } }
         if let Value::Walk(walk) = value {
             let mut walk = walk.borrow_mut();
             let next = walk.0.get(walk.1).cloned();
@@ -5853,6 +5860,18 @@ impl<'a> Engine<'a> {
             // members of another walk meets those words when that walk
             // ends, and the walk it is the method of ends there too.
             Err(Fault::Note(words)) if self.lang.special_stop.iter().any(|n| words == *n || words.starts_with(&format!("{}:", n))) => Ok(None),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+        }
+    }
+
+    /// One step of an asynchronous walk: the walk's own word for the
+    /// next member is asked, and the fault that ends such a walk ends it.
+    fn async_step(&mut self, walker: &Value) -> Res<Option<Value>> {
+        let method = self.special_method(walker, 80).ok_or_else(|| self.special_fault())?;
+        match self.invoke(&method, vec![walker.clone()]) {
+            Ok(()) => Ok(Some(self.drop_top().map_err(|_| self.special_fault())?)),
+            Err(Fault::Thrown(Value::Object(o))) if self.lang.async_stop.iter().any(|n| o.class.named(n, false)) => Ok(None),
             Err(Fault::Note(words)) => Err(words),
             Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
         }
@@ -5931,6 +5950,16 @@ impl<'a> Engine<'a> {
                         bindings.iter().find(|(n, _)| n == name).expect("a pattern binding").1.clone()
                     }).collect())),
                 }
+            }
+            Action::WalkAsync => {
+                // The thing is asked for its asynchronous walk, and what
+                // it hands over is marked, so that each step asks that
+                // walk's own word for the next member.
+                let subject = self.drop_top()?;
+                let told = self.special_call(&subject, 79, Vec::new());
+                if let Some(fled) = self.carried.take() { return Err(fled); }
+                let walker = told?.ok_or_else(|| self.special_fault())?;
+                Value::Adapter(Rc::new((30, vec![walker])))
             }
             Action::ByteAssign(repeat) => {
                 let operands = self.drop_many(2)?;
@@ -7661,6 +7690,12 @@ impl<'a> Engine<'a> {
             }
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                // An asynchronous walk, already asked of its thing, is
+                // stepped by that thing's own word for the next member.
+                if matches!(&handed, Value::Adapter(w) if w.0 == 30) {
+                    self.data.push(Value::Walking(Rc::new(RefCell::new((handed, None)))));
+                    return Ok(());
+                }
                 if let Value::Class(class) = &handed {
                     if let Some(yielded) = self.class_walked(&class.clone())? { handed = yielded; }
                 }

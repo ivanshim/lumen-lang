@@ -459,6 +459,8 @@ pub enum Prim {
     /// The growing literal and the next part of it.
     ExtendLiteral(bool, bool),
     Iterated,
+    /// A thing's asynchronous walk, marked to be stepped by its own word.
+    AsyncWalk,
     CheckUnpack(usize),
     BindingWidth(usize),
     // control

@@ -799,7 +799,8 @@
     "UnicodeDecodeError",
     "UnicodeTranslateError",
     "IndentationError",
-    "TabError"
+    "TabError",
+    "StopAsyncIteration"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -2399,6 +2400,9 @@
   "ext.stmt.async.unrun": [
     "NotImplementedError: asynchronous functions cannot be run"
   ],
+  "ext.stmt.async.stop": [
+    "StopAsyncIteration"
+  ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
   ],
@@ -2723,7 +2727,11 @@
     "__dir__",
     "__instancecheck__",
     "__subclasscheck__",
-    "__length_hint__"
+    "__length_hint__",
+    "__aiter__",
+    "__anext__",
+    "__aenter__",
+    "__aexit__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
@@ -2821,6 +2829,9 @@
   ],
   "ext.stmt.import.from": [
     "from"
+  ],
+  "ext.stmt.import.lazy": [
+    "lazy"
   ],
   "ext.stmt.import.member.missing": [
     "ImportError: cannot import name '",

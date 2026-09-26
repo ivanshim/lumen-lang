@@ -133,6 +133,8 @@ pub struct Builder<'a> {
     /// Whether the reading stopped over a thing the language calls a
     /// fault of the run rather than a program it could not read.
     stopped_fatally: bool,
+    /// Whether the statement under way was marked asynchronous.
+    asynchronous: bool,
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
@@ -426,7 +428,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { declarations: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { declarations: Vec::new(), asynchronous: false, loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -1909,11 +1911,21 @@ impl<'a> Builder<'a> {
             if self.key("stmt.let") {
                 return self.bind();
             }
+            // The deferring word ahead of an import is stepped over; the
+            // import behind it is read and answered as any other.
+            if self.key("ext.stmt.import.lazy") && self.glance(1).shape == Shape::Bare
+                && (self.table.spells("ext.stmt.import", &self.glance(1).lexeme) || self.table.spells("ext.stmt.import.from", &self.glance(1).lexeme)) {
+                self.advance();
+                return self.stmt();
+            }
             if self.key("ext.stmt.async") {
                 let word = self.advance().lexeme;
                 if !self.key("stmt.function") && !self.key("stmt.for") && !self.key("ext.stmt.with") {
                     return Err(format!("Expected a function, for loop or with block after '{}', got '{}'", word, self.look().lexeme));
                 }
+                // A marked function runs as functions do; a marked loop or
+                // context block is read as asynchronous.
+                self.asynchronous = self.key("stmt.for") || self.key("ext.stmt.with");
                 return self.stmt();
             }
             if self.key("ext.stmt.with") { return self.with_block(); }
@@ -2336,6 +2348,7 @@ impl<'a> Builder<'a> {
     /// The items are found and bound in order, then the body is run.
     fn with_block(&mut self) -> Res<Form> {
         let table = self.table;
+        let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
         let (open, close) = (table.single("syntax.group.open").unwrap(), table.single("syntax.group.close").unwrap());
         let mut enclosed = false;
@@ -2364,11 +2377,25 @@ impl<'a> Builder<'a> {
                 let manager = self.gensym("manager");
                 let manager_read = Form::Read(manager.clone());
                 steps.push(Form::Write(manager.clone(), Box::new(value)));
-                value = prim_call(Prim::StartContext, vec![manager_read]);
+                let watched = if asynchronous {
+                    // An asynchronous manager is entered by its own word;
+                    // its leaving method, bound now, stands in the watched
+                    // place and is called with the outcome at the end.
+                    let specials = table.strings("ext.stmt.class.special");
+                    let word = |at: usize| constant(Value::text(specials.get(at).map(String::as_str).unwrap_or_default()));
+                    let leaving = self.gensym("leaving");
+                    steps.push(Form::Write(leaving.clone(), Box::new(prim_call(Prim::Of, vec![manager_read.clone(), word(82)]))));
+                    let entering = prim_call(Prim::Of, vec![manager_read, word(81)]);
+                    value = Form::Apply(Callee::Code(Box::new(entering)), vec![]);
+                    leaving
+                } else {
+                    value = prim_call(Prim::StartContext, vec![manager_read]);
+                    manager
+                };
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
                 value = Form::Read(entered);
-                contexts.push((steps.len(), manager));
+                contexts.push((steps.len(), watched));
             }
             if self.key("ext.stmt.with.as") {
                 self.advance();
@@ -3184,6 +3211,7 @@ impl<'a> Builder<'a> {
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }
+        if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).lexeme) { self.advance(); }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
@@ -4883,6 +4911,7 @@ impl<'a> Builder<'a> {
 
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
+        let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
         if table.has_any("ext.builtin.exceptions.syntax") && matches!(self.look().shape, Shape::Quote | Shape::ByteQuote | Shape::Numeral) { return Err(String::from("SyntaxError: cannot assign to literal")); }
         let place = if table.single("ext.op.tuple").is_some() && table.single("ext.stmt.unpack").is_some() {
@@ -4930,6 +4959,7 @@ impl<'a> Builder<'a> {
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
+                let start = if asynchronous { prim_call(Prim::AsyncWalk, vec![start]) } else { start };
                 let source = match table.single("ext.op.comprehension.for") {
                     Some(_) => prim_call(Prim::Iterated, vec![start]),
                     None => start,

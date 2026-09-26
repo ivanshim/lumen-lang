@@ -166,6 +166,9 @@ pub enum Action {
     /// A pattern and its binding order; the flag marks a tuple subject,
     /// whose members may be taken but whose whole has no value here.
     Match(Rc<Pattern>, Vec<String>, bool),
+    /// Ask a thing for its asynchronous walk, marked so that each step
+    /// asks that walk's own word for the next member.
+    WalkAsync,
     /// Keep a real's point after a compound write.
     KeepPoint,
     Suspend,
