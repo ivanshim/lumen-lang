@@ -835,6 +835,45 @@ impl Value {
         }
     }
 
+    /// While a literal is being read its text still walks as `char`,
+    /// which cannot hold half of a surrogate pair standing alone; the
+    /// reader stows such a half behind this noncharacter and its four
+    /// sixteens digits, and `spoken` below unpacks the stow once
+    /// reading is finished, so nothing past that point ever sees it.
+    pub const STOWED: char = '\u{FDEF}';
+
+    pub fn stow(text: &mut String, half: u32) {
+        text.push(Self::STOWED);
+        text.push_str(&format!("{half:04x}"));
+    }
+
+    /// What a finished literal's text is worth: plain text where the
+    /// reader stowed nothing, or the row of numbers a stow or two
+    /// stands among, unpacked back into their own places.
+    pub fn spoken(raw: &str) -> Value {
+        if !raw.contains(Self::STOWED) { return Value::text(raw); }
+        let mut numbers = Vec::new();
+        let mut walk = raw.chars();
+        while let Some(c) = walk.next() {
+            if c == Self::STOWED {
+                let digits: String = walk.by_ref().take(4).collect();
+                if let Ok(half) = u32::from_str_radix(&digits, 16) { numbers.push(half); continue; }
+            }
+            numbers.push(c as u32);
+        }
+        Value::characters(numbers)
+    }
+
+    /// A stand-in text for a row of numbers a category question walks
+    /// one at a time: a stow that reading left behind answers none of
+    /// them, exactly as the half of a surrogate pair it stands for
+    /// answers none of Python's own, so the stand-in below is a real
+    /// character no category claims, standing in for one no `char` can
+    /// hold at all.
+    pub fn category_text(numbers: &[u32]) -> String {
+        numbers.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect()
+    }
+
     pub fn characters(numbers: Vec<u32>) -> Value {
         let mut word = String::new();
         for &number in &numbers {

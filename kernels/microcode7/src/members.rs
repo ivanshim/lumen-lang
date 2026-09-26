@@ -109,6 +109,11 @@ impl Request<'_> {
         }
         match self.target.settled(){
             Value::Text(chars)=>self.on_text(&chars),
+            // A row of numbers holding a stowed surrogate half still
+            // answers the six category questions, each of which
+            // reads one character at a time and never hands any of
+            // them back out.
+            Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
             // A flag counts as the whole number it stands for, and so

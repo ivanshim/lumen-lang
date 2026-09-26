@@ -4523,7 +4523,7 @@ impl<'a> Builder<'a> {
         if self.look().shape == Shape::Quote {
             let mut chars = String::new();
             while self.look().shape == Shape::Quote { chars.push_str(&self.advance().lexeme); }
-            return Ok(CaseTest::Equal(Value::text(&chars)));
+            return Ok(CaseTest::Equal(Value::spoken(&chars)));
         }
         if self.on_any("syntax.array.open") || self.on_any("syntax.group.open") {
             let array = self.on_any("syntax.array.open");
@@ -6740,7 +6740,7 @@ impl<'a> Builder<'a> {
             return Ok(constant(Value::Octets { cell: Rc::new(std::cell::RefCell::new(start.lexeme.chars().map(|c| c as u8).collect())), changeable: false,
                 lead: Rc::from(self.table.strings("ext.system.bytes.repr")[0].as_str()) }));
         }
-        if start.shape == Shape::Quote { return Ok(constant(Value::text(&start.lexeme))); }
+        if start.shape == Shape::Quote { return Ok(constant(Value::spoken(&start.lexeme))); }
         if start.shape == Shape::Unheld { return Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(&start.lexeme))])); }
         if start.shape != Shape::Woven {
             return Err(self.table.single("ext.lexical.string.amiss").unwrap_or("Invalid string literal").to_owned());
