@@ -263,6 +263,9 @@ impl Fault {
         match self {
             Fault::Note(note) => note,
             Fault::Thrown(Value::Object(o)) => {
+                if let Some((_, words)) = o.fields.borrow().iter().find(|(key, _)| key == "\0diagnostic") {
+                    return words.plain();
+                }
                 if let Some(message) = Value::Object(o.clone()).exception_message(sp).filter(|_| o.fields.borrow().iter().any(|(n, _)| n == "\0arguments")) {
                     return if message.is_empty() { format!("\0{}", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
                 }
@@ -3471,7 +3474,19 @@ impl<'a> Engine<'a> {
         let result = match result {
             Err(Fault::Note(words)) => match self.carried.take() {
                 Some(fault) => Err(fault),
-                None => Err(self.as_fault(&words).map(Fault::Thrown).unwrap_or(Fault::Note(words))),
+                None => match self.as_fault(&words) {
+                    Some(value) => {
+                        // Attaching a frame does not change the command line's
+                        // existing diagnostic for an uncaught kernel fault.
+                        if let Value::Object(object) = &value {
+                            if !words.starts_with('\0') {
+                                object.fields.borrow_mut().push(("\0diagnostic".into(), Value::text(&words)));
+                            }
+                        }
+                        Err(Fault::Thrown(value))
+                    }
+                    None => Err(Fault::Note(words)),
+                },
             },
             other => other,
         };

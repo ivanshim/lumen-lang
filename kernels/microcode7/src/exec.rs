@@ -2440,6 +2440,9 @@ impl<'a> Machine<'a> {
                     let _ = std::io::stdout().flush();
                     std::process::exit(status);
                 }
+                if let Some(report) = thing.holds.borrow().iter().find_map(|(key, held)| (key == "\0report").then(|| held.bare())) {
+                    return Err(report);
+                }
                 if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values")) {
                     return Err(if words.is_empty() { format!("\0{}", thing.of.name) } else { format!("\0{}: {}", thing.of.name, words) });
                 }
@@ -2688,6 +2691,9 @@ impl<'a> Machine<'a> {
     /// body raised reaches the arms round the walk this way.
     fn suspension_fault(&self, fault: Escape) -> String {
         if let Escape::Thrown(Value::Thing(thing)) = &fault {
+            for (name, held) in thing.holds.borrow().iter() {
+                if name == "\0report" { return held.bare(); }
+            }
             let carried = thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values");
             if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| carried) {
                 return match words.is_empty() {
@@ -3588,7 +3594,20 @@ impl<'a> Machine<'a> {
         let outcome = match result {
             Err(Escape::Error(text)) => Err(match self.got_away.take() {
                 Some(escape) => escape,
-                None => self.as_raised(&text).map(Escape::Thrown).unwrap_or(Escape::Error(text)),
+                None => match self.as_raised(&text) {
+                    None => Escape::Error(text),
+                    Some(raised) => {
+                        // Keep the outer reporter's words while the raised
+                        // value acquires the frames a handler can inspect.
+                        if let Value::Thing(item) = &raised {
+                            if text.as_bytes().first() != Some(&0) {
+                                let entry = (String::from("\0report"), Value::text(&text));
+                                item.holds.borrow_mut().push(entry);
+                            }
+                        }
+                        Escape::Thrown(raised)
+                    }
+                },
             }),
             rest => rest,
         };
@@ -14920,7 +14939,15 @@ impl Machine<'_> {
         self.imported.insert(path.into(), value.clone());
         self.importing.insert(path.into());
         let scope = self.outermost.clone();
+        let caller_location = (self.written_in.clone(), self.row);
+        let caller_activation = self.active_trace.take();
+        self.written_in = Rc::from(filename);
+        self.frames_named.push(built.program.clone());
         let stopped = self.value_of(&built.program.body, &scope);
+        let stopped = self.traced_result(stopped);
+        self.frames_named.pop();
+        self.active_trace = caller_activation;
+        (self.written_in, self.row) = caller_location;
         self.importing.remove(path);
         if let Err(stopped) = stopped {
             self.imported.remove(path);

@@ -1,1 +1,1 @@
-TypeError: f() got multiple values for argument 'a'
+PythonError: TypeError: f() got multiple values for argument 'a'
