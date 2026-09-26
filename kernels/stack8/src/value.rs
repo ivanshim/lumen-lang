@@ -189,6 +189,7 @@ pub struct Step {
 /// A walk keeps its own cells and the part of the stack still wanted.
 #[derive(Debug)]
 pub struct Generator {
+    pub trace_frame: Option<Rc<Instance>>,
     pub program: Option<Rc<Routine>>,
     pub frame: Vec<Value>,
     pub stack: Vec<Value>,
@@ -204,7 +205,7 @@ pub struct Generator {
     pub current: Option<Value>,
     /// The cell of a map the walk hands the items of, with the size the
     /// map had when the walk began, so a step may see it has changed.
-    pub watched: Option<(Rc<RefCell<Value>>, usize)>,
+    pub watched: Option<(Rc<RefCell<Value>>, (usize, u64))>,
     /// The tries the suspension stands inside, innermost first, and
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
@@ -222,7 +223,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
@@ -257,7 +258,7 @@ pub enum CursorSource {
     Living(Rc<RefCell<Value>>, usize),
     /// A window upon a map, with the size the map had when the walk
     /// began; the walk stops should that size change.
-    Viewed(Value, usize, usize),
+    Viewed(Value, usize, (usize, u64)),
     /// A thing walked by reading its places from nought upward.
     Indexed(Value, BigInt),
     /// A thing walked by reading its places from its last down to
@@ -276,14 +277,22 @@ pub enum CursorSource {
     Selected(Value, Value),
 }
 
+#[derive(Debug)]
+pub struct Traceback {
+    pub line: u32,
+    pub frame: Rc<Instance>,
+    pub next: Value,
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
+    Codepoints(Rc<Vec<u32>>),
     Collection(Rc<RefCell<Value>>, bool),
     ValueMethod(Rc<(Value, String)>),
     View(Rc<(Value, String)>),
     Native(crate::code::Builtin, Rc<str>),
     Cursor(Rc<RefCell<CursorState>>),
-    Trace(Rc<str>),
+    Trace(Rc<Traceback>),
     Hashed(Rc<(Value, Value)>),
     Fields(Rc<Instance>),
     Walking(Rc<RefCell<(Value, Option<Value>)>>),
@@ -494,6 +503,12 @@ pub enum Placement {
     Uncertain,
 }
 
+thread_local! { static MAP_REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+fn next_map_revision() -> u64 {
+    MAP_REVISION.with(|stamp| { let next = stamp.get().wrapping_add(1); stamp.set(next); next })
+}
+
 /// A map's rows, in the order a program wrote them, paired with a
 /// lookup from a key's own text (`member_key`) to the row it sits at.
 /// The lookup is worked out the first time something asks for it, from
@@ -513,6 +528,7 @@ pub enum Placement {
 #[derive(Debug)]
 pub struct KeyedPairs {
     rows: Vec<(Value, Value)>,
+    pub revision: u64,
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
 }
 
@@ -564,6 +580,7 @@ impl KeyedPairs {
     pub fn insert_proven_absent(&mut self, key: Value, keytext: String, value: Value) {
         self.settle_lookup();
         let at = self.rows.len();
+        self.revision = next_map_revision();
         self.rows.push((key, value));
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
     }
@@ -571,7 +588,7 @@ impl KeyedPairs {
 
 impl From<Vec<(Value, Value)>> for KeyedPairs {
     fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
-        KeyedPairs { rows, lookup: RefCell::new(None) }
+        KeyedPairs { rows, revision: next_map_revision(), lookup: RefCell::new(None) }
     }
 }
 
@@ -580,7 +597,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), lookup: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, lookup: RefCell::new(None) }
     }
 }
 
@@ -597,6 +614,7 @@ impl std::ops::Deref for KeyedPairs {
 
 impl std::ops::DerefMut for KeyedPairs {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         &mut self.rows
     }
@@ -779,6 +797,7 @@ impl Value {
         // be there and the place to still be within it.
         let single = end == start + 1 && start >= 0;
         let one = if !single { None } else { match &object {
+            Some(Value::Codepoints(row)) if kind != 1 => row.get(start as usize).copied().map(Self::unicode_escaped),
             Some(Value::Text(s)) if kind != 1 => usize::try_from(start).ok().and_then(|i| s.chars().nth(i)).map(|c| Self::unicode_escaped(c as u32)),
             Some(Value::Bytes(cell, ..)) if kind == 1 => usize::try_from(start).ok().and_then(|i| cell.borrow().get(i).copied()).map(|b| format!("{:02x}", b)),
             _ => None,
@@ -797,6 +816,22 @@ impl Value {
         let args = self.raised_arguments()?;
         let Value::Object(o) = self else { return None };
         if let Some(told) = Self::unicode_error_text(o, sp) { return Some(told); }
+        {
+            let fields = o.fields.borrow();
+            if let Some((_, Value::Tuple(names))) = fields.iter().find(|(n, _)| n == "\0syntax-fields") {
+                let get = |i: usize| names.get(i).and_then(|n| match n { Value::Text(n) => fields.iter().find(|(key, _)| key == n.as_ref()), _ => None }).map(|(_, v)| v.clone()).unwrap_or(Value::Null);
+                let mut text = get(0).display(sp);
+                let file = match get(1) { Value::Text(s) => Some(s.rsplit('/').next().unwrap_or("").to_string()), _ => None };
+                let line = match get(2) { Value::Small(n) => Some(n), _ => None };
+                match (file, line) {
+                    (Some(file), Some(n)) => text.push_str(&format!(" ({file}, line {n})")),
+                    (Some(file), None) => text.push_str(&format!(" ({file})")),
+                    (None, Some(n)) => text.push_str(&format!(" (line {n})")),
+                    _ => {}
+                }
+                return Some(text);
+            }
+        }
         // A group and an operating-system fault carry the words they
         // are shown with, made when they were.
         if let Some((_, Value::Text(shown))) = o.fields.borrow().iter().find(|(n, _)| n == "\0shown") { return Some(shown.to_string()); }
@@ -807,6 +842,33 @@ impl Value {
             many => Self::tuple_text(many, sp),
         })
     }
+    pub fn text_codes(&self) -> Option<Vec<u32>> {
+        match self { Value::Text(s) => Some(s.chars().map(u32::from).collect()), Value::Codepoints(row) => Some(row.as_ref().clone()), _ => None }
+    }
+
+    pub fn from_codes(row: Vec<u32>) -> Value {
+        if let Some(text) = row.iter().copied().map(char::from_u32).collect::<Option<String>>() { Value::text(&text) }
+        else { Value::Codepoints(Rc::new(row)) }
+    }
+
+    pub fn codepoints_repr(row: &[u32]) -> String {
+        let quote = if row.contains(&39) && !row.contains(&34) { '"' } else { '\'' };
+        let mut result = quote.to_string();
+        for &n in row {
+            match char::from_u32(n) {
+                None => result.push_str(&format!("\\u{n:04x}")),
+                Some(c) if c == quote || c == '\\' => { result.push('\\'); result.push(c); }
+                Some('\n') => result.push_str("\\n"),
+                Some('\r') => result.push_str("\\r"),
+                Some('\t') => result.push_str("\\t"),
+                Some(c) if c.is_control() => result.push_str(&Self::unicode_escaped(n)),
+                Some(c) => result.push(c),
+            }
+        }
+        result.push(quote);
+        result
+    }
+
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -871,7 +933,13 @@ impl Value {
         }
         match self {
             Value::Flag(b) => Ok(format!("n{}/1", u8::from(*b))),
+            Value::Codepoints(row) => Ok(format!("codepoints:{row:?}")),
             Value::Text(s) => Ok(format!("s{}", s)),
+            Value::Bytes(bytes, false, _) => Ok(format!("bytes:{:?}", bytes.borrow())),
+            Value::Bytes(_, true, _) => Err("bytearray"),
+            Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
+            Value::Method(owner, code) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
+
             Value::Null => Ok("nil".into()),
             Value::Ellipsis => Ok("dots".into()),
             Value::Array(_) => Err("list"),
@@ -903,7 +971,7 @@ impl Value {
             Value::Small(_) | Value::Huge(_) => Sort::Integer,
             Value::Frac(_) => Sort::Rational,
             Value::Real(_) => Sort::Real,
-            Value::Text(_) => Sort::Text,
+            Value::Text(_) | Value::Codepoints(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
             Value::Words(..) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Collection(cell, _) => return cell.borrow().sort(),
@@ -954,6 +1022,7 @@ impl Value {
             // Neither what stands outside the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
+            Value::Codepoints(row) => !row.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Words(row, _) => !row.is_empty(),
             Value::Tuple(items) => !items.is_empty(),
@@ -978,6 +1047,7 @@ impl Value {
             Value::Real(r) => Ok(&r.p / &r.q),
             Value::Flag(b) => Ok(BigInt::from(*b as i64)),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
+            Value::Codepoints(_) => return Err("ValueError: invalid literal for int()".to_string()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Words(..) | Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
@@ -1001,6 +1071,7 @@ impl Value {
     /// pointer.
     pub fn same_value(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
             (Value::Counted(x), Value::Counted(y)) => Rc::ptr_eq(x, y),
             (Value::Collection(x, _), Value::Collection(y, _)) => Rc::ptr_eq(x, y),
             (Value::Bond(x), Value::Bond(y)) => Rc::ptr_eq(x, y),
@@ -1057,6 +1128,7 @@ impl Value {
             }
             (Value::Words(a, x), Value::Words(b, y)) => x == y && a == b,
             (Value::Words(a, false), Value::Array(b)) | (Value::Array(b), Value::Words(a, false)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(s,v)| matches!(v,Value::Text(t) if s.as_str()==t.as_ref())),
+            (Value::Codepoints(a), Value::Codepoints(b)) => a == b,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -1077,6 +1149,7 @@ impl Value {
             (Value::Tie(a), Value::Tie(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
             // Two names for one object are the same object; two objects
             // of one class are not.
+            (Value::Trace(a), Value::Trace(b)) => Rc::ptr_eq(a, b),
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
             (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
@@ -1312,6 +1385,7 @@ impl Value {
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             Value::Real(r) => decimal_string(&r.p, &r.q, r.places),
+            Value::Codepoints(row) => Self::codepoints_repr(row),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => (if *b { "true" } else { "false" }).to_string(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => "null".to_string(),
@@ -1327,7 +1401,7 @@ impl Value {
             Value::Generator(_) => "<generator>".to_string(),
             Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
             Value::Descriptor(_) => "<descriptor>".to_string(),
-            Value::Trace(words) => words.to_string(),
+            Value::Trace(_) => "<traceback object>".to_string(),
             Value::Hashed(pair) => pair.0.plain(),
             Value::Fields(o) => format!("<attributes of {}>", o.class.name),
             Value::Declined(word) => word.to_string(),

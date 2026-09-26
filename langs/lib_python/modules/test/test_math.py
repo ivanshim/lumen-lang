@@ -9,6 +9,7 @@
 import math
 import os
 import unittest
+from builtins import open
 
 NAN = float('nan')
 NNAN = float('-nan')

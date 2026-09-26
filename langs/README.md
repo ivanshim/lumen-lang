@@ -425,7 +425,8 @@ only. The extension labels so far, all from PHP:
   complaints, which need no further banner before them. Complaints
   belonging to other operations keep their former telling.
   Unicode properties and case mappings follow the Unicode 16.0 data;
-  lone surrogate code points remain outside the kernels' text values.
+  codecs can preserve lone surrogates in a separate code-point storage
+  form; literal reading retains its own restrictions.
 - `ext.builtin.range.value`: a switch making the range builtin a value
   with one, two or three whole-number arguments: end; start and end;
   start, end and step. Its bounds are kept, so its length, indexed places
@@ -509,11 +510,16 @@ only. The extension labels so far, all from PHP:
   which: the wide encoding, then the seven-bit one, then the one holding
   every byte to be the character of that number, then the one which
   writes a character past a byte as a backslash escape and reads such an
-  escape back. A codec beyond the fourth is not known. An escape naming
-  half a surrogate pair is refused rather than read, since the kernels
-  keep no such character.
-  `ext.system.bytes.strict` names strict conversion; other error policies
-  remain wanting.
+  escape back. UTF-8, ASCII and Latin-1 conversion runs in each kernel.
+  Other codecs are dispatched through the Python `codecs` library:
+  UTF-16/32, UTF-7, Unicode escapes, single-byte character maps and IDNA.
+  `ext.system.bytes.strict` names strict conversion. The standard error
+  handlers and registered callbacks receive Unicode exception objects
+  with the original input, encoding, half-open error span and reason.
+  UTF-8 recovery consumes only the valid prefix of a malformed sequence.
+  Surrogate escape/pass decoding preserves unpaired code points for
+  re-encoding, indexing and slicing. IDNA name preparation uses Unicode
+  3.2; named error replacements use Unicode 15.0 names.
 - `ext.builtin.bytes.hex` and `.fromhex`: the method spelling each byte
   with two hexadecimal figures, and the maker reading those figures back.
   White space may stand between pairs of figures. A mark given to `.hex`
@@ -630,6 +636,15 @@ only. The extension labels so far, all from PHP:
   implementations that cannot hold byte text or render a field. The
   current kernels hold distinct byte values and use the following
   label when a field presentation is unsupported.
+- `ext.lexical.string.format.errors`: ordered reader diagnostics for replacement
+  fields: missing closing brace, lone closing brace, empty expression (the `{}`
+  slot names its delimiter), invalid expression start, unparenthesized lambda,
+  missing conversion, invalid conversion, spaced conversion, unexpected text
+  after an expression, after debug `=`, and after conversion, invalid conversion
+  name, unmatched closer, mismatched brackets (closer then opener), unclosed
+  comment field, nonbreaking space, a bare starred expression, and a newline
+  in a single-quoted format specification. `{}` slots
+  in conversion and bracket diagnostics name the offending text.
 - `ext.lexical.string.format.unavailable`: what is said when a field's
   value or specification asks for a rendering the run has no rule for.
   The field and its specification are read and worked out before this
@@ -1071,10 +1086,16 @@ only. The extension labels so far, all from PHP:
   this one, as the system knows it, for a program that wants to find
   itself again. It stands beside `ext.system.source.file` and comes the
   same way, from the request the host carried in.
+- `ext.builtin.to_int.digits.state`: two words naming a loaded module and
+  its mutable digit-limit field. Integer conversions read that field when
+  present, otherwise using `ext.builtin.to_int.digits` as the startup limit.
 - `ext.builtin.clock.parts`: a switch; the clock builtin below, handed
   one flag, answers a real of seconds and their parts rather than whole
   seconds: since the run's own start, on a clock that never steps back,
   when the flag holds, and since the epoch when it does not.
+  On Linux, a second true flag requests the selected host clock's resolution
+  in seconds, as queried with `clock_getres`.
+
 - `ext.builtin.clock`: a builtin answering with how many seconds have
   passed since the start of the year the system counts from. Turning that
   into a date, and a date back into it, is arithmetic and belongs in a
@@ -1982,6 +2003,7 @@ only. The extension labels so far, all from PHP:
   Equality disregards order. `ext.builtin.set.sorted` gathers an iterable
   into an array ordered by its members, stopping if they cannot be ordered.
 - `ext.builtin.set.unhashable` surrounds the name of an unhashable kind;
+  a third part repeats the kind in the set-element explanation;
   `ext.builtin.set.missing` stands before the representation of an absent
   member. `ext.builtin.set.empty`, `ext.builtin.set.operands`,
   `ext.builtin.set.arguments`, `ext.builtin.set.unsupported` and
@@ -2166,8 +2188,10 @@ only. The extension labels so far, all from PHP:
   under several names; they do not resume generator bodies. A cursor over
   a list reads the list as it stands at each step, so a member appended
   before the end is walked too; one over a map's keys, values or items
-  remembers the map's size and, should that size change before the walk
-  ends, stops with the words of `ext.builtin.core.dict.changed`. A thing
+  remembers the map's size and key revision. A size change stops the walk
+  with the first words of `ext.builtin.core.dict.changed`; replaced keys
+  at unchanged size use its second words. The third complaint reports a
+  source mutated during a dictionary update. A thing
   with no walk method but a method for reading a place is walked from
   place nought upward until that method raises the fault named by
   `ext.system.fault.class.index`. Given a callable and a sentinel,
@@ -4190,7 +4214,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string, not '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
-| `ext.builtin.core.dict.changed` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
+| `ext.builtin.core.dict.changed` | - | - | `RuntimeError: dictionary changed size during iteration` `RuntimeError: dictionary keys changed during iteration` `RuntimeError: dict mutated during update` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.sequence` | - | - | `TypeError: cannot convert dictionary update sequence element #` ` to a sequence` | - | - | - | - | - | - | - |
 | `ext.builtin.core.empty` | - | - | `ValueError: ` `() iterable argument is empty` | - | - | - | - | - | - | - |
@@ -4233,7 +4257,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4252,7 +4276,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.os` | - | - | `errno` `strerror` `filename` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` `: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
@@ -4473,7 +4498,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.set.symmetric_difference` | - | - | `symmetric_difference` | - | - | - | - | - | - | - |
 | `ext.builtin.set.symmetric_difference_update` | - | - | `symmetric_difference_update` | - | - | - | - | - | - | - |
-| `ext.builtin.set.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.set.unhashable` | - | - | `TypeError: cannot use '` `' as a set element (unhashable type: '` `')` | - | - | - | - | - | - | - |
 | `ext.builtin.set.union` | - | - | `union` | - | - | - | - | - | - | - |
 | `ext.builtin.set.unsortable` | - | - | `TypeError: set members cannot be ordered` | - | - | - | - | - | - | - |
 | `ext.builtin.set.unsupported` | - | - | `NotImplementedError: hashing this value is not provided` | - | - | - | - | - | - | - |
@@ -4580,6 +4605,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits` | - | - | `4300` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits.state` | - | - | `sys` `_int_max_str_digits` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int()` | - | - | - | - | - | - | - |
@@ -4659,6 +4685,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.bytes.mixed` | - | - | `SyntaxError: cannot mix bytes and nonbytes literals` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.string.format.errors` | - | - | `SyntaxError: f-string: expecting '}'` `SyntaxError: f-string: single '}' is not allowed` `SyntaxError: f-string: valid expression required before '{}'` `SyntaxError: f-string: expecting a valid expression after '{'` `SyntaxError: f-string: lambda expressions are not allowed without parentheses` `SyntaxError: f-string: missing conversion character` `SyntaxError: f-string: invalid conversion character` `SyntaxError: f-string: conversion type must come right after the exclamation mark` `SyntaxError: f-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: f-string: expecting '!', or ':', or '}'` `SyntaxError: f-string: expecting ':' or '}'` `SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: f-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: f-string: newlines are not allowed in format specifiers` | - | - | - | - | - | - | - |
 | `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
@@ -5203,3 +5230,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.zero.integer` | - | - | `ValueError: Negative zero coercion (z) not allowed in integer format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.zero.string` | - | - | `ValueError: Negative zero coercion (z) not allowed in string format specifier` | - | - | - | - | - | - | - |
 <!-- table:end -->
+
+`ext.builtin.exceptions.syntax` names the message, filename, start line and
+column, source text, end line and column, and print-file flag of a syntax
+exception. Its optional detail argument supplies four or six position values.
+
+The `ext.builtin.exceptions.traceback` roster starts with the traceback class
+name, followed by the line, next and frame members, frame line and code members,
+code name, filename and first-line members, frame class name and module code name.
+Frames are allocated on demand when an exception first records its location.

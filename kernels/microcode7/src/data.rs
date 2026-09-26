@@ -171,7 +171,7 @@ pub enum IteratorKind {
     Living(Rc<RefCell<Value>>, usize),
     /// A window upon a dictionary, and the size the dictionary had at
     /// the start: a different size later stops the walk.
-    Watching { window: Value, at: usize, size: usize },
+    Watching { window: Value, at: usize, size: (usize, u64) },
     /// A thing read place by place from nought, until the reading fails.
     Placed(Value, BigInt),
     /// A thing read place by place from its last down to nought, for
@@ -191,15 +191,23 @@ pub enum IteratorKind {
     Busy,
 }
 
+#[derive(Debug)]
+pub struct TraceLink {
+    pub location: u32,
+    pub activation: Rc<Thing>,
+    pub following: Value,
+}
+
 #[derive(Clone)]
 pub enum Value {
+    Unpaired(Rc<[u32]>),
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
     Window(Rc<Value>, char),
     Row(Rc<Vec<Value>>),
     Intrinsic(Prim, Rc<str>),
     Iterator(Rc<RefCell<IteratorState>>),
-    Backtrace(Rc<str>),
+    Backtrace(Rc<TraceLink>),
     Keyed(Rc<Value>, Rc<Value>),
     Attributes(Rc<Thing>),
     Traversal(Rc<Value>, Rc<RefCell<Option<Value>>>),
@@ -363,6 +371,12 @@ pub enum Found {
     Unknown,
 }
 
+thread_local! { static DICTIONARY_TURN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+fn dictionary_turn() -> u64 {
+    DICTIONARY_TURN.with(|counter| { counter.set(counter.get().wrapping_add(1)); counter.get() })
+}
+
 /// A map's pairs, kept in the order they were written, with a place
 /// that answers where a key of a given address stands among them —
 /// built the first time one is asked for, from every entry already
@@ -381,6 +395,7 @@ pub enum Found {
 /// it again.
 pub struct MapStore {
     pairs: Vec<(Value, Value)>,
+    pub serial: u64,
     place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
 }
 
@@ -433,6 +448,7 @@ impl MapStore {
     pub fn insert_known_absent(&mut self, key: Value, address: String, value: Value) {
         self.ensure_place();
         let at = self.pairs.len();
+        self.serial = dictionary_turn();
         self.pairs.push((key, value));
         self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
     }
@@ -440,7 +456,7 @@ impl MapStore {
 
 impl From<Vec<(Value, Value)>> for MapStore {
     fn from(pairs: Vec<(Value, Value)>) -> MapStore {
-        MapStore { pairs, place: RefCell::new(None) }
+        MapStore { pairs, serial: dictionary_turn(), place: RefCell::new(None) }
     }
 }
 
@@ -456,7 +472,7 @@ impl std::iter::FromIterator<(Value, Value)> for MapStore {
 /// again and answers for the copy's own pairs, never the original's.
 impl Clone for MapStore {
     fn clone(&self) -> MapStore {
-        MapStore { pairs: self.pairs.clone(), place: RefCell::new(None) }
+        MapStore { pairs: self.pairs.clone(), serial: self.serial, place: RefCell::new(None) }
     }
 }
 
@@ -467,6 +483,7 @@ impl std::ops::Deref for MapStore {
 
 impl std::ops::DerefMut for MapStore {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        self.serial = dictionary_turn();
         *self.place.borrow_mut() = None;
         &mut self.pairs
     }
@@ -640,7 +657,14 @@ impl Value {
                 Ok(held) if held.sealed => Ok(held.whole_address()),
                 _ => Err("set"),
             },
+            Value::Unpaired(numbers) => Ok(format!("unpaired:{numbers:?}")),
             Value::Text(word) => Ok(format!("text:{word}")),
+            Value::Octets { changeable: true, .. } => Err("bytearray"),
+            Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
+            Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
+            Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
+            Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
+
             // A progression is addressed by the places it names: their
             // count, where they begin and how far apart they stand, so
             // that two naming the same places share one address. One of
@@ -749,6 +773,7 @@ impl Value {
         let object = get("object");
         let single = end == start + 1 && start >= 0;
         let one = if !single { None } else { match &object {
+            Some(Value::Unpaired(numbers)) if marker != 1 => numbers.get(start as usize).map(|&n| Self::unicode_escaped(n)),
             Some(Value::Text(s)) if marker != 1 => usize::try_from(start).ok().and_then(|i| s.chars().nth(i)).map(|c| Self::unicode_escaped(c as u32)),
             Some(Value::Octets { cell, .. }) if marker == 1 => usize::try_from(start).ok().and_then(|i| cell.borrow().get(i).copied()).map(|b| format!("{:02x}", b)),
             _ => None,
@@ -767,6 +792,25 @@ impl Value {
         let row = self.arguments_held()?;
         let Value::Thing(thing) = self else { return None };
         if let Some(told) = Self::unicode_fault_text(thing, words) { return Some(told); }
+        let syntax = {
+            let members = thing.holds.borrow();
+            members.iter().find_map(|(key, value)| if key == "\0syntax-layout" { Some(value.clone()) } else { None })
+        };
+        if let Some(Value::Tuple(keys)) = syntax {
+            let members = thing.holds.borrow();
+            let read = |index: usize| -> Value {
+                if let Some(Value::Text(key)) = keys.get(index) {
+                    if let Some((_, value)) = members.iter().find(|(name, _)| name == key.as_ref()) { return value.clone(); }
+                }
+                Value::Nil
+            };
+            let message = read(0).render(words);
+            let filename = match read(1) { Value::Text(path) => Some(path.rsplit('/').next().unwrap_or("").to_owned()), _ => None };
+            let lineno = if let Value::Small(n) = read(2) { Some(n) } else { None };
+            return Some(if let Some(file) = filename {
+                if let Some(n) = lineno { format!("{message} ({file}, line {n})") } else { format!("{message} ({file})") }
+            } else if let Some(n) = lineno { format!("{message} (line {n})") } else { message });
+        }
         // A gatherer, or a system fault with its number, was given the
         // words to show itself with when it was made.
         if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }
@@ -783,6 +827,38 @@ impl Value {
         }
     }
 
+    pub fn character_numbers(&self) -> Option<Vec<u32>> {
+        match self {
+            Value::Unpaired(numbers) => Some(numbers.to_vec()),
+            Value::Text(word) => Some(word.chars().map(|c| c as u32).collect()),
+            _ => None,
+        }
+    }
+
+    pub fn characters(numbers: Vec<u32>) -> Value {
+        let mut word = String::new();
+        for &number in &numbers {
+            let Some(letter) = char::from_u32(number) else { return Value::Unpaired(Rc::from(numbers)); };
+            word.push(letter);
+        }
+        Value::text(&word)
+    }
+
+    pub fn unpaired_quoted(numbers: &[u32]) -> String {
+        let delimiter = if numbers.contains(&39) && !numbers.contains(&34) { '"' } else { '\'' };
+        let pieces = numbers.iter().map(|&n| match n {
+            0xd800..=0xdfff => format!("\\u{:04x}", n),
+            10 => String::from("\\n"), 13 => String::from("\\r"), 9 => String::from("\\t"),
+            92 => String::from("\\\\"),
+            n if n == delimiter as u32 => format!("\\{delimiter}"),
+            n => match char::from_u32(n) {
+                Some(c) if !c.is_control() => c.to_string(),
+                _ => Self::unicode_escaped(n),
+            },
+        }).collect::<String>();
+        format!("{delimiter}{pieces}{delimiter}")
+    }
+
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -791,7 +867,7 @@ impl Value {
         Some(match self {
             Value::Small(_) | Value::Huge(_) => Kind::Whole,
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
-            Value::Text(_) => Kind::Chars,
+            Value::Text(_) | Value::Unpaired(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
             Value::TextRow(..) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
@@ -823,6 +899,7 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
             Value::TextRow(words, _) => !words.is_empty(),
+            Value::Unpaired(numbers) => !numbers.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Tuple(parts) => !parts.is_empty(),
             Value::Nil | Value::Unset => false,
@@ -843,6 +920,7 @@ impl Value {
             Value::Frac(_) => return Err("Cannot coerce rational to integer".to_string()),
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
+            Value::Unpaired(_) => return Err("ValueError: invalid literal for int()".to_string()),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::TextRow(..) | Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
@@ -925,6 +1003,7 @@ impl Value {
                     _ => left.first == right.first && left.stride == right.stride,
                 }
             }
+            (Value::Unpaired(one), Value::Unpaired(two)) => one == two,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -937,6 +1016,7 @@ impl Value {
             // when they carry the same name.
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
+            (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
@@ -966,6 +1046,7 @@ impl Value {
             (Value::Huge(x), Value::Huge(y)) => Rc::ptr_eq(x, y),
             (Value::Vector(x), Value::Vector(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
             (Value::Dict(x), Value::Dict(y)) => Rc::ptr_eq(x, y),
+            (Value::Backtrace(x), Value::Backtrace(y)) => Rc::ptr_eq(x, y),
             (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Nil, Value::Nil) => true,
@@ -1203,6 +1284,7 @@ impl Value {
                 Some(d) => decimal_string(&e.above, &e.beneath, d),
                 None => format!("{}/{}", e.above, e.beneath),
             },
+            Value::Unpaired(numbers) => Self::unpaired_quoted(numbers),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => if *b { "true" } else { "false" }.to_string(),
             Value::Nil | Value::Unset => "null".to_string(),
@@ -1221,7 +1303,7 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Generator(_) => "<generator>".into(),
             Value::Adorned(_) => String::from("<descriptor>"),
-            Value::Backtrace(words) => words.to_string(),
+            Value::Backtrace(_) => String::from("<traceback object>"),
             Value::Keyed(value, _) => value.bare(),
             Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
             Value::Refusal(word) => word.to_string(),

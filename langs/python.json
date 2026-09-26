@@ -629,7 +629,9 @@
     " to a sequence"
   ],
   "ext.builtin.core.dict.changed": [
-    "RuntimeError: dictionary changed size during iteration"
+    "RuntimeError: dictionary changed size during iteration",
+    "RuntimeError: dictionary keys changed during iteration",
+    "RuntimeError: dict mutated during update"
   ],
   "ext.builtin.core.empty": [
     "ValueError: ",
@@ -795,7 +797,9 @@
     "ModuleNotFoundError",
     "UnicodeEncodeError",
     "UnicodeDecodeError",
-    "UnicodeTranslateError"
+    "UnicodeTranslateError",
+    "IndentationError",
+    "TabError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -859,7 +863,7 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback"
+    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -867,6 +871,7 @@
   "ext.builtin.exceptions.traceback.with": [
     "with_traceback"
   ],
+  "ext.builtin.exceptions.syntax": ["msg", "filename", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line"],
   "ext.builtin.exceptions.unicode": [
     "encoding",
     "object",
@@ -1406,8 +1411,9 @@
     "symmetric_difference_update"
   ],
   "ext.builtin.set.unhashable": [
-    "TypeError: unhashable type: '",
-    "'"
+    "TypeError: cannot use '",
+    "' as a set element (unhashable type: '",
+    "')"
   ],
   "ext.builtin.set.union": [
     "union"
@@ -1728,6 +1734,7 @@
     "str.zfill"
   ],
   "ext.builtin.to_int.digits": 4300,
+  "ext.builtin.to_int.digits.state": ["sys", "_int_max_str_digits"],
   "ext.builtin.to_int.digits.amiss": [
     "ValueError: Exceeds the limit (",
     " digits) for integer string conversion"
@@ -1999,6 +2006,26 @@
   ],
   "ext.lexical.string.bytes.unready": [
     "NotImplementedError: bytes values are not supported"
+  ],
+  "ext.lexical.string.format.errors": [
+    "SyntaxError: f-string: expecting '}'",
+    "SyntaxError: f-string: single '}' is not allowed",
+    "SyntaxError: f-string: valid expression required before '{}'",
+    "SyntaxError: f-string: expecting a valid expression after '{'",
+    "SyntaxError: f-string: lambda expressions are not allowed without parentheses",
+    "SyntaxError: f-string: missing conversion character",
+    "SyntaxError: f-string: invalid conversion character",
+    "SyntaxError: f-string: conversion type must come right after the exclamation mark",
+    "SyntaxError: f-string: expecting '=', or '!', or ':', or '}'",
+    "SyntaxError: f-string: expecting '!', or ':', or '}'",
+    "SyntaxError: f-string: expecting ':' or '}'",
+    "SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'",
+    "SyntaxError: f-string: unmatched '{}'",
+    "SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'",
+    "SyntaxError: '{' was never closed",
+    "SyntaxError: invalid non-printable character U+00A0",
+    "SyntaxError: can't use starred expression here",
+    "SyntaxError: f-string: newlines are not allowed in format specifiers"
   ],
   "ext.lexical.string.format.unavailable": [
     "this formatted value is not supported"

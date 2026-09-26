@@ -174,6 +174,7 @@ pub struct Lang {
     /// as a whole number; whether a whole number rounded to a negative
     /// count of places rounds a half to the even neighbour.
     pub integer_digits: Option<usize>,
+    pub integer_digits_state: Vec<String>,
     pub digits_amiss: Vec<String>,
     pub to_int_infinity: Option<String>,
     pub to_int_nan: Option<String>,
@@ -229,6 +230,7 @@ pub struct Lang {
     pub fstring_unterminated: Option<String>,
     pub fstring_unterminated_triple: Option<String>,
     pub bytes_unavailable: Option<String>,
+    pub field_errors: Vec<String>,
     pub format_unavailable: Option<String>,
     pub string_unready: Option<String>,
     pub range_zero_start: bool,
@@ -536,6 +538,7 @@ pub struct Lang {
     pub exception_suppress: Option<String>,
     /// The name of the kind of a trace, where the language has one.
     pub exception_traceback: Option<String>,
+    pub trace_fields: Vec<String>,
     /// The fuller account of an exception: the method that adds a note
     /// and the list the notes stand in, the member holding a traceback
     /// and the method that would set one, the members naming an absent
@@ -556,6 +559,7 @@ pub struct Lang {
     /// The members a Unicode codec fault carries: encoding, object,
     /// start, end and reason, in that order. A translation fault has
     /// no encoding, so it takes the last four alone.
+    pub syntax_members: Vec<String>,
     pub unicode_members: Vec<String>,
     /// An exception group: its message and its members, the three
     /// methods that part it, the words around its count when shown,
@@ -1283,11 +1287,11 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | b ext.op.logical.operand | w ext.literal.unimplemented | b ext.syntax.names.shadow_builtins | w ext.builtin.method.bit_count | w ext.builtin.method.numerator | w ext.builtin.method.denominator | w ext.builtin.method.real | w ext.builtin.method.imag | w ext.builtin.method.__index__ | w ext.builtin.method.__truediv__ | w ext.builtin.method.fromhex | n ext.builtin.to_int.digits | w ext.builtin.to_int.digits.amiss | w ext.builtin.to_int.infinity | w ext.builtin.to_int.nan | b ext.builtin.round.whole.even | w ext.builtin.bool.base | w ext.builtin.bool.result | w ext.op.order.unsupported | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief | w ext.system.fault.index.assign
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | b ext.op.logical.operand | w ext.literal.unimplemented | b ext.syntax.names.shadow_builtins | w ext.builtin.method.bit_count | w ext.builtin.method.numerator | w ext.builtin.method.denominator | w ext.builtin.method.real | w ext.builtin.method.imag | w ext.builtin.method.__index__ | w ext.builtin.method.__truediv__ | w ext.builtin.method.fromhex | w ext.builtin.to_int.digits.state | n ext.builtin.to_int.digits | w ext.builtin.to_int.digits.amiss | w ext.builtin.to_int.infinity | w ext.builtin.to_int.nan | b ext.builtin.round.whole.even | w ext.builtin.bool.base | w ext.builtin.bool.result | w ext.op.order.unsupported | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief | w ext.system.fault.index.assign
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.kind | w ext.builtin.host.info | w ext.builtin.file.remove | w ext.builtin.dir.list | w ext.builtin.dir.make | w ext.builtin.dir.remove_tree | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.print.redirect | w ext.builtin.input | w ext.builtin.input.reader | w ext.builtin.stream.write | w ext.builtin.stream.read | w ext.builtin.stream.amiss | w ext.builtin.stream.failed | w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | b ext.builtin.clock.parts | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.positional | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.syntax.call.amiss.keyword | w ext.syntax.call.amiss.repeated | w ext.builtin.print.sep | w ext.builtin.print.end | w ext.builtin.print.file | w ext.builtin.print.flush | w ext.builtin.print.file.error | w ext.builtin.print.file.output | w ext.builtin.print.file.unready | w ext.builtin.print.sep.amiss | w ext.builtin.print.end.amiss | w ext.builtin.to_int.base | w ext.builtin.to_int.base.amiss | w ext.builtin.to_int.text.amiss | w ext.builtin.to_int.text.required | b ext.builtin.to_real.text | w ext.builtin.to_real.text.amiss | w ext.builtin.to_string.object | w ext.builtin.to_string.encoding | w ext.builtin.to_string.errors | w ext.builtin.to_string.undecodable | w ext.builtin.to_string.unready | b ext.builtin.range.value | w ext.builtin.range.zero | w ext.builtin.range.integer | w ext.builtin.range.index | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.parameters.duplicate | w ext.stmt.function.carries | w ext.stmt.function.short | w ext.stmt.function.anonymous | w ext.builtin.exceptions.context | w ext.builtin.exceptions.suppress | w ext.builtin.exceptions.traceback | w ext.stmt.throw.invalid | w ext.stmt.with.invalid | n ext.system.recursion.limit | w ext.system.recursion.exceeded | w ext.builtin.exceptions.note | w ext.builtin.exceptions.notes | w ext.builtin.exceptions.note.invalid | w ext.builtin.exceptions.traceback.member | w ext.builtin.exceptions.traceback.with | w ext.builtin.exceptions.name | w ext.builtin.exceptions.object | w ext.builtin.exceptions.value | w ext.builtin.exceptions.os | w ext.builtin.exceptions.os.message | w ext.builtin.exceptions.unicode | w ext.builtin.exceptions.group.message | w ext.builtin.exceptions.group.members | w ext.builtin.exceptions.group.split | w ext.builtin.exceptions.group.subgroup | w ext.builtin.exceptions.group.derive | w ext.builtin.exceptions.group.summary | w ext.builtin.exceptions.group.invalid | w ext.system.fault.held | w ext.stmt.catch.amiss | w ext.stmt.yield.escaped | w ext.builtin.range.members | w ext.builtin.range.missing
+w ext.builtin.print.redirect | w ext.builtin.input | w ext.builtin.input.reader | w ext.builtin.stream.write | w ext.builtin.stream.read | w ext.builtin.stream.amiss | w ext.builtin.stream.failed | w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | b ext.builtin.clock.parts | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.positional | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.syntax.call.amiss.keyword | w ext.syntax.call.amiss.repeated | w ext.builtin.print.sep | w ext.builtin.print.end | w ext.builtin.print.file | w ext.builtin.print.flush | w ext.builtin.print.file.error | w ext.builtin.print.file.output | w ext.builtin.print.file.unready | w ext.builtin.print.sep.amiss | w ext.builtin.print.end.amiss | w ext.builtin.to_int.base | w ext.builtin.to_int.base.amiss | w ext.builtin.to_int.text.amiss | w ext.builtin.to_int.text.required | b ext.builtin.to_real.text | w ext.builtin.to_real.text.amiss | w ext.builtin.to_string.object | w ext.builtin.to_string.encoding | w ext.builtin.to_string.errors | w ext.builtin.to_string.undecodable | w ext.builtin.to_string.unready | b ext.builtin.range.value | w ext.builtin.range.zero | w ext.builtin.range.integer | w ext.builtin.range.index | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.parameters.duplicate | w ext.stmt.function.carries | w ext.stmt.function.short | w ext.stmt.function.anonymous | w ext.builtin.exceptions.context | w ext.builtin.exceptions.suppress | w ext.builtin.exceptions.traceback | w ext.stmt.throw.invalid | w ext.stmt.with.invalid | n ext.system.recursion.limit | w ext.system.recursion.exceeded | w ext.builtin.exceptions.note | w ext.builtin.exceptions.notes | w ext.builtin.exceptions.note.invalid | w ext.builtin.exceptions.traceback.member | w ext.builtin.exceptions.traceback.with | w ext.builtin.exceptions.name | w ext.builtin.exceptions.object | w ext.builtin.exceptions.value | w ext.builtin.exceptions.os | w ext.builtin.exceptions.os.message | w ext.builtin.exceptions.syntax | w ext.builtin.exceptions.unicode | w ext.builtin.exceptions.group.message | w ext.builtin.exceptions.group.members | w ext.builtin.exceptions.group.split | w ext.builtin.exceptions.group.subgroup | w ext.builtin.exceptions.group.derive | w ext.builtin.exceptions.group.summary | w ext.builtin.exceptions.group.invalid | w ext.system.fault.held | w ext.stmt.catch.amiss | w ext.stmt.yield.escaped | w ext.builtin.range.members | w ext.builtin.range.missing
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
@@ -1301,7 +1305,7 @@ w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.
 b ext.stmt.terminator.only | w ext.stmt.separator
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 
-w ext.lexical.line_continuation | w ext.lexical.string.bytes.unavailable | w ext.lexical.string.format.unavailable | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable | w ext.lexical.string.value.unready | b ext.builtin.range.zero_start | w ext.lexical.string.unready
+w ext.lexical.line_continuation | w ext.lexical.string.bytes.unavailable | w ext.lexical.string.format.errors | w ext.lexical.string.format.unavailable | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable | w ext.lexical.string.value.unready | b ext.builtin.range.zero_start | w ext.lexical.string.unready
 b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
@@ -2244,6 +2248,7 @@ impl Lang {
             fstring_unterminated: r.head("ext.lexical.string.prefix.format.unterminated")?,
             fstring_unterminated_triple: r.head("ext.lexical.string.prefix.format.unterminated.triple")?,
             bytes_unavailable: r.head("ext.lexical.string.bytes.unavailable")?,
+            field_errors: r.strings("ext.lexical.string.format.errors")?,
             format_unavailable: r.head("ext.lexical.string.format.unavailable")?,
             string_unready: r.head("ext.lexical.string.value.unready")?,
             range_zero_start: r.flag("ext.builtin.range.zero_start")?,
@@ -2451,6 +2456,7 @@ impl Lang {
             exception_context: r.head("ext.builtin.exceptions.context")?,
             exception_suppress: r.head("ext.builtin.exceptions.suppress")?,
             exception_traceback: r.head("ext.builtin.exceptions.traceback")?,
+            trace_fields: r.strings("ext.builtin.exceptions.traceback").unwrap_or_default(),
             note_method: r.head("ext.builtin.exceptions.note")?,
             notes_member: r.head("ext.builtin.exceptions.notes")?,
             note_invalid: r.head("ext.builtin.exceptions.note.invalid")?,
@@ -2461,6 +2467,7 @@ impl Lang {
             stop_value_member: r.head("ext.builtin.exceptions.value")?,
             os_members: r.strings("ext.builtin.exceptions.os")?,
             os_message: r.strings("ext.builtin.exceptions.os.message")?,
+            syntax_members: r.strings("ext.builtin.exceptions.syntax").unwrap_or_default(),
             unicode_members: r.strings("ext.builtin.exceptions.unicode").unwrap_or_default(),
             group_message: r.head("ext.builtin.exceptions.group.message")?,
             group_members: r.head("ext.builtin.exceptions.group.members")?,
@@ -2519,6 +2526,7 @@ impl Lang {
             unimplemented_words: r.strings("ext.literal.unimplemented")?,
             shadow_builtins: r.flag("ext.syntax.names.shadow_builtins")?,
             integer_digits: r.count("ext.builtin.to_int.digits")?,
+            integer_digits_state: r.strings("ext.builtin.to_int.digits.state")?,
             digits_amiss: r.strings("ext.builtin.to_int.digits.amiss")?,
             to_int_infinity: r.head("ext.builtin.to_int.infinity")?,
             to_int_nan: r.head("ext.builtin.to_int.nan")?,
@@ -3105,6 +3113,7 @@ impl Lang {
     }
 
     pub fn begins_name(&self, c: char) -> bool {
+        if !self.syntax_members.is_empty() { return c == '_' || crate::unicode::bits(c) & 4 != 0; }
         if self.text_is_bytes {
             // Where text is bytes, a name is spelled in bytes too, and
             // every byte past the plain seven-bit ones may stand in one.
@@ -3114,6 +3123,7 @@ impl Lang {
     }
 
     pub fn extends_name(&self, c: char) -> bool {
+        if !self.syntax_members.is_empty() { return crate::unicode::bits(c) & 8 != 0; }
         if self.text_is_bytes {
             return c == '_' || c.is_ascii_alphanumeric() || (self.unicode_names && c >= '\u{80}');
         }

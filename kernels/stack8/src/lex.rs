@@ -34,6 +34,8 @@ pub struct Token {
     pub width: usize,
     pub row: usize,
     pub column: usize,
+    pub end_column: usize,
+    pub end_row: usize,
 }
 
 impl Token {
@@ -242,6 +244,7 @@ struct Cursor<'a> {
     row: usize,
     column: usize,
     out: Vec<Token>,
+    final_crlf: bool,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -267,7 +270,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn push(&mut self, shape: Shape, lexeme: String, width: usize, row: usize, column: usize) {
-        self.out.push(Token { shape, lexeme, width, row, column });
+        self.out.push(Token { end_row: self.row, end_column: self.column, shape, lexeme, width, row, column });
     }
 
     /// The indentation of a line; a blank line is skipped whole. Returns
@@ -278,6 +281,7 @@ impl<'a> Cursor<'a> {
         while let Some(&c) = self.text.get(j) {
             width += match c {
                 ' ' => 1,
+                '\t' if !self.lang.syntax_members.is_empty() => 8 - width % 8,
                 '\t' => self.lang.indent_width,
                 _ => break,
             };
@@ -295,7 +299,7 @@ impl<'a> Cursor<'a> {
             return true;
         }
         let (line, col) = (self.row, self.column);
-        self.push(Shape::Lead, String::new(), width, line, col);
+        self.push(Shape::Lead, self.text[self.at..j].iter().collect(), width, line, col);
         while self.at < j {
             self.step();
         }
@@ -594,14 +598,19 @@ impl<'a> Cursor<'a> {
             if bytes && (!c.is_ascii() || c == '\\' && self.look(1).map_or(false, |c| !c.is_ascii())) {
                 return Err(self.lang.byte_words["ext.lexical.string.bytes.ascii"][0].clone());
             }
-            if c == '\n' && mark.chars().count() == 1 { return Err(self.string_words()); }
+            if c == '\n' && mark.chars().count() == 1 {
+                if !format && depth == 0 && !self.lang.syntax_members.is_empty() {
+                    if let Some(said) = &self.lang.string_unterminated { return Err(said.clone()); }
+                }
+                return Err(self.string_words());
+            }
             if format && (c == '{' || c == '}') {
                 if self.look(1) == Some(c) {
                     self.step(); self.step(); text.push(c);
                 } else if c == '{' {
                     self.string_text(&mut text, &mut fault, line, col);
-                    self.string_field(raw, depth)?;
-                } else { return Err(self.string_words()); }
+                    self.string_field(raw, depth, mark)?;
+                } else { return Err(self.field_error(1)); }
             } else if c == '\\' {
                 self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
             } else { text.push(self.step()); }
@@ -687,13 +696,17 @@ impl<'a> Cursor<'a> {
         kept
     }
 
-    fn string_field(&mut self, raw: bool, depth: u32) -> Result<(), String> {
+    fn field_error(&self, number: usize) -> String {
+        self.lang.field_errors.get(number).cloned().unwrap_or_else(|| self.string_words())
+    }
+
+    fn string_field(&mut self, raw: bool, depth: u32, outer: &str) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         self.step();
         let mut expression = String::new();
         let mut brackets = Vec::new();
         loop {
-            let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            let Some(c) = self.look(0) else { return Err(self.field_error(0)); };
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
@@ -705,7 +718,14 @@ impl<'a> Cursor<'a> {
             if let Some((prefix, mark, is_raw, format)) = self.string_open() {
                 let saved = self.out.len();
                 let began = self.at;
-                self.rich_string(prefix, &mark, is_raw, format, depth + 1)?;
+                let closes_outer = prefix == 0 && mark == outer && brackets.is_empty();
+                if let Err(error) = self.rich_string(prefix, &mark, is_raw, format, depth + 1) {
+                    if closes_outer && (self.lang.string_unterminated.as_ref() == Some(&error)
+                        || self.lang.string_unterminated_triple.as_ref() == Some(&error)) {
+                        return Err(self.field_error(0));
+                    }
+                    return Err(error);
+                }
                 self.out.truncate(saved);
                 expression.extend(self.text[began..self.at].iter());
                 continue;
@@ -713,18 +733,51 @@ impl<'a> Cursor<'a> {
             if let Some(said) = self.prefix_conflict() { return Err(said); }
             if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
                 while self.look(0).map_or(false, |x| x != '\n') { self.step(); }
+                if self.look(0).is_none() { return Err(self.field_error(14)); }
                 continue;
+            }
+            if c == '\u{a0}' { return Err(self.field_error(15)); }
+            if !brackets.is_empty() && expression.trim_end().ends_with(['(', '[', '{'])
+                && matches!(c, '>' | '/' | ';') { return Err(self.field_error(3)); }
+            if brackets.is_empty() {
+                let start = expression.trim();
+                let operand_missing = start.chars().all(|x| x.is_whitespace() || matches!(x, '+' | '-' | '~'));
+                if matches!(c, ';' | '$') || operand_missing && (matches!(c, ',' | '/' | '>' | '<' | '%')
+                    || c == '.' && !self.look(1).map_or(false, |x| x.is_ascii_digit() || x == '.')
+                    || c == '*' && self.look(1) == Some('*')) {
+                    return Err(self.field_error(if operand_missing { 3 } else { 8 }));
+                }
+                if !self.text.get(self.at.wrapping_sub(1)).map_or(false, |x| self.lang.extends_name(*x))
+                    && self.lang.lambda_words.iter().any(|word| at_word(&self.text, self.at, word)
+                    && !self.look(word.chars().count()).map_or(false, |x| self.lang.extends_name(x))) {
+                    let previous = start.rsplit(',').next().unwrap_or(start).trim();
+                    return Err(self.field_error(if previous.is_empty() { 4 } else { 3 }));
+                }
             }
             if brackets.is_empty() && (matches!(c, '}' | ':') || c == '!' && self.look(1) != Some('=')
                 || c == '=' && self.look(1) != Some('=') && !matches!(self.text.get(self.at.wrapping_sub(1)), Some('!' | '<' | '>' | '='))) { break; }
             match c {
                 '(' => brackets.push(')'), '[' => brackets.push(']'), '{' => brackets.push('}'),
-                ')' | ']' | '}' => { if brackets.pop() != Some(c) { return Err(self.string_words()); } }
+                ')' | ']' | '}' => {
+                    match brackets.pop() {
+                        Some(expected) if expected == c => {}
+                        Some(expected) => {
+                            let open = match expected { ')' => '(', ']' => '[', _ => '{' };
+                            return Err(self.field_error(13).replacen("{}", &c.to_string(), 1).replacen("{}", &open.to_string(), 1));
+                        }
+                        None => return Err(self.field_error(12).replace("{}", &c.to_string())),
+                    }
+                }
                 _ => {}
             }
             expression.push(self.step());
         }
-        if expression.trim().is_empty() { return Err(self.string_words()); }
+        if expression.trim().is_empty() {
+            return Err(self.field_error(2).replace("{}", &self.look(0).unwrap().to_string()));
+        }
+        if expression.trim_start().starts_with('*') && !expression.contains(',') {
+            return Err(self.field_error(16));
+        }
         let debug = self.look(0) == Some('=');
         if debug {
             self.step();
@@ -734,14 +787,25 @@ impl<'a> Cursor<'a> {
         let mut conversion = String::new();
         if self.look(0) == Some('!') {
             self.step();
-            let Some(c @ ('r' | 's' | 'a')) = self.look(0) else { return Err(self.string_words()); };
-            conversion.push(c); self.step();
+            if self.look(0).is_none() || at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+            let c = self.look(0).unwrap();
+            if matches!(c, '}' | ':') { return Err(self.field_error(5)); }
+            if c.is_whitespace() { return Err(self.field_error(7)); }
+            if !self.lang.begins_name(c) { return Err(self.field_error(6)); }
+            while self.look(0).map_or(false, |c| self.lang.extends_name(c)) { conversion.push(self.step()); }
+            if !matches!(conversion.as_str(), "r" | "s" | "a") {
+                return Err(self.field_error(11).replace("{}", &conversion));
+            }
             self.field_space();
         } else if debug && self.look(0) != Some(':') { conversion.push('r'); }
+        if self.look(0).is_none() || at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+        if !matches!(self.look(0), Some(':' | '}')) {
+            return Err(self.field_error(if conversion.is_empty() || debug { 9 } else { 10 }));
+        }
         self.push(Shape::StringField, conversion, 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new() };
+        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), final_crlf: false };
         inner.run(false)?;
         self.out.extend(inner.out.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd)));
         self.push(Shape::Sign, group.close.clone(), 0, line, col);
@@ -750,16 +814,18 @@ impl<'a> Cursor<'a> {
         if self.look(0) == Some(':') {
             self.step();
             loop {
+                if at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
                 match self.look(0) {
                     Some('}') => break,
-                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth)?; }
+                    Some('\n' | '\r') if outer.len() == 1 => return Err(self.field_error(17)),
+                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth, outer)?; }
                     Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault)?,
                     Some(_) => text.push(self.step()),
-                    None => return Err(self.string_words()),
+                    None => return Err(self.field_error(0)),
                 }
             }
         }
-        if self.look(0) != Some('}') { return Err(self.string_words()); }
+        if self.look(0) != Some('}') { return Err(self.field_error(0)); }
         self.step();
         self.string_text(&mut text, &mut fault, line, col);
         self.push(Shape::StringEnd, String::new(), 0, line, col);
@@ -989,7 +1055,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new() };
+            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), final_crlf: false };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1065,7 +1131,13 @@ impl<'a> Cursor<'a> {
             while self.look(0).map_or(false, |c| lang.extends_name(c)) {
                 s.push(self.step());
             }
-            number_spelling(&s, lang)?;
+            if let Err(mut said) = number_spelling(&s, lang) {
+                if !lang.syntax_members.is_empty() {
+                    self.column = col + number_error_column(&s, &said);
+                    if lang.number_amiss.as_deref() == Some(said.as_str()) { said = "SyntaxError: invalid decimal literal".into(); }
+                }
+                return Err(said);
+            }
         }
         self.push(Shape::Numeral, s, 0, line, col);
         Ok(())
@@ -1141,7 +1213,10 @@ impl<'a> Cursor<'a> {
         let (line, col) = (self.row, self.column);
         let window: String = self.text[self.at..].iter().take(8).collect();
         let Some(sym) = self.lang.symbols.iter().find(|s| window.starts_with(s.as_str())).cloned() else {
-            return Err(self.lang.stopped_at_character(self.text[self.at], line, col));
+            let c = self.text[self.at];
+            if !self.lang.syntax_members.is_empty() && c.is_control() { return Err(format!("SyntaxError: invalid non-printable character U+{:04X}", c as u32)); }
+            if !self.lang.syntax_members.is_empty() && !c.is_ascii() { return Err(format!("SyntaxError: invalid character '{c}' (U+{:04X})", c as u32)); }
+            return Err(self.lang.stopped_at_character(c, line, col));
         };
         for _ in sym.chars() {
             self.step();
@@ -1168,11 +1243,23 @@ impl<'a> Cursor<'a> {
                     continue;
                 }
                 if let Some((prefix, mark, raw, format)) = self.string_open() {
-                    self.rich_string(prefix, &mark, raw, format, 0)?;
+                    let origin = (self.row, self.column);
+                    if let Err(mut said) = self.rich_string(prefix, &mark, raw, format, 0) {
+                        if !format && !lang.syntax_members.is_empty() && said.starts_with("SyntaxError: unterminated ") {
+                            let final_newline = !self.final_crlf && self.at == self.text.len() && self.text.last() == Some(&'\n');
+                            let detected = self.row.saturating_sub(usize::from(final_newline));
+                            said.push_str(&format!(" (detected at line {})", detected));
+                        }
+                        let missing_quote = lang.fstring_unterminated.as_deref() == Some(said.as_str())
+                            || lang.fstring_unterminated_triple.as_deref() == Some(said.as_str());
+                        if !format || missing_quote { (self.row, self.column) = origin; }
+                        return Err(said);
+                    }
                     continue;
                 }
                 if let Some(said) = self.prefix_conflict() { return Err(said); }
                 if lang.adjacent_strings && self.look(0) == Some('\\') && self.look(1) == Some('\n') {
+                    if self.at + 2 == self.text.len() && !lang.syntax_members.is_empty() { self.column += 1; return Err("SyntaxError: unexpected EOF while parsing".into()); }
                     self.step(); self.step();
                     continue;
                 }
@@ -1190,6 +1277,7 @@ impl<'a> Cursor<'a> {
                 }
             });
             if let Some(width) = joined {
+                if self.at + width == self.text.len() && !lang.syntax_members.is_empty() { self.column += 1; return Err("SyntaxError: unexpected EOF while parsing".into()); }
                 for _ in 0..width {
                     self.step();
                 }
@@ -1208,7 +1296,10 @@ impl<'a> Cursor<'a> {
                 let mark = lang.line_continuations.iter().find(|m| at_word(&self.text, self.at, m)).unwrap();
                 for _ in mark.chars() { self.step(); }
                 if self.look(0) == Some('\r') { self.step(); }
-                if self.look(0) != Some('\n') { return Err(lang.continuation_amiss.first().cloned().unwrap_or_default()); }
+                if self.look(0) != Some('\n') {
+                    if self.look(0).is_none() && !lang.syntax_members.is_empty() { return Err("SyntaxError: unexpected EOF while parsing".into()); }
+                    return Err(lang.continuation_amiss.first().cloned().unwrap_or_default());
+                }
                 self.step();
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
@@ -1241,13 +1332,36 @@ pub fn lex(source: &str, lang: &Lang) -> Result<Vec<Token>, String> {
 /// The same, telling besides which line the reading stopped on, which a
 /// language with a word for such a stopping names.
 pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> {
+    lex_position(source, lang).map_err(|(message, row, _)| (message, row))
+}
+
+pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
+    let final_crlf = source.ends_with("\r\n");
+    let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
+        .then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
+    let source = normalized.as_deref().unwrap_or(source);
+    if !lang.syntax_members.is_empty() && source.contains('\0') { return Err(("SyntaxError: source code string cannot contain null bytes".into(), 0, 0)); }
     let mut out = match lang.template {
-        true => woven_source(source, lang)?,
+        true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new() };
+            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), final_crlf };
             if let Err(said) = cur.run(true) {
-                return Err((said, cur.row));
+                if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
+                    let mut opens = Vec::new();
+                    for token in &cur.out {
+                        if token.shape != Shape::Sign { continue; }
+                        match token.lexeme.as_str() {
+                            "(" | "[" | "{" => opens.push(token),
+                            ")" | "]" | "}" => { opens.pop(); }
+                            _ => {}
+                        }
+                    }
+                    if let Some(token) = opens.last() {
+                        return Err((format!("SyntaxError: '{}' was never closed", token.lexeme), token.row, token.column));
+                    }
+                }
+                return Err((said, cur.row, cur.column));
             }
             cur.out
         }
@@ -1262,7 +1376,9 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
             });
         }
     }
-    out.push(Token { shape: Shape::Finish, lexeme: "EOF".to_string(), width: 0, row: 1, column: 1 });
+    let row = source.chars().filter(|c| *c == '\n').count() + 1;
+    let column = source.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    out.push(Token { end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), width: 0, row, column });
     Ok(out)
 }
 
@@ -1373,9 +1489,9 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         if text.is_empty() {
             return;
         }
-        out.push(Token { shape: Shape::Instr, lexeme: telling.clone(), width: 0, row: 1, column: 1 });
-        out.push(Token { shape: Shape::Quote, lexeme: text.to_string(), width: 0, row: 1, column: 1 });
-        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: 1, column: 1 });
+        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), width: 0, row: 1, column: 1 });
+        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), width: 0, row: 1, column: 1 });
+        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: 1, column: 1 });
     };
     let mut rest = source;
     let mut row = 1;
@@ -1412,16 +1528,16 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new() };
+        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), final_crlf: false };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }
         // A run of code stands as its own statement, however it ended.
         if writes {
-            out.push(Token { shape: Shape::Instr, lexeme: telling.clone(), width: 0, row, column: 1 });
+            out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), width: 0, row, column: 1 });
         }
         out.append(&mut cur.out);
-        out.push(Token { shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: cur.row, column: 1 });
+        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), width: 0, row: cur.row, column: 1 });
         row = cur.row;
         // One line end straight after the closing marker is PHP's to eat.
         // Eaten or not, the line it ended is a line of the page and is
@@ -1513,4 +1629,29 @@ pub fn number_spelling(text: &str, lang: &Lang) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+
+fn number_error_column(word: &str, message: &str) -> usize {
+    if message.contains("leading zeros") { return 0; }
+    let letters: Vec<char> = word.chars().collect();
+    let radix = if word.starts_with("0x") || word.starts_with("0X") { 16 }
+        else if word.starts_with("0o") || word.starts_with("0O") { 8 }
+        else if word.starts_with("0b") || word.starts_with("0B") { 2 } else { 10 };
+    let start = if radix == 10 { 0 } else { 2 };
+    for i in start..letters.len() {
+        let c = letters[i];
+        if c == '_' && !letters.get(i + 1).map_or(false, |c| c.is_digit(radix)) { return i; }
+        if radix != 10 && c != '_' && !c.is_digit(radix) {
+            return if radix < 10 && c.is_ascii_digit() { i } else { i.saturating_sub(1) };
+        }
+        if radix == 10 && !c.is_ascii_digit() && !matches!(c, '_' | '.' | '+' | '-') {
+            if matches!(c, 'e' | 'E') {
+                if matches!(letters.get(i + 1), Some('+' | '-')) { continue; }
+                if letters.get(i + 1).map_or(false, char::is_ascii_digit) { continue; }
+            }
+            return i.saturating_sub(1);
+        }
+    }
+    letters.len().saturating_sub(1)
 }

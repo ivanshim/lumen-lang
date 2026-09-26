@@ -1,1 +1,1 @@
-PythonError: TypeError: unhashable type: 'set'
+PythonError: TypeError: cannot use 'set' as a set element (unhashable type: 'set')

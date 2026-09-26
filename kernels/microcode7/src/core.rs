@@ -24,7 +24,7 @@ impl Value {
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().kind_word(),
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Dict(_) => "dict",
             Self::Set(_) => if self.set_sealed() { "frozenset" } else { "set" },
-            Self::Text(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
+            Self::Text(_) | Self::Unpaired(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
             Self::Nil => "NoneType", Self::Progression(_) => "range",
             Self::Octets { changeable, .. } => if *changeable { "bytearray" } else { "bytes" },
@@ -38,7 +38,10 @@ impl Value {
             // the word kept of the thing the members came from.
             Self::Iterator(cell) => return cell.try_borrow().map_or("iterator".to_owned(), |state| String::from(match &state.kind {
                 IteratorKind::Living(..) => "list_iterator",
-                IteratorKind::Stepping(..) => "range_iterator",
+                IteratorKind::Stepping(row, _) => match (row.first.to_i64(), row.limit.to_i64(), row.stride.to_i64(), row.count().to_i64()) {
+                    (Some(_), Some(_), Some(_), Some(_)) => "range_iterator",
+                    _ => "longrange_iterator",
+                },
                 IteratorKind::Watching { window: Value::Window(_, portion), .. } => match portion { 'k' => "dict_keyiterator", 'v' => "dict_valueiterator", _ => "dict_itemiterator" },
                 IteratorKind::Summoned { .. } => "callable_iterator",
                 IteratorKind::Count(..) => "enumerate",
@@ -148,12 +151,23 @@ impl Value {
                 let imaginary = crate::complex::decimal_value(pair.1).hash_number()?;
                 real.wrapping_add(1_000_003i64.wrapping_mul(imaginary))
             }
+            Self::Unpaired(numbers) => {
+                let mut code = 0_i64;
+                for &n in numbers.iter() { code = code.wrapping_mul(1_000_003) ^ i64::from(n); }
+                code
+            }
             Self::Text(chars) if chars.is_empty() => 0,
             Self::Text(chars) => {
                 let mut state = std::collections::hash_map::DefaultHasher::new();
                 chars.hash(&mut state);
                 state.finish() as i64
             }
+            Self::Octets { cell, changeable: false, .. } => {
+                cell.borrow().iter().fold(0i64, |total, octet| total.wrapping_mul(1_000_003) ^ i64::from(*octet))
+            }
+            Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
+            Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
+            Self::Method(program, receiver) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
             // The bounds folded one after another, as a tuple's parts are,

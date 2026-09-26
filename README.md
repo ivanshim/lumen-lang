@@ -315,6 +315,7 @@ shape, stack26 and microcode10, were retired at the same time.
 
 ## Documentation
 
+- [docs/OVERVIEW.md](docs/OVERVIEW.md) — the project in one page: the kernels, the kernel lab's findings, how correctness is judged, and how the work is done
 - [docs/LUMEN_KERNEL_STREAM35.md](docs/LUMEN_KERNEL_STREAM35.md) — the stream35 kernel's charter
 - [docs/LUMEN_KERNEL_MICROCODE11.md](docs/LUMEN_KERNEL_MICROCODE11.md) — the microcode11 kernel: the tree kept and written back out
 - [docs/LUMEN_KERNEL_MICROCODE4.md](docs/LUMEN_KERNEL_MICROCODE4.md) — the microcode4 kernel: four primitive forms
@@ -340,7 +341,9 @@ person in one sitting.
 
 ## License
 
-Provided as-is for educational and experimental purposes.
+MIT, for the project's own code: see [LICENSE](LICENSE). The reference suites
+under `tests/` are copied unchanged from php-src and CPython and keep their own
+licences (`tests/php/LICENSE`, `tests/python/LICENSE`).
 
 ## Attribution
 

@@ -118,7 +118,9 @@ def linked_to_musl():
     return None
 
 def gc_collect():
-    return gc.collect()
+    gc.collect()
+    gc.collect()
+    gc.collect()
 
 def run_unittest(*classes):
     result = unittest.TestResult()
@@ -186,19 +188,6 @@ class captured_stderr:
         sys.stderr = self.saved
         return False
 
-def _unavailable(*args, **kwargs):
-    raise 'NotImplementedError: this test support helper is not supported'
-
-calcobjsize = _unavailable
-catch_unraisable_exception = _unavailable
-check_free_after_iterating = _unavailable
-collision_stats = _unavailable
-findfile = _unavailable
-run_in_subinterp = _unavailable
-set_memlimit = _unavailable
-swap_item = _unavailable
-wait_process = _unavailable
-Stopwatch = _unavailable
 
 def exceeds_recursion_limit():
     return sys.getrecursionlimit() + 100
@@ -217,8 +206,6 @@ ALWAYS_EQ = _AlwaysEqual()
 
 # These entry points can be imported, but their absent machinery must
 # be named before a test can mistake it for a successful check.
-async_yield = _unavailable
-run_yielding_async_fn = _unavailable
 force_not_colorized = _identity
 skip_if_double_rounding = _identity
 _1G = 1073741824
@@ -242,7 +229,6 @@ NEVER_EQ = _NeverEqual()
 
 # Tracing control is a stub; the kernel does not install trace callbacks.
 no_tracing = _identity
-SuppressCrashReport = _unavailable
 
 # The dry run uses the small trial size of the reference suite. A test
 # refusing a dry run needs the resource explicitly enabled.
@@ -257,9 +243,11 @@ class _SmallMemory:
         return self.call
 
     def call(self, testcase):
-        if not self.dry_run:
-            raise unittest.SkipTest('big-memory resource is not enabled')
-        return self.function(testcase, 5147)
+        size = self.size if real_max_memuse else 5147
+        if (real_max_memuse or not self.dry_run) and real_max_memuse < size * self.memuse:
+            raise unittest.SkipTest('not enough memory: %.1fG minimum needed' %
+                                    (self.size * self.memuse / (1024 ** 3)))
+        return self.function(testcase, size)
 
 _1M = 1048576
 HAVE_DOCSTRINGS = False
@@ -273,3 +261,393 @@ from test.support.import_helper import import_module, import_fresh_module
 
 def skip_if_sanitizer(reason=None, **sanitizers):
     return _identity
+
+# The embedded test package corresponds to the reference files beside
+# the executable's source tree, even when the caller changes directory.
+import os
+import time
+import re
+TEST_HOME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))), 'tests', 'python')
+_header = 'nP'
+_align = '0n'
+LONG_TIMEOUT = 300.0
+max_memuse = 0
+real_max_memuse = 0
+
+def _check_tracemalloc():
+    try:
+        import tracemalloc
+    except ImportError:
+        return
+    if tracemalloc.is_tracing():
+        raise unittest.SkipTest('run_in_subinterp() cannot be used if tracemalloc module is tracing memory allocations')
+
+def findfile(filename, subdir=None):
+    if filename.startswith('/'):
+        return filename
+    if subdir is not None:
+        filename = os.path.join(subdir, filename)
+    path = [TEST_HOME_DIR] + sys.path
+    for dn in path:
+        fn = os.path.join(dn, filename)
+        if os.path.exists(fn): return fn
+    return filename
+
+class disable_gc:
+    def __enter__(self):
+        self.enabled = gc.isenabled()
+        gc.disable()
+
+    def __exit__(self, *exc):
+        if self.enabled:
+            gc.enable()
+        return False
+
+def calcobjsize(fmt):
+    import struct
+    return struct.calcsize(_header + fmt + _align)
+
+def _parse_memlimit(limit: str) -> int:
+    sizes = {
+        'k': 1024,
+        'm': _1M,
+        'g': _1G,
+        't': 1024*_1G,
+    }
+    m = re.match(r'(\d+(?:\.\d+)?) (K|M|G|T)b?$', limit,
+                 re.IGNORECASE | re.VERBOSE)
+    if m is None:
+        raise ValueError(f'Invalid memory limit: {limit!r}')
+    return int(float(m.group(1)) * sizes[m.group(2).lower()])
+
+def set_memlimit(limit: str) -> None:
+    global max_memuse
+    global real_max_memuse
+    memlimit = _parse_memlimit(limit)
+    if memlimit < _2G - 1:
+        raise ValueError(f'Memory limit {limit!r} too low to be useful')
+
+    real_max_memuse = memlimit
+    memlimit = min(memlimit, MAX_Py_ssize_t)
+    max_memuse = memlimit
+
+class swap_item:
+    def __init__(self, obj, item, new_val):
+        self.obj = obj
+        self.item = item
+        self.new_val = new_val
+
+    def __enter__(self):
+        self.present = self.item in self.obj
+        self.old = self.obj[self.item] if self.present else None
+        self.obj[self.item] = self.new_val
+        return self.old
+
+    def __exit__(self, *exc):
+        if self.present:
+            self.obj[self.item] = self.old
+        elif self.item in self.obj:
+            del self.obj[self.item]
+        return False
+
+class SuppressCrashReport:
+    old_value = None
+    old_modes = None
+
+    def __enter__(self):
+        if sys.platform.startswith('win'):
+            # see http://msdn.microsoft.com/en-us/library/windows/desktop/ms680621.aspx
+            try:
+                import msvcrt
+            except ImportError:
+                return
+
+            self.old_value = msvcrt.GetErrorMode()
+
+            msvcrt.SetErrorMode(self.old_value | msvcrt.SEM_NOGPFAULTERRORBOX)
+
+            # bpo-23314: Suppress assert dialogs in debug builds.
+            # CrtSetReportMode() is only available in debug build.
+            if hasattr(msvcrt, 'CrtSetReportMode'):
+                self.old_modes = {}
+                for report_type in [msvcrt.CRT_WARN,
+                                    msvcrt.CRT_ERROR,
+                                    msvcrt.CRT_ASSERT]:
+                    old_mode = msvcrt.CrtSetReportMode(report_type,
+                            msvcrt.CRTDBG_MODE_FILE)
+                    old_file = msvcrt.CrtSetReportFile(report_type,
+                            msvcrt.CRTDBG_FILE_STDERR)
+                    self.old_modes[report_type] = old_mode, old_file
+
+        else:
+            try:
+                import resource
+                self.resource = resource
+            except ImportError:
+                raise unittest.SkipTest("No module named 'resource'")
+            if self.resource is not None:
+                try:
+                    self.old_value = self.resource.getrlimit(self.resource.RLIMIT_CORE)
+                    self.resource.setrlimit(self.resource.RLIMIT_CORE,
+                                            (0, self.old_value[1]))
+                except (ValueError, OSError):
+                    pass
+
+            if sys.platform == 'darwin':
+                import subprocess
+                # Check if the 'Crash Reporter' on OSX was configured
+                # in 'Developer' mode and warn that it will get triggered
+                # when it is.
+                #
+                # This assumes that this context manager is used in tests
+                # that might trigger the next manager.
+                cmd = ['/usr/bin/defaults', 'read',
+                       'com.apple.CrashReporter', 'DialogType']
+                proc = subprocess.Popen(cmd,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE)
+                with proc:
+                    stdout = proc.communicate()[0]
+                if stdout.strip() == b'developer':
+                    print("this test triggers the Crash Reporter, "
+                          "that is intentional", end='', flush=True)
+
+        return self
+
+    def __exit__(self, *ignore_exc):
+        if self.old_value is None:
+            return
+
+        if sys.platform.startswith('win'):
+            import msvcrt
+            msvcrt.SetErrorMode(self.old_value)
+
+            if self.old_modes:
+                for report_type, (old_mode, old_file) in self.old_modes.items():
+                    msvcrt.CrtSetReportMode(report_type, old_mode)
+                    msvcrt.CrtSetReportFile(report_type, old_file)
+        else:
+            if self.resource is not None:
+                try:
+                    self.resource.setrlimit(self.resource.RLIMIT_CORE, self.old_value)
+                except (ValueError, OSError):
+                    pass
+
+def run_in_subinterp(code):
+    _check_tracemalloc()
+    try:
+        import _testcapi
+    except ImportError:
+        raise unittest.SkipTest("requires _testcapi")
+    return _testcapi.run_in_subinterp(code)
+
+def check_free_after_iterating(test, iter, cls, args=()):
+    done = False
+    def wrapper():
+        class A(cls):
+            def __del__(self):
+                nonlocal done
+                done = True
+                try:
+                    next(it)
+                except StopIteration:
+                    pass
+
+        it = iter(A(*args))
+        # Issue 26494: Shouldn't crash
+        test.assertRaises(StopIteration, next, it)
+
+    wrapper()
+    # The sequence should be deallocated just after the end of iterating
+    gc_collect()
+    test.assertTrue(done)
+
+def collision_stats(nbins, nballs):
+    n, k = nbins, nballs
+    if n > 0 and k == 1:
+        return 0.0, 0.0
+    # prob a bin empty after k trials = (1 - 1/n)**k
+    # mean # empty is then n * (1 - 1/n)**k
+    # so mean # occupied is n - n * (1 - 1/n)**k
+    # so collisions = k - (n - n*(1 - 1/n)**k)
+    #
+    # For the variance:
+    # n*(n-1)*(1-2/n)**k + meanempty - meanempty**2 =
+    # n*(n-1)*(1-2/n)**k + meanempty * (1 - meanempty)
+    #
+    # Massive cancellation occurs, and, e.g., for a 64-bit hash code
+    # 1-1/2**64 rounds uselessly to 1.0. Keep extra precision through
+    # the cancellations before converting the result to binary64.
+    #
+    # Note:  the exact values are straightforward to compute with
+    # rationals, but in context that's unbearably slow, requiring
+    # multi-million bit arithmetic.
+    import math
+    # Fixed-point evaluation of the same empty-bin probabilities. The
+    # scale leaves enough guard digits for cancellation of n squared
+    # and for the accumulated error in k multiplications.
+    scale = 10 ** (max(n.bit_length() * 2, 30) + k.bit_length() + 10)
+    def probability(empty):
+        base = (n - empty) * scale // n
+        exponent = k
+        result = scale
+        while exponent:
+            if exponent & 1:
+                result = result * base // scale
+            exponent >>= 1
+            if exponent:
+                base = base * base // scale
+        return result
+    meanempty = n * probability(1)
+    collisions = (k - n) * scale + meanempty
+    variance = n * (n - 1) * probability(2) + meanempty - meanempty * meanempty // scale
+    return collisions / scale, math.sqrt(variance / scale)
+
+class catch_unraisable_exception:
+
+    def __init__(self):
+        self.unraisable = None
+        self._old_hook = None
+
+    def _hook(self, unraisable):
+        # Storing unraisable.object can resurrect an object which is being
+        # finalized. Storing unraisable.exc_value creates a reference cycle.
+        self.unraisable = unraisable
+
+    def __enter__(self):
+        self._old_hook = sys.unraisablehook
+        sys.unraisablehook = self._hook
+        return self
+
+    def __exit__(self, *exc_info):
+        sys.unraisablehook = self._old_hook
+        del self.unraisable
+
+def wait_process(pid, *, exitcode, timeout=None):
+    if not hasattr(os, 'waitpid'):
+        raise unittest.SkipTest('requires subprocess support')
+    if os.name != "nt":
+        import signal
+
+        if timeout is None:
+            timeout = LONG_TIMEOUT
+
+        start_time = time.monotonic()
+        for _ in sleeping_retry(timeout, error=False):
+            pid2, status = os.waitpid(pid, os.WNOHANG)
+            if pid2 != 0:
+                break
+            # Retry: the process is still running
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            except OSError:
+                # Ignore errors like ChildProcessError or PermissionError
+                pass
+
+            dt = time.monotonic() - start_time
+            raise AssertionError(f"process {pid} is still running "
+                                 f"after {dt:.1f} seconds")
+    else:
+        # Windows implementation: don't support timeout :-(
+        pid2, status = os.waitpid(pid, 0)
+
+    exitcode2 = os.waitstatus_to_exitcode(status)
+    if exitcode2 != exitcode:
+        raise AssertionError(f"process {pid} exited with code {exitcode2}, "
+                             f"but exit code {exitcode} is expected")
+
+    # sanity check: it should not fail in practice
+    if pid2 != pid:
+        raise AssertionError(f"pid {pid2} != pid {pid}")
+
+def busy_retry(timeout, err_msg=None, /, *, error=True):
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than zero")
+
+    start_time = time.monotonic()
+    deadline = start_time + timeout
+
+    while True:
+        yield
+
+        if time.monotonic() >= deadline:
+            break
+
+    if error:
+        dt = time.monotonic() - start_time
+        msg = f"timeout ({dt:.1f} seconds)"
+        if err_msg:
+            msg = f"{msg}: {err_msg}"
+        raise AssertionError(msg)
+
+def sleeping_retry(timeout, err_msg=None, /,
+                     *, init_delay=0.010, max_delay=1.0, error=True):
+
+    delay = init_delay
+    for _ in busy_retry(timeout, err_msg, error=error):
+        yield
+
+        time.sleep(delay)
+        delay = min(delay * 2, max_delay)
+
+class Stopwatch:
+    def __enter__(self):
+        get_time = time.perf_counter
+        clock_info = time.get_clock_info('perf_counter')
+        self.context = disable_gc()
+        self.context.__enter__()
+        self.get_time = get_time
+        self.clock_info = clock_info
+        self.start_time = get_time()
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            end_time = self.get_time()
+        finally:
+            result = self.context.__exit__(*exc)
+        self.seconds = end_time - self.start_time
+        return result
+
+class _AsyncYield:
+    def __init__(self, value):
+        self.value = value
+        self.iterator = self._yield()
+
+    def _yield(self):
+        return (yield self.value)
+
+    def __await__(self):
+        return self.iterator
+
+    def __iter__(self):
+        return self.iterator
+
+    def __next__(self):
+        return next(self.iterator)
+
+    def send(self, value):
+        return self.iterator.send(value)
+
+    def throw(self, *args):
+        return self.iterator.throw(*args)
+
+    def close(self):
+        return self.iterator.close()
+
+
+def async_yield(v):
+    return _AsyncYield(v)
+
+def run_yielding_async_fn(async_fn, /, *args, **kwargs):
+    coro = async_fn(*args, **kwargs)
+    try:
+        while True:
+            try:
+                coro.send(None)
+            except StopIteration as e:
+                return e.value
+    finally:
+        coro.close()

@@ -28,6 +28,7 @@ pub struct Attempt {
 
 #[derive(Debug, Clone)]
 pub struct Taking {
+    pub line: u32,
     pub kinds: Vec<(usize, usize)>,
     pub held: Option<Cell>,
     pub body: (usize, usize),

@@ -23,7 +23,7 @@ impl Value {
             Value::Complex(_) => "complex",
             Value::Small(_) | Value::Huge(_) => "int",
             Value::Real(_) | Value::Frac(_) => "float",
-            Value::Text(_) => "str",
+            Value::Text(_) | Value::Codepoints(_) => "str",
             Value::Flag(_) => "bool",
             Value::Null => "NoneType",
             Value::Array(_) => "list",
@@ -45,7 +45,10 @@ impl Value {
             // otherwise by the word kept of the thing it was made from.
             Value::Cursor(state) => return state.try_borrow().map_or("iterator".to_string(), |held| match &held.source {
                 CursorSource::Living(..) => "list_iterator".to_string(),
-                CursorSource::Counted(..) => "range_iterator".to_string(),
+                CursorSource::Counted(row, _) => {
+                    let small = [&row.start, &row.stop, &row.step, &row.length()].iter().all(|n| n.to_i64().is_some());
+                    if small { "range_iterator" } else { "longrange_iterator" }.to_string()
+                },
                 CursorSource::Viewed(Value::View(window), ..) => match window.1.as_str() { "keys" => "dict_keyiterator", "values" => "dict_valueiterator", _ => "dict_itemiterator" }.to_string(),
                 CursorSource::Called(..) => "callable_iterator".to_string(),
                 CursorSource::Numbered(..) => "enumerate".to_string(),
@@ -132,12 +135,24 @@ impl Value {
                 if number.is_negative() { h = -h; }
                 Some(finish(h))
             }
+            Value::Codepoints(row) => {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                row.hash(&mut h);
+                Some(finish(h.finish() as i64))
+            }
             Value::Text(s) => {
                 if s.is_empty() { return Some(0); }
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 s.hash(&mut h);
                 Some(finish(h.finish() as i64))
             }
+            Value::Bytes(bytes, false, _) => {
+                let mut hash = 0i64;
+                for &byte in bytes.borrow().iter() { hash = hash.wrapping_mul(1000003) ^ i64::from(byte); }
+                Some(finish(hash))
+            }
+            Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
+            Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
             Value::Null => Some(0x9e3779b9),
             Value::Ellipsis => Some(0x9e3779ba),
             // The three bounds, folded as a tuple's items are, without a

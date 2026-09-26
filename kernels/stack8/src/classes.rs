@@ -91,7 +91,7 @@ impl<'a> Engine<'a> {
         }
     }
     /// The builtin kind a class itself stands for, if it is one.
-    fn own_kind(c: &Class) -> Option<String> {
+    pub(super) fn own_kind(c: &Class) -> Option<String> {
         c.constants.iter().find(|(n, _)| n == "\0kind").map(|(_, v)| v.plain())
     }
     /// The builtin kind a class stands on, through any of its line.
@@ -557,7 +557,7 @@ impl<'a> Engine<'a> {
                     // the way a flag stands under the whole-number kind,
                     // still reaches the member as before.
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
-                        .map_or(true, |op| self.kind_holds(&op, &word, &receiver.contents()));
+                        .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
                     let found = if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
                     match found {
                         Some(bound) => self.class_apply(bound,args),
@@ -736,6 +736,14 @@ impl<'a> Engine<'a> {
         self.class_apply(bound, vec![Value::text(name)])
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if let Value::Trace(trace) = &subject {
+            return match self.lang.trace_fields.iter().position(|key| key == name) {
+                Some(1) => Ok(Value::Small(trace.line as i64)),
+                Some(2) => Ok(trace.next.clone()),
+                Some(3) => Ok(Value::Object(trace.frame.clone())),
+                _ => Err(self.missing_member(&subject, name)),
+            };
+        }
         if let Value::Adapter(property) = &subject {
             if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
         }
@@ -753,7 +761,7 @@ impl<'a> Engine<'a> {
         }
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
-            Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word) => {
+            Value::Native(op, word) if Self::kind_builtin(op) => {
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
                 if name==self.class_word("doc") {
@@ -794,6 +802,7 @@ impl<'a> Engine<'a> {
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
                 // a thing's method is bound to the thing.
@@ -822,13 +831,19 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Fields(o.clone()));
                 }
                 let member=self.class_value(&o.class,name);
+                if member.is_none() && self.exception_class(&o.class) && self.exception_method_named(name) {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                }
                 // A member that takes writes speaks before the thing's own
                 // fields; any other member speaks after them.
                 if member.as_ref().map_or(false,|m|self.takes_writes(m)) {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class.clone());}
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class.clone());}
                 // The worth a thing keeps answers for the methods of its kind.
-                if let Some(worth)=Self::worth_of(&subject) {
+                if let Some(worth)=Self::worth_of(&subject).filter(|v|matches!(v.contents(),Value::Set(_))) {
+                    if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }
+                }
+                if let Some(worth)=Self::worth_of(&subject).filter(|v|!matches!(v.contents(),Value::Set(_))) {
                     if let Some(op)=self.lang.value_methods.get(name).cloned() {
                         // The parts of a complex number are read rather
                         // than called, as they are on the number itself.
@@ -911,6 +926,13 @@ impl<'a> Engine<'a> {
     }
     fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().map(|(n,v)|(Value::text(n),v.clone())).collect()))}
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        if self.lang.traceback_member.as_deref() == Some(name) && matches!(&subject, Value::Object(o) if self.exception_class(&o.class)) {
+            match &value {
+                Some(Value::Null | Value::Trace(_)) => {},
+                None => return Err("TypeError: __traceback__ may not be deleted".into()),
+                _ => return Err("TypeError: __traceback__ must be a traceback or None".into()),
+            }
+        }
         let absent=self.missing_member(&subject,name);
         match &subject {
             Value::Object(o) => {
@@ -1142,7 +1164,7 @@ impl<'a> Engine<'a> {
     pub(super) fn kind_holds(&self,op:&Builtin,word:&str,value:&Value)->bool {
         match op {
             Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),
-            Builtin::ToText=>matches!(value,Value::Text(_)),
+            Builtin::ToText=>matches!(value,Value::Text(_) | Value::Codepoints(_)),
             Builtin::AsReal=>matches!(value,Value::Real(_)),
             Builtin::List=>matches!(value,Value::Array(_)),
             Builtin::SortOf=>matches!(value,Value::Class(_)|Value::Native(..)|Value::ByteKind(..)|Value::SortOf(_))||self.kind_spelled(value).is_some(),
@@ -1189,6 +1211,9 @@ impl<'a> Engine<'a> {
             if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
             // Everything stands beneath the class every other one does.
             if c.name==self.class_word("root"){return Ok(true);}
+            if !subclass && !matches!(value, Value::Object(_)) {
+                if let Some(word)=Self::own_kind(c) { return Ok(value.core_kind()==word); }
+            }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class),Value::Class(c) if subclass=>Some(c),_=>None};
             return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));
         }

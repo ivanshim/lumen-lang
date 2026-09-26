@@ -31,7 +31,7 @@ impl<'a> Machine<'a> {
         self.native_kinds.push((word.to_owned(),kind.clone()));
         kind
     }
-    fn native_word(b:&Blueprint)->Option<String> {b.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v.bare())}
+    pub(super) fn native_word(b:&Blueprint)->Option<String> {b.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v.bare())}
     /// The value whose kind a directory should describe: an empty value
     /// of the kind a native kind word names, or the value itself where
     /// it is one of a native kind. Nothing for a blueprint of a class's
@@ -552,7 +552,7 @@ impl<'a> Machine<'a> {
                         // under the whole-number kind, still reaches
                         // the entry as before.
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
-                            .map_or(true,|op|self.kind_covers(&op,&word,&receiver.settled()));
+                            .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
                         let found=if of_own_kind{self.attribute(&receiver,&entry)}else{None};
                         match found {
                             Some(bound)=>self.apply_class_member(bound,values),
@@ -744,6 +744,13 @@ impl<'a> Machine<'a> {
         self.apply_class_member(bound,vec![Value::text(key)])
     }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if let Value::Backtrace(link) = &value {
+            let names = self.table.strings("ext.builtin.exceptions.traceback");
+            if names.get(1).map_or(false, |n| n == key) { return Ok(Value::Small(link.location as i64)); }
+            if names.get(2).map_or(false, |n| n == key) { return Ok(link.following.clone()); }
+            if names.get(3).map_or(false, |n| n == key) { return Ok(Value::Thing(link.activation.clone())); }
+            return Err(self.absent_attribute(&value, key));
+        }
         if matches!(&value,Value::Wrapped(6,_)) && self.table.spells("ext.stmt.class.property.setter",key) {return Ok(Self::wrap(13,vec![value]));}
         // Routines, wrapped routines and slots are members that bind, and
         // read as such; a slot writes and removes besides.
@@ -756,8 +763,8 @@ impl<'a> Machine<'a> {
             }
         }
         // A native kind's word read as a class: its maker, and its name.
-        if let Value::Intrinsic(_,word)=&value {
-            if self.table.spells("ext.stmt.class.builtin",word) {
+        if let Value::Intrinsic(op,word)=&value {
+            if Self::names_a_kind(op) {
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
                 if key==self.detail("doc") {
@@ -799,6 +806,7 @@ impl<'a> Machine<'a> {
                 let result=Value::Tuple(Rc::new(all));return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
+            if let Some(entry)=self.carried_by_kind(&value,key){return Ok(entry);}
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
             // method is bound to the thing.
@@ -828,8 +836,13 @@ impl<'a> Machine<'a> {
             let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone());
             if let Some(v)=own{return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.of.clone());}
+            if self.is_fault_kind(&t.of) && self.fault_method_word(key) { return Ok(Value::Member(Rc::new(value.clone()), key.to_owned())); }
             // The worth a thing keeps answers for the methods of its kind.
-            if let Some(under)=Self::underlying(&value) {
+            let native=Self::underlying(&value);
+            if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
+                if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
+            }
+            if let Some(under)=native.filter(|v|!matches!(v.settled(),Value::Set(_))) {
                 if let Some(operation)=Self::kind_method_named(self.table,key){
                     // The parts of a complex number are members read and
                     // not methods called, as on the number itself.
@@ -932,6 +945,14 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        if self.table.single("ext.builtin.exceptions.traceback.member") == Some(key) {
+            if let Value::Thing(thing) = &subject {
+                if self.is_fault_kind(&thing.of) {
+                    if replacement.is_none() { return Err(String::from("TypeError: __traceback__ may not be deleted").into()); }
+                    if !matches!(&replacement, Some(Value::Nil | Value::Backtrace(_))) { return Err(String::from("TypeError: __traceback__ must be a traceback or None").into()); }
+                }
+            }
+        }
         let writing=replacement.is_some();
         let success=match &subject {
             Value::Thing(t)=>{
@@ -1143,7 +1164,7 @@ impl<'a> Machine<'a> {
     pub(super) fn kind_covers(&self,op:&Prim,word:&str,value:&Value)->bool{
         match op {
             Prim::AsInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),
-            Prim::AsText=>matches!(value,Value::Text(_)),
+            Prim::AsText=>matches!(value,Value::Text(_) | Value::Unpaired(_)),
             Prim::AsReal=>matches!(value,Value::Frac(r) if r.places.is_some()),
             Prim::Listed=>matches!(value,Value::Vector(_)),
             Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
@@ -1191,6 +1212,11 @@ impl<'a> Machine<'a> {
                 if class_only && !self.counts_as_class(subject){return Err(self.not_a_class("core.issubclass.subject"));}
                 // Everything lies under the class everything lies under.
                 if c.name==self.detail("root"){return Ok(true);}
+                match (class_only, subject, Self::native_word(c)) {
+                    (false, Value::Thing(_), _) => {},
+                    (false, _, Some(word)) => return Ok(subject.kind_word()==word),
+                    _ => {},
+                }
                 let b=match subject{Value::Blueprint(b) if class_only=>Some(b),Value::Thing(t) if !class_only=>Some(&t.of),_=>None};
                 Ok(b.map_or(false,|b|Rc::ptr_eq(b,c)||b.ancestry.iter().any(|a|Rc::ptr_eq(a,c))))
             }

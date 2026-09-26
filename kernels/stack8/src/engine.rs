@@ -27,6 +27,7 @@ enum Passage {
 }
 
 pub struct Engine<'a> {
+    trace_frame: Option<Rc<Instance>>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
     class_maker: Option<Rc<Class>>,
@@ -262,6 +263,9 @@ impl Fault {
         match self {
             Fault::Note(note) => note,
             Fault::Thrown(Value::Object(o)) => {
+                if let Some((_, words)) = o.fields.borrow().iter().find(|(key, _)| key == "\0diagnostic") {
+                    return words.plain();
+                }
                 if let Some(message) = Value::Object(o.clone()).exception_message(sp).filter(|_| o.fields.borrow().iter().any(|(n, _)| n == "\0arguments")) {
                     return if message.is_empty() { format!("\0{}", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
                 }
@@ -372,7 +376,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -475,6 +479,18 @@ impl<'a> Engine<'a> {
             let values = [args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone()];
             for (name, value) in self.lang.unicode_members.iter().skip(1).zip(values) { fields.push((name.clone(), value)); }
         }
+        if self.stands_on(&class, 36) {
+            let details = args.get(1).filter(|_| args.len() == 2).and_then(|v| match v.contents() {
+                Value::Tuple(v) | Value::Array(v) => Some(v), _ => None,
+            });
+            for (i, key) in self.lang.syntax_members.iter().enumerate() {
+                let value = if i == 0 { args.first().cloned() }
+                    else { details.as_ref().and_then(|v| v.get(i - 1)).cloned() };
+                fields.push((key.clone(), value.unwrap_or(Value::Null)));
+            }
+            let names = self.lang.syntax_members.iter().map(|n| Value::text(n)).collect();
+            fields.push(("\0syntax-fields".into(), Value::Tuple(Rc::new(names))));
+        }
         let args = Value::Tuple(Rc::new(args));
         fields.push(("\0arguments".into(), args.clone()));
         if let Some(name) = &self.lang.exception_args { fields.push((name.clone(), args)); }
@@ -575,6 +591,7 @@ impl<'a> Engine<'a> {
         for (key, value) in self.call_items(given)? {
             match key { Some(key) => named.push((key, value)), None => args.push(value) }
         }
+        let syntax = if self.stands_on(&class, 36) { self.check_syntax_details(&args)? } else { Vec::new() };
         let unicode_arity = if self.stands_on(&class, 43) || self.stands_on(&class, 44) { Some(5) }
             else if self.stands_on(&class, 45) { Some(4) } else { None };
         if let Some(wanted) = unicode_arity {
@@ -587,6 +604,7 @@ impl<'a> Engine<'a> {
         } else { self.exception_instance(class, args, Value::Null) };
         if let Value::Object(object) = &made {
             let mut fields = object.fields.borrow_mut();
+            self.install_syntax_details(&mut fields, &syntax);
             for (key, value) in named {
                 let allowed = [&self.lang.absent_name_member, &self.lang.absent_object_member].into_iter().flatten().any(|n| *n == key);
                 match fields.iter_mut().find(|(n, _)| *n == key) {
@@ -694,6 +712,26 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn check_syntax_details(&mut self, args: &[Value]) -> Res<Vec<Value>> {
+        if args.len() != 2 { return Ok(Vec::new()); }
+        let details = self.core_members(&args[1])?;
+        let n = details.len();
+        if n != 4 && n != 6 {
+            let (bound, count) = if n < 4 { ("least", 4) } else if n < 6 { ("least", 6) } else { ("most", 6) };
+            return Err(format!("TypeError: function takes at {bound} {count} arguments ({n} given)"));
+        }
+        Ok(details)
+    }
+
+    fn install_syntax_details(&self, fields: &mut [(String, Value)], details: &[Value]) {
+        if details.is_empty() { return; }
+        for (key, value) in fields {
+            if let Some(i) = self.lang.syntax_members.iter().position(|n| n == key).filter(|i| *i > 0 && *i < 7) {
+                *value = details.get(i - 1).cloned().unwrap_or(Value::Null);
+            }
+        }
+    }
+
     /// Whether a name is one of the methods an exception answers itself.
     fn exception_method_named(&self, name: &str) -> bool {
         [&self.lang.note_method, &self.lang.traceback_setter, &self.lang.group_split, &self.lang.group_subgroup, &self.lang.group_derive]
@@ -703,6 +741,19 @@ impl<'a> Engine<'a> {
     /// The methods an exception answers itself: adding a note, setting
     /// a traceback, and parting a group three ways.
     fn exception_method(&mut self, object: Rc<Instance>, name: &str, args: &[Value]) -> Flow<Value> {
+        if self.stands_on(&object.class, 36) && self.lang.constructor.as_deref() == Some(name) {
+            let details = self.check_syntax_details(args)?;
+            let Value::Object(fresh) = self.exception_instance(object.class.clone(), args.to_vec(), Value::Null) else { unreachable!() };
+            self.install_syntax_details(&mut fresh.fields.borrow_mut(), &details);
+            let mut fields = object.fields.borrow_mut();
+            for (key, value) in fresh.fields.borrow().iter() {
+                if (self.lang.syntax_members.contains(key) && (args.len() == 2 || self.lang.syntax_members.first() == Some(key))) || key == "\0arguments" || self.lang.exception_args.as_ref() == Some(key) {
+                    if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
+                    else { fields.push((key.clone(), value.clone())); }
+                }
+            }
+            return Ok(Value::Null);
+        }
         let unready = self.lang.exception_unready.clone().unwrap_or_default();
         if self.lang.note_method.as_deref() == Some(name) {
             let [Value::Text(_)] = args else { return Err(self.lang.note_invalid.clone().unwrap_or_default().into()) };
@@ -716,7 +767,11 @@ impl<'a> Engine<'a> {
             return Ok(Value::Null);
         }
         if self.lang.traceback_setter.as_deref() == Some(name) {
-            return if matches!(args, [Value::Null]) { Ok(Value::Object(object)) } else { Err(unready.into()) };
+            let [trace @ (Value::Null | Value::Trace(_))] = args else { return Err("TypeError: __traceback__ must be a traceback or None".into()) };
+            if let Some(key) = &self.lang.traceback_member {
+                if let Some((_, value)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *value = trace.clone(); }
+            }
+            return Ok(Value::Object(object));
         }
         let derive = self.lang.group_derive.as_deref() == Some(name);
         let split = self.lang.group_split.as_deref() == Some(name);
@@ -898,6 +953,7 @@ impl<'a> Engine<'a> {
             given: Vec::new(),
             made: 0,
             line: 0,
+            trace_frame: None,
             source: Rc::from(""),
             pages_kept: None,
             calls: Vec::new(),
@@ -1685,6 +1741,15 @@ impl<'a> Engine<'a> {
             }
         }
         Some(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
+    }
+
+    fn hold_exception(&mut self, value: Value) {
+        // A handler can change the exception before raising it again.
+        // Its later report must therefore come from the value itself.
+        if let Value::Object(object) = &value {
+            object.fields.borrow_mut().retain(|(name, _)| name != "\0diagnostic");
+        }
+        self.caught.push(value);
     }
 
     /// Offer a fault of the kernel's own to the innermost guard as a
@@ -2624,8 +2689,12 @@ impl<'a> Engine<'a> {
             let was = std::mem::replace(&mut self.source, place.clone());
             (was, self.line)
         });
+        let caller_frame = self.trace_frame.take();
+        let caller_line = self.line;
         self.inside.push(program.within.clone());
         let outcome = self.run_instrs(program, &mut frame);
+        self.trace_frame = caller_frame;
+        if !self.lang.trace_fields.is_empty() { self.line = caller_line; }
         self.inside.pop();
         if let Some((was, on)) = elsewhere {
             self.source = was;
@@ -2742,6 +2811,7 @@ impl<'a> Engine<'a> {
     /// try is written among the words, and a walk stepping back in says
     /// which of its parts it gave way in.
     fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, at: usize, mut suspended: Option<&mut Generator>) -> Flow<Passage> {
+        let context_line = self.line;
         if self.lang.catch_group_unsupported.is_some() && plan.clauses.iter().any(|arm| arm.grouped) {
             return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
         }
@@ -2782,7 +2852,7 @@ impl<'a> Engine<'a> {
                 return Err(self.lang.special_unready.first().cloned().unwrap_or_default().into());
             }
             let args = match &ending {
-                Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class.clone()), value.clone(), Value::Trace(Rc::from(self.lang.special_unready.first().map_or("", String::as_str)))],
+                Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class.clone()), value.clone(), self.trace_of(value)],
                 _ => vec![Value::Null, Value::Null, Value::Null],
             };
             let method = self.special_method(&object, 34).ok_or_else(|| self.special_fault())?;
@@ -2791,9 +2861,18 @@ impl<'a> Engine<'a> {
             given.extend(args);
             // The raised value is held while the manager lets the body
             // go, so that whatever the leaving raises keeps it as context.
-            if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+            if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
+            let body_line = self.line;
+            if !self.lang.trace_fields.is_empty() {
+                self.line = context_line;
+                if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
+            }
             let left = self.invoke(&method, given);
             let left = self.raised_of_note(left);
+            if left.is_ok() && !self.lang.trace_fields.is_empty() {
+                self.line = body_line;
+                if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
+            }
             self.caught.truncate(active);
             left?;
             let answer = self.drop_top()?;
@@ -2823,14 +2902,14 @@ impl<'a> Engine<'a> {
                     },
                     Err(Fault::Thrown(raised)) if plan.clauses.iter().any(|arm| arm.grouped) => {
                         self.data.truncate(depth);
-                        self.caught.push(raised.clone());
+                        self.hold_exception(raised.clone());
                         let handled = self.grouped_attempt(program, frame, instrs, plan, raised);
                         self.caught.truncate(active);
                         handled
                     }
                     Err(Fault::Thrown(raised)) => {
                         self.data.truncate(depth);
-                        self.caught.push(raised.clone());
+                        self.hold_exception(raised.clone());
                         self.attempt_clauses(program, frame, instrs, plan, at, suspended.as_deref_mut(), raised, None, depth, active)
                     }
                     other => other,
@@ -2915,6 +2994,10 @@ impl<'a> Engine<'a> {
             return self.attempt_arm(program, frame, instrs, plan, at, suspended, arm, index, raised, depth, active);
         }
         for (index, arm) in plan.clauses.iter().enumerate() {
+            if !self.lang.trace_fields.is_empty() {
+                self.line = arm.line;
+                if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
+            }
             let mut takes = arm.bare;
             for span in &arm.kinds {
                 self.run_span(program, frame, instrs, *span)?;
@@ -2976,7 +3059,7 @@ impl<'a> Engine<'a> {
         let saved = match taken_up {
             Some(mark) => mark,
             None => {
-                if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+                if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
                 self.data.len()
             }
         };
@@ -3300,7 +3383,12 @@ impl<'a> Engine<'a> {
             if !matches!(sent, Value::Null) { return Err(self.lang.yield_unsupported[0].clone().into()); }
             // A map that changed size under the walk stops the next step.
             if let (Some((cell, size)), Some(said)) = (&kept.watched, &self.lang.map_resized) {
-                if Self::map_size(cell) != *size { kept.closed = true; return Err(format!("\0{said}").into()); }
+                let now = Self::map_size(cell);
+                if now != *size {
+                    let words = if now.0 != size.0 { said.clone() } else { self.lang.core_words["core.dict.changed"][1].clone() };
+                    kept.closed = true;
+                    return Err(format!("\0{words}").into());
+                }
             }
             let item = kept.items.get(kept.pc).cloned();
             kept.pc += usize::from(item.is_some());
@@ -3324,7 +3412,9 @@ impl<'a> Engine<'a> {
         let line = self.line;
         if let Some(place) = &program.written_in { self.source = place.clone(); }
         self.inside.push(program.within.clone());
+        let caller_frame = std::mem::replace(&mut self.trace_frame, kept.trace_frame.take());
         let result = self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept));
+        kept.trace_frame = std::mem::replace(&mut self.trace_frame, caller_frame);
         // The exhaustion class raised inside the body is a fault of the
         // generator, not the end of its walk.
         let result = match result {
@@ -3353,11 +3443,72 @@ impl<'a> Engine<'a> {
         Ok(kept.handed.take())
     }
 
+    fn trace_of(&self, raised: &Value) -> Value {
+        if let (Value::Object(object), Some(key)) = (raised, &self.lang.traceback_member) {
+            return object.fields.borrow().iter().find(|(name, _)| name == key).map(|(_, value)| value.clone()).unwrap_or(Value::Null);
+        }
+        Value::Null
+    }
+
+    fn record_trace(&mut self, raised: &Value, program: &Routine) {
+        let Value::Object(object) = raised else { return };
+        if !self.exception_class(&object.class) || self.lang.trace_fields.len() < 11 { return; }
+        let names = self.lang.trace_fields.clone();
+        let frame = if let Some(frame) = &self.trace_frame { frame.clone() } else {
+            let code_class = self.code_class();
+            self.made += 1;
+            let code = Value::Object(Rc::new(Instance { class: code_class, mark: self.made, fields: RefCell::new(vec![
+                (names[6].clone(), Value::text(if program.ident == "<program>" { &names[10] } else { &program.ident })),
+                (names[7].clone(), Value::Text(self.source.clone())),
+                (names[8].clone(), Value::Small(program.declared_on.max(1) as i64)),
+            ]) }));
+            let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: names[9].clone(), base: None,
+                answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
+            self.made += 1;
+            let frame = Rc::new(Instance { class, mark: self.made, fields: RefCell::new(vec![
+                (names[4].clone(), Value::Small(self.line as i64)), (names[5].clone(), code),
+            ]) });
+            self.trace_frame = Some(frame.clone());
+            frame
+        };
+        let prior = self.trace_of(raised);
+        if matches!(&prior, Value::Trace(trace) if Rc::ptr_eq(&trace.frame, &frame)) { return; }
+        let Some(key) = &self.lang.traceback_member else { return };
+        let trace = Value::Trace(Rc::new(crate::value::Traceback { line: self.line, frame, next: prior }));
+        if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
+    }
+
     fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<Passage> {
         self.run_portion(program, frame, instrs, span, None)
     }
 
-    fn run_portion(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), mut suspended: Option<&mut Generator>) -> Flow<Passage> {
+    fn run_portion(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), suspended: Option<&mut Generator>) -> Flow<Passage> {
+        let result = self.run_portion_inner(program, frame, instrs, span, suspended);
+        if self.lang.trace_fields.len() < 11 { return result; }
+        let result = match result {
+            Err(Fault::Note(words)) => match self.carried.take() {
+                Some(fault) => Err(fault),
+                None => match self.as_fault(&words) {
+                    Some(value) => {
+                        // Attaching a frame does not change the command line's
+                        // existing diagnostic for an uncaught kernel fault.
+                        if let Value::Object(object) = &value {
+                            if self.caught.is_empty() && !words.starts_with('\0') {
+                                object.fields.borrow_mut().push(("\0diagnostic".into(), Value::text(&words)));
+                            }
+                        }
+                        Err(Fault::Thrown(value))
+                    }
+                    None => Err(Fault::Note(words)),
+                },
+            },
+            other => other,
+        };
+        if let Err(Fault::Thrown(value)) = &result { self.record_trace(value, program); }
+        result
+    }
+
+    fn run_portion_inner(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), mut suspended: Option<&mut Generator>) -> Flow<Passage> {
         // A walk stepping back in makes its way to where it left off: to
         // each try it stood inside in turn, and at the innermost of them
         // to the word after the yield. What was thrown in is raised
@@ -3662,6 +3813,7 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Line(row) => {
                     self.line = *row;
+                    if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
                     // A statement reached is a fault gone by: the calls
                     // an earlier one was raised under are none of its
                     // business.
@@ -3944,7 +4096,16 @@ impl<'a> Engine<'a> {
         let mut amiss = None;
         if let Some(v) = args.first() {
             match v.contents() {
-                Value::Map(p) => { for (k, v) in p.iter() { self.map_enter(&mut pairs, k.clone(), v.clone())?; } }
+                Value::Map(p) => {
+                    let watch = Self::map_cell(v).map(|cell| { let start = Self::map_size(&cell); (cell, start) });
+                    for (k, v) in p.iter() {
+                        self.map_enter(&mut pairs, k.clone(), v.clone())?;
+                        if watch.as_ref().is_some_and(|(cell, start)| Self::map_size(cell) != *start) {
+                            self.replace_map(receiver, pairs)?;
+                            return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][2]));
+                        }
+                    }
+                }
                 other => {
                     for item in crate::methods::members(&other, &|k| self.lang.method_errors[k].clone())? {
                         let pair = crate::methods::members(&item, &|k| self.lang.method_errors[k].clone())?;
@@ -3955,7 +4116,15 @@ impl<'a> Engine<'a> {
             }
         }
         if amiss.is_none() { for (k, v) in named { self.map_enter(&mut pairs, Value::text(k), v.clone())?; } }
+        let values_only = pairs.len() == store.len();
         self.replace_map(receiver, pairs)?;
+        if values_only {
+            if let Some(cell) = Self::map_cell(receiver) {
+                if let Value::Map(updated) = &mut *cell.borrow_mut() {
+                    Rc::make_mut(updated).revision = store.revision;
+                }
+            }
+        }
         match amiss { Some(told) => Err(told), None => Ok(Value::Null) }
     }
 
@@ -4001,9 +4170,11 @@ impl<'a> Engine<'a> {
         // map with a Thing among its keys pays for the walk.
         for (key, value) in one.iter() {
             let (found, _) = self.map_locate(other, Some(other), key)?;
-            match found {
-                Some(index) if self.mapping_equality(value, &other[index].1) => {}
-                _ => return Ok(false),
+            let Some(index) = found else { return Ok(false) };
+            let compared = &other[index].1;
+            if !value.same_place(compared) {
+                let answer = self.special_dyad(&Action::Eq, value, compared)?;
+                if !self.special_truth(&answer)? { return Ok(false); }
             }
         }
         Ok(true)
@@ -4040,6 +4211,14 @@ impl<'a> Engine<'a> {
     /// the kind wherever the kind itself is asked what its values can
     /// do. Nothing for a word that names no builtin kind.
     pub(super) fn kind_sample(&self, word: &str) -> Option<Value> {
+        // Retain the concrete kind while using an empty walk to ask
+        // which protocol members the native type exposes.
+        if matches!(word, "iterator" | "list_iterator" | "list_reverseiterator" | "tuple_iterator" | "str_ascii_iterator" | "str_iterator" | "range_iterator" | "longrange_iterator" | "set_iterator" | "dict_keyiterator" | "dict_valueiterator" | "dict_itemiterator" | "dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator" | "bytes_iterator" | "bytearray_iterator" | "callable_iterator" | "enumerate" | "zip" | "map" | "filter" | "reversed" | "generator") {
+            return Some(Self::core_cursor_walked(CursorSource::Items(Rc::new(Vec::new()), 0), Some(Rc::from(word))));
+        }
+        if let Some(portion) = match word { "dict_keys" => Some("keys"), "dict_values" => Some("values"), "dict_items" => Some("items"), "mappingproxy" => Some("mapping"), _ => None } {
+            return Some(Value::View(Rc::new((Value::Map(Rc::new(Vec::new().into())), portion.to_string()))));
+        }
         Some(match self.lang.builtins.get(word)? {
             Builtin::ToText => Value::text(""),
             Builtin::ToInt => Value::Small(0),
@@ -4197,6 +4376,7 @@ impl<'a> Engine<'a> {
     /// builtin kind, or where that kind carries no such member.
     pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
         let word: Rc<str> = match value {
+            Value::Class(c) => Rc::from(Self::own_kind(c)?),
             Value::Native(_, word) => word.clone(),
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
@@ -4321,6 +4501,7 @@ impl<'a> Engine<'a> {
             14 => holds || matches!(family, Kindred::View(false)),
             15 => holds || matches!(family, Kindred::Walk | Kindred::View(_)),
             16 => matches!(family, Kindred::Walk),
+            42 => matches!(family, Kindred::Row | Kindred::Map | Kindred::Counted | Kindred::View(_)),
             18 | 20 | 28 => number || joined,
             19 => number || setted,
             23 | 31 => number && !matches!(family, Kindred::Complex) || matches!(family, Kindred::Text | Kindred::Bytes(_)),
@@ -4422,6 +4603,7 @@ impl<'a> Engine<'a> {
         if let Some(plain) = match place {
             0 => Some(Builtin::ToText), 1 => Some(Builtin::Repr), 8 => Some(Builtin::Hash), 9 => Some(Builtin::Bool),
             10 => Some(Builtin::Length), 15 => Some(Builtin::Iter), 16 => Some(Builtin::Next),
+            42 => Some(Builtin::Reversed),
             38 | 43 => Some(Builtin::ToInt), 39 => Some(Builtin::AsReal), 40 => Some(Builtin::Absolute),
             _ => None,
         } {
@@ -4635,6 +4817,19 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        let container = matches!(value, Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Set(_));
+        if container {
+            if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
+            }
+            self.reaching += 1;
+        }
+        let result = self.special_text_inner(value, representation);
+        if container { self.reaching -= 1; }
+        result
+    }
+
+    fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
         // Where the definition asks it, a collection reads the same
         // whether or not a representation was asked for: the members
         // inside it are always written as representations, so that text
@@ -4656,7 +4851,7 @@ impl<'a> Engine<'a> {
             }
             return self.special_text(&held, representation || quoted);
         }
-        if let Value::Trace(words) = value { return Err(words.to_string()); }
+        if matches!(value, Value::Trace(_)) { return Ok("<traceback object>".into()); }
         if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) {
             // A collection standing in no cell is written the same way,
             // and by the same walk, which stops where it comes round.
@@ -5174,6 +5369,10 @@ impl<'a> Engine<'a> {
             // is: by its own hash and its own equality, the members
             // standing in the set as the gathering put them there.
             if let (Value::Object(_) | Value::Hashed(_), Value::Set(cell)) = (a, b) {
+                if let Value::Set(needle) = self.set_lookup_value(a) {
+                    let found = cell.borrow().held.contains_key(&needle.borrow().address());
+                    return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+                }
                 let wanted = self.special_key(a)?;
                 let members = cell.borrow().items();
                 let mut found = false;
@@ -5375,6 +5574,9 @@ impl<'a> Engine<'a> {
 
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
+        if op == Builtin::Hash && args.len() == 1 && matches!(args[0], Value::Method(..)) {
+            return Ok(args[0].core_hash().map(Value::Small));
+        }
         let first = args.first();
         // Writing a value out looks into a set for a thing; the other
         // builtins do not (see argument_holds_object).
@@ -5450,8 +5652,8 @@ impl<'a> Engine<'a> {
                 Value::text(&crate::strings::ascii_escaped(&said))
             }
             Builtin::ToText if args.len() == 1 => {
-                self.digits_shown(&args[0])?;
-                Value::text(&self.special_text(&args[0], false)?)
+                if matches!(args[0], Value::Codepoints(_)) { args[0].clone() }
+                else { self.digits_shown(&args[0])?; Value::text(&self.special_text(&args[0], false)?) }
             }
             Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
             // A thing may say what whole number, real, or magnitude it
@@ -6760,6 +6962,7 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let field = match &held {
+                    Value::Trace(_) => self.lang.trace_fields.get(1..4).map_or(false, |keys| keys.iter().any(|key| key == name.as_ref())),
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     Value::Slice(_) => self.slice_bound_named(name).is_some(),
@@ -6817,12 +7020,19 @@ impl<'a> Engine<'a> {
                 }
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 // An exception answers its own few methods itself.
-                Value::Object(o) if self.exception_class(&o.class) && self.exception_method_named(name) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
+                Value::Object(o) if self.exception_class(&o.class) && (self.exception_method_named(name) || (self.stands_on(&o.class, 36) && self.lang.constructor.as_deref() == Some(name))) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
                 subject if self.descriptor_of(&subject, name).is_some() => {
                     let d = self.descriptor_of(&subject, name).expect("the descriptor");
                     self.descriptor_read(&d, subject)?
                 }
-                Value::Trace(words) => return Err(words.to_string().into()),
+                Value::Trace(trace) => {
+                    match self.lang.trace_fields.iter().position(|field| field == name.as_ref()) {
+                        Some(1) => Value::Small(trace.line as i64),
+                        Some(2) => trace.next.clone(),
+                        Some(3) => Value::Object(trace.frame.clone()),
+                        _ => return Err(format!("AttributeError: 'traceback' object has no attribute '{}'", name).into()),
+                    }
+                },
                 Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
                 Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class.clone()),
                 Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {
@@ -7343,6 +7553,12 @@ impl<'a> Engine<'a> {
                         let Some(name) = name else { continue };
                         if let Some((_, held)) = fields.iter_mut().find(|(n, _)| n == name) { *held = worth; }
                         else { fields.push((name.clone(), worth)); }
+                    }
+                }
+                if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
+                    if Rc::ptr_eq(&prior.frame, frame) {
+                        let trace = Value::Trace(Rc::new(crate::value::Traceback { line: self.line, frame: frame.clone(), next: Value::Trace(prior) }));
+                        if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
                 }
                 self.chain_context(&value);
@@ -8014,6 +8230,7 @@ impl<'a> Engine<'a> {
             match value {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => offending(&cell.borrow()),
                 Value::Set(_) if value.set_fixed() => None,
+                Value::Bytes(_, true, _) => Some(value.core_kind()),
                 Value::Array(_) | Value::Map(_) | Value::Set(_) => Some(value.core_kind()),
                 Value::Tuple(items) => items.iter().find_map(offending),
                 _ => None,
@@ -8050,11 +8267,11 @@ impl<'a> Engine<'a> {
     }
 
     /// How many pairs the map in a cell holds at this moment.
-    fn map_size(cell: &Rc<RefCell<Value>>) -> usize {
+    fn map_size(cell: &Rc<RefCell<Value>>) -> (usize, u64) {
         match &*cell.borrow() {
-            Value::Map(pairs) => pairs.len(),
+            Value::Map(pairs) => (pairs.len(), pairs.revision),
             Value::Bond(within) | Value::Collection(within, _) => Self::map_size(within),
-            _ => 0,
+            _ => (0, 0),
         }
     }
 
@@ -8313,6 +8530,19 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_)) {
+            if let (Some(mut left), Some(right)) = (a.text_codes(), b.text_codes()) {
+                if matches!(op, Action::Add) { left.extend(right); return Ok(Value::from_codes(left)); }
+                if matches!(op, Action::Contains | Action::Lacks) {
+                    let found = left.is_empty() || right.windows(left.len()).any(|part| part == left);
+                    return Ok(Value::Flag(found == matches!(op, Action::Contains)));
+                }
+                if matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                    let order = left.cmp(&right);
+                    return Ok(Value::Flag(match op { Action::Lt => order.is_lt(), Action::Le => !order.is_gt(), Action::Gt => order.is_gt(), _ => !order.is_lt() }));
+                }
+            }
+        }
         // A key handed out with its hash still stands for the key.
         if let Value::Hashed(pair) = a { return self.dyadic(op, &pair.0, b); }
         if let Value::Hashed(pair) = b { return self.dyadic(op, a, &pair.0); }
@@ -8640,7 +8870,13 @@ impl<'a> Engine<'a> {
                             None => items.iter().any(|(key, _)| Self::member_matches(a, key) || self.keys_alike(key, a)),
                         }
                     }
-                    Value::Set(s) => s.borrow().held.contains_key(&self.set_key(a)?),
+                    Value::Set(s) => {
+                        let key = match self.set_lookup_value(a) {
+                            Value::Set(needle) => needle.borrow().address(),
+                            _ => self.set_key(a)?,
+                        };
+                        s.borrow().held.contains_key(&key)
+                    },
                     Value::Bytes(row, ..) => {
                         let row = row.borrow();
                         match a {
@@ -8717,6 +8953,7 @@ impl<'a> Engine<'a> {
                     (Value::Adapter(x), Value::Adapter(y)) => Rc::ptr_eq(x,y),
                     // A method is bound afresh at every read; no two reads are one.
                     (Value::Method(..), Value::Method(..)) => false,
+                    (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
                     (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
                     _ if !a.identical(b) => false,
@@ -9506,6 +9743,15 @@ impl<'a> Engine<'a> {
     }
 
     fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::Codepoints(row) = target {
+            if let Value::Slice(parts) = at {
+                let (_, _, _, places) = self.slice_places(parts, row.len())?;
+                return Ok(Value::from_codes(places.into_iter().map(|i| row[i]).collect()));
+            }
+            let mut i = at.as_big()?.to_i64().ok_or_else(|| crate::strings::fault(self.lang, "index"))?;
+            if i < 0 { i += row.len() as i64; }
+            return row.get(i as usize).map(|&n| Value::from_codes(vec![n])).ok_or_else(|| crate::strings::fault(self.lang, "index"));
+        }
         if matches!(target, Value::Set(_)) { return Err(self.core_fault("core.unindexable", &target.core_kind())); }
         if let (Value::Text(s), true) = (target, self.lang.text_negative_index) {
             if !matches!(at, Value::Slice(_)) {
@@ -9682,7 +9928,18 @@ impl<'a> Engine<'a> {
 
     fn set_said(&self, label: &str, piece: &str) -> String {
         let words = &self.lang.set_words[&format!("ext.builtin.set{}", label)];
+        if label == ".unhashable" && words.len() == 3 { return words.join(piece); }
         format!("{}{}{}", words.first().map_or("", String::as_str), piece, words.get(1).map_or("", String::as_str))
+    }
+
+    fn set_lookup_value(&self, value: &Value) -> Value {
+        let bare = value.contents();
+        if self.special_method(&bare, 8).is_none() {
+            if let Some(worth) = Self::worth_of(&bare) {
+                if matches!(worth.contents(), Value::Set(_)) { return worth.contents(); }
+            }
+        }
+        bare
     }
 
     fn set_key(&self, value: &Value) -> Res<String> {
@@ -9879,7 +10136,10 @@ impl<'a> Engine<'a> {
         if matches!(op, SetAdd | SetRemove | SetDiscard) {
             if op == SetAdd { self.set_put(&cell.clone(), args[1].clone())?; return Ok(Value::Null); }
             let members = Self::set_pairs(cell);
-            let key = self.set_place(&members, &args[1])?;
+            let key = match self.set_lookup_value(&args[1]) {
+                Value::Set(needle) => needle.borrow().address(),
+                _ => self.set_place(&members, &args[1])?,
+            };
             if cell.borrow_mut().remove(&key).is_none() && op == SetRemove {
                 // A member a set has not is told of as a map tells of a
                 // key it has not, so a number is named as the number it
@@ -9972,6 +10232,7 @@ impl<'a> Engine<'a> {
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| match k { Value::Hashed(p) => p.0.clone(), _ => k.clone() }).collect()),
             Value::Bytes(row, ..) => Ok(row.borrow().iter().map(|&b| Value::Small(b as i64)).collect()),
             Value::Words(items, _) => Ok(items.iter().map(|s| Value::text(s)).collect()),
+            Value::Codepoints(row) => Ok(row.iter().map(|&n| Value::from_codes(vec![n])).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
                 let mut items = Vec::new();
@@ -10201,6 +10462,14 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if matches!(builtin, Builtin::Bytes(0..=3)) && !named.is_empty() {
+            for (key, value) in std::mem::take(&mut named) {
+                let at = match key.as_str() { "encoding" => 1, "errors" => 2, _ => return Err(self.byte_fault("arguments")) };
+                if args.len() > at { return Err(self.byte_fault("arguments")); }
+                while args.len() < at { args.push(Value::text("utf-8")); }
+                args.push(value);
+            }
+        }
         if let Builtin::Bytes(task @ (14 | 15)) = builtin {
             let mut signed = false;
             for (key, value) in named {
@@ -10395,7 +10664,7 @@ impl<'a> Engine<'a> {
                 }),
             };
         }
-        if operation == "encode" && matches!(&contents, Value::Text(_)) {
+        if operation == "encode" && matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             let mut supplied = args;
             for (key, value) in named {
                 let at = match key.as_str() { "encoding"=>0, "errors"=>1, _=>return Err(self.byte_fault("unready")) };
@@ -10404,11 +10673,10 @@ impl<'a> Engine<'a> {
                 supplied.push(value);
             }
             if supplied.len() > 2 { return Err(self.byte_fault("arguments")); }
-            if let Some(errors) = supplied.get(1) { if !matches!(errors, Value::Text(s) if s.as_ref()=="strict") { return Err(self.byte_fault("unready")); } }
-            supplied.truncate(1); supplied.insert(0, contents);
+            supplied.insert(0, contents);
             return self.byte_call(2, &supplied);
         }
-        if matches!(&contents, Value::Bytes(..)) || operation == "encode" && matches!(&contents, Value::Text(_)) {
+        if matches!(&contents, Value::Bytes(..)) || operation == "encode" && matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             // A working that writes where the row lies is asked of a
             // changeable row alone; a fixed row has no such member.
             let changeable = matches!(&contents, Value::Bytes(_, true, _));
@@ -10613,7 +10881,7 @@ impl<'a> Engine<'a> {
         }
         // More figures than the definition allows, in a base whose reading
         // is slow, are refused before the reading starts.
-        if let (Some(limit), false) = (self.lang.integer_digits, radix.is_power_of_two()) {
+        if let (Some(limit), false) = (self.current_digit_limit(), radix.is_power_of_two()) {
             if limit > 0 && cleaned.len() > limit { return Err(self.digits_refused(limit)); }
         }
         let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(invalid)?;
@@ -10622,9 +10890,29 @@ impl<'a> Engine<'a> {
 
     /// A whole number is refused as text when it has more figures than
     /// the definition allows to be written out.
+    fn current_digit_limit(&self) -> Option<usize> {
+        if let [module, field] = self.lang.integer_digits_state.as_slice() {
+            if let Some(Value::Object(object)) = self.modules.get(module) {
+                if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == field) {
+                    if let Value::Small(limit) = held.contents() {
+                        if limit >= 0 { return Some(limit as usize); }
+                    }
+                }
+            }
+        }
+        self.lang.integer_digits
+    }
+
     fn digits_shown(&self, value: &Value) -> Res<()> {
-        if let (Some(limit), Value::Huge(whole)) = (self.lang.integer_digits, value.contents()) {
-            if limit > 0 && num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit { return Err(self.digits_refused(limit)); }
+        if let (Some(limit), Value::Huge(whole)) = (self.current_digit_limit(), value.contents()) {
+            if limit > 0 {
+                // A lower bound on decimal digits rejects large values
+                // without paying for the conversion being limited.
+                let lower = whole.bits().saturating_sub(1).saturating_mul(30102) / 100000;
+                if lower >= limit as u64 || num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit {
+                    return Err(self.digits_refused(limit));
+                }
+            }
         }
         Ok(())
     }
@@ -11300,7 +11588,7 @@ impl<'a> Engine<'a> {
     /// A row of bytes read back as text, the encoding and then the error
     /// policy standing after it. Only a row of bytes can be read so:
     /// text is turned away by name, and every other value by its kind.
-    fn text_from_bytes(&self, args: &[Value]) -> Res<Value> {
+    fn text_from_bytes(&mut self, args: &[Value]) -> Res<Value> {
         if args.len() > 3 { return Err(self.lang.to_string_unready[0].clone()); }
         let words = &self.lang.to_string_undecodable;
         let part = |at: usize| words.get(at).cloned().unwrap_or_default();
@@ -11309,22 +11597,98 @@ impl<'a> Engine<'a> {
             Value::Text(_) => return Err(part(0)),
             other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
         };
-        if let Some(policy) = args.get(2) {
-            let Value::Text(policy) = policy else { return Err(self.byte_fault("arguments")); };
-            if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
-        }
-        self.byte_decode(&row, self.byte_codec(args.get(1))?)
+        self.byte_transcode(false, &row, args)
     }
 
-    fn byte_call(&self, task: u8, args: &[Value]) -> Res<Value> {
+    fn codec_library(&mut self, member: &str, args: Vec<Value>) -> Res<Value> {
+        let module = self.route_module("codecs")?;
+        let routine = self.member_of(module, member)?.ok_or_else(|| self.byte_fault("unready"))?;
+        self.call_held(routine, args)
+    }
+
+    fn byte_transcode(&mut self, encode: bool, row: &[u8], args: &[Value]) -> Res<Value> {
+        if args.is_empty() || args.len() > 3 { return Err(self.byte_fault("arguments")); }
+        let policy = match args.get(2) {
+            None => "strict".to_owned(),
+            Some(Value::Text(s)) => s.to_string(),
+            _ => return Err(self.byte_fault("arguments")),
+        };
+        let codec = match self.byte_codec(args.get(1)) {
+            Ok(n) if n < 3 => n,
+            _ => return self.codec_library(if encode { "_encode" } else { "_decode" }, args.to_vec()),
+        };
+        if encode && matches!(args[0], Value::Codepoints(_)) { return self.codec_library("_encode_surrogates", args.to_vec()); }
+        let name = self.byte_codec_name(codec);
+        let mut output = Vec::new();
+        let mut decoded: Vec<u32> = Vec::new();
+        if encode {
+            let Value::Text(text) = &args[0] else { return Err(self.byte_fault("arguments")); };
+            if codec == Self::CODEC_WIDE { return Ok(self.byte_make(text.as_bytes().to_vec(), false)); }
+            let letters: Vec<char> = text.chars().collect();
+            let limit = if codec == Self::CODEC_SEVEN { 128 } else { 256 };
+            let mut at = 0;
+            while at < letters.len() {
+                if (letters[at] as u32) < limit { output.push(letters[at] as u8); at += 1; continue; }
+                let end = at + letters[at..].iter().take_while(|c| **c as u32 >= limit).count();
+                if policy == "ignore" { at = end; continue; }
+                if policy == "replace" { output.resize(output.len() + end - at, b'?'); at = end; continue; }
+                let answer = self.codec_library("_encode_error", vec![Value::text(&name), args[0].clone(), Value::Small(at as i64), Value::Small(end as i64), Value::text(&format!("ordinal not in range({limit})")), Value::text(&policy)])?;
+                let Value::Tuple(pair) = answer else { return Err(self.byte_fault("arguments")); };
+                match &pair[0] {
+                    Value::Bytes(bytes, ..) => output.extend_from_slice(&bytes.borrow()),
+                    Value::Text(replacement) => output.extend(self.byte_encode(replacement, codec)?),
+                    _ => return Err(self.byte_fault("arguments")),
+                }
+                at = pair[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
+            }
+            return Ok(self.byte_make(output, false));
+        }
+        if codec == Self::CODEC_BYTEWISE { return self.byte_decode(row, codec); }
+        let mut offset = 0;
+        while offset < row.len() {
+            let tail = &row[offset..];
+            let failure = if codec == Self::CODEC_SEVEN {
+                tail.iter().position(|b| *b >= 128).map(|i| (i, 1, "ordinal not in range(128)"))
+            } else {
+                std::str::from_utf8(tail).err().map(|e| {
+                    let i = e.valid_up_to();
+                    let why = if e.error_len().is_none() { "unexpected end of data" }
+                        else if (194..=244).contains(&tail[i]) { "invalid continuation byte" } else { "invalid start byte" };
+                    (i, e.error_len().unwrap_or(tail.len() - i), why)
+                })
+            };
+            let Some((valid, count, why)) = failure else {
+                decoded.extend(std::str::from_utf8(tail).map_err(|_| self.byte_fault("unready"))?.chars().map(u32::from)); break;
+            };
+            decoded.extend(std::str::from_utf8(&tail[..valid]).map_err(|_| self.byte_fault("unready"))?.chars().map(u32::from));
+            let start = offset + valid;
+            let end = start + count;
+            if policy == "replace" { decoded.push(0xfffd); offset = end; }
+            else if policy == "ignore" { offset = end; }
+            else {
+                let answer = self.codec_library("_decode_error", vec![Value::text(&name), self.byte_make(row.to_vec(), false), Value::Small(start as i64), Value::Small(end as i64), Value::text(why), Value::text(&policy)])?;
+                let Value::Tuple(pair) = answer else { return Err(self.byte_fault("arguments")); };
+                let replacement = pair[0].text_codes().ok_or_else(|| self.byte_fault("arguments"))?;
+                decoded.extend(replacement);
+                offset = pair[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
+            }
+        }
+        Ok(Value::from_codes(decoded))
+    }
+
+    fn byte_call(&mut self, task: u8, args: &[Value]) -> Res<Value> {
         self.byte_work(task, args, false)
     }
 
-    fn byte_work(&self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
-        if matches!(task, 0..=3) && args.len() == 3 {
-            let Value::Text(policy) = &args[2] else { return Err(self.byte_fault("arguments")); };
-            if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
-            return self.byte_work(task, &args[..2], signed);
+    fn byte_work(&mut self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if task <= 3 && !args.is_empty() && (task >= 2 || args.len() >= 2) {
+            let decode = task == 3;
+            let row = if decode { self.byte_row(&args[0], false)? } else { Vec::new() };
+            let result = self.byte_transcode(!decode, &row, args)?;
+            if task == 1 {
+                if let Value::Bytes(cell, ..) = result { return Ok(self.byte_make(cell.borrow().clone(), true)); }
+            }
+            return Ok(result);
         }
         let bad = || self.byte_fault("arguments");
         let unready = || self.byte_fault("unready");
@@ -11733,6 +12097,7 @@ impl<'a> Engine<'a> {
             Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
                 arity(1)?;
+                if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 self.utter(s);
                 Value::Null
@@ -12315,6 +12680,22 @@ impl<'a> Engine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Builtin::Clock => {
+                #[cfg(target_os = "linux")]
+                if self.lang.clock_parts && args.len() == 2 {
+                    let [Value::Flag(steady), Value::Flag(true)] = args.as_slice() else {
+                        return Err(self.lang.module_helper_amiss.clone());
+                    };
+                    #[repr(C)]
+                    struct Resolution { seconds: i64, nanos: i64 }
+                    extern "C" { fn clock_getres(clock: i32, result: *mut Resolution) -> i32; }
+                    let mut resolution = Resolution { seconds: 0, nanos: 0 };
+                    // Linux CLOCK_REALTIME is zero, CLOCK_MONOTONIC is one.
+                    if unsafe { clock_getres(i32::from(*steady), &mut resolution) } != 0 {
+                        return Err("OSError: clock resolution is unavailable".to_string());
+                    }
+                    return Ok(crate::value::real_of(resolution.seconds as f64 + resolution.nanos as f64 / 1e9,
+                        self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)));
+                }
                 // Handed a flag where the definition allows, the clock
                 // answers in seconds and their parts, and the flag says
                 // from where: the run's own start, a clock that never
@@ -12679,6 +13060,7 @@ impl<'a> Engine<'a> {
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
             Builtin::ToText => {
                 arity(1)?;
+                if matches!(args[0], Value::Codepoints(_)) { return Ok(args[0].clone()); }
                 self.digits_shown(&args[0])?;
                 Value::text(&self.told(&args[0], &sp))
             }
@@ -12735,6 +13117,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Bytes(row, ..) => Value::Small(row.borrow().len() as i64),
+                    Value::Codepoints(row) => Value::Small(row.len() as i64),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) | Value::Tuple(items) => Value::Small(items.len() as i64),
                     Value::Set(s) => Value::Small(s.borrow().held.len() as i64),
@@ -12760,6 +13143,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::CodeOf => {
                 arity(1)?;
+                if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 match s.chars().next() {
                     Some(c) => Value::Small(c as i64),
@@ -12777,6 +13161,7 @@ impl<'a> Engine<'a> {
                     .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
                 match char::from_u32(code) {
                     Some(c) => Value::text(&c.to_string()),
+                    None if (0xd800..=0xdfff).contains(&code) && !self.lang.byte_words["ext.system.bytes.encodings"].is_empty() => Value::from_codes(vec![code]),
                     None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
                 }
             }
@@ -12799,7 +13184,7 @@ impl<'a> Engine<'a> {
                     let which = match &args[0] {
                         Value::Complex(_) => Some(Builtin::Complex),
                         Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
-                        Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
+                        Value::Text(_) | Value::Codepoints(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
                         Value::Set(_) => Some(if args[0].set_fixed() { Builtin::Frozen } else { Builtin::Set }), Value::Map(_) => Some(Builtin::Dict),
                         // A counted row and a span of bounds are kinds
@@ -14007,7 +14392,8 @@ impl Engine<'_> {
                     return Ok(found);
                 }
                 CursorSource::Viewed(window, place, size) => {
-                    if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                    let now = Self::window_size(window);
+                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
                     let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
                     if found.is_some() { *place += 1; } else { state.finished = true; }
                     return Ok(found);
@@ -14034,7 +14420,8 @@ impl Engine<'_> {
                 Ok(found)
             }
             CursorSource::Viewed(window, place, size) => {
-                if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                let now = Self::window_size(window);
+                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
                 let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
                 if found.is_some() { *place += 1; }
                 Ok(found)
@@ -14156,8 +14543,8 @@ impl Engine<'_> {
     }
 
     /// The size of the map a window looks upon.
-    fn window_size(window: &Value) -> usize {
-        match window { Value::View(view) => match view.0.contents() { Value::Map(pairs) => pairs.len(), _ => 0 }, _ => 0 }
+    fn window_size(window: &Value) -> (usize, u64) {
+        match window { Value::View(view) => match view.0.contents() { Value::Map(pairs) => (pairs.len(), pairs.revision), _ => (0, 0) }, _ => (0, 0) }
     }
 
     /// What iter is handed before its cell is opened: a list's own cell,
@@ -14241,7 +14628,12 @@ impl Engine<'_> {
             // no word of its own for is asked about by the kind's own
             // name, there being no builtin word to ask in its place.
             if let Some(kind) = Self::kind_beneath(class) {
-                if !self.lang.builtins.contains_key(&kind) { return Ok(value.core_kind() == kind); }
+                if !self.lang.builtins.contains_key(&kind) {
+                    return Ok(match value {
+                        Value::Object(o) => Rc::ptr_eq(&o.class, class) || o.class.lineage.iter().any(|c| Rc::ptr_eq(c, class)),
+                        _ => Self::own_kind(class).is_some() && value.core_kind() == kind,
+                    });
+                }
             }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
@@ -14295,6 +14687,9 @@ impl Engine<'_> {
         if named.is_empty() {
             if b == Builtin::Hash && matches!(args.first(), Some(Value::Bytes(..))) { return self.byte_call(17, &args); }
             if b == Builtin::InstanceOf && matches!(args.get(1), Some(Value::ByteKind(..))) { return self.byte_call(16, &args); }
+            if b == Builtin::Repr && args.len() == 1 && matches!(args[0], Value::Map(_)) {
+                return self.special_text(&args[0], true).map(|text| Value::text(&text));
+            }
             if b == Builtin::Repr && matches!(args.first(), Some(Value::Text(_))) { return crate::strings::run(crate::strings::TextOp::Repr, name, &args, self.lang, &self.wording()); }
             if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
@@ -14638,6 +15033,13 @@ impl Engine<'_> {
                     return Ok(crate::complex::real(length));
                 }
                 let x = number(&args[0]);
+                if let Value::Real(r) = &x {
+                    // Non-finite reals have no rational parts; their
+                    // magnitude still exists, including for NaN.
+                    if r.q == BigInt::from(0) {
+                        return Ok(crate::complex::real(crate::value::as_binary(&r.p, &r.q).abs()));
+                    }
+                }
                 let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
                 arith::shape_number(p.abs(), q, if matches!(x, Value::Real(_)) { Some(arith::DEFAULT_PLACES) } else { None })
             }
@@ -14827,8 +15229,21 @@ impl Engine<'_> {
         let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
-        let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?;
-        let program = crate::compile::compile(&tokens, self.lang, &mut local, 0)?;
+        let filename = own_file.as_deref().unwrap_or(path);
+        let tokens = match self.text_tokens(&source, 0) {
+            Ok(tokens) => tokens,
+            Err((said, row, col)) => {
+                let said = self.text_syntax(0, said, filename, row, col, None, &source);
+                return Err(self.carried.take().unwrap_or_else(|| said.into()));
+            }
+        };
+        let program = match crate::compile::compile_from(&tokens, self.lang, &mut local, 0, Some(Rc::from(filename))) {
+            Ok(program) => program,
+            Err(said) => {
+                let said = self.text_syntax(0, said, filename, local.stopped_at, local.stopped_column, Some((local.stopped_end_row, local.stopped_end)), &source);
+                return Err(self.carried.take().unwrap_or_else(|| said.into()));
+            }
+        };
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0module:{offset}:{path}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -15235,16 +15650,94 @@ impl Engine<'_> {
     /// are kept where they name the very complaint the language has for
     /// text it cannot read; any other words are that complaint instead,
     /// since they are the assembler's and not the language's.
-    fn text_syntax(&self, said: String, file: &str, row: usize) -> String {
+    fn text_syntax(&mut self, mode: usize, said: String, file: &str, row: usize, column: usize, end: Option<(usize, usize)>, source: &str) -> String {
+        let lines = if source.contains('\r') { std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n")) } else { std::borrow::Cow::Borrowed(source) };
+        let source = lines.as_ref();
         let generic = self.lang.source_syntax.clone().unwrap_or_default();
-        let kind = generic.split_once(':').map(|(word, _)| format!("{}:", word));
-        let told = match &kind {
-            Some(kind) if said.starts_with(kind.as_str()) => said,
-            _ => generic,
-        };
-        let words = &self.lang.source_place;
-        if words.len() < 3 { return told; }
-        format!("{}{}{}{}{}{}", told, words[0], file, words[1], row.max(1), words[2])
+        let fallback = generic.split_once(':').map(|(kind, _)| kind).unwrap_or("");
+        let (kind, message) = said.split_once(": ").filter(|(kind, _)| self.native_exceptions.contains_key(*kind))
+            .unwrap_or((fallback, generic.split_once(": ").map(|(_, msg)| msg).unwrap_or(&generic)));
+        if let Some(Value::Class(class)) = self.native_exceptions.get(kind).cloned() {
+            if message == "source code string cannot contain null bytes" {
+                let raised = self.exception_instance(class, vec![Value::text(message)], Value::Null);
+                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                return String::new();
+            }
+            if row == 0 && mode != 0 && source.is_empty() {
+                let positions = vec![Value::text(file), Value::Small(0), Value::Small(0), Value::text(""), Value::Small(0), Value::Small(0)];
+                let raised = self.exception_instance(class, vec![Value::text(message), Value::Tuple(Rc::new(positions))], Value::Null);
+                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                return String::new();
+            }
+            if row == 0 {
+                let bom_conflict = message.starts_with("encoding problem:") && message.ends_with(" with BOM");
+                let details = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(if bom_conflict { 1 } else { 0 }), Value::Small(if bom_conflict { 0 } else { -1 }), Value::Null]));
+                let raised = self.exception_instance(class, vec![Value::text(message), details], Value::Null);
+                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                return String::new();
+            }
+            let row = row.max(1);
+            let mut text = source.split_inclusive('\n').nth(row - 1).unwrap_or("").to_owned();
+            let mut col = column.max(1) as i64;
+            let mut finish = end.map_or(col, |(_, n)| n as i64);
+            let end_row = end.map_or(row, |(r, _)| if r == 0 { row } else { r });
+            let mut message = message.to_owned();
+            if mode != 0 && source.ends_with('\\') && message == "unexpected EOF while parsing" {
+                message = "unexpected character after line continuation character".to_owned();
+                col = col.saturating_sub(1).max(1);
+            }
+            let unclosed = message.ends_with("was never closed");
+            let indentation = kind == "IndentationError" || kind == "TabError";
+            if unclosed || message == "unexpected character after line continuation character" { finish = 0; }
+            if message == "unexpected EOF while parsing" { finish = -1; }
+            if end.is_none() && message == "invalid syntax" {
+                let rest: String = text.chars().skip(col as usize - 1).collect();
+                let length = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').count();
+                finish = col + length.max(1) as i64;
+                if mode == 0 && !text.ends_with('\n') { text.push('\n'); }
+            }
+            if message.contains("bytes can only contain ASCII") { finish = text.trim_end_matches(['\r', '\n']).chars().count() as i64 + 1; }
+            if message.starts_with("leading zeros") {
+                finish = col + text.chars().skip(col as usize - 1).take_while(|c| matches!(c, '0' | '_')).count() as i64;
+            }
+            if end.is_none() && message.contains("prefixes") {
+                finish = col + text.chars().skip(col as usize - 1).take_while(char::is_ascii_alphabetic).count() as i64;
+            }
+            if message.starts_with("unterminated ") && !message.contains("detected at line") {
+                let detected = source.lines().count().max(row);
+                message.push_str(&format!(" (detected at line {detected})"));
+            }
+            if indentation {
+                if message.starts_with("unindent") { col = text.trim_end_matches(['\n', '\r']).chars().count() as i64 + 1; finish = -1; }
+                else if message.starts_with("expected an indented block") {
+                    let length = text.chars().skip(col as usize - 1).take_while(|c| c.is_alphanumeric() || *c == '_').count();
+                    finish = if length == 0 { -1 } else { col + length as i64 };
+                } else { finish = if kind == "TabError" { 0 } else { -1 }; }
+            }
+            if mode == 0 && (end.is_some() || unclosed || indentation || message.starts_with("unexpected EOF") || message.starts_with("unexpected character after line continuation")) && !text.ends_with('\n') { text.push('\n'); }
+            if message.starts_with("unterminated ") || (unclosed && source.lines().count() > row) { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
+            if message == "cannot assign to function call" && source.lines().count() > row { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
+            if mode != 0 && message == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { col = 0; finish = 0; }
+            let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("duplicate argument ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
+            // Symbol-table diagnostics retain UTF-8 spans; tokenizer
+            // diagnostics count characters in the original source.
+            if compiler_only {
+                col = text.chars().take(col.saturating_sub(1) as usize).map(char::len_utf8).sum::<usize>() as i64 + 1;
+                if finish > 0 {
+                    let ending = source.split_inclusive('\n').nth(end_row - 1).unwrap_or("");
+                    finish = ending.chars().take((finish - 1) as usize).map(char::len_utf8).sum::<usize>() as i64 + 1;
+                }
+            }
+            let line_text = if compiler_only {
+                std::fs::read_to_string(file).ok().and_then(|contents| contents.replace("\r\n", "\n").replace('\r', "\n").split_inclusive('\n').nth(row - 1).map(Value::text)).unwrap_or(Value::Null)
+            } else { Value::text(&text) };
+            let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(col), line_text, Value::Small(end_row as i64), Value::Small(finish)];
+            let raised = self.exception_instance(class, vec![Value::text(&message), Value::Tuple(Rc::new(details))], Value::Null);
+            self.chain_context(&raised);
+            self.carried = Some(Fault::Thrown(raised));
+            return String::new();
+        }
+        said
     }
 
     /// The tokens of text handed over to be read, or the reading's own
@@ -15252,9 +15745,20 @@ impl Engine<'_> {
     /// same complaint a file being run keeps, so text read through
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_syntax`.
-    fn text_tokens(&self, source: &str) -> Result<Vec<crate::lex::Token>, (String, usize)> {
-        crate::lex::lex_at(source, self.lang)
-            .and_then(|tokens| crate::layout::layout(tokens, self.lang, 0))
+    fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+        if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
+        if mode == 1 {
+            let word = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
+            if ["return", "raise", "break", "continue", "pass", "del", "import", "from", "global", "nonlocal", "assert", "class", "def", "for", "while", "if", "try", "with"].contains(&word) {
+                let prefix = source.len() - source.trim_start_matches([' ', '\t', '\n']).len();
+                let row = source[..prefix].bytes().filter(|c| *c == b'\n').count() + 1;
+                let col = source[..prefix].rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                return Err(("SyntaxError: invalid syntax".into(), row as _, col));
+            }
+        }
+
+        crate::lex::lex_position(source, self.lang)
+            .and_then(|tokens| crate::layout::layout_position(tokens, self.lang, 0))
     }
 
     /// The builtins that read text, hand out names, or fetch a module.
@@ -15303,21 +15807,77 @@ impl Engine<'_> {
 
     /// Text checked ahead of time and kept as a code value, with the
     /// file and the manner it is to be read in.
+    fn source_bytes(&mut self, bytes: &[u8], filename: &str) -> Res<Rc<str>> {
+        let bom = bytes.starts_with(&[239, 187, 191]);
+        let bytes = bytes.strip_prefix(&[239, 187, 191]).unwrap_or(bytes);
+        let mut spelling = "utf-8".to_string();
+        for line in bytes.split(|b| *b == b'\n').take(2) {
+            let line = String::from_utf8_lossy(line);
+            if !line.trim_start().starts_with('#') { continue; }
+            if let Some((_, tail)) = line.split_once("coding") {
+                if let Some(tail) = tail.strip_prefix(':').or_else(|| tail.strip_prefix('=')) {
+                    spelling = tail.trim_start().chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).collect();
+                    break;
+                }
+            }
+        }
+        let encoding = spelling.to_ascii_lowercase().replace(['-', '_'], "");
+        let declared = spelling.to_ascii_lowercase().replace('_', "-");
+        if bom && declared != "utf-8" && !declared.starts_with("utf-8-") {
+            return Err(self.text_syntax(0, format!("SyntaxError: encoding problem: {spelling} with BOM"), filename, 0, 0, None, ""));
+        }
+        let decoded = match encoding.as_str() {
+            "ascii" | "usascii" => {
+                if let Some((index, byte)) = bytes.iter().enumerate().find(|(_, b)| **b > 127) {
+                    let words = format!("SyntaxError: 'ascii' codec can't decode byte 0x{byte:02x} in position {index}: ordinal not in range(128)");
+                    return Err(self.text_syntax(0, words, filename, 0, 0, None, ""));
+                }
+                bytes.iter().copied().map(char::from).collect()
+            },
+            "utf8" | "utf8sig" => match std::str::from_utf8(bytes) {
+                Ok(text) => text.to_owned(),
+                Err(error) => {
+                    let prefix = String::from_utf8_lossy(&bytes[..error.valid_up_to()]);
+                    let row = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+                    let col = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                    let source = String::from_utf8_lossy(bytes);
+                    let why = if error.error_len().is_none() { "unexpected end of data" } else if bytes[error.valid_up_to()] >= 194 { "invalid continuation byte" } else { "invalid start byte" };
+                    let position = prefix.rsplit(['\n', '\'', '"']).next().unwrap_or("").len();
+                    let message = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{:02x} in position {position}: {why}", bytes[error.valid_up_to()]);
+                    return Err(self.text_syntax(0, message, filename, row, col, Some((row, col + 1)), &source));
+                }
+            },
+            "latin1" | "latin" | "iso88591" => bytes.iter().copied().map(char::from).collect(),
+            "cp1251" | "iso88597" => {
+                let mapping = if encoding == "cp1251" { "ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя" } else { " ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�" };
+                let upper: Vec<char> = mapping.chars().collect();
+                bytes.iter().map(|b| if *b < 128 { char::from(*b) } else { upper[*b as usize - 128] }).collect()
+            }
+            _ => return Err(self.text_syntax(0, format!("SyntaxError: unknown encoding: {spelling}"), filename, 0, 0, None, "")),
+        };
+        Ok(Rc::from(decoded))
+    }
+
     fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
         if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
-        let (Value::Text(source), Value::Text(file), Value::Text(manner)) = (args[0].contents(), args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
+        let (Value::Text(file), Value::Text(manner)) = (args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
+        let source = match args[0].contents() {
+            Value::Text(source) => source,
+            Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
+            _ => return Err(self.source_unready()),
+        };
         let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err(self.source_unready()) };
         // Flags and inheritance are read and let be; another setting of
         // optimisation than the ordinary is not honoured.
         if args.get(5).map_or(false, |value| !matches!(value, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(self.source_unready()); }
-        let tokens = match self.text_tokens(if mode == 1 { source.trim() } else { &source }) {
+        let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
-            return Err(self.text_syntax(said, &file, trial.stopped_at));
+            return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
         }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
@@ -15336,6 +15896,7 @@ impl Engine<'_> {
         let Some(first) = args.first().map(Value::contents) else { return Err(self.source_unready()) };
         let (source, file, mode) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
+            Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing)),
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class.name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
@@ -15345,7 +15906,7 @@ impl Engine<'_> {
         };
         if args.len() > 3 { return Err(self.source_unready()); }
         // An expression to be weighed may stand in from the edge of its text.
-        let source = if mode == 1 { source.trim().to_string() } else { source };
+        let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_string() } else { source };
         let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {
             match value {
                 None | Some(Value::Null) => Ok(None),
@@ -15386,11 +15947,11 @@ impl Engine<'_> {
             };
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
-        let (program, shown) = self.text_program(&tokens, &file, mode, None)?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, None)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
     }
@@ -15402,11 +15963,11 @@ impl Engine<'_> {
     /// the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
     fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>) -> Res<Value> {
-        let source = if mode == 1 { source.trim() } else { source };
+        let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         // Text read inside a method is read as standing in that method's
         // class, as text read where a language has no manners of reading
@@ -15421,7 +15982,7 @@ impl Engine<'_> {
         self.registry.value_only = mode == 1;
         let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
             Ok(program) => program,
-            Err(said) => { let row = self.registry.stopped_at; return Err(self.text_syntax(said, &file, row)); }
+            Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
         };
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut mine = values;
@@ -15429,7 +15990,9 @@ impl Engine<'_> {
         let (was_written_in, was_on) = (self.source.clone(), self.line);
         self.source = file;
         let base = self.data.len();
+        let prior_frame = self.trace_frame.take();
         let ran = self.run_instrs(&program, &mut mine);
+        self.trace_frame = prior_frame;
         self.source = was_written_in;
         self.line = was_on;
         match ran {
@@ -15446,9 +16009,9 @@ impl Engine<'_> {
     /// of their own in the world, and a book is kept for them.
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Res<Value> {
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source) {
+        let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
-            Err((said, row)) => return Err(self.text_syntax(said, &file, row)),
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::default();
@@ -15464,7 +16027,7 @@ impl Engine<'_> {
         if own_natives {
             for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
         }
-        let (program, shown) = self.text_program(&tokens, &file, mode, Some(&mut local))?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local))?;
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -15480,7 +16043,7 @@ impl Engine<'_> {
     /// one statement shown as it runs, which is an expression written
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
-    fn text_program(&mut self, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
+    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
         let amiss;
         {
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
@@ -15491,10 +16054,10 @@ impl Engine<'_> {
             registry.value_only = mode == 1;
             match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
                 Ok(program) => return Ok((program, false)),
-                Err(said) => amiss = (said, registry.stopped_at),
+                Err(said) => amiss = (said, registry.stopped_at, registry.stopped_column, (registry.stopped_end_row, registry.stopped_end)),
             }
         }
-        Err(self.text_syntax(amiss.0, file, amiss.1))
+        Err(self.text_syntax(mode, amiss.0, file, amiss.1, amiss.2, Some(amiss.3), source))
     }
 
     /// Run a text's program as standing in its file, and answer what it
