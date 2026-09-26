@@ -340,7 +340,9 @@ person in one sitting.
 
 ## License
 
-Provided as-is for educational and experimental purposes.
+MIT, for the project's own code: see [LICENSE](LICENSE). The reference suites
+under `tests/` are copied unchanged from php-src and CPython and keep their own
+licences (`tests/php/LICENSE`, `tests/python/LICENSE`).
 
 ## Attribution
 
