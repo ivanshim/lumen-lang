@@ -7149,7 +7149,97 @@ impl<'a> Machine<'a> {
             Some(space) if !program.qualification.is_empty() => format!("{}.{}", space, program.qualification),
             _ => program.qualification.clone(),
         };
-        format!("{}{}{}{}{}", words[0], called, words[1], key, words[2])
+        self.whole_complaint([words[0].as_str(), &called, &words[1], key, &words[2]].concat())
+    }
+
+    /// A complaint whose words already open with the kind of fault they
+    /// are is handed on as it stands where the language has exceptions.
+    fn whole_complaint(&self, words: String) -> String {
+        match self.table.has_any("ext.builtin.exceptions") {
+            true => format!("\0{words}"),
+            false => words,
+        }
+    }
+
+    /// What a routine is called in the words about a call made to it.
+    fn routine_called(program: &Routine) -> String {
+        match program.qualification.as_str() {
+            "" => program.ident.clone(),
+            full => full.to_string(),
+        }
+    }
+
+    /// The places a call left unfilled, named one by one between their
+    /// quotes: two stand joined by their own word, and three or more are
+    /// run together with a different joining before the final one.
+    fn unfilled_complaint(&self, program: &Routine, unfilled: &[String], only_named: bool) -> String {
+        let pieces = self.table.strings("ext.syntax.call.amiss.absent");
+        if pieces.len() != 7 { return self.argument_fault("ext.syntax.call.amiss.missing", unfilled.first().map(String::as_str)); }
+        let joins = self.table.strings("ext.syntax.call.amiss.absent.names");
+        let join = |n: usize| joins.get(n).cloned().unwrap_or_default();
+        let mut listing = String::new();
+        let last = unfilled.len() - 1;
+        for (n, name) in unfilled.iter().enumerate() {
+            if n > 0 {
+                listing += &match (n == last, unfilled.len()) {
+                    (true, 2) => join(3),
+                    (true, _) => join(4),
+                    _ => join(2),
+                };
+            }
+            listing += &(join(0) + name + &join(1));
+        }
+        let manner = &pieces[if only_named { 6 } else { 5 }];
+        let noun = &pieces[if unfilled.len() > 1 { 4 } else { 3 }];
+        self.whole_complaint(format!("{}{}{}{}{}{manner}{noun}{listing}", pieces[0], Self::routine_called(program), pieces[1], unfilled.len(), pieces[2]))
+    }
+
+    /// Too many worths handed over in order: how many the routine takes
+    /// (a range, where some of its places have defaults), how many came,
+    /// and how many places filled only by name came beside them.
+    fn overfull_complaint(&self, program: &Routine, manners: &[char], fitted: &[Value], handed: usize) -> String {
+        let pieces = self.table.strings("ext.syntax.call.amiss.excess");
+        if pieces.len() != 12 { return self.argument_fault("ext.syntax.call.amiss", None); }
+        let mut takes = 0;
+        let mut optional = 0;
+        let mut beside = 0;
+        for (at, how) in manners.iter().enumerate() {
+            let slot = program.formal_slots[at];
+            let has_default = program.carried.contains(&slot) || program.local_defaults.contains(&slot);
+            match how {
+                'b' | 'p' => { takes += 1; if has_default { optional += 1; } }
+                'n' if !matches!(fitted[at], Value::Unset) => beside += 1,
+                _ => {}
+            }
+        }
+        let plural = |count: usize, single: usize| pieces[if count == 1 { single } else { single + 1 }].as_str();
+        let span = if optional > 0 { format!("{}{}{}", pieces[2], takes - optional, pieces[3]) } else { String::new() };
+        let taken = if optional > 0 { pieces[5].as_str() } else { plural(takes, 4) };
+        let aside = match beside {
+            0 => String::new(),
+            _ => format!("{}{}{}{}", plural(handed, 4), pieces[9], beside, plural(beside, 10)),
+        };
+        let verb = if handed == 1 && beside == 0 { &pieces[7] } else { &pieces[8] };
+        self.whole_complaint(format!("{}{}{}{span}{takes}{taken}{}{handed}{aside}{verb}", pieces[0], Self::routine_called(program), pieces[1], pieces[6]))
+    }
+
+    /// A keyword that meets no place. If the call named any place the
+    /// routine takes in order alone, it is those places that are told,
+    /// as the routine lists them; otherwise the keyword itself.
+    fn unplaced_keyword(&self, program: &Routine, manners: &[char], keys: &[String], key: &str) -> String {
+        let mut in_order_only = Vec::new();
+        for (at, how) in manners.iter().enumerate() {
+            if *how == 'p' && keys.iter().any(|given| *given == program.formals[at]) { in_order_only.push(program.formals[at].clone()); }
+        }
+        let routine = Self::routine_called(program);
+        let ordered = self.table.strings("ext.syntax.call.amiss.ordered");
+        if ordered.len() == 4 && !in_order_only.is_empty() {
+            return self.whole_complaint(ordered[0].clone() + &routine + &ordered[1] + &in_order_only.join(&ordered[2]) + &ordered[3]);
+        }
+        match self.table.strings("ext.syntax.call.amiss.unexpected") {
+            [opening, middle, end] => self.whole_complaint(opening.clone() + &routine + middle + key + end),
+            _ => self.argument_fault("ext.syntax.call.amiss.unknown", Some(key)),
+        }
     }
 
     fn fit_arguments(&mut self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
@@ -7168,9 +7258,10 @@ impl<'a> Machine<'a> {
             .filter_map(|(slot, how)| matches!(how, 'b' | 'p').then_some(slot)).collect();
         let gather = manners.iter().position(|how| *how == 'v');
         let gather_names = manners.iter().position(|how| *how == 'k');
-        if positional.len() > ordinary.len() && gather.is_none() {
-            return Err(self.argument_fault("ext.syntax.call.amiss", None).into());
-        }
+        // Worths beyond the ordinary places are not refused until the
+        // names are placed: the reference speaks of a place given twice
+        // before it counts the worths given in order.
+        let handed = positional.len();
         let mut remaining = Vec::new();
         for (n, held) in positional.into_iter().enumerate() {
             match ordinary.get(n) {
@@ -7181,6 +7272,10 @@ impl<'a> Machine<'a> {
         // The spare worths a gathering place takes stand as a tuple, so
         // that they read, weigh and compare as the language says.
         if let Some(slot) = gather { fitted[slot] = Value::Tuple(Rc::new(remaining)); }
+        let keys: Vec<String> = match manners.contains(&'p') {
+            true => named.iter().map(|(key, _)| key.clone()).collect(),
+            false => Vec::new(),
+        };
         let mut spare_names = Vec::new();
         let mut already = std::collections::HashSet::new();
         for (key, worth) in named {
@@ -7188,7 +7283,7 @@ impl<'a> Machine<'a> {
             // is worded with the routine the call was meant for, under
             // the name it goes by where it was written.
             let duplicate = || match self.table.strings("ext.syntax.call.amiss.positional") {
-                [opening, between, closing] => opening.clone() + &program.qualification + between + &key + closing,
+                [opening, between, closing] => self.whole_complaint(opening.clone() + &Self::routine_called(program) + between + &key + closing),
                 _ => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)),
             };
             if !already.insert(key.clone()) { return Err(self.keyword_twice(program, &key).into()); }
@@ -7200,16 +7295,25 @@ impl<'a> Machine<'a> {
             } else if gather_names.is_some() {
                 spare_names.push((Value::text(&key), worth));
             } else {
-                return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)).into());
+                return Err(self.unplaced_keyword(program, manners, &keys, &key).into());
             }
+        }
+        if handed > ordinary.len() && gather.is_none() {
+            return Err(self.overfull_complaint(program, manners, &fitted, handed).into());
         }
         if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())); }
-        for at in 0..fitted.len() {
-            if matches!(fitted[at], Value::Unset) && !program.carried.contains(&program.formal_slots[at])
-                && !program.local_defaults.contains(&program.formal_slots[at]) {
-                return Err(self.argument_fault("ext.syntax.call.amiss.missing", Some(&program.formals[at])).into());
-            }
-        }
+        // Every unfilled place is told at once: first those taken in
+        // order, and the ones taken by name only when none of those is.
+        let unfilled = |wanted: &dyn Fn(char) -> bool| -> Vec<String> {
+            (0..fitted.len()).filter(|at| wanted(manners[*at]) && matches!(fitted[*at], Value::Unset)
+                && !program.carried.contains(&program.formal_slots[*at])
+                && !program.local_defaults.contains(&program.formal_slots[*at]))
+                .map(|at| program.formals[at].clone()).collect()
+        };
+        let in_order = unfilled(&|how| how != 'n');
+        if !in_order.is_empty() { return Err(self.unfilled_complaint(program, &in_order, false).into()); }
+        let by_name = unfilled(&|how| how == 'n');
+        if !by_name.is_empty() { return Err(self.unfilled_complaint(program, &by_name, true).into()); }
         Ok(fitted)
     }
 
