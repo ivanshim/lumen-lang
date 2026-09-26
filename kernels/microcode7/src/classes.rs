@@ -497,6 +497,7 @@ impl<'a> Machine<'a> {
             Value::Blueprint(c)=>self.construct_ordered(c,values),
             Value::Wrapped(tag,kept)=>{
                 match tag {
+                    9 if kept.is_empty() && values.len() == 2 && matches!(values[0], Value::Blueprint(_)) => Ok(Value::Wrapped(9, Rc::new(values))),
                     0=>Ok(kept[0].clone()),
                     1 if values.len()==1=>{if let Some(Value::Blueprint(c))=values.first(){self.made+=1;Ok(Value::Thing(Rc::new(Thing{of:c.clone(),holds:RefCell::new(vec![]),turn:self.made})))}else{Err(self.class_unready())}},
                     2 if values.len()==1=>Ok(Value::Nil),
@@ -735,6 +736,21 @@ impl<'a> Machine<'a> {
         }
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if let Value::Wrapped(9, binding) = &value {
+            if let [Value::Blueprint(defining), instance] = binding.as_slice() {
+                let actual = match instance { Value::Thing(t) => t.of.clone(), Value::Blueprint(b) => b.clone(), _ => return Err(self.class_unready()) };
+                let mut passed = false;
+                for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
+                    if passed {
+                        if let Some(entry) = Self::own_entry(base, key) {
+                            return self.member_binding(entry, Some(instance.clone()), actual.clone());
+                        }
+                    }
+                    passed |= Rc::ptr_eq(base, defining);
+                }
+                return Err(self.absent_attribute(&value, key));
+            }
+        }
         let sought=self.seek_class_member(value.clone(),key,direct);
         if direct{return sought;}
         let (Err(escape),Value::Thing(t))=(&sought,&value) else{return sought};

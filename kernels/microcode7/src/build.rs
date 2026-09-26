@@ -27,12 +27,17 @@ enum Holds {
     Nothing,
 }
 
+thread_local! {
+    static PARENT_PAYLOAD: Rc<Vec<Value>> = Rc::new(Vec::new());
+}
+
 /// What reading a class body gathers. `arms` counts the arms of
 /// conditionals open around the member being read: only one arm of a
 /// conditional runs, so a member named within one may go unwritten, and
 /// `uncertain` holds those names, whose places are glanced at when the
 /// class is built rather than read outright.
 struct ClassParts {
+    completed_class: Address,
     methods: Vec<(String, Rc<Routine>)>,
     attributes: Vec<String>,
     held: Vec<Form>,
@@ -3625,7 +3630,8 @@ impl<'a> Builder<'a> {
         }
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         self.class_globals.push((self.layers.len(), Vec::new()));
-        self.under_way.push(ClassParts { methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        let completed_class = self.gensym("completed_class");
+        self.under_way.push(ClassParts { completed_class, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -3666,7 +3672,7 @@ impl<'a> Builder<'a> {
         self.class_globals.pop();
         self.within = previous;
         self.named_before = named_outside;
-        let ClassParts { methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
+        let ClassParts { completed_class, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
@@ -3722,6 +3728,8 @@ impl<'a> Builder<'a> {
             ranking, has_book,
         };
         let declaration = Form::Class { plan: Rc::new(plan), values };
+        setup.push(Form::Write(completed_class.clone(), Box::new(declaration)));
+        let declaration = Form::Read(completed_class);
         if self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len()) {
             let slot = self.gensym("inner_class");
             self.class_bindings.last_mut().expect("an outer class").1.insert(named, slot.clone());
@@ -6983,7 +6991,8 @@ impl<'a> Builder<'a> {
             }
             Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.lexeme)
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
-                self.advance();constant(Value::Wrapped(9,Rc::new(Vec::new())))
+                self.advance();
+                constant(Value::Wrapped(9, PARENT_PAYLOAD.with(|value| value.clone())))
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
@@ -6997,6 +7006,12 @@ impl<'a> Builder<'a> {
                 let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
+                    (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
+                        let private = self.parts().completed_class.ident.to_string();
+                        let args = vec![self.read(&private), self.read(&receiver)];
+                        let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone)));
+                        invoke(parent_word, args)
+                    }
                     (true, Some(base), Some(receiver), Some(_)) => {
                         self.advance();
                         let called = self.need_word("as the parent's member")?;
@@ -7010,6 +7025,14 @@ impl<'a> Builder<'a> {
                     }
                     _ => self.class_not_ready(),
                 }
+            }
+            Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
+                && table.spells("ext.stmt.class.detail.kind", &t.lexeme)
+                && !self.layers.last().unwrap().idents.contains(&t.lexeme)
+                && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
+                self.advance();
+                let hidden = self.parts().completed_class.ident.to_string();
+                self.read(&hidden)
             }
             Shape::Bare if table.spells("ext.stmt.class.self", &t.lexeme) || table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();

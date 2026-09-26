@@ -35,6 +35,10 @@ use crate::lex::{Shape, Token};
 use crate::value::{Reach, Value, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt, Taking};
 
+thread_local! {
+    static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
+}
+
 /// The global names, each with a slot.
 #[derive(Default)]
 pub struct Registry {
@@ -114,6 +118,7 @@ struct Cycle {
 /// `uncertain` keeps the names of those, whose places are read at the
 /// end without complaint.
 struct ClassBody {
+    class_cell: String,
     methods: Vec<(String, Rc<Routine>)>,
     shared: Vec<(String, String)>,
     /// The names the body has bound, each where the body first bound
@@ -4698,7 +4703,9 @@ impl<'a> Compiler<'a> {
         }
         let body_at = self.mark();
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
-        self.gathered.push(ClassBody { methods: Vec::new(), shared, order, annotated: Vec::new(),
+        let class_cell = self.gensym("class_cell");
+        self.cell_to_write(&class_cell);
+        self.gathered.push(ClassBody { class_cell, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
         // given its own namespace before its first statement runs, so
@@ -4720,7 +4727,7 @@ impl<'a> Compiler<'a> {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.take();
         }
-        let ClassBody { methods, mut shared, mut order, annotated, uncertain, unready, book, book_tracked, .. } = self.gathered.pop().expect("the class body just read");
+        let ClassBody { class_cell, methods, mut shared, mut order, annotated, uncertain, unready, book, book_tracked, .. } = self.gathered.pop().expect("the class body just read");
         self.class_names.pop();
         self.class_globals.pop();
         self.within = outer;
@@ -4780,6 +4787,8 @@ impl<'a> Compiler<'a> {
             shared_names: pushed.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some(),
             member_order: order, has_book };
         self.act(Action::Forge(Rc::new(plan)), count);
+        self.write(&class_cell);
+        self.read(&class_cell);
         if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {
             let private = self.gensym("class");
             self.write(&private);
@@ -7337,7 +7346,8 @@ impl<'a> Compiler<'a> {
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.lexeme)
                 && lang.class_details.get("root").map_or(false,|v|!v.is_empty())
                 && lang.calling.as_ref().map_or(false,|call|self.look_ahead(1).lexeme!=call.open) => {
-                self.take();self.constant(Value::Adapter(Rc::new((9,vec![]))));
+                self.take();
+                self.constant(PARENT_CALLABLE.with(Clone::clone));
             }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
@@ -7351,7 +7361,13 @@ impl<'a> Compiler<'a> {
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
-                if let (0, Some(base), Some(this), Some(mark)) = (extra, parent, self.method_self.clone(), member) {
+                if extra == 0 && parent.is_some() && self.method_self.is_some() && member.is_none() && !self.gathered.is_empty() {
+                    let cell = self.gathering().class_cell.clone();
+                    self.read(&cell);
+                    self.read(&self.method_self.clone().unwrap());
+                    self.constant(PARENT_CALLABLE.with(Clone::clone));
+                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), 3);
+                } else if let (0, Some(base), Some(this), Some(mark)) = (extra, parent, self.method_self.clone(), member) {
                     self.want_sign(&mark, "after the parent call")?;
                     let named = self.want_name("as the parent's member")?;
                     self.read(&this);
@@ -7368,6 +7384,14 @@ impl<'a> Compiler<'a> {
                 } else {
                     self.class_cannot_run();
                 }
+            }
+            Shape::Instr if !self.in_class_body() && !self.gathered.is_empty()
+                && lang.class_details.get("kind").map_or(false, |words| words.contains(&tok.lexeme))
+                && !self.piece().idents.contains(&tok.lexeme)
+                && !self.comprehension_names.iter().any(|(name, _)| name == &tok.lexeme) => {
+                self.take();
+                let cell = self.gathering().class_cell.clone();
+                self.read(&cell);
             }
             Shape::Instr if Lang::spells(&lang.self_words, &tok.lexeme) || Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
