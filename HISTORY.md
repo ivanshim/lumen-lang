@@ -1817,3 +1817,68 @@ is the measure.
 The repository now carries an MIT licence for its own code (`LICENSE`);
 the CPython and PHP tests under `tests/` keep their own licences.
 `docs/OVERVIEW.md` is a one-page account of the project.
+
+### 1ab. Batch 19 merged as #507; batch 20a is the first batch checked on Lambda
+
+Pull request #507 merged into main at 8a13986 (batch 19, the MIT licence
+and docs/OVERVIEW.md). Batch 20 grew to seventeen branches, so it goes in
+as smaller pull requests; 20a folds the eight that merge with one another
+without conflicts. All counts both kernels unless noted.
+
+fix/generators: generator and coroutine corners (test_generators 27 to
+29). fix/call-arguments: positional-only and keyword-only parameters,
+their errors and CPython's wording (test_positional_only_arg 7 to 20,
+test_keywordonlyarg 8 to 10, test_syntax 50 to 56). fix/class-operations:
+function and class attributes (test_funcattrs 13 to 32, test_class 16/17
+to 21). fix/complex: the complex type's construction, arithmetic and
+formatting (test_complex 19 to 32). fix/sequences: list and tuple
+semantics, with CPython's own LyingTuple/LyingList helpers restored in the
+test library's seq_tests (test_list 44/45 to 55/56, test_tuple 26 to 32).
+fix/fractions: the fractions module (test_fractions 19 to 26). fix/operators: augmented assignment and comparison
+(test_augassign 5 to 7, test_compare +1). fix/small-files: index
+conversion, print's writer calls, bool's pickle forms and unpacking errors
+(test_index 36/37 to 55 of 55, test_print +1, test_bool +1).
+
+Merged, the fifty files count 1882 passing tests on stack8 and 1894 on
+microcode7, up from 1774 and 1781, with no passing test lost on either.
+
+How it was checked. The instance was replaced blue/green by a c8g.4xlarge
+built from its image and then stepped down to a c8g.2xlarge (8 cores):
+the bursty checks moved to AWS Lambda (arm64, one vCPU each, the build
+box's own glibc shipped with the binary). The full scratch check runs as
+about 700 invocations at once in under two minutes, the example gates
+(1,224 runs) in about one, and forty-nine of the fifty reference files
+in about twelve; test_set and scratch/reader-tail/4 stay on the instance.
+The Lambda results matched the instance's run of the same tree exactly.
+fix/relocatable-library lets a binary find its library through
+LUMEN_ROOT, so any worktree's own build can be checked on Lambda.
+
+### 1ac. Batch 20a merged as #508; batch 20b, and the checks moved to Lambda for good
+
+Pull request #508 merged into main at 33f9458. Batch 20b folds six
+branches. fix/relocatable-library: the host resolves `LUMEN_ROOT` once and
+passes the library directory to both kernels, so a copied binary finds
+its library files wherever the tree is; unset, nothing changes.
+fix/unittest-only: `LUMEN_UNITTEST_ONLY` names the test classes a
+reference file's `unittest.main()` runs, so a file as long as test_set can
+be run in parts; run class by class and joined in the order a whole run
+takes them, test_set gives the same 644-character progress line on both
+kernels. fix/math: the math module's helpers as CPython's tests use them
+(test_math 51 to 72, test_float +1). fix/enum: IntEnum and StrEnum in the
+library. fix/compile-eval: compile() and the builtins around it
+(test_builtin 47 to 55, test_scope +1). fix/listcomps: comprehension
+assignment targets, comprehensions in asynchronous functions, class cells
+(test_listcomps 43 to 54, test_dictcomps 9 to 10).
+
+Merged, the fifty files count 1926 on stack8 and 1938 on microcode7, up
+from 1882 and 1894, with no passing test lost. file-builtin/28 was
+rewritten for the merge: both kernels print the same line, 55 passing.
+
+scripts/lambda/ holds the Lambda checker (README there): a worktree's own
+build is packed with the build machine's loader and C library and checked
+by several hundred invocations at once: the scratch records in about two
+minutes, the example gates in about one, all fifty reference files in
+about twelve (test_set one class per invocation). Every result matched the
+same check on the build machine. With every check on Lambda, the build
+machine only builds and probes, and is resized between jobs in about
+three minutes (stop, change the type, start).

@@ -102,6 +102,12 @@ def _ratio(value):
         denominator *= 2
     return int(value), denominator
 
+def _floor_quotient(numerator, denominator):
+    magnitude = abs(numerator) // abs(denominator)
+    if (numerator < 0) != (denominator < 0):
+        return -magnitude - (1 if abs(numerator) % abs(denominator) else 0)
+    return magnitude
+
 def _number(value):
     if not isinstance(value, Fraction) and not isinstance(value, int) and not isinstance(value, float) and not isinstance(value, bool):
         raise 'TypeError: unsupported operand type for Fraction'
@@ -241,8 +247,44 @@ class Fraction:
             raise 'TypeError: Fraction.from_float() only takes floats and integers'
         return Fraction(value)
 
-    def from_decimal(value):
-        raise 'NotImplementedError: Decimal conversion is not supported'
+    @classmethod
+    def from_decimal(cls, value):
+        from decimal import Decimal
+        if not isinstance(value, (Decimal, int)):
+            raise TypeError('Fraction.from_decimal() only takes Decimals and integers')
+        return cls(value)
+
+    @classmethod
+    def from_number(cls, value):
+        if isinstance(value, str) or not (isinstance(value, numbers.Rational) or hasattr(value, 'as_integer_ratio')):
+            raise TypeError('argument should be a Rational instance or have the as_integer_ratio() method')
+        return cls(value)
+
+    def is_integer(self):
+        return self.denominator == 1
+
+    @property
+    def _numerator(self):
+        return self.numerator
+
+    @property
+    def _denominator(self):
+        return self.denominator
+
+    def __bool__(self):
+        return self.numerator != 0
+
+    def __hash__(self):
+        from sys import hash_info
+        modulus = hash_info.modulus
+        denominator = self.denominator % modulus
+        if denominator == 0:
+            result = hash_info.inf
+        else:
+            result = (abs(self.numerator) % modulus) * pow(denominator, modulus - 2, modulus) % modulus
+        if self.numerator < 0:
+            result = -result
+        return -2 if result == -1 else result
 
     def as_integer_ratio(self):
         return self.numerator, self.denominator
@@ -260,6 +302,21 @@ class Fraction:
         if value == inf or value == -inf:
             raise 'OverflowError: integer division result too large for a float'
         return value
+
+    def __trunc__(self):
+        return int(self)
+
+    def __floor__(self):
+        return _floor_quotient(self.numerator, self.denominator)
+
+    def __ceil__(self):
+        return -_floor_quotient(-self.numerator, self.denominator)
+
+    def __round__(self, ndigits=None):
+        if ndigits is None:
+            return self._round_to_exponent(0)[1] * (-1 if self.numerator < 0 else 1)
+        sign, units, exponent = self._round_to_exponent(-ndigits)
+        return Fraction((-units if sign else units) * 10 ** exponent) if exponent >= 0 else Fraction(-units if sign else units, 10 ** (-exponent))
 
     def __int__(self):
         if self.numerator < 0:
@@ -321,12 +378,19 @@ class Fraction:
         if isinstance(other, float):
             return _as_float(self.__float__() // _as_float(other))
         right = _number(other)
-        return (self.numerator * right.denominator) // (self.denominator * right.numerator)
+        return _floor_quotient(self.numerator * right.denominator, self.denominator * right.numerator)
 
     def __rfloordiv__(self, other):
         if isinstance(other, float):
             return _as_float(_as_float(other) // self.__float__())
         return _number(other).__floordiv__(self)
+
+    def __divmod__(self, other):
+        quotient = self.__floordiv__(other)
+        return (quotient, self - quotient * other)
+
+    def __rdivmod__(self, other):
+        return _number(other).__divmod__(self)
 
     def __mod__(self, other):
         if isinstance(other, float):
@@ -371,13 +435,17 @@ class Fraction:
             if other.imag != 0:
                 return False
             return self.__eq__(other.real)
-        if not isinstance(other, Fraction) and not isinstance(other, int) and not isinstance(other, float) and not isinstance(other, bool):
-            raise 'NotImplementedError: comparison with this Fraction operand is not supported'
-        right = _number(other)
+        if not isinstance(other, (Fraction, int, float, bool)):
+            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+                return NotImplemented
+        right = Fraction(other)
         return self.numerator == right.numerator and self.denominator == right.denominator
 
     def __ne__(self, other):
-        return not self.__eq__(other)
+        equal = self.__eq__(other)
+        if equal is NotImplemented:
+            return NotImplemented
+        return not equal
 
     def __lt__(self, other):
         if isinstance(other, float):
@@ -387,7 +455,10 @@ class Fraction:
                 return True
             if other == -inf:
                 return False
-        right = _number(other)
+        if not isinstance(other, (Fraction, int, float, bool)):
+            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+                return NotImplemented
+        right = Fraction(other)
         return self.numerator * right.denominator < right.numerator * self.denominator
 
     def __le__(self, other):
@@ -398,7 +469,10 @@ class Fraction:
                 return True
             if other == -inf:
                 return False
-        right = _number(other)
+        if not isinstance(other, (Fraction, int, float, bool)):
+            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+                return NotImplemented
+        right = Fraction(other)
         return self.numerator * right.denominator <= right.numerator * self.denominator
 
     def __gt__(self, other):
@@ -409,7 +483,10 @@ class Fraction:
                 return False
             if other == -inf:
                 return True
-        right = _number(other)
+        if not isinstance(other, (Fraction, int, float, bool)):
+            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+                return NotImplemented
+        right = Fraction(other)
         return self.numerator * right.denominator > right.numerator * self.denominator
 
     def __ge__(self, other):
@@ -420,7 +497,10 @@ class Fraction:
                 return False
             if other == -inf:
                 return True
-        right = _number(other)
+        if not isinstance(other, (Fraction, int, float, bool)):
+            if not isinstance(other, numbers.Rational) and not hasattr(other, 'as_integer_ratio'):
+                return NotImplemented
+        right = Fraction(other)
         return self.numerator * right.denominator >= right.numerator * self.denominator
 
     def _round_to_exponent(self, exponent, no_minus_zero=False):
@@ -433,11 +513,11 @@ class Fraction:
         else:
             top = self.numerator * 10 ** (-exponent)
             bottom = self.denominator
-        whole, left = divmod(top, bottom)
-        if 2 * left > bottom or (2 * left == bottom and abs(whole) % 2 == 1):
+        whole, left = divmod(abs(top), bottom)
+        if 2 * left > bottom or (2 * left == bottom and whole % 2 == 1):
             whole += 1
         if whole != 0:
-            return whole < 0, abs(whole), exponent
+            return top < 0, whole, exponent
         return self.numerator < 0 and not no_minus_zero, 0, exponent
 
     def _round_to_figures(self, figures):

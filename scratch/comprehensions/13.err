@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: indexed comprehension targets are not supported
+PythonError: UnboundLocalError: cannot access local variable 'a' where it is not associated with a value
