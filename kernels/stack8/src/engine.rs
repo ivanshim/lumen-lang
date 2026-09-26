@@ -311,7 +311,7 @@ enum Kindred {
 /// The labels under which the definition spells the methods that text,
 /// a run of bytes and a set answer through builtins of their own.
 const TEXT_METHOD_LABELS: &[&str] = &[
-    "ext.builtin.text.splitlines", "ext.builtin.text.partition", "ext.builtin.text.rpartition", "ext.builtin.text.expandtabs",
+    "ext.builtin.text.getnewargs", "ext.builtin.text.splitlines", "ext.builtin.text.partition", "ext.builtin.text.rpartition", "ext.builtin.text.expandtabs",
     "ext.builtin.text.swapcase", "ext.builtin.text.casefold", "ext.builtin.text.capitalize", "ext.builtin.text.title",
     "ext.builtin.text.istitle", "ext.builtin.text.isidentifier", "ext.builtin.text.isprintable", "ext.builtin.text.isdecimal",
     "ext.builtin.text.isnumeric", "ext.builtin.text.isascii", "ext.builtin.text.removeprefix", "ext.builtin.text.removesuffix",
@@ -377,7 +377,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -4384,6 +4384,9 @@ impl<'a> Engine<'a> {
             _ => return None,
         };
         let sample = self.kind_sample(&word)?;
+        if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
+            return Some(Value::Native(Builtin::Text(crate::strings::TextOp::Maketrans), Rc::from(name)));
+        }
         if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
         Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
     }
@@ -4405,6 +4408,12 @@ impl<'a> Engine<'a> {
             if self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
         }
         if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
+        if matches!(held, Value::Codepoints(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(_))) {
+            return Ok(Some(Value::ValueMethod(Rc::new((held, name.to_string())))));
+        }
+        if let (Value::Text(subject), Some(Builtin::Text(op))) = (&held, self.lang.builtins.get(name)) {
+            return Ok(Some(Value::TextMethod(subject.clone(), *op, Rc::from(name))));
+        }
         if self.native_special(&held, name) { return Ok(Some(Value::ValueMethod(Rc::new((value.clone().held(false), name.to_string()))))); }
         if let Value::Complex(z) = &held {
             if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { return Ok(Some(crate::complex::real(z.real))); }
@@ -4818,6 +4827,15 @@ impl<'a> Engine<'a> {
         looked_into(value, &mut Vec::new(), into_sets)
     }
 
+    fn string_conversion(&mut self, value: &Value, repr: bool) -> Res<Value> {
+        let place = if repr || self.special_value(value, 0).is_none() { 1 } else { 0 };
+        if let Some(answer) = self.special_call(value, place, Vec::new())? {
+            if matches!(answer, Value::Text(_) | Value::Codepoints(_)) || matches!(Self::worth_of(&answer), Some(Value::Text(_) | Value::Codepoints(_))) { return Ok(answer); }
+            return Err(format!("TypeError: {} returned non-string (type {})", if place == 0 { "__str__" } else { "__repr__" }, answer.core_kind()));
+        }
+        Ok(Value::text(&self.special_text(value, repr)?))
+    }
+
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
         let container = matches!(value, Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Set(_));
         if container {
@@ -4877,7 +4895,10 @@ impl<'a> Engine<'a> {
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
             return match self.special_call(value, place, Vec::new())? {
                 Some(Value::Text(text)) => Ok(text.to_string()),
-                Some(_) => Err(self.special_fault()),
+                Some(answer) => match Self::worth_of(&answer) {
+                    Some(Value::Text(text)) => Ok(text.to_string()),
+                    _ => Err(format!("TypeError: {} returned non-string (type {})", if place == 0 { "__str__" } else { "__repr__" }, answer.core_kind())),
+                },
                 None => {
                     let module = self.class_word("main");
                     Ok(if module.is_empty() { format!("<{} object>", object.class.name) }
@@ -5103,6 +5124,7 @@ impl<'a> Engine<'a> {
         if let Some(answer) = self.special_call(value, 72, vec![Value::text(spec)])? {
             return match answer { Value::Text(text) => Ok(text.to_string()), _ => Err(self.special_fault()) };
         }
+        if spec.is_empty() { return self.special_text(value, false); }
         if let Some(worth) = Self::worth_of(value) {
             let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
             return writer.field(&worth.contents(), spec, "");
@@ -5437,6 +5459,7 @@ impl<'a> Engine<'a> {
         // did not answer above, that worth; a mapping thing asked for a
         // key it has not may answer through the method the definition
         // names for it.
+        if matches!(op, Action::Same | Action::Unsame) && (matches!(Self::worth_of(a), Some(Value::Text(_))) || matches!(Self::worth_of(b), Some(Value::Text(_)))) { return self.dyadic(op, a, b); }
         let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
         if left.is_some() || right.is_some() {
             if let (Action::At, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
@@ -5645,17 +5668,19 @@ impl<'a> Engine<'a> {
         let args: &[Value] = if changed { &settled } else { args };
         let first = if changed { args.first() } else { first };
         let answer = match op {
-            Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
+            Builtin::Repr if args.len() == 1 => self.string_conversion(&args[0], true)?,
             // The ascii builtin writes what the quoting builtin writes
             // and then puts every letter outside ASCII into the escape
             // that stands for it.
             Builtin::Ascii if args.len() == 1 => {
-                let said = self.special_text(&args[0], true)?;
-                Value::text(&crate::strings::ascii_escaped(&said))
+                let result = self.string_conversion(&args[0], true)?;
+                let base = Self::worth_of(&result).unwrap_or_else(|| result.clone());
+                let said = base.plain();
+                if said.is_ascii() { result } else { Value::text(&crate::strings::ascii_escaped(&said)) }
             }
             Builtin::ToText if args.len() == 1 => {
                 if matches!(args[0], Value::Codepoints(_)) { args[0].clone() }
-                else { self.digits_shown(&args[0])?; Value::text(&self.special_text(&args[0], false)?) }
+                else { self.digits_shown(&args[0])?; self.string_conversion(&args[0], false)? }
             }
             Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
             // A thing may say what whole number, real, or magnitude it
@@ -6971,7 +6996,7 @@ impl<'a> Engine<'a> {
                     Value::Counted(_) => self.range_member_named(name).is_some(),
                     _ => false,
                 };
-                let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
+                let text_method = matches!(held, Value::Text(_) | Value::Codepoints(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
                 // A row of bytes answers to the methods its kind keeps,
                 // whose words are the ones text goes by.
                 let byte_method = matches!(&held, Value::Bytes(_, changeable, _) if self.byte_member(name, *changeable).is_some());
@@ -7011,6 +7036,7 @@ impl<'a> Engine<'a> {
                 // A walk, a row, a map or a set hands over the walking
                 // pair and the container members as methods bound to it.
                 subject if self.native_special(&subject, name) => Value::ValueMethod(Rc::new((subject.held(false), name.to_string()))),
+                subject @ Value::Codepoints(_) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => Value::ValueMethod(Rc::new((subject, name.to_string()))),
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(subject, op, name.clone())
@@ -8010,13 +8036,21 @@ impl<'a> Engine<'a> {
     /// ways of writing a field say the same words.
     fn filled_template(&mut self, text: &str, args: &[(Option<String>, Value)]) -> Res<String> {
         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-        let mut offered = |value: &Value, spec: &str, conversion: &str| -> Res<Option<String>> {
+        let mut offered = |value: &Value, request: crate::formatting::FieldRequest<'_>| -> Res<Option<Value>> {
+            use crate::formatting::FieldRequest;
+            let (spec, conversion) = match request {
+                FieldRequest::Attribute(name) => return self.member_of(value.clone(), name),
+                FieldRequest::Item(key) => return self.special_dyad(&Action::At, value, &key).map(Some),
+                FieldRequest::Render(spec, conversion) => (spec, conversion),
+            };
             let thing = value.contents();
             if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
-            if conversion.is_empty() { return self.special_format(&thing, spec).map(Some); }
-            let said = Value::text(&self.special_text(&thing, conversion != "s")?);
+            if conversion.is_empty() { return self.special_format(&thing, spec).map(|s| Some(Value::text(&s))); }
+            let mut words = self.special_text(&thing, conversion != "s")?;
+            if conversion == "a" { words = crate::strings::ascii_escaped(&words); }
+            let said = Value::text(&words);
             let inner = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-            inner.field(&said, spec, "").map(Some)
+            inner.field(&said, spec, "").map(|s| Some(Value::text(&s)))
         };
         writer.template(text, args, &mut offered)
     }
@@ -8534,7 +8568,7 @@ impl<'a> Engine<'a> {
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_)) {
             if let (Some(mut left), Some(right)) = (a.text_codes(), b.text_codes()) {
-                if matches!(op, Action::Add) { left.extend(right); return Ok(Value::from_codes(left)); }
+                if matches!(op, Action::Add | Action::Join) { left.extend(right); return Ok(Value::from_codes(left)); }
                 if matches!(op, Action::Contains | Action::Lacks) {
                     let found = left.is_empty() || right.windows(left.len()).any(|part| part == left);
                     return Ok(Value::Flag(found == matches!(op, Action::Contains)));
@@ -8911,10 +8945,11 @@ impl<'a> Engine<'a> {
             Action::Mul if self.lang.text_repeat && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_))) => {
                 let (text, times) = match (a,b) { (Value::Text(s), n) | (n,Value::Text(s)) => (s,n), _ => unreachable!() };
                 let times = match times { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().unwrap_or(if n.sign() == num_bigint::Sign::Minus { i64::MIN } else { i64::MAX }), _ => return Err(crate::strings::fault(self.lang,"integer")) };
+                if times == 1 { return Ok(Value::Text(text.clone())); }
                 let mut result = String::new();
                 if times > 0 && !text.is_empty() {
                     let size = text.len().checked_mul(times as usize).ok_or_else(|| crate::strings::fault(self.lang,"room"))?;
-                    result.try_reserve(size).map_err(|_| crate::strings::fault(self.lang,"room"))?;
+                    result.try_reserve(size).map_err(|_| "MemoryError: ".to_string())?;
                     for _ in 0..times { result.push_str(text); }
                 }
                 Value::text(&result)
@@ -8957,6 +8992,7 @@ impl<'a> Engine<'a> {
                     (Value::Method(..), Value::Method(..)) => false,
                     (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    (Value::Object(_), Value::Text(_)) | (Value::Text(_), Value::Object(_)) => false,
                     (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
@@ -10451,6 +10487,29 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        if builtin == Builtin::ToText && !self.lang.to_string_object.is_empty() && !named.is_empty() {
+            let count = args.len() + named.len();
+            if count > 3 { return Err(format!("TypeError: str() takes at most 3 arguments ({count} given)")); }
+            let mut slots: Vec<Option<Value>> = (0..3).map(|i| args.get(i).cloned()).collect();
+            for (key, value) in named {
+                let at = match key.as_str() { "object" => 0, "encoding" => 1, "errors" => 2,
+                    _ => return Err(format!("TypeError: str() got an unexpected keyword argument '{key}'")) };
+                if slots[at].is_some() { return Err(format!("TypeError: argument for str() given by name ('{key}') and position ({})", at + 1)); }
+                slots[at] = Some(value);
+            }
+            for at in 1..3 {
+                if let Some(value) = &slots[at] {
+                    if !matches!(value.contents(), Value::Text(_)) && !matches!(Self::worth_of(value), Some(Value::Text(_))) {
+                        return Err(format!("TypeError: str() argument '{}' must be str, not {}", ["object", "encoding", "errors"][at], value.core_kind()));
+                    }
+                }
+            }
+            let Some(object) = slots[0].take() else { return Ok(Value::text("")); };
+            args = vec![object];
+            if slots[1].is_some() || slots[2].is_some() { args.push(slots[1].take().unwrap_or_else(|| Value::text("utf-8"))); }
+            if let Some(errors) = slots[2].take() { args.push(errors); }
+            return self.builtin(builtin, name, &mut args);
+        }
         // A word of a builtin kind spelled with the method after a dot,
         // such as `str.upper`, calls that kind's method unbound: its
         // first argument is the receiver, so a thing of a class
@@ -10531,6 +10590,10 @@ impl<'a> Engine<'a> {
             if routed {
                 let route = self.lang.print_route.clone();
                 if matches!(destination, Value::Null) {
+                    for value in &args {
+                        let held = value.contents();
+                        if matches!(held, Value::Codepoints(_)) { self.codec_library("_encode_surrogates", vec![held])?; }
+                    }
                     let module = self.route_module(&route[0])?;
                     destination = self.member_of(module, &route[1])?.unwrap_or(Value::Null);
                     if matches!(destination, Value::Null) { return Ok(Value::Null); }
@@ -10611,6 +10674,18 @@ impl<'a> Engine<'a> {
             return self.native_member_call(receiver, operation, place, args, named);
         }
         let contents = receiver.contents();
+        if let Value::Codepoints(codes) = &contents {
+            if operation == "__getnewargs__" {
+                let mut supplied = vec![contents.clone()]; supplied.extend(args);
+                crate::strings::keywords(crate::strings::TextOp::Getnewargs, &mut supplied, named, self.lang)?;
+                return crate::strings::run(crate::strings::TextOp::Getnewargs, operation, &supplied, self.lang, &self.wording());
+            }
+            if operation.starts_with("is") {
+                let text: String = codes.iter().map(|n| char::from_u32(*n).unwrap_or('\0')).collect();
+                let checked = self.value_method(&Value::text(&text), operation, args, named)?;
+                return Ok(if operation == "isascii" { Value::Flag(false) } else { checked });
+            }
+        }
         if let Value::Object(object) = &contents {
             if self.exception_class(&object.class) {
                 if !named.is_empty() { return Err(self.lang.exception_unready.clone().unwrap_or_default()); }
@@ -10688,12 +10763,12 @@ impl<'a> Engine<'a> {
         if matches!(&contents, Value::Text(_)) {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
-                let operation = match operation { "split"=>Some(crate::strings::TextOp::Split), "rsplit"=>Some(crate::strings::TextOp::Rsplit), "join"=>Some(crate::strings::TextOp::Join), "strip"=>Some(crate::strings::TextOp::Strip), "lstrip"=>Some(crate::strings::TextOp::Lstrip), "rstrip"=>Some(crate::strings::TextOp::Rstrip), "replace"=>Some(crate::strings::TextOp::Replace), "startswith"=>Some(crate::strings::TextOp::Startswith), "endswith"=>Some(crate::strings::TextOp::Endswith), "find"=>Some(crate::strings::TextOp::Find), "rfind"=>Some(crate::strings::TextOp::Rfind), "index"=>Some(crate::strings::TextOp::Index), "rindex"=>Some(crate::strings::TextOp::Rindex), "count"=>Some(crate::strings::TextOp::Count), "upper"=>Some(crate::strings::TextOp::Upper), "lower"=>Some(crate::strings::TextOp::Lower), "swapcase"=>Some(crate::strings::TextOp::Swapcase), _=>None };
-                if let Some(op) = operation {
-                    let mut given = vec![contents]; given.extend(args.into_iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }));
+                let working = crate::strings::operation(operation);
+                if let Some(op) = working {
+                    let mut given = vec![contents]; given.extend(args.into_iter().map(|v| v.contents()));
                     if op == crate::strings::TextOp::Join && given.len() == 2 { given[1] = Value::array(self.comprehension_items(&given[1])?); }
                     crate::strings::keywords(op, &mut given, named, self.lang)?;
-                    return crate::strings::run(op, "", &given, self.lang, &self.wording());
+                    return self.builtin(Builtin::Text(op), operation, &mut given);
                 }
             }
         }
@@ -11591,7 +11666,12 @@ impl<'a> Engine<'a> {
     /// policy standing after it. Only a row of bytes can be read so:
     /// text is turned away by name, and every other value by its kind.
     fn text_from_bytes(&mut self, args: &[Value]) -> Res<Value> {
-        if args.len() > 3 { return Err(self.lang.to_string_unready[0].clone()); }
+        if args.len() > 3 { return Err(format!("TypeError: str expected at most 3 arguments, got {}", args.len())); }
+        for (at, value) in args.iter().enumerate().skip(1) {
+            if !matches!(value.contents(), Value::Text(_)) && !matches!(Self::worth_of(value), Some(Value::Text(_))) {
+                return Err(format!("TypeError: str() argument '{}' must be str, not {}", if at == 1 { "encoding" } else { "errors" }, value.core_kind()));
+            }
+        }
         let words = &self.lang.to_string_undecodable;
         let part = |at: usize| words.get(at).cloned().unwrap_or_default();
         let row = match &args[0] {
@@ -12063,7 +12143,35 @@ impl<'a> Engine<'a> {
                 return self.byte_call(task, args);
             }
             Builtin::Text(op) => {
-                let normalized: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect();
+                let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ Value::Text(_)) => text, _ => v.contents() }).collect();
+                if op == crate::strings::TextOp::Maketrans && normalized.len() == 1 {
+                    if matches!(&normalized[0], Value::Object(o) if o.class.name == "frozendict") {
+                        if let Some(mapping) = self.member_of(normalized[0].clone(), "_rows")? { normalized[0] = mapping.contents(); }
+                    }
+                }
+                if matches!(op, crate::strings::TextOp::Expandtabs | crate::strings::TextOp::Splitlines) && normalized.len() == 2 {
+                    if let Some(index) = self.special_index(&normalized[1])? { normalized[1] = index; }
+                }
+                if op == crate::strings::TextOp::Translate && normalized.len() == 2 && matches!(normalized[1], Value::Object(_)) {
+                    if let Value::Text(source) = &normalized[0] {
+                        let mut translated = String::new();
+                        for c in source.to_string().chars() {
+                            let key = Value::Small(c as i64);
+                            let entries = match self.special_dyad(&Action::At, &normalized[1], &key) {
+                                Ok(value) => vec![(key, value)],
+                                Err(words) => {
+                                    let missing = matches!(&self.carried, Some(Fault::Thrown(Value::Object(o))) if self.stands_on(&o.class, 5));
+                                    if missing { self.carried.take(); }
+                                    else if !words.starts_with("KeyError:") && !words.starts_with("IndexError:") && !words.starts_with("LookupError:") { return Err(words); }
+                                    Vec::new()
+                                }
+                            };
+                            let piece = crate::strings::run(op, name, &[Value::text(&c.to_string()), Value::Map(Rc::new(entries.into()))], self.lang, &sp)?;
+                            translated.push_str(&piece.plain());
+                        }
+                        return Ok(Value::text(&translated));
+                    }
+                }
                 // A word of the text kind spelled with the method after
                 // a dot, such as `str.upper`, is refused as CPython's
                 // unbound method or descriptor is when it is handed no
@@ -12076,7 +12184,7 @@ impl<'a> Engine<'a> {
                             let pieces = self.lang.class_details.get("descriptor.unbound").cloned().unwrap_or_default();
                             return if pieces.len() == 3 { Err(format!("{}{word}{}{operation}{}", pieces[0], pieces[1], pieces[2])) } else { Err(crate::strings::fault(self.lang, "receiver")) };
                         }
-                        Some(Value::Text(_)) => {}
+                        Some(Value::Text(_) | Value::Codepoints(_)) => {}
                         Some(other) => {
                             let pieces = self.lang.class_details.get("descriptor.foreign").cloned().unwrap_or_default();
                             return if pieces.len() == 4 { Err(format!("{}{operation}{}{word}{}{}{}", pieces[0], pieces[1], pieces[2], Self::shown_kind(other), pieces[3])) } else { Err(crate::strings::fault(self.lang, "receiver")) };
@@ -15155,6 +15263,9 @@ impl Engine<'_> {
             }
             Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => {
                 arity(if b == Builtin::Vars { 1 } else { 2 }, if matches!(b, Builtin::SetAttr | Builtin::GetAttr) { 3 } else if b == Builtin::Vars { 1 } else { 2 })?;
+                if b != Builtin::Vars {
+                    if let Some(Value::Text(word)) = Self::worth_of(&args[1]) { args[1] = Value::Text(word); }
+                }
                 if b != Builtin::Vars && !matches!(args[1], Value::Text(_)) { return Err(self.core_fault("core.attribute.name", &args[1].core_kind())); }
                 let Value::Object(o) = &args[0] else {
                     // A value of a builtin kind answers the members its

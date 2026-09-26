@@ -5424,11 +5424,14 @@ impl<'a> Machine<'a> {
             let (mut positional, named) = self.open_arguments(received)?;
             if *work != crate::text::Work::MAKETRANS { positional.insert(0, Value::Text(subject.clone())); }
             crate::text::fit_names(self.table, *work, &mut positional, named)?;
+            if matches!(*work, crate::text::Work::EXPANDTABS | crate::text::Work::SPLITLINES) && positional.len() == 2 {
+                if let Some(number) = self.stood_for_whole(&positional[1])? { positional[1] = number; }
+            }
             if *work == crate::text::Work::FORMATMAP {
                 if positional.len() != 2 { return Err(crate::text::complaint(self.table, "arguments").into()); }
                 return Ok(Value::text(&self.mapping_format(subject, &positional[1], 0)?));
             }
-            Ok(crate::text::apply(self.table, *work, name, &positional, self.wording())?)
+            self.prim(Prim::Textual(*work), name, &positional).map_err(Escape::from)
         })())
     }
 
@@ -5873,6 +5876,9 @@ impl<'a> Machine<'a> {
             _ => return None,
         };
         let stand_in = self.kind_stand_in(&word)?;
+        if let (Value::Text(_), Some(op @ Prim::Textual(crate::text::Work::MAKETRANS))) = (&stand_in, self.table.prims.get(name)) {
+            return Some(Value::Intrinsic(*op, Rc::from(name)));
+        }
         if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
         Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)])))
     }
@@ -5914,6 +5920,9 @@ impl<'a> Machine<'a> {
             if let Value::Intrinsic(_, word) = value {
                 if let Some(doc) = Self::builtin_kind_doc(word) { return Some(Value::text(doc)); }
             }
+        }
+        if matches!(value, Value::Unpaired(_)) && matches!(self.table.prims.get(name), Some(Prim::Textual(_))) {
+            return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
         }
         if let (Value::Text(subject), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
             return Some(Value::TextCall { subject: subject.clone(), work: *work, name: Rc::from(name) });
@@ -6433,10 +6442,22 @@ impl<'a> Machine<'a> {
                 return self.octet_routine(operation, &values).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)));
             }
         }
+        if let Value::Unpaired(numbers) = &actual {
+            if name == "__getnewargs__" {
+                let mut input = vec![actual.clone()]; input.extend(arguments);
+                crate::text::fit_names(self.table, crate::text::Work::NEWARGS, &mut input, keywords)?;
+                return self.prim(Prim::Textual(crate::text::Work::NEWARGS), name, &input).map_err(Escape::from);
+            }
+            if name.starts_with("is") {
+                let replacement = numbers.iter().map(|number| char::from_u32(*number).unwrap_or('\0')).collect::<String>();
+                let result = self.value_member(&Value::text(&replacement), name, arguments, keywords)?;
+                return Ok(if name == "isascii" { Value::Flag(false) } else { result });
+            }
+        }
         if matches!(&actual, Value::Text(_)) {
             let key = format!("ext.builtin.text.{}", name);
             if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(label, _)| *label == key) {
-                let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| match v.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }));
+                let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| v.settled()));
                 if *work == crate::text::Work::JOIN && given.len() == 2 { given[1] = Value::Vector(Rc::new(self.gathered_members(&given[1])?)); }
                 crate::text::fit_names(self.table, *work, &mut given, keywords)?;
                 if *work == crate::text::Work::FORMATMAP {
@@ -6445,7 +6466,7 @@ impl<'a> Machine<'a> {
                     let s = s.to_string();
                     return Ok(Value::text(&self.mapping_format(&s, &given[1], 0)?));
                 }
-                return crate::text::apply(self.table, *work, name, &given, self.wording()).map_err(Escape::from);
+                return self.prim(Prim::Textual(*work), name, &given).map_err(Escape::from);
             }
         }
         if let Value::Progression(walk) = &actual {
@@ -6855,6 +6876,9 @@ impl<'a> Machine<'a> {
             // the values are not even put into words for it.
             if route.len() == 3 {
                 if matches!(sink, Value::Nil) {
+                    for item in positional.iter() {
+                        if let value @ Value::Unpaired(_) = item.settled() { self.codec_function("_encode_surrogates", vec![value])?; }
+                    }
                     let namespace = self.namespace_for(&route[0])?;
                     sink = self.attribute(&namespace, &route[1]).unwrap_or(Value::Nil);
                     if matches!(sink, Value::Nil) { return Ok(Some(Value::Nil)); }
@@ -6915,6 +6939,31 @@ impl<'a> Machine<'a> {
         }
         if let Prim::Textual(work) = op {
             crate::text::fit_names(table, work, positional, keywords)?;
+            return Ok(None);
+        }
+        if op == Prim::AsText && table.has_any("ext.builtin.to_string.object") && !keywords.is_empty() {
+            let supplied = positional.len() + keywords.len();
+            if supplied > 3 { return Err(format!("TypeError: str() takes at most 3 arguments ({supplied} given)").into()); }
+            let mut options = [positional.first().cloned(), positional.get(1).cloned(), positional.get(2).cloned()];
+            for (key, value) in keywords {
+                let index = ["object", "encoding", "errors"].iter().position(|word| *word == key)
+                    .ok_or_else(|| format!("TypeError: str() got an unexpected keyword argument '{key}'"))?;
+                if options[index].replace(value).is_some() {
+                    return Err(format!("TypeError: argument for str() given by name ('{key}') and position ({})", index + 1).into());
+                }
+            }
+            for index in [1, 2] {
+                if let Some(value) = &options[index] {
+                    let plain = Self::underlying(value).unwrap_or_else(|| value.settled());
+                    if !matches!(plain, Value::Text(_)) {
+                        return Err(format!("TypeError: str() argument '{}' must be str, not {}", ["object", "encoding", "errors"][index], value.kind_word()).into());
+                    }
+                }
+            }
+            positional.clear();
+            match options[0].take() { None => return Ok(Some(Value::text(""))), Some(value) => positional.push(value) }
+            if options[1].is_some() || options[2].is_some() { positional.push(options[1].take().unwrap_or_else(|| Value::text("utf-8"))); }
+            if let Some(policy) = options[2].take() { positional.push(policy); }
             return Ok(None);
         }
         for (key, value) in keywords {
@@ -8128,7 +8177,11 @@ impl<'a> Machine<'a> {
     /// be read this way; text asked of text is refused outright, as is
     /// anything else.
     fn text_decoded(&mut self, values: &[Value]) -> Result<Value, String> {
-        if values.len() > 3 { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
+        if values.len() > 3 { return Err(format!("TypeError: str expected at most 3 arguments, got {}", values.len())); }
+        for (value, word) in values.iter().skip(1).zip(["encoding", "errors"]) {
+            let plain = Self::underlying(value).unwrap_or_else(|| value.settled());
+            if !matches!(plain, Value::Text(_)) { return Err(format!("TypeError: str() argument '{word}' must be str, not {}", value.kind_word())); }
+        }
         let words = self.table.strings("ext.builtin.to_string.undecodable");
         let said = |at: usize| words.get(at).cloned().unwrap_or_default();
         let content = match &values[0] {
@@ -9128,6 +9181,18 @@ impl<'a> Machine<'a> {
         text
     }
 
+    fn converted_string(&mut self, subject: &Value, representation: bool) -> Result<Value, String> {
+        let slot = usize::from(representation || self.appointment(subject, 0).is_none());
+        match self.ask_special(subject, slot, &[])? {
+            Some(result) => {
+                let base = Self::underlying(&result).unwrap_or_else(|| result.clone());
+                if matches!(base, Value::Text(_) | Value::Unpaired(_)) { Ok(result) }
+                else { Err(format!("TypeError: {} returned non-string (type {})", ["__str__", "__repr__"][slot], result.kind_word())) }
+            }
+            None => self.object_words(subject, representation).map(|word| Value::text(&word)),
+        }
+    }
+
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
         let celled = match subject {
             Value::Mutable(place, represented) => Some((place.clone(), *represented)),
@@ -9178,7 +9243,10 @@ impl<'a> Machine<'a> {
                             else { format!("<{module}.{} object at 0x1>", t.of.name) })
                     }
                     Some(Value::Text(s)) => Ok(s.to_string()),
-                    _ => Err(self.bad_answer()),
+                    Some(result) => {
+                        if let Some(Value::Text(word)) = Self::underlying(&result) { return Ok(word.to_string()); }
+                        Err(format!("TypeError: {} returned non-string (type {})", ["__str__", "__repr__"][chosen], result.kind_word()))
+                    }
                 }
             }
             // A bound method is written by the routine's own full name
@@ -9353,6 +9421,7 @@ impl<'a> Machine<'a> {
             Some(_) => return Err(self.bad_answer()),
             None => (),
         }
+        if spec.is_empty() { return self.object_words(item, false); }
         if let Some(worth) = Self::underlying(item) {
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
             return layout.present(&worth.settled(), spec, "");
@@ -9794,17 +9863,18 @@ impl<'a> Machine<'a> {
             }
             (Prim::Invert, [one]) => Value::Flag(!self.object_truth(one)?),
             (Prim::Negate, [one]) if self.appointed(one, 25).is_some() => self.ask_special(one, 25, &[])?.unwrap(),
-            (Prim::Quoted, [one]) => Value::text(&self.object_words(one, true)?),
+            (Prim::Quoted, [one]) => self.converted_string(one, true)?,
             // The ascii builtin writes what the quoting builtin writes
             // and then puts every letter outside ASCII into the escape
             // that stands for it.
             (Prim::Asciied, [one]) => {
-                let said = self.object_words(one, true)?;
-                Value::text(&crate::text::ascii_escaped(&said))
+                let rendered = self.converted_string(one, true)?;
+                let plain = Self::underlying(&rendered).unwrap_or_else(|| rendered.clone()).render(self.wording());
+                if plain.is_ascii() { rendered } else { Value::text(&crate::text::ascii_escaped(&plain)) }
             }
             (Prim::AsText, [one]) => match one {
                 Value::Unpaired(_) => one.clone(),
-                _ => { self.figures_allowed(one)?; Value::text(&self.object_words(one, false)?) }
+                _ => { self.figures_allowed(one)?; self.converted_string(one, false)? }
             },
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
@@ -10070,7 +10140,7 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
-        if op == Prim::Plus && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
+        if [Prim::Plus, Prim::Join].contains(&op) && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
             if let (Some(first), Some(last)) = (v[0].character_numbers(), v[1].character_numbers()) {
                 return Ok(Value::characters(first.into_iter().chain(last).collect()));
             }
@@ -10651,7 +10721,43 @@ impl<'a> Machine<'a> {
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
             Prim::StartContext | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
-                let values: Vec<Value> = v.iter().map(|x| match x.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect();
+                let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
+                if work == crate::text::Work::MAKETRANS && values.len() == 1 {
+                    if let Value::Thing(instance) = &values[0] {
+                        if instance.of.name == "frozendict" {
+                            let rows = instance.holds.borrow().iter().find(|(key, _)| key == "_rows").map(|(_, row)| row.settled());
+                            if let Some(rows) = rows { values[0] = rows; }
+                        }
+                    }
+                }
+                if matches!(work, crate::text::Work::EXPANDTABS | crate::text::Work::SPLITLINES) && values.len() == 2 {
+                    if let Some(index) = self.stood_for_whole(&values[1])? { values[1] = index; }
+                }
+                if work == crate::text::Work::TRANSLATE && values.len() == 2 {
+                    if let (Value::Text(text), Value::Thing(_)) = (&values[0], &values[1]) {
+                        let letters: Vec<char> = text.chars().collect();
+                        let mut output = String::new();
+                        for letter in letters {
+                            let point = Value::Small(letter as i64);
+                            let replacement = self.prim(Prim::At, "", &[values[1].clone(), point.clone()]);
+                            let mut mapping = Vec::new();
+                            match replacement {
+                                Ok(value) => mapping.push((point, value)),
+                                Err(message) => {
+                                    let absent = match &self.got_away {
+                                        Some(Escape::Thrown(Value::Thing(error))) => self.stands_under(&error.of, 5),
+                                        _ => ["KeyError:", "IndexError:", "LookupError:"].iter().any(|prefix| message.starts_with(prefix)),
+                                    };
+                                    if !absent { return Err(message); }
+                                    self.got_away = None;
+                                }
+                            }
+                            let input = [Value::text(&String::from(letter)), Value::Dict(Rc::new(mapping.into()))];
+                            output.push_str(&crate::text::apply(self.table, work, name, &input, self.wording())?.render(self.wording()));
+                        }
+                        return Ok(Value::text(&output));
+                    }
+                }
                 // A word of the text kind spelled with the method after
                 // a dot, such as `str.upper`, is refused as CPython's
                 // unbound method or descriptor is when it is handed no
@@ -10664,7 +10770,7 @@ impl<'a> Machine<'a> {
                             let words = self.table.strings("ext.stmt.class.detail.descriptor.unbound");
                             return if words.len() == 3 { Err(format!("{}{word}{}{entry}{}",words[0],words[1],words[2])) } else { Err(crate::text::complaint(self.table, "receiver")) };
                         }
-                        Some(Value::Text(_)) => {}
+                        Some(Value::Text(_) | Value::Unpaired(_)) => {}
                         Some(other) => {
                             let words = self.table.strings("ext.stmt.class.detail.descriptor.foreign");
                             return if words.len() == 4 { Err(format!("{}{entry}{}{word}{}{}{}",words[0],words[1],words[2],other.kind_word(),words[3])) } else { Err(crate::text::complaint(self.table, "receiver")) };
@@ -11111,7 +11217,7 @@ impl<'a> Machine<'a> {
                 };
                 // What a value of a native kind answers to is carried by the kind as well.
                 if self.carried_by_kind(&v[0], &word).is_some() { return Ok(Value::Flag(true)); }
-                let native = matches!(v[0], Value::Text(_)) && matches!(self.table.prims.get(&word), Some(Prim::Textual(work)) if *work != crate::text::Work::REPR);
+                let native = matches!(v[0], Value::Text(_) | Value::Unpaired(_)) && matches!(self.table.prims.get(&word), Some(Prim::Textual(work)) if *work != crate::text::Work::REPR);
                 // A row of bytes answers to the methods its kind keeps.
                 let of_octets = matches!(v[0].settled(), Value::Octets { changeable, .. } if self.octet_member(&word, changeable).is_some());
                 // A walk over a routine's own body answers whether it is
@@ -11126,6 +11232,9 @@ impl<'a> Machine<'a> {
                     if self.table.spells("ext.builtin.complex.real", &called) { return Ok(crate::complex::decimal_value(pair.0)); }
                     if self.table.spells("ext.builtin.complex.imag", &called) { return Ok(crate::complex::decimal_value(pair.1)); }
                     return Err(crate::complex::complaint(self.table, "unready"));
+                }
+                if matches!(v[0], Value::Unpaired(_)) {
+                    if let Some(bound) = self.attribute(&v[0], &called) { return Ok(bound); }
                 }
                 if matches!(v[0], Value::Member(..)) {
                     return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
@@ -12393,6 +12502,7 @@ impl<'a> Machine<'a> {
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
                     (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+                    (Value::Text(_), Value::Thing(_)) | (Value::Thing(_), Value::Text(_)) => false,
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
@@ -12497,10 +12607,11 @@ impl<'a> Machine<'a> {
                     Value::Huge(i) => i.to_i64().unwrap_or_else(|| if **i < BigInt::from(0) { i64::MIN } else { i64::MAX }),
                     _ => return Err(crate::text::complaint(self.table,"integer").into()),
                 };
+                if number == 1 { return Ok(Value::Text(word.clone())); }
                 let mut repeated = String::new();
                 if number > 0 && !word.is_empty() {
                     let length = (number as usize).checked_mul(word.len()).ok_or_else(||crate::text::complaint(self.table,"room"))?;
-                    repeated.try_reserve(length).map_err(|_|crate::text::complaint(self.table,"room"))?;
+                    repeated.try_reserve(length).map_err(|_|String::from("MemoryError: "))?;
                     for _ in 0..number { repeated.push_str(word); }
                 }
                 Value::text(&repeated)
@@ -17016,6 +17127,9 @@ impl Machine<'_> {
             HasAttribute | GetMember | SetMember | DropMember | MembersOf => {
                 let count = if op == MembersOf { 1 } else { 2 };
                 require(count, if matches!(op, GetMember | SetMember) { 3 } else { count })?;
+                if op != MembersOf {
+                    if let Some(base @ Value::Text(_)) = Self::underlying(&input[1]) { input[1] = base; }
+                }
                 if op != MembersOf && !matches!(input[1], Value::Text(_)) { return Err(self.core_complaint("core.attribute.name", &input[1].kind_word())); }
                 let Value::Thing(thing) = &input[0] else {
                     // A value of a builtin kind answers the members its
@@ -17162,11 +17276,21 @@ impl crate::formatting::Elsewhere for OctetMarks<'_> {
 /// of the program's own is written by its own methods, and the layout
 /// keeps everything else.
 impl crate::formatting::Elsewhere for Machine<'_> {
+    fn field_member(&mut self, item: &Value, key: &Value, bracket: bool) -> Result<Option<Value>, String> {
+        if bracket { return self.prim(Prim::At, "", &[item.clone(), key.clone()]).map(Some); }
+        let Value::Text(word) = key else { return Ok(None) };
+        self.read_class_member(item.clone(), &word, false).map(Some).map_err(|error| match error {
+            Escape::Error(message) => message,
+            carried => { self.got_away = Some(carried); String::new() }
+        })
+    }
+
     fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<String>, String> {
         let held = item.settled();
         if !self.speaks_for(&held) { return Ok(None); }
         if convert.is_empty() { return self.thing_in_spec(&held, pattern).map(Some); }
-        let said = Value::text(&self.object_words(&held, convert != "s")?);
+        let written = self.object_words(&held, convert != "s")?;
+        let said = Value::text(&if convert == "a" { crate::text::ascii_escaped(&written) } else { written });
         let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
         layout.present(&said, pattern, "").map(Some)
     }

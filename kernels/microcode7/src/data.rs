@@ -852,7 +852,7 @@ impl Value {
             92 => String::from("\\\\"),
             n if n == delimiter as u32 => format!("\\{delimiter}"),
             n => match char::from_u32(n) {
-                Some(c) if !c.is_control() => c.to_string(),
+                Some(c) if crate::unicode::property(c, 1) => c.to_string(),
                 _ => Self::unicode_escaped(n),
             },
         }).collect::<String>();
@@ -936,6 +936,12 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        for (candidate, text) in [(self, other), (other, self)] {
+            if let (Value::Thing(object), Value::Text(word)) = (candidate, text) {
+                let slots = object.holds.borrow();
+                if let Some((_, Value::Text(under))) = slots.iter().find(|entry| entry.0 == "\0underlying") { return under == word; }
+            }
+        }
         // Most askings are of two small numbers, two great ones, or two
         // pieces of text, and all three can be settled here and now.
         // Left to the ratios below, a pair of small numbers would have

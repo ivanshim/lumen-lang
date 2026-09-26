@@ -14,6 +14,7 @@ pub struct Layout<'a> {
 /// whoever asked for the layout. The answer is the field as it stands,
 /// and nothing at all where the layout is to lay the value out itself.
 pub trait Elsewhere {
+    fn field_member(&mut self, _item: &Value, _key: &Value, _bracket: bool) -> Result<Option<Value>, String> { Ok(None) }
     fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<String>, String>;
     fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String>;
 }
@@ -202,6 +203,7 @@ impl Layout<'_> {
         let unknown = || self.complain("ext.text.format.unknown", &[&shape.letter.unwrap_or('\0').to_string(), self.typename(item)]);
         if let Value::Text(text) = item {
             if shape.letter.is_some() && shape.letter != Some('s') { return Err(unknown()); }
+            if shape.polarity == Some(' ') { return Err(String::from("ValueError: Space not allowed in string format specifier")); }
             let bad = if shape.polarity.is_some() { Some("sign") }
                 else if shape.no_minus_zero { Some("zero") }
                 else if shape.alternative { Some("alternate") }
@@ -314,8 +316,30 @@ impl Layout<'_> {
                 if c == ']' { inside_key = false; }
                 (!inside_key && matches!(c, ':' | '!' | '}')).then_some(i)
             }).ok_or_else(|| self.complain("ext.text.format.brace.open", &[]))?;
+            let mut key_brackets = false;
+            for letter in rest[..split].chars() {
+                if letter == '[' { key_brackets = true; }
+                if letter == ']' { key_brackets = false; }
+                if letter == '{' && !key_brackets { return Err(self.invalid()); }
+            }
+            let mut level = 0;
+            let mut bracketed = false;
+            let mut closes = false;
+            for ch in rest.chars() {
+                match ch {
+                    '[' => bracketed = true,
+                    ']' => bracketed = false,
+                    '{' if !bracketed => level += 1,
+                    '}' if !bracketed => { if level == 0 { closes = true; break; } level -= 1; }
+                    _ => (),
+                }
+            }
+            if !closes { return Err(self.complain("ext.text.format.brace.open", &[])); }
+            if rest[split..].starts_with('!') && !rest[split + 1..].starts_with(['s','r','a']) {
+                return Err(self.complain("ext.text.format.conversion", &[]));
+            }
             let selector = &rest[..split];
-            let value = self.select(selector, positions, names, numbering)?;
+            let value = self.select(selector, positions, names, numbering, asked)?;
             rest = &rest[split..];
             let conversion = if rest.starts_with('!') {
                 let c = rest[1..].chars().next().ok_or_else(|| self.invalid())?;
@@ -348,7 +372,7 @@ impl Layout<'_> {
         Ok(finished)
     }
 
-    fn select(&self, field: &str, positions: &[Value], names: &[(String, Value)], numbering: &mut i64) -> Result<Value, String> {
+    fn select(&self, field: &str, positions: &[Value], names: &[(String, Value)], numbering: &mut i64, access: &mut dyn Elsewhere) -> Result<Value, String> {
         let first_end = field.find(['[', '.']).unwrap_or(field.len());
         let first = &field[..first_end];
         let index = if first.is_empty() {
@@ -380,23 +404,10 @@ impl Layout<'_> {
                 else if following.starts_with('.') { tail.find(['[', '.']).unwrap_or(tail.len()) }
                 else { return Err(self.invalid()); };
             let asked = &tail[..end];
-            let found = if bracket {
-                let numeric = asked.parse::<usize>().ok();
-                match &selected {
-                    Value::Vector(list) | Value::Tuple(list) | Value::Row(list) | Value::Arguments(list) => numeric.and_then(|n| list.get(n)).cloned(),
-                    Value::Text(chars) => numeric.and_then(|n| chars.chars().nth(n)).map(|c| Value::text(&c.to_string())),
-                    Value::Dict(pairs) => {
-                        let key = numeric.map_or_else(|| Value::text(asked), |n| Value::from_big(n.into()));
-                        pairs.iter().find(|(k, _)| k.equals(&key)).map(|(_, v)| v.clone())
-                    }
-                    _ => None,
-                }
-            } else {
-                match &selected {
-                    Value::Thing(thing) => thing.holds.borrow().iter().find(|(key, _)| key == asked).map(|(_, value)| value.clone()),
-                    _ => None,
-                }
-            };
+            if !bracket && asked.is_empty() { return Err(self.invalid()); }
+            if bracket && !asked.is_empty() && asked.bytes().all(|digit| digit.is_ascii_digit()) && asked.parse::<i64>().is_err() { return Err(self.complain("ext.text.format.digits", &[])); }
+            let key = if bracket { asked.parse::<i64>().map(Value::Small).unwrap_or_else(|_| Value::text(asked)) } else { Value::text(asked) };
+            let found = access.field_member(&selected, &key, bracket)?;
             selected = found.ok_or_else(|| if bracket { self.name_absent(asked) } else { self.refused() })?;
             following = &tail[end + usize::from(bracket)..];
         }
@@ -545,7 +556,7 @@ impl Layout<'_> {
         *used += 1;
         match value {
             Value::Flag(_) | Value::Small(_) | Value::Huge(_) => value.as_big()?.to_i64()
-                .filter(|n| (-100000..=100000).contains(n)).ok_or_else(|| self.refused()),
+                .ok_or_else(|| String::from("OverflowError: Python int too large to convert to C ssize_t")),
             _ => Err(self.complain("ext.op.rem.format.star", &[])),
         }
     }

@@ -9,7 +9,7 @@ use num_traits::ToPrimitive;
 
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
 pub enum Work {
-    SPLITLINES, PARTITION, RPARTITION, EXPANDTABS, SWAPCASE, CASEFOLD,
+    NEWARGS, SPLITLINES, PARTITION, RPARTITION, EXPANDTABS, SWAPCASE, CASEFOLD,
     CAPITALIZE, TITLE, ISTITLE, ISIDENTIFIER, ISPRINTABLE, ISDECIMAL,
     ISNUMERIC, ISASCII, REMOVEPREFIX, REMOVESUFFIX, FORMATMAP, MAKETRANS,
     TRANSLATE, ENCODE, JOIN, SPLIT, RSPLIT, STRIP, LSTRIP, RSTRIP,
@@ -29,21 +29,41 @@ pub fn bears_kind(table: &Table, message: &str) -> bool {
     })
 }
 
-fn count(value: &Value, table: &Table) -> Result<i64, String> {
+fn count(value: &Value, _table: &Table) -> Result<i64, String> {
     if let Value::Flag(flag) = value { return Ok(if *flag { 1 } else { 0 }); }
     if let Value::Small(n) = value { return Ok(*n); }
     if let Value::Huge(n) = value {
         return Ok(n.to_i64().unwrap_or_else(|| if **n < num_bigint::BigInt::from(0) { i64::MIN } else { i64::MAX }));
     }
-    Err(complaint(table, "integer"))
+    Err(format!("TypeError: '{}' object cannot be interpreted as an integer", value.kind_word()))
 }
 
-fn letters<'s>(value: &'s Value, table: &Table) -> Result<&'s str, String> {
-    if let Value::Text(word) = value { Ok(word) } else { Err(complaint(table, "string")) }
+fn letters<'s>(value: &'s Value, _table: &Table) -> Result<&'s str, String> {
+    if let Value::Text(word) = value { Ok(word) } else { Err(format!("TypeError: must be str, not {}", value.kind_word())) }
+}
+
+fn checked_word(work: Work) -> &'static str {
+    use Work::*;
+    match work {
+        NEWARGS => "__getnewargs__", ISASCII => "isascii", ISDECIMAL => "isdecimal", ISNUMERIC => "isnumeric", ISTITLE => "istitle",
+        PARTITION => "partition", RPARTITION => "rpartition", REMOVEPREFIX => "removeprefix", REMOVESUFFIX => "removesuffix", TRANSLATE => "translate",
+        SPLITLINES => "splitlines", EXPANDTABS => "expandtabs", _ => "",
+    }
 }
 
 pub fn fit_names(table: &Table, work: Work, values: &mut Vec<Value>, named: Vec<(String, Value)>) -> Result<(), String> {
+    if work == Work::MAKETRANS && !named.is_empty() { return Err(String::from("TypeError: str.maketrans() takes no keyword arguments")); }
     let filled = values.len();
+    let method = checked_word(work);
+    if !method.is_empty() && !named.is_empty() {
+        match work {
+            Work::EXPANDTABS | Work::SPLITLINES => {
+                let total = filled.saturating_sub(1) + named.len();
+                if total > 1 { return Err(format!("TypeError: {method}() takes at most 1 argument ({total} given)")); }
+            }
+            _ => return Err(format!("TypeError: str.{method}() takes no keyword arguments")),
+        }
+    }
     let mut assigned = std::collections::HashSet::new();
     for (name, value) in named {
         let candidates: &[(usize, &str)] = match work {
@@ -55,7 +75,9 @@ pub fn fit_names(table: &Table, work: Work, values: &mut Vec<Value>, named: Vec<
             _ => &[],
         };
         let chosen = candidates.iter().find(|(_, tail)| table.spells(&format!("ext.builtin.text.keyword.{}",tail), &name));
-        let Some(&(position,_)) = chosen else { return Err(complaint(table,"arguments")); };
+        let Some(&(position,_)) = chosen else {
+            return Err(if method.is_empty() { complaint(table,"arguments") } else { format!("TypeError: '{name}' is an invalid keyword argument for {method}()") });
+        };
         if position < filled || !assigned.insert(position) { return Err(complaint(table,"arguments")); }
         values.resize(values.len().max(position+1),Value::Nil);
         values[position]=value;
@@ -194,20 +216,25 @@ fn make_table(input: &[Value], table: &Table) -> Result<Value,String> {
             }
         }
         [_,_] | [_,_,_]=>{
+            for (position, value) in input.iter().enumerate().skip(1) {
+                if !matches!(value, Value::Text(_)) { return Err(format!("TypeError: maketrans() argument {} must be str, not {}", position + 1, value.kind_word())); }
+            }
+            if !matches!(input[0], Value::Text(_)) { return Err(String::from("TypeError: first maketrans argument must be a string if there is a second argument")); }
             let before=letters(&input[0],table)?;
             let after=letters(&input[1],table)?;
             if before.chars().count()!=after.chars().count() {return Err(complaint(table,"maketrans.length"));}
             for (a,b) in before.chars().zip(after.chars()) {insert(Value::Small(a as i64),Value::Small(b as i64));}
             if input.len()==3 {for c in letters(&input[2],table)?.chars() {insert(Value::Small(c as i64),Value::Nil);}}
         }
-        [_]=>return Err(complaint(table,"mapping")),
-        _=>return Err(complaint(table,"arguments")),
+        [_]=>return Err(String::from("TypeError: if you give only one argument to maketrans it must be a dict")),
+        []=>return Err(String::from("TypeError: maketrans expected at least 1 argument, got 0")),
+        _=>return Err(format!("TypeError: maketrans expected at most 3 arguments, got {}", input.len())),
     }
     Ok(Value::Dict(Rc::new(entries.into())))
 }
 
 pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
-    let settled: Vec<Value> = input.iter().map(|v| match v.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect();
+    let settled: Vec<Value> = input.iter().map(Value::settled).collect();
     let input = settled.as_slice();
 
     use Work::*;
@@ -216,6 +243,18 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     }
     if work==REPR {
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
+    }
+    if let Some(Value::Unpaired(numbers)) = input.first() {
+        if work == NEWARGS {
+            if input.len() > 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", input.len() - 1)); }
+            return Ok(Value::Tuple(Rc::new(vec![Value::characters(numbers.to_vec())])));
+        }
+        if matches!(work, ISASCII|ISDECIMAL|ISNUMERIC|ISTITLE|ISIDENTIFIER|ISPRINTABLE) {
+            let string = numbers.iter().map(|code| char::from_u32(*code).unwrap_or('\0')).collect::<String>();
+            let mut operands = input.to_vec(); operands[0] = Value::text(&string);
+            let answer = apply(table, work, _name, &operands, names)?;
+            return Ok(if work == ISASCII { Value::Flag(false) } else { answer });
+        }
     }
     let Some(Value::Text(subject))=input.first() else {return Err(complaint(table,"receiver"));};
     let g=Given{tail:&input[1..],table};
@@ -229,6 +268,15 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         _=>0..=0,
     };
     if !allowed.contains(&g.tail.len()) {
+        let called = checked_word(work);
+        if !called.is_empty() {
+            let total = g.tail.len();
+            let expected = if *allowed.end() == 0 { "no arguments" } else { "exactly one argument" };
+            return Err(if *allowed.start() == 0 && *allowed.end() == 1 {
+                format!("TypeError: {called}() takes at most 1 argument ({total} given)")
+            } else { format!("TypeError: str.{called}() takes {expected} ({total} given)") });
+        }
+
         // These seven answer for their own count of arguments by name,
         // as CPython's do, rather than by the one complaint every other
         // text working shares.
@@ -241,11 +289,16 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         }
         return Err(g.bad("arguments"));
     }
+    if matches!(work, SPLITLINES|EXPANDTABS) {
+        let count = g.whole(0,0)?;
+        if count < i32::MIN as i64 || count > i32::MAX as i64 { return Err(String::from("OverflowError: Python int too large to convert to C int")); }
+    }
     let source=subject.as_ref();
     let many=source.chars().count();
     let answer=match work {
         ENCODE=>return Err(g.bad("encode")),
         REPR|MAKETRANS=>unreachable!(),
+        NEWARGS=>Value::Tuple(Rc::new(Vec::from([Value::text(source)]))),
         LENGTH=>Value::Small(many as i64),
         LOWER|UPPER|CAPITALIZE|TITLE|CASEFOLD|SWAPCASE=>Value::text(&case_changed(source,work)),
         ISASCII=>Value::Flag(source.is_ascii()),
@@ -264,11 +317,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             Value::Flag(right && has_case)
         }
         SPLITLINES=>{
-            let ends=match g.tail.first() {
-                Some(Value::Thing(_)) => return Err(g.bad("protocol")),
-                Some(Value::Dict(entries)) => !entries.is_empty(), Some(Value::Vector(items)) => !items.is_empty(),
-                Some(value) => value.is_true(), None => false,
-            };
+            let ends=g.whole(0,0)? != 0;
             let chars: Vec<_>=source.char_indices().collect();
             let mut cursor=0;let mut begin=0;let mut lines=Vec::new();
             while cursor<chars.len() {
@@ -288,7 +337,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let row=if let Some(i)=position {vec![source[..i].to_owned(),separator.to_owned(),source[i+separator.len()..].to_owned()]}
                 else if work==RPARTITION {vec![String::new(),String::new(),source.to_owned()]}
                 else {vec![source.to_owned(),String::new(),String::new()]};
-            Value::TextRow(Rc::new(row),true)
+            Value::Tuple(Rc::new(row.into_iter().map(|word| Value::text(&word)).collect()))
         }
         EXPANDTABS=>{
             let stop=g.whole(0,8)?.max(0) as usize;
@@ -307,7 +356,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             Value::text(&expanded)
         }
         REMOVEPREFIX|REMOVESUFFIX=>{
-            let part=g.word(0)?;
+            let part=g.word(0).map_err(|_| format!("TypeError: {}() argument must be str, not {}", checked_word(work), g.tail[0].kind_word()))?;
             let remove=match work {REMOVEPREFIX=>source.starts_with(part),_=>source.ends_with(part)};
             let kept=if !remove {source} else if work==REMOVEPREFIX {&source[part.len()..]} else {&source[..source.len()-part.len()]};
             Value::text(kept)
@@ -368,7 +417,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         }
         JOIN=>{
             let row=match &g.tail[0] {
-                Value::Vector(items)=>items.to_vec(),
+                Value::Vector(items)|Value::Tuple(items)=>items.to_vec(),
                 Value::TextRow(items,_)=>items.iter().map(|s|Value::text(s)).collect(),
                 Value::Text(word)=>word.chars().map(|c|Value::text(&String::from(c))).collect(),
                 Value::Dict(entries)=>entries.iter().map(|(key,_)|key.clone()).collect(),
@@ -387,8 +436,8 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let lookup=&g.tail[0];
             match lookup {
                 Value::Thing(_) => return Err(g.bad("protocol")),
-                Value::Dict(_) | Value::Vector(_) | Value::TextRow(..) | Value::Text(_) => (),
-                _ => return Err(g.bad("mapping")),
+                Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::TextRow(..) | Value::Text(_) => (),
+                _ => return Err(format!("TypeError: '{}' object is not subscriptable", lookup.kind_word())),
             }
             let mut result=String::new();
             for letter in source.chars() {
@@ -396,10 +445,17 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 let replace=match lookup {
                     Value::Text(word) => word.chars().nth(letter as usize).map(|c|Value::text(&String::from(c))),
                     Value::TextRow(words, _) => words.get(letter as usize).map(|word|Value::text(word)),
-                    Value::Vector(items) => items.get(letter as usize).cloned(),
+                    Value::Vector(items) | Value::Tuple(items) => items.get(letter as usize).cloned(),
                     Value::Dict(entries) => entries.iter().find(|(k,_)|k.equals(&numbered)).map(|(_,v)|v.clone()),
                     _ => unreachable!(),
                 };
+                let mut replace = replace;
+                if let Some(Value::Thing(instance)) = &replace {
+                    let inner = instance.holds.borrow().iter().find_map(|(slot, v)| {
+                        if slot == "\0underlying" && matches!(v, Value::Text(_)) { Some(v.clone()) } else { None }
+                    });
+                    if inner.is_some() { replace = inner; }
+                }
                 if let Some(value)=replace.as_ref() {
                     match value {
                         Value::Nil=>(),Value::Text(word)=>result.push_str(word),
@@ -431,9 +487,10 @@ fn seek(work: Work, source: &str, g: &Given) -> Result<Value,String> {
     let piece:String=if fitting {letters[begin..end].iter().collect()} else {String::new()};
     if matches!(work,Work::STARTSWITH|Work::ENDSWITH) {
         let candidates=match &g.tail[0] {
-            Value::Vector(values)=>values.to_vec(),
+            Value::Tuple(values)=>values.to_vec(),
             Value::TextRow(words,true)=>words.iter().map(|s|Value::text(s)).collect(),
-            v=>vec![v.clone()],
+            v @ Value::Text(_)=>vec![v.clone()],
+            wrong=>return Err(format!("TypeError: {} first arg must be str or a tuple of str, not {}", if work==Work::STARTSWITH {"startswith"} else {"endswith"}, wrong.kind_word())),
         };
         for candidate in candidates {
             let affix=letters_of_candidate(&candidate,g)?;
