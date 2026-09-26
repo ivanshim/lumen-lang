@@ -236,6 +236,11 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    /// Routines whose spare arguments or code the program wrote over,
+    /// each under the program and frame it was bound as: what the
+    /// routine was, kept so the pair stays its own, what calls of it now
+    /// run, and the program whose code it now runs.
+    written_over: HashMap<(usize, usize), (Rc<Routine>, Rc<Env>, Rc<Routine>, Rc<Env>, Rc<Routine>)>,
     table: &'a Table,
     fault_kinds: HashMap<String, Value>,
     pub outermost: Rc<Env>,
@@ -1000,7 +1005,7 @@ impl<'a> Machine<'a> {
             reading_now: None,
             natives_book: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -5456,7 +5461,7 @@ impl<'a> Machine<'a> {
 
     fn routine_of(&mut self, stands: Value, node: &Form) -> Res<(Rc<Routine>, Rc<Env>)> {
         match stands {
-            Value::Bound(p, env) => Ok((p, env)),
+            Value::Bound(p, env) => Ok(self.as_now_written(p, env)),
             Value::Unset => Err("Unknown function".to_string().into()),
             _ => match node {
                 Form::Read(slot) => Err(format!("'{}' is not a function", slot.ident).into()),
@@ -6337,6 +6342,13 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Nil);
                 }
             }
+        }
+        // A list grown by whatever can be walked: the walk is drawn out
+        // first, the list's own working knowing only the kinds it names.
+        let mut arguments = arguments;
+        if name == "extend" && arguments.len() == 1 && matches!(receiver.settled(), Value::Vector(_)) {
+            let plain = matches!(arguments[0].settled(), Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Set(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_));
+            if !plain { let drawn = self.gathered_members(&arguments[0])?; arguments[0] = Value::Vector(Rc::new(drawn)); }
         }
         // A special member asked for by name on a value of a native
         // kind. Each hands its work to the primitive that already does
@@ -7453,7 +7465,18 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A routine as calls of it now run: as it was bound, or as the
+    /// program wrote its spare arguments or its code over since.
+    pub(super) fn as_now_written(&self, program: Rc<Routine>, env: Rc<Env>) -> (Rc<Routine>, Rc<Env>) {
+        if self.written_over.is_empty() { return (program, env); }
+        match self.written_over.get(&(Rc::as_ptr(&program) as usize, Rc::as_ptr(&env) as usize)) {
+            Some((_, _, now, room, _)) => (now.clone(), room.clone()),
+            None => (program, env),
+        }
+    }
+
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
+        let (program, env) = self.as_now_written(program, env);
         if let Some(manners) = &program.taking {
             let fitted = self.fit_arguments(&program, manners, args)?;
             let frame = self.frame_for(&program, &env);
@@ -9361,7 +9384,7 @@ impl<'a> Machine<'a> {
     }
 
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
-        if let (Prim::Hashed, [method @ Value::Method(..)]) = (operation, operands) {
+        if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3, _))]) = (operation, operands) {
             return Ok(method.hash_number().map(Value::Small));
         }
         if self.table.strings("ext.stmt.class.special").is_empty() { return Ok(None); }
@@ -9907,6 +9930,31 @@ impl<'a> Machine<'a> {
     /// no method for the ordering is refused and named by its blueprint,
     /// since the kernel invents no order among things. Anything else is
     /// handed back untouched, for the plain working knows its own kinds.
+    /// Two rows, or two tuples, one of which holds a thing somewhere
+    /// among its members: equal where every pair is, a member being
+    /// equal to itself before anything is asked and any other pair asked
+    /// as the program asks it, so a thing on either side answers for
+    /// itself. Nothing where neither holds a thing.
+    fn alike_with_things(&mut self, one: &Value, two: &Value) -> Result<Option<bool>, String> {
+        fn holds_thing(value: &Value) -> bool {
+            match value {
+                Value::Thing(_) => true,
+                Value::Vector(held) | Value::Tuple(held) => held.iter().any(holds_thing),
+                Value::Shared(cell) | Value::Mutable(cell, _) => holds_thing(&cell.borrow()),
+                _ => false,
+            }
+        }
+        let ((Value::Vector(left), Value::Vector(right)) | (Value::Tuple(left), Value::Tuple(right))) = (one, two) else { return Ok(None) };
+        if !left.iter().chain(right.iter()).any(holds_thing) { return Ok(None); }
+        if left.len() != right.len() { return Ok(Some(false)); }
+        for (here, there) in left.iter().zip(right.iter()) {
+            if contained_equal(here, there) { continue; }
+            let said = self.prim(Prim::Eq, "", &[here.clone(), there.clone()])?;
+            if !self.object_truth(&said)? { return Ok(Some(false)); }
+        }
+        Ok(Some(true))
+    }
+
     fn weighed_member_wise(&mut self, op: Prim, one: &Value, two: &Value) -> Result<Option<Value>, String> {
         let members = |value: &Value| match value { Value::Vector(held) | Value::Tuple(held) | Value::Row(held) => Some(Rc::clone(held)), _ => None };
         let rows = matches!(one, Value::Vector(_)) == matches!(two, Value::Vector(_));
@@ -10388,6 +10436,17 @@ impl<'a> Machine<'a> {
         }
         if self.works_sequences() {
             if let Some(answer) = self.sequence_working(op, v)? { return Ok(answer); }
+        }
+        if let (Prim::Eq | Prim::Ne, [one, two]) = (op, v) {
+            if let Some(same) = self.alike_with_things(one, two)? { return Ok(Value::Flag(same == (op == Prim::Eq))); }
+        }
+        if let [Value::Wrapped(35, one), Value::Wrapped(35, two)] = v {
+            if matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+                let (one, two) = (self.cell_contents(one), self.cell_contents(two));
+                if let (Some(one), Some(two)) = (&one, &two) { return self.prim(op, name, &[one.clone(), two.clone()]); }
+                let rank = one.is_some().cmp(&two.is_some());
+                return Ok(Value::Flag(match op { Prim::Eq => rank.is_eq(), Prim::Ne => rank.is_ne(), Prim::Lt => rank.is_lt(), Prim::Le => rank.is_le(), Prim::Gt => rank.is_gt(), _ => rank.is_ge() }));
+            }
         }
         if let ([one, two], true) = (v, matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) && self.table.strings("ext.op.order.unsupported").len() == 4) {
             let (one, two) = (one.clone(), two.clone());
@@ -16537,7 +16596,7 @@ impl Machine<'_> {
                 }
             }
             if op == Prim::Quoted && matches!(input.first(), Some(Value::Text(_))) { return crate::text::apply(self.table, crate::text::Work::REPR, name, &input, self.wording()); }
-            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) {
+            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
                 if let Some(job) = job { return self.work_on_class(job, input).map_err(|e| self.suspension_fault(e)); }
             }
