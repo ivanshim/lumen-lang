@@ -10905,7 +10905,8 @@ impl<'a> Engine<'a> {
             return result;
         }
 
-        if matches!(receiver.contents(), Value::Generator(_)) {
+        if matches!(receiver.contents(), Value::Generator(_))
+            && [&self.lang.yield_send, &self.lang.yield_throw, &self.lang.yield_close].iter().any(|words| Lang::spells(words, operation)) {
             let floor = self.data.len();
             self.data.push(receiver.contents());
             self.data.extend(args);

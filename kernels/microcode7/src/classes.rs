@@ -1389,7 +1389,7 @@ impl<'a> Machine<'a> {
                     };
                     let mut holds=t.holds.borrow_mut();
                     holds.retain(|(k,_)| k.starts_with('\0') && k != "\0dictionary");
-                    match replacement { Some(mapping) => holds.push(("\0dictionary".to_owned(), mapping)), None => holds.push(("\0dictionary".to_owned(), Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true))) }
+                    match replacement { Some(mapping) => holds.push(("\0dictionary".to_owned(), mapping.keep(true))), None => holds.push(("\0dictionary".to_owned(), Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true))) }
                     let _ = fresh;
                     return Ok(Value::Nil);
                 }

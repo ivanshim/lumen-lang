@@ -6224,6 +6224,7 @@ impl<'a> Builder<'a> {
                 // rewriting the arrays within it lands where it lives
                 // and nothing need be written back afterwards.
                 let start = match stands_on {
+                    place @ Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), _) => self.cell_of(place)?,
                     call @ Form::Apply(..) if self.table.flag("ext.syntax.call.bind_names") => {
                         let saved = self.gensym("target_result");
                         steps.push(Form::Write(saved.clone(), Box::new(call)));

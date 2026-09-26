@@ -1332,7 +1332,7 @@ impl<'a> Engine<'a> {
                     };
                     let mut fields=o.fields.borrow_mut();
                     fields.retain(|(n,_)| n.starts_with('\0') && n != "\0namespace");
-                    if let Some(dictionary) = value { fields.push(("\0namespace".to_string(), dictionary)); }
+                    if let Some(dictionary) = value { fields.push(("\0namespace".to_string(), dictionary.held(true))); }
                     else { fields.push(("\0namespace".to_string(), Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true))); }
                     let _ = entries;
                     return Ok(Value::Null);

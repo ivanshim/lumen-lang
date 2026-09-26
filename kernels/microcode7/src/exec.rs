@@ -6387,7 +6387,8 @@ impl<'a> Machine<'a> {
             return outcome;
         }
 
-        if matches!(receiver.settled(), Value::Generator(_)) {
+        if matches!(receiver.settled(), Value::Generator(_)) &&
+            ["ext.stmt.yield.throw", "ext.stmt.yield.close", "ext.stmt.yield.send"].iter().any(|label| self.table.spells(label, name)) {
             let mut inputs = vec![Form::Const(receiver.settled()), Form::Const(Value::text(name))];
             inputs.extend(arguments.into_iter().map(Form::Const));
             let call = Form::Apply(Callee::Prim(Prim::Ask, Rc::from(name)), inputs);
