@@ -19,6 +19,8 @@ def sqrt(x):
     return __math('sqrt', x)
 
 def fabs(x):
+    _check_real(x)
+    x = float(x)
     if x == 0:
         return __math('fdiv', 0.0, 1.0)
     if x < 0:
@@ -35,7 +37,7 @@ def _check_real(x):
 def _answers_own(x, name):
     if type(x) == type(1) or type(x) == type(1.0) or type(x) == type(True):
         return False
-    return hasattr(x, name)
+    return hasattr(type(x), name)
 
 def floor(x):
     if _answers_own(x, '__floor__'):
@@ -44,6 +46,7 @@ def floor(x):
             raise 'TypeError: __floor__ returned non-Integral (type ' + type(answer).__name__ + ')'
         return answer
     _check_real(x)
+    x = float(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer floor'
     n = int(x)
@@ -58,6 +61,7 @@ def ceil(x):
             raise 'TypeError: __ceil__ returned non-Integral (type ' + type(answer).__name__ + ')'
         return answer
     _check_real(x)
+    x = float(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer ceiling'
     n = int(x)
@@ -67,7 +71,12 @@ def ceil(x):
 
 def trunc(x):
     if _answers_own(x, '__trunc__'):
-        return x.__trunc__()
+        answer = x.__trunc__()
+        if type(answer) != type(1) and type(answer) != type(True):
+            raise 'TypeError: __trunc__ returned non-Integral (type ' + type(answer).__name__ + ')'
+        return answer
+    _check_real(x)
+    x = float(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer truncation'
     return int(x)
@@ -115,7 +124,7 @@ def _int_frexp(n):
     # the language's own exact ratio, never of a working handed the
     # whole number outright, since that would carry it to the width by
     # itself first and overflow there before the ratio was ever taken.
-    e = n.bit_length() - 1
+    e = n.bit_length()
     return n / (1 << e), e
 
 def _log_int(xi, working, per_bit):
@@ -169,6 +178,12 @@ def isfinite(x):
     return not isnan(x) and not isinf(x)
 
 def isclose(a, b, rel_tol=0.000000001, abs_tol=0.0):
+    _check_real(a)
+    _check_real(b)
+    _check_real(rel_tol)
+    _check_real(abs_tol)
+    a, b = float(a), float(b)
+    rel_tol, abs_tol = float(rel_tol), float(abs_tol)
     if rel_tol < 0 or abs_tol < 0:
         raise 'ValueError: tolerances must be non-negative'
     if a == b:
@@ -346,16 +361,48 @@ def isqrt(n):
     return low
 
 def hypot(*coordinates):
-    result = 0.0
-    for value in coordinates:
-        result = __math('hypot', result, value)
-    return result
+    import decimal
+    squares = decimal.Decimal(0)
+    saw_inf = False
+    saw_nan = False
+    for coordinate in coordinates:
+        _check_real(coordinate)
+        if type(coordinate).__name__ == 'Decimal':
+            exact = decimal.Decimal(coordinate)
+            value = None
+        elif type(coordinate).__name__ == 'Fraction':
+            exact = decimal.Decimal(float(coordinate))
+            value = None
+        else:
+            value = float(coordinate)
+            exact = decimal.Decimal(value)
+        if value is not None and isinf(value):
+            saw_inf = True
+            continue
+        if value is not None and isnan(value):
+            saw_nan = True
+            continue
+        squares += exact * exact
+    if saw_inf:
+        return inf
+    if saw_nan:
+        return nan
+    if squares == 0:
+        return 0.0
+    return float(squares.sqrt())
 
 def _point_items(point):
     items = []
-    for value in point:
+    if type(point).__name__ in ('generator', 'list_iterator', 'tuple_iterator'):
+        iterator = point
+    else:
+        iterator = iter(point)
+    while True:
+        try:
+            value = next(iterator)
+        except StopIteration:
+            return items
         items.append(value)
-    return items
 
 def dist(p, q):
     p, q = _point_items(p), _point_items(q)
@@ -537,6 +584,11 @@ def fmod(x, y):
 
 def modf(x):
     _check_real(x)
+    x = float(x)
+    if isnan(x):
+        return (nan, nan)
+    if isinf(x):
+        return (copysign(0.0, x), x)
     if x == 0:
         return (x, x)
     whole = trunc(x)
@@ -545,6 +597,13 @@ def modf(x):
 
 def frexp(x):
     _check_real(x)
+    if _is_integral(x):
+        n = int(x)
+        if n == 0:
+            return (__math('fdiv', 0.0, 1.0), 0)
+        mantissa, exponent = _int_frexp(-n if n < 0 else n)
+        return (-mantissa if n < 0 else mantissa, exponent)
+    x = float(x)
     if x == 0 or not isfinite(x):
         return (__math('fdiv', x, 1.0), 0)
     sign = -1 if x < 0 else 1
