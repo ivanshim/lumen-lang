@@ -5578,6 +5578,7 @@ impl<'a> Machine<'a> {
         let mut held = value.clone();
         while let Value::Mutable(cell, _) | Value::Shared(cell) = held { let inner = cell.borrow().clone(); held = inner; }
         Some(match held {
+            Value::Nil => '0',
             Value::Iterator(_) | Value::Generator(_) => 'w',
             Value::Window(_, portion) => if portion == 'v' { 'V' } else { 'W' },
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) => 'n',
@@ -5603,6 +5604,7 @@ impl<'a> Machine<'a> {
     /// kind that stands by itself answers for how it reads, how it
     /// compares, and the signs its own kind is written with.
     fn mark_answers(mark: char, at: usize) -> bool {
+        if mark == '0' { return (2..=3).contains(&at); }
         let counts = "nrqc".contains(mark);
         let lined = "sbBltp".contains(mark);
         let holds = lined || "deE".contains(mark);
@@ -6471,14 +6473,6 @@ impl<'a> Machine<'a> {
                     if values.len() > slot { return Err(self.octet_error("arguments").into()); }
                     while values.len() < slot { values.push(Value::text("utf-8")); }
                     values.push(value);
-                }
-                // A row lengthened by a walk takes the walk's members
-                // for its bytes, so the walk is drawn out into a row
-                // first, as the maker of a row of bytes draws one out.
-                if operation == 53 && values.len() == 2
-                    && !matches!(values[1].settled(), Value::Octets { .. } | Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_)) {
-                    let source = values[1].settled();
-                    if let Ok(members) = self.core_collect(&source) { values[1] = Value::Vector(Rc::new(members)); }
                 }
                 return self.octet_routine(operation, &values).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)));
             }
@@ -8122,13 +8116,20 @@ impl<'a> Machine<'a> {
     /// The bytes a value gives up to a row being lengthened: another
     /// row hands over its own, and a row of numbers or a text hands
     /// over one byte for each of its members.
-    fn octet_lengthening(&self, source: &Value) -> Result<Vec<u8>, String> {
+    fn octet_lengthening(&mut self, source: &Value) -> Result<Vec<u8>, String> {
         match &source.settled() {
             Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
             Value::Vector(items) | Value::Tuple(items) | Value::Row(items) =>
                 items.iter().map(|item| self.octet_item(item, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
-            other => Err(self.core_complaint("core.uniterable", &other.kind_word())),
+            other => {
+                let source = self.iterated_value(other)?;
+                let mut collected = Vec::new();
+                loop {
+                    let Some(next) = self.next_value(&source)? else { return Ok(collected); };
+                    collected.push(self.octet_item(&next, false)?);
+                }
+            },
         }
     }
 
@@ -8527,9 +8528,17 @@ impl<'a> Machine<'a> {
             39 if (1..=2).contains(&arguments.len()) => {
                 let mapping = match &arguments[0] {
                     Value::Nil => None,
-                    value => { let table = self.octet_contents(value, false)?; if table.len() != 256 { return Err(wrong()); } Some(table) }
+                    value => {
+                        if !matches!(value, Value::Octets { .. }) { return Err(self.core_complaint("core.bytes.like", &value.kind_word())); }
+                        let table = self.octet_contents(value, false)?;
+                        if table.len() == 256 { Some(table) } else { return Err(self.core_complaint("core.translate.table", "")); }
+                    }
                 };
-                let away = match arguments.get(1) { Some(v) => self.octet_contents(v, false)?, None => Vec::new() };
+                let away = match arguments.get(1) {
+                    None => Vec::new(),
+                    Some(value @ Value::Octets { .. }) => self.octet_contents(value, false)?,
+                    Some(invalid) => return Err(self.core_complaint("core.bytes.like", &invalid.kind_word())),
+                };
                 let mut turned = Vec::with_capacity(content.len());
                 for number in content.iter().filter(|n| !away.contains(n)) {
                     turned.push(match &mapping { Some(table) => table[usize::from(*number)], None => *number });
@@ -8781,8 +8790,8 @@ impl<'a> Machine<'a> {
             17 => {
                 let [Value::Octets { cell, changeable, .. }] = values else { return Err(refusal()); };
                 if *changeable { return Err(self.octet_error("unhashable")); }
-                let number = cell.borrow().iter().fold(0i64, |n, &b| n.wrapping_mul(1_000_003) ^ i64::from(b));
-                return Ok(Value::Small(if number == -1 { -2 } else { number }));
+                let letters = cell.borrow().iter().map(|octet| char::from(*octet)).collect::<String>();
+                return Ok(Value::Small(Value::text(&letters).hash_number().unwrap()));
             }
             _ => {}
         }
@@ -8823,7 +8832,7 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Vector(Rc::new(chunks.into_iter().map(|chunk| self.octets(chunk, *changeable)).collect())));
             }
             9 if args.len() == 1 => {
-                let Value::Vector(items) = &args[0] else { return Err(refusal()); };
+                let items = self.core_collect(&args[0])?;
                 let pieces = items.iter().map(|item| self.octet_contents(item, false)).collect::<Result<Vec<_>, _>>()?;
                 result = pieces.join(content.as_slice());
             }
@@ -9417,7 +9426,7 @@ impl<'a> Machine<'a> {
 
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
         if let Value::Attributes(t) = subject { return Ok(t.holds.borrow().iter().any(|(name, x)| !matches!(x, Value::Unset) && !name.starts_with('\0'))); }
-        if matches!(subject, Value::Refusal(_)) { return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_string()); }
+        if matches!(subject, Value::Refusal(_)) { return Err(self.core_complaint("core.bool.declined", "")); }
         match self.ask_special(subject, 9, &[])? {
             Some(Value::Flag(b)) => return Ok(b),
             Some(other) => return Err(match self.table.single("ext.builtin.bool.result") {
@@ -10026,7 +10035,10 @@ impl<'a> Machine<'a> {
             }
             (Prim::Hashed, [one]) => match self.ask_special(one, 8, &[])? {
                 Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
-                Some(_) => return Err(self.bad_answer()),
+                Some(answer) => match Self::underlying(&answer).map(|v| v.settled()) {
+                    Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
+                    _ => return Err(self.bad_answer()),
+                },
                 None => match one {
                     Value::Thing(t) if self.appointed(one, 2).is_none() => Value::Small(t.turn as i64),
                     Value::Small(_) | Value::Huge(_) => one.clone(),
@@ -10819,7 +10831,12 @@ impl<'a> Machine<'a> {
         }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
-            if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
         };
         if v.len() == 2 && v.iter().any(|item| matches!(item, Value::Set(_))) {
             let rule = match op { Prim::BitsEither => Some(0), Prim::BitsBoth => Some(1), Prim::Minus => Some(2), Prim::BitsOne => Some(3), _ => None };
@@ -13145,21 +13162,15 @@ impl<'a> Machine<'a> {
             }
             Prim::SomeTrue => {
                 n(1)?;
-                if matches!(v[0], Value::Iterator(_)) {
-                    while let Some(item) = self.next_value(&v[0])? { if self.stands_true(&item) { return Ok(Value::Flag(true)); } }
-                    return Ok(Value::Flag(false));
-                } else if self.table.flag("ext.stmt.yield.suspends") {
-                    let Value::Generator(walk) = self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? else { unreachable!() };
-                    loop {
-                        match self.resume(&walk, Value::Nil).map_err(|fault| self.suspension_fault(fault))? {
-                            None => return Ok(Value::Flag(false)),
-                            Some(item) if self.stands_true(&item) => return Ok(Value::Flag(true)),
-                            _ => {}
+                let source = self.iterated_value(&v[0])?;
+                loop {
+                    match self.next_value(&source)? {
+                        None => break Value::Flag(false),
+                        Some(value) => {
+                            if self.object_truth(&value)? { break Value::Flag(true); }
                         }
                     }
                 }
-                let members = self.gathered_members(&v[0])?;
-                Value::Flag(members.iter().any(|item| self.stands_true(item)))
             }
             Prim::Total => {
                 if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
@@ -13393,16 +13404,30 @@ impl<'a> Machine<'a> {
             }
             Prim::CharOf => {
                 n(1)?;
-                let code = match &v[0] {
-                    Value::Small(i) => u32::try_from(*i).ok(),
-                    Value::Huge(_) => None,
-                    _ => return Err(format!("{}() requires an integer argument", name)),
-                }
-                .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
-                match char::from_u32(code) {
-                    Some(c) => Value::text(&c.to_string()),
-                    None if code >= 0xd800 && code <= 0xdfff && self.table.has_any("ext.system.bytes.encodings") => Value::characters(vec![code]),
-                    None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
+                if self.table.has_any("ext.builtin.core.chr.range") {
+                    let point = match &v[0] {
+                        value @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => value.as_big()?.to_u32(),
+                        other => return Err(self.core_complaint("core.integer", &other.kind_word())),
+                    };
+                    match point {
+                        Some(number @ 0..=0x10ffff) => match char::from_u32(number) {
+                            None => Value::characters(vec![number]),
+                            Some(letter) => Value::text(&letter.to_string()),
+                        },
+                        _ => return Err(self.core_complaint("core.chr.range", "")),
+                    }
+                } else {
+                    let code = match &v[0] {
+                        Value::Small(i) => u32::try_from(*i).ok(),
+                        Value::Huge(_) => None,
+                        _ => return Err(format!("{}() requires an integer argument", name)),
+                    }
+                    .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
+                    match char::from_u32(code) {
+                        Some(c) => Value::text(&c.to_string()),
+                        None if code >= 0xd800 && code <= 0xdfff && self.table.has_any("ext.system.bytes.encodings") => Value::characters(vec![code]),
+                        None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
+                    }
                 }
             }
             // Saying the run is over is done where the call is made,
@@ -16869,7 +16894,17 @@ impl Machine<'_> {
             if op == Prim::Quoted && matches!(input.first(), Some(Value::Text(_))) { return crate::text::apply(self.table, crate::text::Work::REPR, name, &input, self.wording()); }
             if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
-                if let Some(job) = job { return self.work_on_class(job, input).map_err(|e| self.suspension_fault(e)); }
+                if let Some(job) = job {
+                    let result = self.work_on_class(job, input);
+                    return result.map_err(|escaped| match escaped {
+                        Escape::Thrown(value) => {
+                            let description = self.suspension_fault(Escape::Thrown(value.clone()));
+                            self.got_away = Some(Escape::Thrown(value));
+                            description
+                        }
+                        other => self.suspension_fault(other),
+                    });
+                }
             }
         }
         if keywords.is_empty() { if let Some(value) = self.user_operation(op, &input)? { return Ok(value); } }
@@ -16975,7 +17010,11 @@ impl Machine<'_> {
                 let quoted = self.core_primitive(Prim::Quoted, &word, input.clone(), Vec::new())?;
                 Ok(Value::text(&crate::text::ascii_escaped(&quoted.bare())))
             }
-            Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
+            Truthful => {
+                require(0, 1)?;
+                let answer = if input.is_empty() { false } else { self.object_truth(&input[0])? };
+                Ok(Value::Flag(answer))
+            }
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
                 require(1, 1)?;
@@ -17172,7 +17211,7 @@ impl Machine<'_> {
                 let iterator = self.iterated_value(&input[0])?;
                 loop {
                     match self.next_value(&iterator)? {
-                        Some(item) if !self.stands_true(&item) => return Ok(Value::Flag(false)),
+                        Some(item) if !self.object_truth(&item)? => return Ok(Value::Flag(false)),
                         None => return Ok(Value::Flag(true)),
                         _ => (),
                     }
@@ -17229,7 +17268,7 @@ impl Machine<'_> {
                     if pair.0.is_finite() && pair.1.is_finite() && !norm.is_finite() { return Err(self.core_complaint("core.power.overflow", "")); }
                     return Ok(crate::complex::decimal_value(norm));
                 }
-                let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.abs.type", &input[0].kind_word()))?;
                 Ok(math::make_number(parts.above.abs(), parts.beneath, parts.places))
             }
             Hexadecimal | Octal | Binary => {

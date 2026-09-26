@@ -148,9 +148,8 @@ impl Value {
                 Some(finish(h.finish() as i64))
             }
             Value::Bytes(bytes, false, _) => {
-                let mut hash = 0i64;
-                for &byte in bytes.borrow().iter() { hash = hash.wrapping_mul(1000003) ^ i64::from(byte); }
-                Some(finish(hash))
+                let text: String = bytes.borrow().iter().map(|byte| char::from(*byte)).collect();
+                Value::text(&text).core_hash()
             }
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),

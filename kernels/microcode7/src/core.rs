@@ -165,7 +165,8 @@ impl Value {
                 state.finish() as i64
             }
             Self::Octets { cell, changeable: false, .. } => {
-                cell.borrow().iter().fold(0i64, |total, octet| total.wrapping_mul(1_000_003) ^ i64::from(*octet))
+                let letters = cell.borrow().iter().copied().map(char::from).collect::<String>();
+                return Self::text(&letters).hash_number();
             }
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,

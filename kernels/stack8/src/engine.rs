@@ -292,6 +292,7 @@ type Flow<T> = Result<T, Fault>;
 /// upon a map's values from the other two.
 #[derive(Clone, Copy, PartialEq)]
 enum Kindred {
+    Nothing,
     Walk,
     Whole,
     Real,
@@ -4542,6 +4543,7 @@ impl<'a> Engine<'a> {
             held = inner;
         }
         Some(match held {
+            Value::Null => Kindred::Nothing,
             Value::Cursor(_) | Value::Generator(_) => Kindred::Walk,
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Kindred::Whole,
             Value::Real(_) => Kindred::Real,
@@ -4570,6 +4572,7 @@ impl<'a> Engine<'a> {
     /// taken out; and every kind that stands on its own answers for how
     /// it reads, for how it compares and for the signs its kind knows.
     fn family_answers(family: Kindred, place: usize) -> bool {
+        if family == Kindred::Nothing { return matches!(place, 2 | 3); }
         let number = matches!(family, Kindred::Whole | Kindred::Real | Kindred::Ratio | Kindred::Complex);
         let ordered = matches!(family, Kindred::Text | Kindred::Bytes(_) | Kindred::Row | Kindred::Tuple | Kindred::Counted);
         let holds = ordered || matches!(family, Kindred::Map | Kindred::Set(_));
@@ -5080,7 +5083,7 @@ impl<'a> Engine<'a> {
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
         if let Value::Fields(o) = value { return Ok(o.fields.borrow().iter().any(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0'))); }
-        if matches!(value, Value::Declined(_)) { return Err(self.lang.special_unready.first().cloned().unwrap_or_default()); }
+        if matches!(value, Value::Declined(_)) { return Err(self.core_fault("core.bool.declined", "")); }
         if let Some(answer) = self.special_call(value, 9, Vec::new())? {
             return match answer {
                 Value::Flag(flag) => Ok(flag),
@@ -5997,6 +6000,7 @@ impl<'a> Engine<'a> {
                     return Err(self.core_fault("core.unhashable", &args[0].core_kind()));
                 }
                 if let Some(answer) = self.special_call(&args[0], 8, Vec::new())? {
+                    let answer = Self::worth_of(&answer).map_or(answer.clone(), |v| v.contents());
                     if !matches!(answer, Value::Small(_) | Value::Huge(_)) { return Err(self.special_fault()); }
                     answer
                 } else {
@@ -11585,9 +11589,18 @@ impl<'a> Engine<'a> {
             39 if (1..=2).contains(&given.len()) => {
                 let table = match &given[0] {
                     Value::Null => None,
-                    value => { let held = part(value)?; if held.len() != 256 { return Err(bad()); } Some(held) }
+                    value => {
+                        let Value::Bytes(data, ..) = value else { return Err(self.core_fault("core.bytes.like", &value.core_kind())); };
+                        let held = data.borrow().clone();
+                        if held.len() != 256 { return Err(self.core_fault("core.translate.table", "")); }
+                        Some(held)
+                    }
                 };
-                let dropped = match given.get(1) { Some(v) => part(v)?, None => Vec::new() };
+                let dropped = match given.get(1) {
+                    Some(Value::Bytes(data, ..)) => data.borrow().clone(),
+                    Some(other) => return Err(self.core_fault("core.bytes.like", &other.core_kind())),
+                    None => Vec::new(),
+                };
                 let turned = row.iter().filter(|byte| !dropped.contains(byte))
                     .map(|byte| table.as_ref().map_or(*byte, |held| held[usize::from(*byte)])).collect();
                 Ok(made(turned))
@@ -11728,12 +11741,17 @@ impl<'a> Engine<'a> {
     /// The bytes a value gives up to a row being lengthened: another
     /// row hands over its own, and anything that can be walked hands
     /// over one byte for each of its members.
-    fn byte_taken(&self, value: &Value) -> Res<Vec<u8>> {
+    fn byte_taken(&mut self, value: &Value) -> Res<Vec<u8>> {
         match &value.contents() {
             Value::Bytes(row, ..) => Ok(row.borrow().clone()),
             Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_number(member, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.byte_number(&Value::text(&letter.to_string()), false)).collect(),
-            other => Err(self.core_fault("core.uniterable", &other.core_kind())),
+            other => {
+                let walk = self.core_iterator(other)?;
+                let mut bytes = Vec::new();
+                while let Some(item) = self.core_step(&walk)? { bytes.push(self.byte_number(&item, false)?); }
+                Ok(bytes)
+            },
         }
     }
 
@@ -12011,9 +12029,8 @@ impl<'a> Engine<'a> {
             if args.len() != 1 { return Err(bad()); }
             let Value::Bytes(row, mutable, _) = &args[0] else { return Err(unready()); };
             if *mutable { return Err(self.byte_fault("unhashable")); }
-            let mut hash = 0i64;
-            for &byte in row.borrow().iter() { hash = hash.wrapping_mul(1000003) ^ i64::from(byte); }
-            return Ok(Value::Small(if hash == -1 { -2 } else { hash }));
+            let spelling: String = row.borrow().iter().copied().map(char::from).collect();
+            return Ok(Value::Small(Value::text(&spelling).core_hash().unwrap()));
         }
         if task == 2 {
             if args.is_empty() || args.len() > 2 { return Err(unready()); }
@@ -12153,9 +12170,15 @@ impl<'a> Engine<'a> {
                 return Ok(Value::array(parts));
             }
             9 if given.len() == 1 => {
-                let Value::Array(parts) = &given[0] else { return Err(unready()); };
+                let parts = self.core_members(&given[0])?;
                 let mut joined = Vec::new();
-                for (at, part) in parts.iter().enumerate() { if at > 0 { joined.extend(&row); } joined.extend(bytes(part)?); }
+                for (at, part) in parts.iter().enumerate() {
+                    if at > 0 { joined.extend(&row); }
+                    match part {
+                        Value::Bytes(piece, ..) => joined.extend(piece.borrow().iter().copied()),
+                        _ => return Err(self.byte_fault("arguments")),
+                    }
+                }
                 joined
             }
             11 if given.len() == 2 || given.len() == 3 => {
@@ -12301,6 +12324,11 @@ impl<'a> Engine<'a> {
             if args.len() == n {
                 return Ok(());
             }
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
@@ -12338,14 +12366,6 @@ impl<'a> Engine<'a> {
                 if gathered {
                     let source = args[0].clone();
                     if let Ok(items) = self.core_members(&source) { return self.byte_call(task, &[Value::array(items)]); }
-                }
-                // A row lengthened by a walk takes the walk's members
-                // for its bytes, so the walk is drawn out into a row
-                // first, as the maker of a row of bytes draws one out.
-                if task == 53 && args.len() == 2
-                    && !matches!(args[1], Value::Bytes(..) | Value::Array(_) | Value::Tuple(_) | Value::Text(_)) {
-                    let source = args[1].clone();
-                    if let Ok(items) = self.core_members(&source) { return self.byte_call(task, &[args[0].clone(), Value::array(items)]); }
                 }
                 return self.byte_call(task, args);
             }
@@ -13258,16 +13278,11 @@ impl<'a> Engine<'a> {
             }
             Builtin::Any => {
                 arity(1)?;
-                if matches!(args[0], Value::Cursor(_)) {
-                    while let Some(value) = self.core_step(&args[0])? { if self.truth(&value) { return Ok(Value::Flag(true)); } }
-                } else if self.lang.yield_suspends {
-                    let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
-                    while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
-                        if self.truth(&item) { return Ok(Value::Flag(true)); }
-                    }
-                    return Ok(Value::Flag(false));
+                let walk = self.core_iterator(&args[0])?;
+                while let Some(item) = self.core_step(&walk)? {
+                    if self.special_truth(&item)? { return Ok(Value::Flag(true)); }
                 }
-                Value::Flag(self.comprehension_items(&args[0])?.iter().any(|v| self.truth(v)))
+                Value::Flag(false)
             }
             Builtin::Sum => {
                 if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
@@ -13444,17 +13459,29 @@ impl<'a> Engine<'a> {
             }
             Builtin::CharOf => {
                 arity(1)?;
-                let code = match &args[0] {
-                    Value::Small(n) => u32::try_from(*n).ok(),
-                    Value::Huge(_) => None,
-                    _ => return Err(format!("{}() requires an integer argument", name)),
-                };
-                let code = code
-                    .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
-                match char::from_u32(code) {
-                    Some(c) => Value::text(&c.to_string()),
-                    None if (0xd800..=0xdfff).contains(&code) && !self.lang.byte_words["ext.system.bytes.encodings"].is_empty() => Value::from_codes(vec![code]),
-                    None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
+                if self.lang.core_words["core.chr.range"].is_empty() {
+                    let code = match &args[0] {
+                        Value::Small(n) => u32::try_from(*n).ok(),
+                        Value::Huge(_) => None,
+                        _ => return Err(format!("{}() requires an integer argument", name)),
+                    };
+                    let code = code
+                        .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
+                    match char::from_u32(code) {
+                        Some(c) => Value::text(&c.to_string()),
+                        None if (0xd800..=0xdfff).contains(&code) && !self.lang.byte_words["ext.system.bytes.encodings"].is_empty() => Value::from_codes(vec![code]),
+                        None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
+                    }
+                } else {
+                    if !matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                        return Err(self.core_fault("core.integer", &args[0].core_kind()));
+                    }
+                    let code = args[0].as_big()?.to_u32().filter(|n| *n <= 0x10ffff)
+                        .ok_or_else(|| self.core_fault("core.chr.range", ""))?;
+                    match char::from_u32(code) {
+                        Some(c) => Value::text(&c.to_string()),
+                        None => Value::from_codes(vec![code]),
+                    }
                 }
             }
             Builtin::Leave => return Err("the run is over".to_string()),
@@ -14986,7 +15013,16 @@ impl Engine<'_> {
             if b == Builtin::Repr && matches!(args.first(), Some(Value::Text(_))) { return crate::strings::run(crate::strings::TextOp::Repr, name, &args, self.lang, &self.wording()); }
             if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
-                if let Some(work) = work { return self.class_work(work, args).map_err(|f| f.told(&self.wording())); }
+                if let Some(work) = work {
+                    return match self.class_work(work, args) {
+                        Err(Fault::Thrown(value)) => {
+                            let words = Fault::Thrown(value.clone()).told(&self.wording());
+                            self.carried = Some(Fault::Thrown(value));
+                            Err(words)
+                        }
+                        result => result.map_err(|fault| fault.told(&self.wording())),
+                    };
+                }
             }
         }
         if named.is_empty() { if let Some(value) = self.special_builtin(b, &args)? { return Ok(value); } }
@@ -15043,7 +15079,7 @@ impl Engine<'_> {
         let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.integer", &v.core_kind())) };
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
-            Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
+            Builtin::Bool => { arity(0, 1)?; Value::Flag(match args.first() { Some(value) => self.special_truth(value)?, None => false }) }
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
             Builtin::Repr => {
                 arity(1, 1)?;
@@ -15281,7 +15317,7 @@ impl Engine<'_> {
             Builtin::All => {
                 arity(1, 1)?;
                 let walk = self.core_iterator(&args[0])?;
-                while let Some(value) = self.core_step(&walk)? { if !self.truth(&value) { return Ok(Value::Flag(false)); } }
+                while let Some(value) = self.core_step(&walk)? { if !self.special_truth(&value)? { return Ok(Value::Flag(false)); } }
                 Value::Flag(true)
             }
             Builtin::Sorted => {
@@ -15336,7 +15372,7 @@ impl Engine<'_> {
                         return Ok(crate::complex::real(crate::value::as_binary(&r.p, &r.q).abs()));
                     }
                 }
-                let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
+                let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.abs.type", &args[0].core_kind()))?;
                 arith::shape_number(p.abs(), q, if matches!(x, Value::Real(_)) { Some(arith::DEFAULT_PLACES) } else { None })
             }
             Builtin::Hex | Builtin::Oct | Builtin::Bin => {
