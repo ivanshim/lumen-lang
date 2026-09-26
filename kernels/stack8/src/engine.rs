@@ -8562,7 +8562,7 @@ impl<'a> Engine<'a> {
             // rows do; two of different kinds, or of a kind with no order
             // at all, cannot. The two kinds of set are one kind here,
             // since either holds members the other may hold as well.
-            let orderless = Self::order_family(a) != Self::order_family(b) || matches!(a, Value::Null | Value::Map(_));
+            let orderless = Self::order_family(a) != Self::order_family(b) || matches!(a, Value::Null | Value::Map(_) | Value::Counted(_));
             if orderless && !(numeric(a) && numeric(b)) && !matches!((a, b), (Value::Text(_), Value::Text(_))) && arith::order_values(a, b).is_none() {
                 let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", _ => ">=" };
                 let words = &self.lang.order_unsupported;
@@ -15093,17 +15093,7 @@ impl Engine<'_> {
                     if modulus.is_negative() && !n.is_zero() { n -= positive; }
                     Value::of_big(n)
                 } else {
-                    let base = number(&args[0]); let exp = number(&args[1]);
-                    let (ep,eq) = arith::parts(&exp).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    if ep.is_negative() || eq != BigInt::from(1) || matches!(base, Value::Real(_)) || matches!(exp, Value::Real(_)) {
-                        let (bp,bq) = arith::parts(&base).ok_or_else(|| self.core_fault("core.unready", name))?;
-                        let (x,y) = (crate::value::as_binary(&bp,&bq),crate::value::as_binary(&ep,&eq));
-                        if x == 0.0 && y < 0.0 { return Err(self.core_fault("core.power.zero", "")); }
-                        let answer = x.powf(y);
-                        if answer.is_nan() { return Err(self.core_fault("core.unready", name)); }
-                        if answer.is_infinite() { return Err(self.core_fault("core.power.overflow", "")); }
-                        crate::value::real_of(answer,arith::DEFAULT_PLACES)
-                    } else { arith::calculate(Operation::Raise, &base, &exp).ok_or_else(|| self.core_fault("core.unready", name))?? }
+                    self.special_dyad(&Action::Power, &args[0], &args[1])?
                 }
             }
             Builtin::Round => {

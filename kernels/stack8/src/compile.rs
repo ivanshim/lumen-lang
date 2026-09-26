@@ -5910,7 +5910,8 @@ impl<'a> Compiler<'a> {
         if self.tuple_assignment()? { return Ok(()); }
         if !self.lang.tuple_marks.is_empty() && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty()
             && !self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty() {
-            self.tuple_value()?;
+            self.tuple_read(false)?;
+            if self.on_writing() { return Err("SyntaxError: 'tuple' is an illegal expression for augmented assignment".into()); }
             self.piece().result_touched = true;
             self.write(RESULT_CELL);
             return Ok(());
@@ -6207,9 +6208,6 @@ impl<'a> Compiler<'a> {
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
         // A slice write works out its value before it asks for bounds.
         let was_waiting = self.waiting.clone();
-        if compound.is_some() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
-            self.act(Action::SliceUnavailable, 0);
-        }
         // A language with slice values works the value out before any
         // key, as it does for a slice.
         let keyed_place = matches!(target.last(), Some(Instr::Act(Action::At, 2)) | Some(Instr::Act(Action::AtEnd, 1)));
