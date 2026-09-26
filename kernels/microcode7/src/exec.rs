@@ -16943,8 +16943,12 @@ impl Machine<'_> {
                         let power = crate::data::nearest_binary(&e.above,&e.beneath);
                         if n == 0.0 && power < 0.0 { return Err(self.core_complaint("core.power.zero", "")); }
                         let made = n.powf(power);
-                        if made.is_nan() { return Err(self.core_complaint("core.unready", name)); }
-                        if made.is_infinite() { return Err(self.core_complaint("core.power.overflow", "")); }
+                        // A nan carried in by either side of the power
+                        // comes back out a nan, the way the `**` operator
+                        // already answers it, rather than a refusal: only
+                        // a made-up infinity out of two finite numbers is
+                        // what the width itself cannot stand for.
+                        if made.is_infinite() && n.is_finite() && power.is_finite() { return Err(self.core_complaint("core.power.overflow", "")); }
                         return Ok(crate::data::worth_of_binary(made, math::DEFAULT_PLACES));
                     }
                     return math::compute(Calc::Power, &base, &exponent).ok_or_else(|| self.core_complaint("core.unready", name))?;
@@ -16966,7 +16970,38 @@ impl Machine<'_> {
             }
             Rounded => {
                 require(1, 2)?;
-                let places = match input.get(1) { None | Some(Value::Nil) => 0, Some(v) => whole(v)?.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
+                let ndigits = match input.get(1) { None | Some(Value::Nil) => None, Some(v) => Some(whole(v)?) };
+                // A float past every number, or the one that is not a
+                // number at all, carries no rounding of its own: asked
+                // to round down to a plain whole number it fails the way
+                // turning it into one always fails, but handed a count
+                // of places (any count) it comes back exactly as given,
+                // there being no nearer float at that scale to move to.
+                if let Value::Frac(r) = &input[0] {
+                    if r.beneath.is_zero() {
+                        if r.above.is_zero() {
+                            if ndigits.is_none() { return Err("ValueError: cannot convert float NaN to integer".to_string()); }
+                        } else if ndigits.is_none() {
+                            return Err("OverflowError: cannot convert float infinity to integer".to_string());
+                        }
+                        return Ok(input[0].clone());
+                    }
+                }
+                // A count of places beyond where a double's own decimal
+                // digits reach is answered without a scale that wide:
+                // past the top of that reach the float already names its
+                // own rounding, and past the bottom every float rounds
+                // away to a nought carrying its sign.
+                if let Value::Frac(r) = &input[0] {
+                    if let Some(n) = &ndigits {
+                        if *n > BigInt::from(323) { return Ok(input[0].clone()); }
+                        if *n < BigInt::from(-308) {
+                            let negative = r.above.is_negative();
+                            return Ok(crate::data::worth_of_binary(if negative { -0.0 } else { 0.0 }, math::DEFAULT_PLACES));
+                        }
+                    }
+                }
+                let places = match &ndigits { None => 0, Some(n) => n.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
                 // A whole number rounded to places after the point is itself;
                 // to places before it, a half goes to the even neighbour where
                 // the table says so.
@@ -16998,6 +17033,7 @@ impl Machine<'_> {
                     if input.len() < 2 || matches!(input[1], Value::Nil) { return Ok(Value::from_big(rounded)); }
                     let worth = if places < 0 { crate::data::nearest_binary(&(rounded * factor), &BigInt::from(1)) }
                         else { crate::data::nearest_binary(&rounded, &factor) };
+                    if worth.is_infinite() { return Err("OverflowError: rounded value too large to represent".to_string()); }
                     return Ok(crate::data::worth_of_binary(if negative && worth == 0.0 { -0.0 } else { worth }, math::DEFAULT_PLACES));
                 }
                 // Follow the arithmetic of the shared library at each step.

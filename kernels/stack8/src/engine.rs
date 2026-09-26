@@ -15094,21 +15094,55 @@ impl Engine<'_> {
                     Value::of_big(n)
                 } else {
                     let base = number(&args[0]); let exp = number(&args[1]);
-                    let (ep,eq) = arith::parts(&exp).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    if ep.is_negative() || eq != BigInt::from(1) || matches!(base, Value::Real(_)) || matches!(exp, Value::Real(_)) {
-                        let (bp,bq) = arith::parts(&base).ok_or_else(|| self.core_fault("core.unready", name))?;
-                        let (x,y) = (crate::value::as_binary(&bp,&bq),crate::value::as_binary(&ep,&eq));
-                        if x == 0.0 && y < 0.0 { return Err(self.core_fault("core.power.zero", "")); }
-                        let answer = x.powf(y);
-                        if answer.is_nan() { return Err(self.core_fault("core.unready", name)); }
-                        if answer.is_infinite() { return Err(self.core_fault("core.power.overflow", "")); }
-                        crate::value::real_of(answer,arith::DEFAULT_PLACES)
+                    // A power's exponent may stand outside the numbers
+                    // altogether (an infinity or a nan carries no p/q a
+                    // rational could hold), which the exact-arithmetic
+                    // reading of it cannot answer either way: such an
+                    // exponent, like a real one or a negative or
+                    // fractional one, is answered by the width's own
+                    // reckoning, the very one `**` already gives, so
+                    // that a nan exponent gives a nan power exactly as
+                    // that operator does rather than a refusal.
+                    let exp_exact = arith::Exact::from_value(&exp);
+                    let real_route = matches!(base, Value::Real(_)) || matches!(exp, Value::Real(_))
+                        || exp_exact.as_ref().map_or(true, |e| e.q.is_zero() || e.q != BigInt::from(1) || e.p.is_negative());
+                    if real_route {
+                        self.real_power(&base, &exp)?.ok_or_else(|| self.core_fault("core.unready", name))?
                     } else { arith::calculate(Operation::Raise, &base, &exp).ok_or_else(|| self.core_fault("core.unready", name))?? }
                 }
             }
             Builtin::Round => {
                 arity(1, 2)?;
-                let digits = match args.get(1) { None | Some(Value::Null) => 0, Some(n) => integer(n)?.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
+                let ndigits_big: Option<BigInt> = match args.get(1) { None | Some(Value::Null) => None, Some(n) => Some(integer(n)?) };
+                // An infinite or a NaN float carries no rounding to a
+                // places count of its own: rounded to a plain integer it
+                // fails the way CPython's own float-to-int conversion
+                // does, but given a places count (any places count) it
+                // passes through unchanged, since there is no nearer
+                // float at that scale to move to.
+                if let Value::Real(f) = &args[0] {
+                    if f.no_number() {
+                        if ndigits_big.is_none() { return Err("ValueError: cannot convert float NaN to integer".to_string()); }
+                        return Ok(args[0].clone());
+                    }
+                    if f.outside() {
+                        if ndigits_big.is_none() { return Err("OverflowError: cannot convert float infinity to integer".to_string()); }
+                        return Ok(args[0].clone());
+                    }
+                }
+                // A places count outside where a double's decimal digits
+                // reach is answered without building a scale that big:
+                // above it the float already names its own rounding,
+                // below it every float rounds to a signed nought.
+                if let Value::Real(f) = &args[0] {
+                    if let Some(n) = &ndigits_big {
+                        if *n > BigInt::from(323) { return Ok(args[0].clone()); }
+                        if *n < BigInt::from(-308) {
+                            return Ok(crate::value::real_of(if f.p.is_negative() { -0.0 } else { 0.0 }, arith::DEFAULT_PLACES));
+                        }
+                    }
+                }
+                let digits = match &ndigits_big { None => 0, Some(n) => n.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
                 // A whole number is its own rounding to any count of places
                 // at or after the point; rounded to places before it, a half
                 // goes to the even neighbour where the definition says so.
@@ -15138,6 +15172,7 @@ impl Engine<'_> {
                     if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { return Ok(Value::of_big(whole)); }
                     let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
                     let result = crate::value::as_binary(&above, &beneath);
+                    if result.is_infinite() { return Err("OverflowError: rounded value too large to represent".to_string()); }
                     return Ok(crate::value::real_of(if result == 0.0 && p.is_negative() { -0.0 } else { result }, arith::DEFAULT_PLACES));
                 }
                 // Keep the library's scale, signed half, and truncating quotient.
