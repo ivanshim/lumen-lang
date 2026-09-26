@@ -3113,7 +3113,7 @@ impl<'a> Compiler<'a> {
         if token.shape == Shape::Quote {
             let mut text = self.take().lexeme;
             while self.look().shape == Shape::Quote { text.push_str(&self.take().lexeme); }
-            return Ok(Pattern::Literal(Value::text(&text)));
+            return Ok(Pattern::Literal(Value::literal_text(&text)));
         }
         for (brackets, grouped) in [(lang.array_brackets.clone(), false), (lang.grouping.clone(), true)] {
             let Some(b) = brackets else { continue; };
@@ -7064,7 +7064,7 @@ impl<'a> Compiler<'a> {
         match token.shape {
             Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
                 Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
-            Shape::Quote => self.constant(Value::text(&token.lexeme)),
+            Shape::Quote => self.constant(Value::literal_text(&token.lexeme)),
             Shape::StringFault => {
                 self.constant(Value::text(&token.lexeme));
                 self.act(Action::StringFault, 1);

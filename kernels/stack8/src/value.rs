@@ -846,6 +846,47 @@ impl Value {
         match self { Value::Text(s) => Some(s.chars().map(u32::from).collect()), Value::Codepoints(row) => Some(row.as_ref().clone()), _ => None }
     }
 
+    /// The reader marks a lone surrogate an escape named with this
+    /// noncharacter followed by its four sixteens digits, since the
+    /// text it walks while reading a literal is built of `char` and a
+    /// surrogate is not one; a literal built this way is decoded back
+    /// to its numbers before it becomes a value, so nothing outside
+    /// this reading ever meets the mark itself.
+    pub const SURROGATE_MARK: char = '\u{FDD0}';
+
+    pub fn mark_surrogate(text: &mut String, unit: u32) {
+        text.push(Self::SURROGATE_MARK);
+        text.push_str(&format!("{unit:04x}"));
+    }
+
+    /// A literal's text once reading is done: ordinary text where the
+    /// reader left no mark, and a row of numbers, some standing for a
+    /// surrogate the mark carried, where it did.
+    pub fn literal_text(s: &str) -> Value {
+        if !s.contains(Self::SURROGATE_MARK) { return Value::text(s); }
+        let mut row = Vec::new();
+        let mut rest = s.chars();
+        while let Some(c) = rest.next() {
+            if c == Self::SURROGATE_MARK {
+                let hex: String = rest.by_ref().take(4).collect();
+                if let Ok(unit) = u32::from_str_radix(&hex, 16) { row.push(unit); continue; }
+            }
+            row.push(c as u32);
+        }
+        Value::from_codes(row)
+    }
+
+    /// A read-only category question (is it alphabetic, printable,
+    /// upper-cased and so on) asks after each character on its own; a
+    /// half of a surrogate pair kept whole answers none of them, the
+    /// same as the noncharacter standing in for it here answers none
+    /// of them either, so a walk built this way answers exactly as a
+    /// walk of the real numbers would, without ever once minting a
+    /// `char` a surrogate cannot become.
+    pub fn predicate_text(row: &[u32]) -> String {
+        row.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect()
+    }
+
     pub fn from_codes(row: Vec<u32>) -> Value {
         if let Some(text) = row.iter().copied().map(char::from_u32).collect::<Option<String>>() { Value::text(&text) }
         else { Value::Codepoints(Rc::new(row)) }

@@ -1232,6 +1232,17 @@ impl<'a> Engine<'a> {
     /// bytes, each character stands for one byte and is written as that
     /// byte alone; a character standing for no byte cannot arise there.
     /// Where text is letters, it goes out as the letters spell it.
+    /// What printing writes is a value's own text, unquoted, put
+    /// out through the same door an explicit `.encode('utf-8')`
+    /// would use; a half of a surrogate pair kept whole is refused
+    /// there the same way, before anything reaches the writing.
+    fn printed_surrogate_check(&mut self, value: &Value) -> Res<()> {
+        if matches!(value.contents(), Value::Codepoints(_)) {
+            self.codec_library("_encode_surrogates", vec![value.contents(), Value::text("utf-8"), Value::text("strict")])?;
+        }
+        Ok(())
+    }
+
     fn let_out(&self, text: &str) {
         if !self.lang.text_is_bytes {
             print!("{}", text);
@@ -4440,6 +4451,16 @@ impl<'a> Engine<'a> {
     /// cells stand between the name and the value itself. The family
     /// settles both which special members the value answers to and
     /// which values those members will work with.
+    /// Whether that text working only ever answers a category
+    /// question, one character at a time, and never hands any of
+    /// them back out: the one safe way to let a value holding a
+    /// surrogate this reading cannot spell answer it, from a
+    /// stand-in text built for exactly this reading.
+    fn surrogate_safe_text_op(op: crate::strings::TextOp) -> bool {
+        use crate::strings::TextOp::*;
+        matches!(op, Istitle | Isidentifier | Isprintable | Isdecimal | Isnumeric | Isascii)
+    }
+
     fn native_family(subject: &Value) -> Option<Kindred> {
         let mut held = subject.clone();
         while let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = held {
@@ -6969,7 +6990,12 @@ impl<'a> Engine<'a> {
                     Value::Counted(_) => self.range_member_named(name).is_some(),
                     _ => false,
                 };
-                let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
+                let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr)
+                    // A held surrogate answers only the category
+                    // questions, each of which looks at one character
+                    // at a time and never hands the surrogate itself
+                    // back out.
+                    || matches!(held, Value::Codepoints(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if Self::surrogate_safe_text_op(*op));
                 // A row of bytes answers to the methods its kind keeps,
                 // whose words are the ones text goes by.
                 let byte_method = matches!(&held, Value::Bytes(_, changeable, _) if self.byte_member(name, *changeable).is_some());
@@ -7012,6 +7038,10 @@ impl<'a> Engine<'a> {
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(subject, op, name.clone())
+                }
+                Value::Codepoints(row) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if Self::surrogate_safe_text_op(*op)) => {
+                    let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
+                    Value::TextMethod(Rc::from(Value::predicate_text(&row).as_str()), op, name.clone())
                 }
                 Value::Complex(z) => {
                     if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { crate::complex::real(z.real) }
@@ -10533,6 +10563,7 @@ impl<'a> Engine<'a> {
                     destination = self.member_of(module, &route[1])?.unwrap_or(Value::Null);
                     if matches!(destination, Value::Null) { return Ok(Value::Null); }
                 }
+                for value in &args { self.printed_surrogate_check(value)?; }
                 let mut parts = Vec::new();
                 for value in &args { parts.push(self.special_text(value, false)?); }
                 let text = parts.join(&between) + &ending;
@@ -10547,6 +10578,7 @@ impl<'a> Engine<'a> {
                 }
                 return Ok(Value::Null);
             }
+            for value in &args { self.printed_surrogate_check(value)?; }
             let mut parts = Vec::new();
             for value in &args { parts.push(self.special_text(value, false)?); }
             let text = parts.join(&between) + &ending;
