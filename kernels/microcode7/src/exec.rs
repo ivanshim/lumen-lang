@@ -6857,17 +6857,21 @@ impl<'a> Machine<'a> {
                     sink = self.attribute(&namespace, &route[1]).unwrap_or(Value::Nil);
                     if matches!(sink, Value::Nil) { return Ok(Some(Value::Nil)); }
                 }
-                let mut written = String::new();
-                for (at, item) in positional.iter().enumerate() {
-                    if at != 0 { written.push_str(&join); }
-                    written.push_str(&self.object_words(item, false)?);
+                let writer = self.attribute(&sink, &route[2])
+                    .ok_or_else(|| self.member_missing(&sink, &route[2]))?;
+                let mut first = true;
+                for item in positional {
+                    if !first { self.apply_held(writer.clone(), vec![Value::text(&join)])?; }
+                    first = false;
+                    let rendered = self.object_words(&item, false)?;
+                    self.apply_held(writer.clone(), vec![Value::text(&rendered)])?;
                 }
-                written.push_str(&tail);
-                let writer = self.attribute(&sink, &route[2]).ok_or_else(|| self.argument_fault("ext.builtin.print.file.unready", None))?;
-                self.apply_held(writer, vec![Value::text(&written)])?;
+                self.apply_held(writer, vec![Value::text(&tail)])?;
                 if drained {
-                    if let Some(method) = table.single("ext.builtin.print.flush").and_then(|word| self.attribute(&sink, word)) {
-                        self.apply_held(method, Vec::new())?;
+                    if let Some(word) = table.single("ext.builtin.print.flush") {
+                        let flush = self.attribute(&sink, word)
+                            .ok_or_else(|| self.member_missing(&sink, word))?;
+                        self.apply_held(flush, Vec::new())?;
                     }
                 }
                 return Ok(Some(Value::Nil));

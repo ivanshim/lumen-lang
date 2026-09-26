@@ -10533,17 +10533,21 @@ impl<'a> Engine<'a> {
                     destination = self.member_of(module, &route[1])?.unwrap_or(Value::Null);
                     if matches!(destination, Value::Null) { return Ok(Value::Null); }
                 }
-                let mut parts = Vec::new();
-                for value in &args { parts.push(self.special_text(value, false)?); }
-                let text = parts.join(&between) + &ending;
                 let writer = match self.member_of(destination.clone(), &route[2])? {
                     Some(writer) => writer,
-                    None => return Err(self.lang.print_file_unready[0].clone()),
+                    None => return Err(self.member_amiss(&destination, &route[2])),
                 };
-                self.call_held(writer, vec![Value::text(&text)])?;
+                for (index, value) in args.iter().enumerate() {
+                    if index > 0 { self.call_held(writer.clone(), vec![Value::text(&between)])?; }
+                    let text = self.special_text(value, false)?;
+                    self.call_held(writer.clone(), vec![Value::text(&text)])?;
+                }
+                self.call_held(writer, vec![Value::text(&ending)])?;
                 if flushed {
                     let word = self.lang.print_flush[0].clone();
-                    if let Some(method) = self.member_of(destination, &word)? { self.call_held(method, Vec::new())?; }
+                    let method = self.member_of(destination.clone(), &word)?
+                        .ok_or_else(|| self.member_amiss(&destination, &word))?;
+                    self.call_held(method, Vec::new())?;
                 }
                 return Ok(Value::Null);
             }
