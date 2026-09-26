@@ -747,7 +747,16 @@ impl Value {
             }
             Value::Object(o) => {
                 if let Some(args) = self.raised_arguments() {
-                    return format!("{}({})", o.class.name, args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "));
+                    let mut parts = args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>();
+                    if o.class.all_fields().iter().any(|(k, _)| k == "\0import-error") {
+                        let fields = o.fields.borrow();
+                        for name in ["name", "path", "name_from"] {
+                            if let Some((_, value)) = fields.iter().find(|(k, _)| k == name) {
+                                if !matches!(value, Value::Null) { parts.push(format!("{name}={}", value.repr(sp))); }
+                            }
+                        }
+                    }
+                    return format!("{}({})", o.class.name, parts.join(", "));
                 }
                 self.display(sp)
             }
@@ -1152,6 +1161,16 @@ impl Value {
             (Value::Trace(a), Value::Trace(b)) => Rc::ptr_eq(a, b),
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
             (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
+            // Two readings of code are alike where they read the very
+            // same body, however the routines they came from were
+            // written over since.
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 7 && b.0 == 7 => match (a.1.first(), b.1.first()) {
+                (Some(Value::Routine(x)), Some(Value::Routine(y))) => {
+                    let body = |r: &Rc<crate::code::Routine>| r.revised.borrow().as_ref().map_or_else(|| r.instrs.clone(), |now| now.instrs.clone());
+                    Rc::ptr_eq(&body(x), &body(y))
+                }
+                _ => Rc::ptr_eq(a, b),
+            },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
         }
