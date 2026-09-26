@@ -8636,7 +8636,15 @@ impl<'a> Machine<'a> {
             }
         }
         if stopped.is_none() { for (key, value) in keywords { self.map_enter(&mut entries, Value::text(key), value.clone())?; } }
+        let previous_turn = (entries.len() == store.len()).then_some(store.serial);
         self.replace_dict(receiver, entries)?;
+        if let (Some(serial), Some(owner)) = (previous_turn, Self::dict_cell(receiver)) {
+            let mut held = owner.borrow_mut();
+            match &mut *held {
+                Value::Dict(current) => Rc::make_mut(current).serial = serial,
+                _ => unreachable!("dictionary receiver"),
+            }
+        }
         match stopped { Some(words) => Err(words), None => Ok(Value::Nil) }
     }
 

@@ -3969,7 +3969,15 @@ impl<'a> Engine<'a> {
             }
         }
         if amiss.is_none() { for (k, v) in named { self.map_enter(&mut pairs, Value::text(k), v.clone())?; } }
+        let values_only = pairs.len() == store.len();
         self.replace_map(receiver, pairs)?;
+        if values_only {
+            if let Some(cell) = Self::map_cell(receiver) {
+                if let Value::Map(updated) = &mut *cell.borrow_mut() {
+                    Rc::make_mut(updated).revision = store.revision;
+                }
+            }
+        }
         match amiss { Some(told) => Err(told), None => Ok(Value::Null) }
     }
 
