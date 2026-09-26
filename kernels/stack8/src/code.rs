@@ -285,6 +285,9 @@ pub enum Action {
     /// in its stead answers with that one; a thing that is its own walk
     /// is wound back and answers with itself; anything else is itself.
     WalkFrom,
+    Awaited,
+    AsyncGenerator,
+    AsyncWalk,
     /// Whether a walk has more to hand out, what stands at the place it
     /// has reached and what that is called, and the step onward. A thing
     /// that is its own walk is asked; anything else is counted through,

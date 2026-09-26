@@ -850,10 +850,12 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.loop.else`: a switch; the `stmt.else` block after a for or
   while loop runs when its test ends the loop, including an empty walk.
   A break leaves that block behind; a continue does not.
-- `ext.stmt.async` and `ext.op.await`: the former is read before a
-  function, for loop or with block and dropped. The latter hands back
-  the value of its operand. Neither schedules nor suspends a run in
-  this stage; an await may stand outside a function too.
+- `ext.stmt.async` before a function or method keeps its body suspended
+  until asked to run. Before a for loop or with block it is read and
+  dropped. `ext.op.await` runs a supported suspended body to completion,
+  hands back its return value and propagates its exceptions. An operand
+  already holding a value is returned as it stands. These forms do not
+  schedule concurrent tasks; an await may stand outside a function too.
 - `ext.stmt.yield.suspends`: a switch; calling a routine containing a
   yield keeps its words and bindings unrun. Each asking runs to the next
   yield, and the next asking begins where that one left off. A delegated
@@ -1979,12 +1981,17 @@ only. The extension labels so far, all from PHP:
   array unless `ext.stmt.yield.suspends` is set, when they keep a lazy
   walk, including when they stand as the sole argument of a call.
   A spread mark may lead the gathered expression too.
-  `ext.op.comprehension.async` marks an asynchronous walk, read in full
-  but refused when reached in the words of
-  `ext.op.comprehension.async.unavailable`; no asynchronous walk is
-  yet provided. Indexed targets likewise read, but stop the run with
-  `ext.op.comprehension.target.unavailable` until their binding rules
-  are provided.
+  `ext.op.comprehension.async` marks an asynchronous walk. In Python an
+  eager asynchronous comprehension must be inside an asynchronous
+  function; otherwise reading raises `SyntaxError`. Asynchronous
+  generator expressions are separate from synchronous iterables and
+  may be consumed by another asynchronous comprehension. Walk targets
+  use assignment semantics, including attributes, indices, slices,
+  nested unpacking and starred targets. Their local names are reserved
+  before the inner sources, filters and target expressions are read;
+  the outermost source is still evaluated in the enclosing scope.
+  The `async.unavailable` and `target.unavailable` entries remain
+  accepted compatibility wording.
   `ext.op.comprehension.unpack.amiss` says that an item has the wrong
   number of parts for its target.
 - `ext.syntax.set`: a switch; braces without pairs gather a set, each
@@ -2274,7 +2281,11 @@ only. The extension labels so far, all from PHP:
   own for what it found keeps them in front of the place. A reading the
   kernels cannot yet
   honour — a closure handed over, a setting of optimisation beyond the
-  ordinary — with `ext.builtin.source.unready`. `ext.builtin.import`
+  ordinary — with `ext.builtin.source.unready`. Seeding a dictionary of
+  a program's own with the builtins, where it names none of its own and
+  has no way to be written into, is refused instead with
+  `ext.builtin.source.builtins_immutable`, its one piece the name of the
+  kind that refused the write. `ext.builtin.import`
   fetches a module by its name as the import statement would.
   `ext.system.module.doc` names what a program keeps its opening
   documentation under, text standing alone as its first statement, and
@@ -4333,7 +4344,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `MemoryError` `BufferError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4588,6 +4599,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.slice.step` | - | - | `step` | - | - | - | - | - | - | - |
 | `ext.builtin.slice.stop` | - | - | `stop` | - | - | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
+| `ext.builtin.source.builtins_immutable` | - | - | `TypeError: cannot assign __builtins__ to ` ` globals` | - | - | - | - | - | - | - |
 | `ext.builtin.source.syntax` | - | - | `SyntaxError: invalid syntax` | - | - | - | - | - | - | - |
 | `ext.builtin.source.syntax.place` | - | - | ` (` `, line ` `)` | - | - | - | - | - | - | - |
 | `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
@@ -4994,6 +5006,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.getitem` | - | - | `__class_getitem__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.globals` | - | - | `__globals__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.integer.layout` | - | - | `__basicsize__` `__itemsize__` `__sizeof__` `24` `4` `30` `32` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.keywords` | - | - | `__kwdefaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.keywords.amiss` | - | - | `TypeError: __kwdefaults__ must be set to a dict object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.kind` | - | - | `__class__` | - | - | - | - | - | - | - |
@@ -5347,3 +5360,8 @@ Frames are allocated on demand when an exception first records its location.
 `ext.builtin.core.chr.range` rejects out-of-range character ordinals.
 `ext.builtin.core.translate.table` and `ext.builtin.core.bytes.like` describe
 invalid byte translation tables and operands, respectively.
+
+`ext.stmt.class.detail.integer.layout` gives the integer basic-size,
+item-size and size-method names, followed by decimal values for the base
+size, digit size, digit bit width and subclass base size. The full kernels
+use these to report integer storage sizes, including inherited attributes.
