@@ -2350,7 +2350,22 @@ impl<'a> Builder<'a> {
                 let place = self.gensym("with");
                 let name = place.ident.to_string();
                 steps.push(Form::Write(place, Box::new(value)));
-                steps.extend(self.with_target(&name)?);
+                let start = self.pos;
+                let mut boundary = start;
+                let mut closing = Vec::new();
+                for token in &self.tokens[start..] {
+                    let spelling = token.lexeme.as_str();
+                    if closing.is_empty() && (["block.intro", "syntax.call.separator", "syntax.group.close"].iter()
+                        .any(|label| table.spells(label, spelling))) { break; }
+                    match spelling {
+                        "(" => closing.push(")"), "[" => closing.push("]"), "{" => closing.push("}"),
+                        _ if closing.last().copied() == Some(spelling) => { closing.pop(); }
+                        _ => {}
+                    }
+                    boundary += 1;
+                }
+                steps.push(self.distribute(start..boundary, &name)?);
+                self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
@@ -6189,7 +6204,14 @@ impl<'a> Builder<'a> {
                 // What the chain stands on is taken as a cell, so that
                 // rewriting the arrays within it lands where it lives
                 // and nothing need be written back afterwards.
-                let start = self.cell_of(stands_on)?;
+                let start = match stands_on {
+                    call @ Form::Apply(..) if self.table.flag("ext.syntax.call.bind_names") => {
+                        let saved = self.gensym("target_result");
+                        steps.push(Form::Write(saved.clone(), Box::new(call)));
+                        self.cell_of(Form::Read(saved))?
+                    }
+                    other => self.cell_of(other)?,
+                };
                 // Tied, not written: a plain write of a cell writes what
                 // it holds, and here the cell itself is wanted.
                 let tied = self.address_to_write(&root);

@@ -1907,7 +1907,21 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let held = self.gensym("with");
                 self.write(&held);
-                self.bind_block_target(&held)?;
+                let begin = self.pos;
+                let mut end = begin;
+                let mut depth = 0usize;
+                while end < self.tokens.len() {
+                    let word = &self.tokens[end];
+                    if depth == 0 && (Lang::spells(&lang.block_intros, &word.lexeme)
+                        || Lang::spells(&lang.tuple_marks, &word.lexeme) || word.lexeme == group.close) { break; }
+                    if word.shape == Shape::Sign {
+                        if ["(", "[", "{"].contains(&word.lexeme.as_str()) { depth += 1; }
+                        else if [")", "]", "}"].contains(&word.lexeme.as_str()) { depth = depth.saturating_sub(1); }
+                    }
+                    end += 1;
+                }
+                self.give_places(begin, end, &held)?;
+                self.pos = end;
             } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
             self.take();
@@ -6340,7 +6354,7 @@ impl<'a> Compiler<'a> {
                 // to the footing below that restores `self.waiting` and
                 // any hush/mute marks, rather than returning out of the
                 // whole statement with those left disturbed.
-                if names_handed {
+                if names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
                     Ok(())
                 } else {
                     // What it stood on is written back into, read again

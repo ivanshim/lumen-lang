@@ -1259,7 +1259,7 @@ impl<'a> Machine<'a> {
         if match slots{Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching),v=>matching(&v)}{return true;}
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.allowed_slot(p,key))
     }
-    fn change_entry(entries:&mut Vec<(String,Value)>,key:&str,replacement:Option<Value>)->bool {
+    pub(super) fn change_entry(entries:&mut Vec<(String,Value)>,key:&str,replacement:Option<Value>)->bool {
         if let Some(i)=entries.iter().position(|(k,_)|k==key){
             if let Some(v)=replacement{entries[i].1=v;}else{entries.remove(i);}true
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}

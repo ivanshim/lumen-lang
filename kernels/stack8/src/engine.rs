@@ -3513,7 +3513,17 @@ impl<'a> Engine<'a> {
         // The exhaustion class raised inside the body is a fault of the
         // generator, not the end of its walk.
         let result = match result {
-            Err(Fault::Thrown(Value::Object(object))) if self.lang.yield_escaped.is_some() && self.stop_class(&object.class) => Err(self.escaped_stop()),
+            Err(Fault::Thrown(value @ Value::Object(_))) if self.lang.yield_escaped.is_some() && matches!(&value, Value::Object(object) if self.stop_class(&object.class)) => {
+                let fault = self.escaped_stop();
+                if let Fault::Thrown(Value::Object(wrapper)) = &fault {
+                    for key in [&self.lang.exception_cause, &self.lang.exception_context].into_iter().flatten() {
+                        let mut fields = wrapper.fields.borrow_mut();
+                        fields.retain(|(name, _)| name != key);
+                        fields.push((key.clone(), value.clone()));
+                    }
+                }
+                Err(fault)
+            },
             Err(Fault::Note(words)) if self.lang.yield_escaped.is_some() && self.lang.core_words.get("core.exhausted").and_then(|w| w.first()) == Some(&words) => Err(self.escaped_stop()),
             other => other,
         };
@@ -4495,6 +4505,9 @@ impl<'a> Engine<'a> {
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
         if let Value::Generator(held) = &held {
+            if [&self.lang.yield_throw, &self.lang.yield_send, &self.lang.yield_close].iter().any(|words| Lang::spells(words, name)) {
+                return Ok(Some(Value::ValueMethod(Rc::new((value.contents(), name.to_string())))));
+            }
             if self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
         }
         if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
@@ -7229,7 +7242,7 @@ impl<'a> Engine<'a> {
                 let kind_carries = self.loose_kind_member(&held, name).is_some();
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
-                let generator_running = matches!(&held, Value::Generator(_)) && self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref());
+                let generator_running = matches!(&held, Value::Generator(_)) && [&self.lang.yield_running, &self.lang.yield_throw, &self.lang.yield_send, &self.lang.yield_close].iter().any(|words| Lang::spells(words, name));
                 Value::Flag(kind_named || kind_maker || kind_doc || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
@@ -10848,6 +10861,18 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if matches!(receiver.contents(), Value::Generator(_)) {
+            let floor = self.data.len();
+            self.data.push(receiver.contents());
+            self.data.extend(args);
+            let called = self.perform(&Action::Send(Rc::from(operation)), self.data.len() - floor);
+            let answer = match called { Ok(()) => self.drop_top().map_err(Fault::Note), Err(fault) => Err(fault) };
+            self.data.truncate(floor);
+            return match answer {
+                Ok(value) => Ok(value), Err(Fault::Note(words)) => Err(words),
+                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            };
+        }
         // A row lengthened where it lies, instead of copied out, added
         // to, and written back. It stands ahead of the reading below
         // because that reading would hold the row a second time, and a

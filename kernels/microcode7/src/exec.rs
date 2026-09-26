@@ -3179,7 +3179,17 @@ impl<'a> Machine<'a> {
         // The stop kind raised in the body is the generator's fault,
         // not the end of its walk.
         let outcome = match outcome {
-            Err(Escape::Thrown(Value::Thing(t))) if self.table.has_any("ext.stmt.yield.escaped") && self.is_stop_kind(&t.of) => Err(self.stop_got_out()),
+            Err(Escape::Thrown(Value::Thing(t))) if self.table.has_any("ext.stmt.yield.escaped") && self.is_stop_kind(&t.of) => {
+                let translated = self.stop_got_out();
+                if let Escape::Thrown(Value::Thing(outer)) = &translated {
+                    for label in ["ext.builtin.exceptions.context", "ext.builtin.exceptions.cause"] {
+                        if let Some(word) = self.table.single(label) {
+                            Self::change_entry(&mut outer.holds.borrow_mut(), word, Some(Value::Thing(t.clone())));
+                        }
+                    }
+                }
+                Err(translated)
+            },
             Err(Escape::Error(said)) if self.table.has_any("ext.stmt.yield.escaped") && self.table.single("ext.builtin.core.exhausted") == Some(said.as_str()) => Err(self.stop_got_out()),
             other => other,
         };
@@ -5897,6 +5907,10 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+        if matches!(value.settled(), Value::Generator(_)) && ["throw", "send", "close"].iter()
+            .any(|part| self.table.spells(&format!("ext.stmt.yield.{part}"), name)) {
+            return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
+        }
         if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
         // A walk over a routine's own body answers whether it is on the
         // way through the machine at this very moment: exactly when the
@@ -6344,6 +6358,13 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if matches!(receiver.settled(), Value::Generator(_)) {
+            let mut inputs = vec![Form::Const(receiver.settled()), Form::Const(Value::text(name))];
+            inputs.extend(arguments.into_iter().map(Form::Const));
+            let call = Form::Apply(Callee::Prim(Prim::Ask, Rc::from(name)), inputs);
+            return self.value_of(&call, &self.outermost.clone());
+        }
+
         // One more member set on the end of a list, in the place the
         // list already occupies. This comes first of all: further down
         // the contents are read out into a worth of their own, and a
@@ -11444,7 +11465,7 @@ impl<'a> Machine<'a> {
                 let of_octets = matches!(v[0].settled(), Value::Octets { changeable, .. } if self.octet_member(&word, changeable).is_some());
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
-                let generator_running = matches!(&v[0], Value::Generator(_)) && self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| *w == word);
+                let generator_running = matches!(&v[0], Value::Generator(_)) && ["ext.stmt.yield.running", "ext.stmt.yield.throw", "ext.stmt.yield.send", "ext.stmt.yield.close"].iter().any(|label| self.table.spells(label, &word));
                 Value::Flag(native || of_octets || generator_running || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
