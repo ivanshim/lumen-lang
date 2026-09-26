@@ -2075,39 +2075,41 @@ impl<'a> Engine<'a> {
         if let Some(kept) = self.book_of(slot.far) {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) { return found; }
         }
-        if let Value::Bond(shared) = &self.world[slot.far] {
-            // A module's cell that holds nothing -- a name never bound, or
-            // one deleted -- is no value to read in a language that binds
-            // values rather than cells: the name is undefined.
-            if !self.lang.bind_names && matches!(&*shared.borrow(), Value::Blank) {
-                return Err(format!("Undefined variable: {}", slot.ident));
-            }
+        // A module's cell that holds nothing -- a name never bound, or
+        // one deleted -- is no value to read in a language whose unbound
+        // names are looked for in a module: it is read as an unbound
+        // name, answered by the same fallbacks and refused the same way.
+        let empty_cell = !self.lang.names_module.is_empty()
+            && matches!(&self.world[slot.far], Value::Bond(shared) if matches!(&*shared.borrow(), Value::Blank));
+        if let (Value::Bond(shared), false) = (&self.world[slot.far], empty_cell) {
             return Ok(match () {
                 _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
                 _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
                 _ => shared.borrow().clone(),
             });
         }
+        let unbound = empty_cell || matches!(self.world[slot.far], Value::Blank);
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
         // is concerned, and nothing is said about it.
-        if slot.moving && self.lang.makes_places && matches!(self.world[slot.far], Value::Blank | Value::Null) {
+        if slot.moving && self.lang.makes_places && (unbound || matches!(self.world[slot.far], Value::Null)) {
             return Ok(Value::Array(std::rc::Rc::new(Vec::new())));
         }
         // A language that has a word for a warning does not stop for a
         // binding never written: it says so and reads nothing there.
-        if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
+        if unbound && self.warns_about(&slot.ident) {
             let told = format!("Undefined variable {}", slot.ident);
             self.complain(Complaint::Warning, &told);
             return Ok(Value::Null);
         }
-        if matches!(self.world[slot.far], Value::Blank) && self.fuller_classes() {
+        if unbound && self.fuller_classes() {
             if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
             if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::Adapter(Rc::new((8,vec![Value::text(&slot.ident)])))); }
         }
-        if matches!(self.world[slot.far], Value::Blank) {
+        if unbound {
             if let Some(held) = self.kept_by_module(&slot.ident) { return Ok(held); }
         }
+        if empty_cell { return Err(format!("Undefined variable: {}", slot.ident)); }
         let g = &mut self.world[slot.far];
         match g {
             Value::Blank if slot.moving => Err(format!("Undefined variable '{}'", slot.ident)),
@@ -2235,6 +2237,9 @@ impl<'a> Engine<'a> {
         }
         match &self.world[slot.far] {
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
+            // A module's cell holding nothing is an unbound name too, for a
+            // language whose unbound names are looked for in a module.
+            Value::Bond(shared) if !self.lang.names_module.is_empty() && matches!(&*shared.borrow(), Value::Blank) => Err(format!("Undefined variable: {}", slot.ident)),
             v => Ok(v),
         }
     }
@@ -2284,6 +2289,7 @@ impl<'a> Engine<'a> {
         }
         match &self.world[slot.far] {
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
+            Value::Bond(shared) if !self.lang.names_module.is_empty() && matches!(&*shared.borrow(), Value::Blank) => Err(format!("Undefined variable: {}", slot.ident)),
             _ => Ok(&mut self.world[slot.far]),
         }
     }
