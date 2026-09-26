@@ -209,6 +209,16 @@ class sentinel:
     def __hash__(self):
         return id(self)
 
+    def __reduce__(self):
+        return self.__name__
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
+
 
 # A mapping that is read and never written. It keeps an ordinary
 # dictionary of its own and hands out that dictionary's views, so what a
@@ -217,6 +227,12 @@ class sentinel:
 # dictionary it holds by reaching for the member it is kept under, so
 # this is an immutable mapping by manner rather than by construction.
 class frozendict:
+    def __reduce_ex__(self, protocol):
+        if protocol < 2:
+            raise TypeError('cannot pickle frozendict with protocol 0 or 1')
+        import pickle
+        return (type(self), (self._rows,), pickle._state(self))
+
     def __new__(cls, *given, **named):
         if len(given) > 1:
             raise TypeError("frozendict expected at most 1 argument, got " + str(len(given)))
