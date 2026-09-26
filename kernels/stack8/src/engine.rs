@@ -6557,7 +6557,7 @@ impl<'a> Engine<'a> {
                 Value::array(together)
             }
             Action::Unpack(count, rest) => {
-                let source = collection_contents(&self.drop_top()?);
+                let source = collection_contents(&self.drop_top()?).contents();
                 let mut items = match source {
                     Value::Generator(ref generator) => {
                         let mut found = Vec::new();
