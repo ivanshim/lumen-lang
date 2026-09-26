@@ -2188,8 +2188,10 @@ only. The extension labels so far, all from PHP:
   under several names; they do not resume generator bodies. A cursor over
   a list reads the list as it stands at each step, so a member appended
   before the end is walked too; one over a map's keys, values or items
-  remembers the map's size and, should that size change before the walk
-  ends, stops with the words of `ext.builtin.core.dict.changed`. A thing
+  remembers the map's size and key revision. A size change stops the walk
+  with the first words of `ext.builtin.core.dict.changed`; replaced keys
+  at unchanged size use its second words. The third complaint reports a
+  source mutated during a dictionary update. A thing
   with no walk method but a method for reading a place is walked from
   place nought upward until that method raises the fault named by
   `ext.system.fault.class.index`. Given a callable and a sentinel,
@@ -4212,7 +4214,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string, not '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
-| `ext.builtin.core.dict.changed` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
+| `ext.builtin.core.dict.changed` | - | - | `RuntimeError: dictionary changed size during iteration` `RuntimeError: dictionary keys changed during iteration` `RuntimeError: dict mutated during update` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.sequence` | - | - | `TypeError: cannot convert dictionary update sequence element #` ` to a sequence` | - | - | - | - | - | - | - |
 | `ext.builtin.core.empty` | - | - | `ValueError: ` `() iterable argument is empty` | - | - | - | - | - | - | - |

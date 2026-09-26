@@ -3300,7 +3300,12 @@ impl<'a> Engine<'a> {
             if !matches!(sent, Value::Null) { return Err(self.lang.yield_unsupported[0].clone().into()); }
             // A map that changed size under the walk stops the next step.
             if let (Some((cell, size)), Some(said)) = (&kept.watched, &self.lang.map_resized) {
-                if Self::map_size(cell) != *size { kept.closed = true; return Err(format!("\0{said}").into()); }
+                let now = Self::map_size(cell);
+                if now != *size {
+                    let words = if now.0 != size.0 { said.clone() } else { self.lang.core_words["core.dict.changed"][1].clone() };
+                    kept.closed = true;
+                    return Err(format!("\0{words}").into());
+                }
             }
             let item = kept.items.get(kept.pc).cloned();
             kept.pc += usize::from(item.is_some());
@@ -3944,7 +3949,16 @@ impl<'a> Engine<'a> {
         let mut amiss = None;
         if let Some(v) = args.first() {
             match v.contents() {
-                Value::Map(p) => { for (k, v) in p.iter() { self.map_enter(&mut pairs, k.clone(), v.clone())?; } }
+                Value::Map(p) => {
+                    let watch = Self::map_cell(v).map(|cell| { let start = Self::map_size(&cell); (cell, start) });
+                    for (k, v) in p.iter() {
+                        self.map_enter(&mut pairs, k.clone(), v.clone())?;
+                        if watch.as_ref().is_some_and(|(cell, start)| Self::map_size(cell) != *start) {
+                            self.replace_map(receiver, pairs)?;
+                            return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][2]));
+                        }
+                    }
+                }
                 other => {
                     for item in crate::methods::members(&other, &|k| self.lang.method_errors[k].clone())? {
                         let pair = crate::methods::members(&item, &|k| self.lang.method_errors[k].clone())?;
@@ -3955,7 +3969,15 @@ impl<'a> Engine<'a> {
             }
         }
         if amiss.is_none() { for (k, v) in named { self.map_enter(&mut pairs, Value::text(k), v.clone())?; } }
+        let values_only = pairs.len() == store.len();
         self.replace_map(receiver, pairs)?;
+        if values_only {
+            if let Some(cell) = Self::map_cell(receiver) {
+                if let Value::Map(updated) = &mut *cell.borrow_mut() {
+                    Rc::make_mut(updated).revision = store.revision;
+                }
+            }
+        }
         match amiss { Some(told) => Err(told), None => Ok(Value::Null) }
     }
 
@@ -4001,9 +4023,11 @@ impl<'a> Engine<'a> {
         // map with a Thing among its keys pays for the walk.
         for (key, value) in one.iter() {
             let (found, _) = self.map_locate(other, Some(other), key)?;
-            match found {
-                Some(index) if self.mapping_equality(value, &other[index].1) => {}
-                _ => return Ok(false),
+            let Some(index) = found else { return Ok(false) };
+            let compared = &other[index].1;
+            if !value.same_place(compared) {
+                let answer = self.special_dyad(&Action::Eq, value, compared)?;
+                if !self.special_truth(&answer)? { return Ok(false); }
             }
         }
         Ok(true)
@@ -4646,6 +4670,19 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        let container = matches!(value, Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Set(_));
+        if container {
+            if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
+            }
+            self.reaching += 1;
+        }
+        let result = self.special_text_inner(value, representation);
+        if container { self.reaching -= 1; }
+        result
+    }
+
+    fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
         // Where the definition asks it, a collection reads the same
         // whether or not a representation was asked for: the members
         // inside it are always written as representations, so that text
@@ -8069,11 +8106,11 @@ impl<'a> Engine<'a> {
     }
 
     /// How many pairs the map in a cell holds at this moment.
-    fn map_size(cell: &Rc<RefCell<Value>>) -> usize {
+    fn map_size(cell: &Rc<RefCell<Value>>) -> (usize, u64) {
         match &*cell.borrow() {
-            Value::Map(pairs) => pairs.len(),
+            Value::Map(pairs) => (pairs.len(), pairs.revision),
             Value::Bond(within) | Value::Collection(within, _) => Self::map_size(within),
-            _ => 0,
+            _ => (0, 0),
         }
     }
 
@@ -14193,7 +14230,8 @@ impl Engine<'_> {
                     return Ok(found);
                 }
                 CursorSource::Viewed(window, place, size) => {
-                    if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                    let now = Self::window_size(window);
+                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
                     let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
                     if found.is_some() { *place += 1; } else { state.finished = true; }
                     return Ok(found);
@@ -14220,7 +14258,8 @@ impl Engine<'_> {
                 Ok(found)
             }
             CursorSource::Viewed(window, place, size) => {
-                if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                let now = Self::window_size(window);
+                    if now != *size { return Err(format!("\0{}", self.lang.core_words["core.dict.changed"][usize::from(now.0 == size.0)])); }
                 let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
                 if found.is_some() { *place += 1; }
                 Ok(found)
@@ -14342,8 +14381,8 @@ impl Engine<'_> {
     }
 
     /// The size of the map a window looks upon.
-    fn window_size(window: &Value) -> usize {
-        match window { Value::View(view) => match view.0.contents() { Value::Map(pairs) => pairs.len(), _ => 0 }, _ => 0 }
+    fn window_size(window: &Value) -> (usize, u64) {
+        match window { Value::View(view) => match view.0.contents() { Value::Map(pairs) => (pairs.len(), pairs.revision), _ => (0, 0) }, _ => (0, 0) }
     }
 
     /// What iter is handed before its cell is opened: a list's own cell,
@@ -14486,6 +14525,9 @@ impl Engine<'_> {
         if named.is_empty() {
             if b == Builtin::Hash && matches!(args.first(), Some(Value::Bytes(..))) { return self.byte_call(17, &args); }
             if b == Builtin::InstanceOf && matches!(args.get(1), Some(Value::ByteKind(..))) { return self.byte_call(16, &args); }
+            if b == Builtin::Repr && args.len() == 1 && matches!(args[0], Value::Map(_)) {
+                return self.special_text(&args[0], true).map(|text| Value::text(&text));
+            }
             if b == Builtin::Repr && matches!(args.first(), Some(Value::Text(_))) { return crate::strings::run(crate::strings::TextOp::Repr, name, &args, self.lang, &self.wording()); }
             if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };

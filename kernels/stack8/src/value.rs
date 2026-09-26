@@ -204,7 +204,7 @@ pub struct Generator {
     pub current: Option<Value>,
     /// The cell of a map the walk hands the items of, with the size the
     /// map had when the walk began, so a step may see it has changed.
-    pub watched: Option<(Rc<RefCell<Value>>, usize)>,
+    pub watched: Option<(Rc<RefCell<Value>>, (usize, u64))>,
     /// The tries the suspension stands inside, innermost first, and
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
@@ -257,7 +257,7 @@ pub enum CursorSource {
     Living(Rc<RefCell<Value>>, usize),
     /// A window upon a map, with the size the map had when the walk
     /// began; the walk stops should that size change.
-    Viewed(Value, usize, usize),
+    Viewed(Value, usize, (usize, u64)),
     /// A thing walked by reading its places from nought upward.
     Indexed(Value, BigInt),
     /// A thing walked by reading its places from its last down to
@@ -495,6 +495,12 @@ pub enum Placement {
     Uncertain,
 }
 
+thread_local! { static MAP_REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+fn next_map_revision() -> u64 {
+    MAP_REVISION.with(|stamp| { let next = stamp.get().wrapping_add(1); stamp.set(next); next })
+}
+
 /// A map's rows, in the order a program wrote them, paired with a
 /// lookup from a key's own text (`member_key`) to the row it sits at.
 /// The lookup is worked out the first time something asks for it, from
@@ -514,6 +520,7 @@ pub enum Placement {
 #[derive(Debug)]
 pub struct KeyedPairs {
     rows: Vec<(Value, Value)>,
+    pub revision: u64,
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
 }
 
@@ -565,6 +572,7 @@ impl KeyedPairs {
     pub fn insert_proven_absent(&mut self, key: Value, keytext: String, value: Value) {
         self.settle_lookup();
         let at = self.rows.len();
+        self.revision = next_map_revision();
         self.rows.push((key, value));
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
     }
@@ -572,7 +580,7 @@ impl KeyedPairs {
 
 impl From<Vec<(Value, Value)>> for KeyedPairs {
     fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
-        KeyedPairs { rows, lookup: RefCell::new(None) }
+        KeyedPairs { rows, revision: next_map_revision(), lookup: RefCell::new(None) }
     }
 }
 
@@ -581,7 +589,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), lookup: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, lookup: RefCell::new(None) }
     }
 }
 
@@ -598,6 +606,7 @@ impl std::ops::Deref for KeyedPairs {
 
 impl std::ops::DerefMut for KeyedPairs {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         &mut self.rows
     }

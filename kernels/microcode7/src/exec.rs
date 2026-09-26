@@ -174,7 +174,7 @@ pub struct Suspension {
     /// The cell of the map the members were taken from, and how many
     /// pairs it held then, so a step may notice the map has grown or
     /// shrunk under the walk.
-    overseen: Option<(Rc<RefCell<Value>>, usize)>,
+    overseen: Option<(Rc<RefCell<Value>>, (usize, u64))>,
     /// The routine the body belongs to, where the walk is a routine's
     /// body and not a row of members already in hand. A step back into
     /// it stands inside that routine, so it is named while the step
@@ -2766,11 +2766,11 @@ impl<'a> Machine<'a> {
     }
 
     /// How many pairs the map in a cell holds now.
-    fn dict_extent(cell: &Rc<RefCell<Value>>) -> usize {
+    fn dict_extent(cell: &Rc<RefCell<Value>>) -> (usize, u64) {
         match &*cell.borrow() {
-            Value::Dict(entries) => entries.len(),
+            Value::Dict(entries) => (entries.len(), entries.serial),
             Value::Mutable(deeper, _) | Value::Shared(deeper) => Self::dict_extent(deeper),
-            _ => 0,
+            _ => (0, 0),
         }
     }
 
@@ -3042,9 +3042,12 @@ impl<'a> Machine<'a> {
         if state.ready.is_some() { return Ok(state.ready.take()); }
         // A map that changed size under the walk stops the step.
         if let (Some(_), Some((cell, size))) = (&state.members, &state.overseen) {
-            if Self::dict_extent(cell) != *size {
+            let current = Self::dict_extent(cell);
+            if current != *size {
+                let which = usize::from(current.0 == size.0);
+                let complaint = self.table.strings("ext.builtin.core.dict.changed")[which].clone();
                 state.ended = true;
-                return Err(format!("\0{}", self.table.single("ext.syntax.map.resized").unwrap_or_default()).into());
+                return Err(format!("\0{complaint}").into());
             }
         }
         if let Some(members) = &mut state.members {
@@ -8716,7 +8719,17 @@ impl<'a> Machine<'a> {
         let mut stopped = None;
         if let Some(source) = arguments.first() {
             match source.settled() {
-                Value::Dict(d) => { for (key, value) in d.iter() { self.map_enter(&mut entries, key.clone(), value.clone())?; } }
+                Value::Dict(d) => {
+                    let cell = Self::dict_cell(source);
+                    let initial = cell.as_ref().map(Self::dict_extent);
+                    for (key, value) in d.iter() {
+                        self.map_enter(&mut entries, key.clone(), value.clone())?;
+                        if cell.as_ref().map(Self::dict_extent) != initial {
+                            self.replace_dict(receiver, entries)?;
+                            return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[2]));
+                        }
+                    }
+                }
                 other => {
                     let says = |kind: &str| self.method_fault(kind);
                     for item in crate::members::gather(&other, &says)? {
@@ -8729,7 +8742,15 @@ impl<'a> Machine<'a> {
             }
         }
         if stopped.is_none() { for (key, value) in keywords { self.map_enter(&mut entries, Value::text(key), value.clone())?; } }
+        let previous_turn = (entries.len() == store.len()).then_some(store.serial);
         self.replace_dict(receiver, entries)?;
+        if let (Some(serial), Some(owner)) = (previous_turn, Self::dict_cell(receiver)) {
+            let mut held = owner.borrow_mut();
+            match &mut *held {
+                Value::Dict(current) => Rc::make_mut(current).serial = serial,
+                _ => unreachable!("dictionary receiver"),
+            }
+        }
         match stopped { Some(words) => Err(words), None => Ok(Value::Nil) }
     }
 
@@ -8903,6 +8924,22 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if !matches!(subject, Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Set(_)) {
+            return self.object_words_inner(subject, quoted);
+        }
+        let ceiling = self.table.count("ext.system.recursion.limit");
+        if ceiling.is_some_and(|limit| self.standing >= limit) {
+            if let Some(told) = self.table.single("ext.system.recursion.exceeded") {
+                return Err(format!("\0{told}"));
+            }
+        }
+        self.standing += 1;
+        let text = self.object_words_inner(subject, quoted);
+        self.standing -= 1;
+        text
+    }
+
+    fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
         let celled = match subject {
             Value::Mutable(place, represented) => Some((place.clone(), *represented)),
             Value::Shared(place) => Some((place.clone(), false)),
@@ -9766,8 +9803,13 @@ impl<'a> Machine<'a> {
         for (key, value) in one.iter() {
             let (found, _) = self.map_locate(other, Some(other), key)?;
             match found {
-                Some(index) if self.equal_contents(value, &other[index].1) => {}
-                _ => return Ok(false),
+                None => return Ok(false),
+                Some(index) => {
+                    let rhs = &other[index].1;
+                    if value.one_place(rhs) { continue; }
+                    let verdict = self.prim(Prim::Eq, "", &[value.clone(), rhs.clone()])?;
+                    if !self.object_truth(&verdict)? { return Ok(false); }
+                }
             }
         }
         Ok(true)
@@ -15821,7 +15863,11 @@ impl Machine<'_> {
                     return Ok(item);
                 }
                 IteratorKind::Watching { window, at, size } => {
-                    if Self::window_extent(window) != *size { return Err(self.core_complaint("core.dict.changed", "")); }
+                    let current = Self::window_extent(window);
+                    if current != *size {
+                        let index = if current.0 == size.0 { 1 } else { 0 };
+                        return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[index]));
+                    }
                     let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
                     if item.is_some() { *at += 1; }
                     held.done = item.is_none();
@@ -15847,7 +15893,11 @@ impl Machine<'_> {
                     Ok(item)
                 }
                 IteratorKind::Watching { window, at, size } => {
-                    if Self::window_extent(window) != *size { return Err(self.core_complaint("core.dict.changed", "")); }
+                    let current = Self::window_extent(window);
+                    if current != *size {
+                        let index = if current.0 == size.0 { 1 } else { 0 };
+                        return Err(format!("\0{}", self.table.strings("ext.builtin.core.dict.changed")[index]));
+                    }
                     let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
                     if item.is_some() { *at += 1; }
                     Ok(item)
@@ -15973,8 +16023,8 @@ impl Machine<'_> {
     }
 
     /// How many entries the dictionary behind a window holds.
-    fn window_extent(window: &Value) -> usize {
-        match window { Value::Window(owner, _) => match owner.settled() { Value::Dict(entries) => entries.len(), _ => 0 }, _ => 0 }
+    fn window_extent(window: &Value) -> (usize, u64) {
+        match window { Value::Window(owner, _) => match owner.settled() { Value::Dict(entries) => (entries.len(), entries.serial), _ => (0, 0) }, _ => (0, 0) }
     }
 
     /// The cell a list lives in, or a window upon a dictionary, taken as
@@ -16107,6 +16157,12 @@ impl Machine<'_> {
         if keywords.is_empty() {
             if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }
             if op == Prim::Belongs && matches!(input.get(1), Some(Value::OctetKind { .. })) { return self.octet_routine(16, &input); }
+            if op == Prim::Quoted && input.len() == 1 {
+                if let Value::Dict(_) = &input[0] {
+                    let words = self.object_words(&input[0], true)?;
+                    return Ok(Value::text(&words));
+                }
+            }
             if op == Prim::Quoted && matches!(input.first(), Some(Value::Text(_))) { return crate::text::apply(self.table, crate::text::Work::REPR, name, &input, self.wording()); }
             if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
