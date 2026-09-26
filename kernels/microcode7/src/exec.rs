@@ -203,6 +203,7 @@ impl Suspension {
 pub struct Machine<'a> {
     active_trace: Option<Rc<Thing>>,
     pub library_sources: HashMap<String, String>,
+    pub library_directory: Option<std::path::PathBuf>,
     imported: HashMap<String, Value>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
@@ -997,6 +998,7 @@ impl<'a> Machine<'a> {
         Machine {
             fault_kinds,
             library_sources: HashMap::new(),
+            library_directory: None,
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
             within_spare: false,
@@ -15584,23 +15586,19 @@ impl Machine<'_> {
         None
     }
 
-    /// Where a library module's own text lives on disk, if this run
-    /// carries the library there to be found: the plain file first, and
-    /// a package's own file failing that. Nothing here reads the file
-    /// again; the text the module runs from was read in once already,
-    /// when the library was gathered into the program. The place named
-    /// is always the one on the machine that built this binary --
-    /// `CARGO_MANIFEST_DIR` is written in at compile time, not read
-    /// from the working directory a later run happens to stand in --
-    /// since that is the only machine the library's own text in
-    /// `langs/` is promised to still be sitting at.
+    /// An explicit directory from the host replaces the build-time location.
+    /// Both ordinary modules and package initializers still need a real file.
     fn library_module_file(&self, path: &str) -> Option<String> {
-        const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
-        let stem = path.replace('.', "/");
-        let flat = format!("{ROOT}/{stem}.py");
-        if std::path::Path::new(&flat).is_file() { return Some(made_absolute(&flat)); }
-        let package = format!("{ROOT}/{stem}/__init__.py");
-        if std::path::Path::new(&package).is_file() { return Some(made_absolute(&package)); }
+        let directory = self.library_directory.as_deref().unwrap_or_else(|| {
+            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules"))
+        });
+        let name = path.replace('.', "/");
+        for relative in [format!("{name}.py"), format!("{name}/__init__.py")] {
+            let candidate = directory.join(relative);
+            if candidate.is_file() {
+                return Some(made_absolute(&candidate.to_string_lossy()));
+            }
+        }
         None
     }
 
