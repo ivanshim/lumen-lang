@@ -186,7 +186,7 @@ ext.op.tuple.unready:L ext.lexical.string.prefix.bytes.unready:L ext.lexical.str
 ext.stmt.assign.chain:B ext.lexical.escape.deferred:L ext.builtin.complex:L ext.builtin.complex.real:L \
 ext.builtin.complex.imag:L ext.builtin.method.conjugate:L ext.builtin.complex.invalid:L ext.builtin.complex.integer:L \
 ext.builtin.complex.order:L ext.builtin.complex.floor:L ext.builtin.complex.zero:L ext.builtin.complex.power.zero:L \
-ext.builtin.complex.unready:L ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L \
+ext.builtin.complex.power.overflow:L ext.builtin.complex.power.modulo:L ext.builtin.complex.integer.overflow:L ext.builtin.complex.unready:L ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L \
 ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.map.short:L ext.builtin.map.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L \
 ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B \
 ext.stmt.class.index.amiss:L ext.stmt.class.binary.amiss:L ext.stmt.class.format.amiss:L ext.stmt.class.metaclass:L \

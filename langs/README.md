@@ -71,10 +71,10 @@ starred subscript, after the entire subscript has been read.
   `ext.builtin.complex.real` and `ext.builtin.complex.imag` name the two
   read-only parts; `ext.builtin.method.conjugate` names the method which
   turns the imaginary sign about. Arithmetic admits whole, real and complex
-  operands; powers admit real and complex exponents. Powers beyond
-  the finite range, nonfinite powers other than real zero or one, and
-  nonfinite multiplication or division between complex
-  operands still say the unready words. The ordinary real writer supplies
+  operands; powers admit real and complex exponents. Multiplication and
+  division recover infinities and signed zeros when intermediate products
+  lose them. Small integer powers retain the signs of zero components.
+  The ordinary real writer supplies
   the figures, preserving signed noughts and nonfinite parts.
 - `ext.builtin.complex.invalid`,
   `ext.builtin.complex.integer`, `ext.builtin.complex.zero`,
@@ -84,10 +84,15 @@ starred subscript, after the entire subscript has been read.
   still owed. Each is a list holding one message. Wrong constructor
   arguments borrow `ext.builtin.core.arity`; wrong method arguments borrow
   `ext.builtin.method.error.arguments`.
+- `ext.builtin.complex.power.overflow`, `ext.builtin.complex.power.modulo`
+  and `ext.builtin.complex.integer.overflow` name the complaints for a
+  power outside the finite range, a third non-null power argument, and
+  an integer too large to convert to a complex component.
 - `ext.builtin.complex.order` holds four pieces surrounding the sign and
   the two operand kinds in an ordering complaint. `ext.builtin.complex.floor`
-  holds three pieces surrounding the kinds for floor division, remainder
-  and divmod. Neither operation is reckoned for complex operands.
+  retains the three-piece floor-division complaint. Floor division,
+  remainder and divmod refuse complex operands using the shared binary
+  complaint, which includes the actual operation requested.
 
 ## Format rules
 
@@ -1552,7 +1557,9 @@ only. The extension labels so far, all from PHP:
   specification and showing as its text; rounding, asked with the
   places if any were given; complex conversion, which must answer a
   complex; and the directory, whose answer the dir builtin sorts. An
-  absent list leaves ordinary operations as they stood.
+  absent list leaves ordinary operations as they stood. The trailing entries
+  name instance and subclass checks, an iterator length hint, and the
+  reconstruction arguments returned by a complex value as two real parts.
   `ext.stmt.class.special.amiss` gives the words for a method answering
   with a value of the wrong kind. An object with neither text method is
   shown as `<C object>`, where C is its class name.
@@ -4256,8 +4263,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complex.floor` | - | - | `TypeError: unsupported operand type(s) for //: '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.imag` | - | - | `imag` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.integer` | - | - | `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'complex'` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.integer.overflow` | - | - | `OverflowError: int too large to convert to float` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.invalid` | - | - | `ValueError: complex() arg is a malformed string` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.order` | - | - | `TypeError: '` `' not supported between instances of '` `' and '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.power.modulo` | - | - | `ValueError: complex modulo` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.power.overflow` | - | - | `OverflowError: complex exponentiation` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.power.zero` | - | - | `ZeroDivisionError: 0.0 to a negative or complex power` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.real` | - | - | `real` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.unready` | - | - | `NotImplementedError: this complex operation is not supported` | - | - | - | - | - | - | - |
@@ -5028,7 +5038,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` `__getnewargs__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |

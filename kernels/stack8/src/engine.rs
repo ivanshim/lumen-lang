@@ -4609,6 +4609,7 @@ impl<'a> Engine<'a> {
             // Every value is written to a specification, the writer
             // having marks of its own for each kind or words against
             // the kinds that take none.
+            74 | 79 => matches!(family, Kindred::Complex),
             72 => true,
             // A walk answers a guess at how many members it has left,
             // where the reference keeps one for a walk of its kind.
@@ -4686,6 +4687,16 @@ impl<'a> Engine<'a> {
         };
         if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
         let family = Self::native_family(receiver).ok_or_else(|| self.special_fault())?;
+        if family == Kindred::Complex {
+            if place == 74 { return Ok(receiver.contents()); }
+            if place == 79 {
+                let (r,i) = crate::complex::parts(&receiver.contents()).expect("complex receiver");
+                return Ok(Value::Tuple(Rc::new(vec![crate::complex::real(r), crate::complex::real(i)])));
+            }
+            if (4..=7).contains(&place) {
+                return Ok(Value::Declined(Rc::from(self.lang.special_declined.first().map_or("", String::as_str))));
+            }
+        }
         // A working handed a value of a kind it cannot take turns that
         // value down, leaving the other side of the pair to answer.
         if wanted == 1 && Self::family_turns_down(family, place) && !Self::family_takes(family, Self::native_family(&args[0])) {
@@ -5821,7 +5832,10 @@ impl<'a> Engine<'a> {
                 match self.special_call(&args[0], 74, Vec::new())? {
                     Some(answer @ Value::Complex(_)) => answer,
                     Some(_) => return Err(self.special_fault()),
-                    None => return Ok(None),
+                    None => match Self::worth_of(&args[0]).filter(|v| matches!(v, Value::Complex(_))) {
+                        Some(value) => value,
+                        None => return Ok(None),
+                    },
                 }
             }
             Builtin::Format if matches!(args.first(), Some(Value::Object(_))) && args.len() <= 2 => {
@@ -6418,6 +6432,7 @@ impl<'a> Engine<'a> {
                     self.data.push(answer);
                     return Ok(());
                 }
+                let v = Self::worth_of(&v).filter(|n| matches!(n, Value::Complex(_))).unwrap_or(v);
                 match v {
                     Value::Imaginary(_, words) => return Err(words.to_string().into()),
                     Value::Flag(flag) => Value::Small(i64::from(flag)),
@@ -15202,7 +15217,7 @@ impl Engine<'_> {
             }
             Builtin::Divmod => {
                 arity(2, 2)?;
-                if args.iter().any(|v| matches!(v, Value::Complex(_))) { return Err(crate::complex::floor_fault(self.lang, &args[0], &args[1])); }
+                if args.iter().any(|v| matches!(v, Value::Complex(_))) { return Err(crate::complex::floor_fault(self.lang, &args[0], &args[1], "divmod()")); }
                 let (a,z) = (number(&args[0]), number(&args[1]));
                 if matches!(a, Value::Small(_) | Value::Huge(_)) && matches!(z, Value::Small(_) | Value::Huge(_)) {
                     let divisor = z.as_big()?;
@@ -15227,7 +15242,7 @@ impl Engine<'_> {
             Builtin::Power => {
                 arity(2, 3)?;
                 if args.iter().any(|v| matches!(v, Value::Complex(_))) {
-                    if args.len() != 2 { return Err(crate::complex::fault(self.lang, "unready")); }
+                    if args.len() == 3 && !matches!(args[2], Value::Null) { return Err(crate::complex::fault(self.lang, "power.modulo")); }
                     return crate::complex::work(self.lang, &Action::Power, &args[0], &args[1]);
                 }
                 if args.len() == 3 && !matches!(args[2], Value::Null) {

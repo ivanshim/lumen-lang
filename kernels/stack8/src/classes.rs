@@ -942,6 +942,9 @@ impl<'a> Engine<'a> {
                     if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }
                 }
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|!matches!(v.contents(),Value::Set(_))) {
+                    if matches!(worth.contents(), Value::Complex(_)) && self.native_special(&worth, name) {
+                        return Ok(Value::ValueMethod(Rc::new((worth, name.to_string()))));
+                    }
                     if let Some(op)=self.lang.value_methods.get(name).cloned() {
                         // The parts of a complex number are read rather
                         // than called, as they are on the number itself.
