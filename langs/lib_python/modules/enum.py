@@ -1,5 +1,4 @@
-# Members are made once, so aliases and value lookup retain identity.
-# Stub: mixed-in types, flags and custom member constructors are not carried.
+# Enumeration members retain identity, including aliases and value lookup.
 class auto:
     pass
 
@@ -13,32 +12,46 @@ class _Member:
         return self.owner.__name__ + '.' + self.name
 
     def __repr__(self):
-        return '<' + self.owner.__name__ + '.' + self.name + ': ' + ('%r' % (self.value,)) + '>'
+        return '<' + self.owner.__name__ + '.' + self.name + ': ' + repr(self.value) + '>'
 
     def __eq__(self, other):
         return self is other
 
 class Enum:
     def __init_subclass__(cls, **options):
-        attributes = vars(cls)
         members = []
         next_value = 1
-        for name in list(attributes):
-            if name[:1] != '_' and not callable(attributes[name]):
-                value = attributes[name]
-                if isinstance(value, auto):
-                    value = next_value
-                if type(value) == type(0) and (len(members) == 0 or value >= next_value):
-                    next_value = value + 1
-                member = None
-                for held in members:
-                    if held.value == value:
-                        member = held
-                if member is None:
+        for name in list(vars(cls)):
+            if name[:1] == '_' or callable(getattr(cls, name)):
+                continue
+            value = getattr(cls, name)
+            if isinstance(value, auto):
+                value = name.lower() if issubclass(cls, str) else next_value
+            if type(value) == int and value >= next_value:
+                next_value = value + 1
+            member = None
+            for held in members:
+                if held.value == value:
+                    member = held
+                    break
+            if member is None:
+                if issubclass(cls, int):
+                    member = int.__new__(cls, value)
+                    member.name = name
+                    member.value = value
+                elif issubclass(cls, str):
+                    member = str.__new__(cls, value)
+                    member.name = name
+                    member.value = value
+                elif issubclass(cls, float):
+                    member = float.__new__(cls, value)
+                    member.name = name
+                    member.value = value
+                else:
                     member = _Member(cls, name, value)
-                    members.append(member)
-                setattr(cls, name, member)
-        setattr(cls, '_members', members)
+                members.append(member)
+            setattr(cls, name, member)
+        cls._members = members
 
     def __class_call__(cls, value):
         for member in cls._members:
@@ -49,7 +62,31 @@ class Enum:
     def __class_iter__(cls):
         return cls._members
 
-# Stub: integer arithmetic on members awaits numeric object methods.
-class IntEnum(Enum):
-    def __init_subclass__(cls, **options):
-        raise 'NotImplementedError: integer enumeration arithmetic is not supported'
+    def __repr__(self):
+        return '<' + self.__class__.__name__ + '.' + self.name + ': ' + repr(self.value) + '>'
+
+class IntEnum(int, Enum):
+    def __neg__(self):
+        return 0 - self.value
+
+    def __pos__(self):
+        return self.value
+
+    def __abs__(self):
+        return abs(self.value)
+
+    def __invert__(self):
+        return ~self.value
+
+    def __str__(self):
+        return str(self.value)
+
+    def __repr__(self):
+        return '<' + self.__class__.__name__ + '.' + self.name + ': ' + repr(self.value) + '>'
+
+class StrEnum(str, Enum):
+    def __str__(self):
+        return str(self.value)
+
+    def __repr__(self):
+        return '<' + self.__class__.__name__ + '.' + self.name + ': ' + repr(self.value) + '>'

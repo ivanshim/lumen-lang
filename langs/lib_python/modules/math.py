@@ -19,6 +19,8 @@ def sqrt(x):
     return __math('sqrt', x)
 
 def fabs(x):
+    _check_real(x)
+    x = float(x)
     if x == 0:
         return __math('fdiv', 0.0, 1.0)
     if x < 0:
@@ -35,11 +37,16 @@ def _check_real(x):
 def _answers_own(x, name):
     if type(x) == type(1) or type(x) == type(1.0) or type(x) == type(True):
         return False
-    return hasattr(x, name)
+    return hasattr(type(x), name)
 
 def floor(x):
     if _answers_own(x, '__floor__'):
-        return x.__floor__()
+        answer = x.__floor__()
+        if type(answer) != type(1) and type(answer) != type(True):
+            raise 'TypeError: __floor__ returned non-Integral (type ' + type(answer).__name__ + ')'
+        return answer
+    _check_real(x)
+    x = float(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer floor'
     n = int(x)
@@ -49,7 +56,12 @@ def floor(x):
 
 def ceil(x):
     if _answers_own(x, '__ceil__'):
-        return x.__ceil__()
+        answer = x.__ceil__()
+        if type(answer) != type(1) and type(answer) != type(True):
+            raise 'TypeError: __ceil__ returned non-Integral (type ' + type(answer).__name__ + ')'
+        return answer
+    _check_real(x)
+    x = float(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer ceiling'
     n = int(x)
@@ -59,7 +71,12 @@ def ceil(x):
 
 def trunc(x):
     if _answers_own(x, '__trunc__'):
-        return x.__trunc__()
+        answer = x.__trunc__()
+        if type(answer) != type(1) and type(answer) != type(True):
+            raise 'TypeError: __trunc__ returned non-Integral (type ' + type(answer).__name__ + ')'
+        return answer
+    _check_real(x)
+    x = float(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer truncation'
     return int(x)
@@ -107,7 +124,7 @@ def _int_frexp(n):
     # the language's own exact ratio, never of a working handed the
     # whole number outright, since that would carry it to the width by
     # itself first and overflow there before the ratio was ever taken.
-    e = n.bit_length() - 1
+    e = n.bit_length()
     return n / (1 << e), e
 
 def _log_int(xi, working, per_bit):
@@ -161,6 +178,12 @@ def isfinite(x):
     return not isnan(x) and not isinf(x)
 
 def isclose(a, b, rel_tol=0.000000001, abs_tol=0.0):
+    _check_real(a)
+    _check_real(b)
+    _check_real(rel_tol)
+    _check_real(abs_tol)
+    a, b = float(a), float(b)
+    rel_tol, abs_tol = float(rel_tol), float(abs_tol)
     if rel_tol < 0 or abs_tol < 0:
         raise 'ValueError: tolerances must be non-negative'
     if a == b:
@@ -168,7 +191,11 @@ def isclose(a, b, rel_tol=0.000000001, abs_tol=0.0):
     if isinf(a) or isinf(b):
         return False
     difference = fabs(a - b)
-    return difference <= abs_tol or difference <= rel_tol * fabs(a) or difference <= rel_tol * fabs(b)
+    scale = fabs(a)
+    other = fabs(b)
+    if other > scale:
+        scale = other
+    return difference <= abs_tol or difference <= rel_tol * scale
 
 def copysign(x, y):
     _check_real(x)
@@ -282,6 +309,8 @@ def fsum(values):
         raise 'OverflowError: intermediate overflow in fsum'
     return __math('fdiv', high, 1.0)
 
+isclose = staticmethod(isclose)
+
 def prod(values, *, start=1):
     for x in values:
         start *= x
@@ -332,13 +361,51 @@ def isqrt(n):
     return low
 
 def hypot(*coordinates):
-    result = 0.0
-    for value in coordinates:
-        result = __math('hypot', result, value)
-    return result
+    import decimal
+    squares = decimal.Decimal(0)
+    saw_inf = False
+    saw_nan = False
+    for coordinate in coordinates:
+        _check_real(coordinate)
+        if type(coordinate).__name__ == 'Decimal':
+            exact = decimal.Decimal(coordinate)
+            value = None
+        elif type(coordinate).__name__ == 'Fraction':
+            exact = decimal.Decimal(float(coordinate))
+            value = None
+        else:
+            value = float(coordinate)
+            exact = decimal.Decimal(value)
+        if value is not None and isinf(value):
+            saw_inf = True
+            continue
+        if value is not None and isnan(value):
+            saw_nan = True
+            continue
+        squares += exact * exact
+    if saw_inf:
+        return inf
+    if saw_nan:
+        return nan
+    if squares == 0:
+        return 0.0
+    return float(squares.sqrt())
+
+def _point_items(point):
+    items = []
+    if type(point).__name__ in ('generator', 'list_iterator', 'tuple_iterator'):
+        iterator = point
+    else:
+        iterator = iter(point)
+    while True:
+        try:
+            value = next(iterator)
+        except StopIteration:
+            return items
+        items.append(value)
 
 def dist(p, q):
-    p, q = list(p), list(q)
+    p, q = _point_items(p), _point_items(q)
     if len(p) != len(q):
         raise 'ValueError: both points must have the same number of dimensions'
     return hypot(*[p[i] - q[i] for i in range(len(p))])
@@ -435,7 +502,38 @@ def erfc(x):
 
 def gamma(x):
     _check_real(x)
-    raise 'NotImplementedError: gamma is not supported'
+    if not isfinite(x):
+        raise 'ValueError: math domain error'
+    if x <= 0 and x == int(x):
+        raise 'ValueError: math domain error'
+    if x == int(x):
+        return float(factorial(int(x) - 1))
+    if x * 2 == int(x * 2):
+        if x > 0.5:
+            result = __math('sqrt', pi)
+            step = 0.5
+            while step < x - 0.5:
+                result *= step
+                step += 1
+            return result
+        result = __math('sqrt', pi)
+        step = -0.5
+        while step >= x:
+            result /= step
+            step -= 1
+        return result
+    coefficients = [676.5203681218851, -1259.1392167224028,
+                    771.32342877765313, -176.61502916214059,
+                    12.507343278686905, -0.13857109526572012,
+                    0.000009984369578019572, 0.00000015056327351493116]
+    if x < 0.5:
+        return pi / (__math('sin', pi * x) * gamma(1 - x))
+    z = x - 1
+    acc = 0.99999999999980993
+    for i in range(len(coefficients)):
+        acc += coefficients[i] / (z + i + 1)
+    t = z + 7.5
+    return __math('sqrt', 2 * pi) * __math('pow', t, z + 0.5) * __math('exp', -t) * acc
 
 def lgamma(x):
     _check_real(x)
@@ -485,10 +583,39 @@ def fmod(x, y):
     return __math('fmod', x, y)
 
 def modf(x):
-    raise 'NotImplementedError: modf needs tuple values'
+    _check_real(x)
+    x = float(x)
+    if isnan(x):
+        return (nan, nan)
+    if isinf(x):
+        return (copysign(0.0, x), x)
+    if x == 0:
+        return (x, x)
+    whole = trunc(x)
+    fraction = x - whole
+    return (fraction, __math('fdiv', whole, 1.0))
 
 def frexp(x):
-    raise 'NotImplementedError: frexp needs tuple values'
+    _check_real(x)
+    if _is_integral(x):
+        n = int(x)
+        if n == 0:
+            return (__math('fdiv', 0.0, 1.0), 0)
+        mantissa, exponent = _int_frexp(-n if n < 0 else n)
+        return (-mantissa if n < 0 else mantissa, exponent)
+    x = float(x)
+    if x == 0 or not isfinite(x):
+        return (__math('fdiv', x, 1.0), 0)
+    sign = -1 if x < 0 else 1
+    value = fabs(x)
+    exponent = 0
+    while value >= 1:
+        value = __math('fdiv', value, 2.0)
+        exponent += 1
+    while value < 0.5:
+        value *= 2.0
+        exponent -= 1
+    return (sign * value, exponent)
 
 def ldexp(x, i):
     if type(i) != type(1) and type(i) != type(True):
