@@ -5426,7 +5426,13 @@ impl<'a> Builder<'a> {
                 b.pos = keyword_at;
                 return Err(String::from("SyntaxError: cannot assign to lambda"));
             }
-            steps.push(body);
+            // A lambda gives its expression back exactly as `return
+            // expr` would: falling off a generator's body with the
+            // value merely computed, and not handed back through the
+            // same escape a `return` statement takes, would lose it
+            // (a lambda generator's exhaustion then answers `None`
+            // where the expression's own value belongs).
+            steps.push(prim_call(Prim::Yield, vec![body]));
             Ok(sequence(steps))
         })?;
         self.outside_lambda = prior;
