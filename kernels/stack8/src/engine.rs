@@ -377,7 +377,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -386,6 +386,7 @@ impl<'a> Engine<'a> {
             // The exit class ends the run when nobody takes it. The two
             // group classes gather exceptions: the ordinary one takes
             // ordinary faults alone, and stands upon them as well.
+            if at == 19 { fields.push(("\0import-error".into(), Value::Flag(true))); }
             if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
             if at == 37 || at == 38 { fields.push(("\0group".into(), Value::Flag(at == 38))); }
             if at == 38 { if let Some(ordinary) = classes.get(1) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
@@ -398,7 +399,7 @@ impl<'a> Engine<'a> {
             classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()),
             }));
         }
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
@@ -491,6 +492,20 @@ impl<'a> Engine<'a> {
             }
             let names = self.lang.syntax_members.iter().map(|n| Value::text(n)).collect();
             fields.push(("\0syntax-fields".into(), Value::Tuple(Rc::new(names))));
+        }
+        if self.stands_on(&class, 36) { fields.push(("_metadata".into(), Value::Null)); }
+        if self.stands_on(&class, 19) {
+            fields.push(("msg".into(), if args.len() == 1 { args[0].clone() } else { Value::Null }));
+            for name in ["path", "name_from"] { fields.push((name.into(), Value::Null)); }
+        }
+        if self.stands_on(&class, 17) {
+            let code = match args.as_slice() { [] => Value::Null, [one] => one.clone(), _ => Value::Tuple(Rc::new(args.clone())) };
+            fields.push(("code".into(), code));
+        }
+        let mut args = args;
+        if self.stands_on(&class, 20) {
+            fields.push(("filename2".into(), args.get(4).cloned().unwrap_or(Value::Null)));
+            if (3..=5).contains(&args.len()) && !matches!(args[2], Value::Null) { args.truncate(2); }
         }
         let args = Value::Tuple(Rc::new(args));
         fields.push(("\0arguments".into(), args.clone()));
@@ -586,7 +601,16 @@ impl<'a> Engine<'a> {
     /// only names a call may give are those of an absent name and the
     /// object it was sought on.
     fn exception_new(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
-        let unready = self.lang.exception_unready.clone().unwrap_or_default();
+        if let Some(init) = self.lang.constructor.as_deref().and_then(|key| self.class_value(&class, key)) {
+            let positional = self.call_items(given.clone())?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
+            let made = self.exception_instance(class, positional, Value::Null);
+            let mut supplied = vec![made.clone()];
+            supplied.extend(given);
+            self.class_apply(init, supplied)?;
+            return Ok(made);
+        }
+        let class_name = class.name.clone();
+        let import = self.stands_on(&class, 19);
         let mut args = Vec::new();
         let mut named = Vec::new();
         for (key, value) in self.call_items(given)? {
@@ -607,10 +631,10 @@ impl<'a> Engine<'a> {
             let mut fields = object.fields.borrow_mut();
             self.install_syntax_details(&mut fields, &syntax);
             for (key, value) in named {
-                let allowed = [&self.lang.absent_name_member, &self.lang.absent_object_member].into_iter().flatten().any(|n| *n == key);
+                let allowed = [&self.lang.absent_name_member, &self.lang.absent_object_member].into_iter().flatten().any(|n| *n == key) || (import && ["path", "name_from"].contains(&key.as_str()));
                 match fields.iter_mut().find(|(n, _)| *n == key) {
                     Some(place) if allowed => place.1 = value,
-                    _ => return Err(unready.into()),
+                    _ => return Err(format!("TypeError: {class_name}() got an unexpected keyword argument '{key}'").into()),
                 }
             }
         }
@@ -742,6 +766,15 @@ impl<'a> Engine<'a> {
     /// The methods an exception answers itself: adding a note, setting
     /// a traceback, and parting a group three ways.
     fn exception_method(&mut self, object: Rc<Instance>, name: &str, args: &[Value]) -> Flow<Value> {
+        if self.stands_on(&object.class, 19) && self.lang.constructor.as_deref() == Some(name) {
+            let Value::Object(fresh) = self.exception_instance(object.class.clone(), args.to_vec(), Value::Null) else { unreachable!() };
+            let mut fields = object.fields.borrow_mut();
+            for (key, value) in fresh.fields.borrow().iter().filter(|(k, _)| ["msg", "name", "path", "name_from", "\0arguments"].contains(&k.as_str()) || self.lang.exception_args.as_ref() == Some(k)) {
+                if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
+                else { fields.push((key.clone(), value.clone())); }
+            }
+            return Ok(Value::Null);
+        }
         if self.stands_on(&object.class, 36) && self.lang.constructor.as_deref() == Some(name) {
             let details = self.check_syntax_details(args)?;
             let Value::Object(fresh) = self.exception_instance(object.class.clone(), args.to_vec(), Value::Null) else { unreachable!() };
@@ -755,6 +788,21 @@ impl<'a> Engine<'a> {
             }
             return Ok(Value::Null);
         }
+        if self.lang.constructor.as_deref() == Some(name) {
+            if self.stands_on(&object.class, 20) {
+                let Value::Object(fresh) = self.exception_instance(object.class.clone(), args.to_vec(), Value::Null) else { unreachable!() };
+                let mut fields = object.fields.borrow_mut();
+                for (key, value) in fresh.fields.borrow().iter() {
+                    if self.lang.os_members.contains(key) || ["filename2", "\0shown", "\0arguments"].contains(&key.as_str()) || self.lang.exception_args.as_ref() == Some(key) {
+                        if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
+                        else { fields.push((key.clone(), value.clone())); }
+                    }
+                }
+                return Ok(Value::Null);
+            }
+            let key = self.lang.exception_args.clone().unwrap_or_default();
+            return self.class_write(Value::Object(object), &key, Some(Value::Tuple(Rc::new(args.to_vec()))), true);
+        }
         let unready = self.lang.exception_unready.clone().unwrap_or_default();
         if self.lang.note_method.as_deref() == Some(name) {
             let [Value::Text(_)] = args else { return Err(self.lang.note_invalid.clone().unwrap_or_default().into()) };
@@ -762,7 +810,7 @@ impl<'a> Engine<'a> {
             let mut fields = object.fields.borrow_mut();
             match fields.iter_mut().find(|(n, _)| *n == key) {
                 Some((_, Value::Array(row))) => Rc::make_mut(row).push(args[0].clone()),
-                Some(_) => return Err(unready.into()),
+                Some(_) => return Err("TypeError: __notes__ is not a list".into()),
                 None => fields.push((key, Value::array(args.to_vec()))),
             }
             return Ok(Value::Null);
@@ -1719,6 +1767,13 @@ impl<'a> Engine<'a> {
                 // way a name fault's own name is.
                 if self.lang.import_member_missing.first().map_or(false, |head| told.trim_start_matches('\0').starts_with(head.as_str())) {
                     if let Some(module) = self.absent_import(told) { filled.push((&self.lang.absent_name_member, Value::text(&module))); }
+                }
+                if self.stands_on(&object.class, 42) {
+                    if let [head, tail] = self.lang.import_missing.as_slice() {
+                        if let Some(module) = told.strip_prefix(head.as_str()).and_then(|s| s.strip_suffix(tail.as_str())) {
+                            filled.push((&self.lang.absent_name_member, Value::text(module)));
+                        }
+                    }
                 }
                 let mut fields = object.fields.borrow_mut();
                 for (key, held) in filled {
@@ -3121,7 +3176,7 @@ impl<'a> Engine<'a> {
                         _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
                     }
                 }
-                if takes { break; }
+                if takes && self.lang.exceptions.is_empty() { break; }
             }
             if !takes { continue; }
             self.under = None;
@@ -4495,6 +4550,11 @@ impl<'a> Engine<'a> {
             if let Some(view) = raw { return Ok(Some(Value::View(Rc::new((view.0.clone(), "mapping".to_string()))))); }
         }
         let held = value.contents();
+        if let Some(size) = self.integer_member(&held, name) { return Ok(Some(size)); }
+        if matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_))
+            && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) {
+            return Ok(Some(Value::ValueMethod(Rc::new((held, "integer_bytes".to_string())))));
+        }
         if matches!(held, Value::Object(_) | Value::Class(_)) { return Ok(None); }
         // A walk over a routine's own body answers whether it is on the
         // way through the machine at this very moment: exactly when the
@@ -4986,6 +5046,24 @@ impl<'a> Engine<'a> {
         }
         if let Value::Object(object) = value {
             if self.exception_class(&object.class) && self.special_value(value, if representation { 1 } else { 0 }).is_none() {
+                if !representation && (43..=45).any(|at| self.stands_on(&object.class, at)) {
+                    let field = |key: &str| object.fields.borrow().iter().find(|(n, _)| n == key).map(|(_, v)| v.clone());
+                    if field("object").is_none() { return Ok(String::new()); }
+                    let mut rendered = Vec::new();
+                    for key in ["encoding", "reason"] {
+                        if let Some(held) = field(key) { rendered.push((key, Value::text(&self.special_text(&held, false)?))); }
+                    }
+                    let source = field("object").unwrap_or(Value::Null).contents();
+                    let valid = if self.stands_on(&object.class, 44) { matches!(source, Value::Bytes(..)) }
+                        else { matches!(source, Value::Text(_) | Value::Codepoints(_)) };
+                    if !valid { return Err("TypeError: object attribute has an invalid type".into()); }
+                    let mut fields = object.fields.borrow().clone();
+                    for (key, text) in rendered {
+                        if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = text; }
+                    }
+                    let snapshot = Value::Object(Rc::new(Instance { class: object.class.clone(), fields: RefCell::new(fields), mark: object.mark }));
+                    return Ok(snapshot.display(&self.wording()));
+                }
                 let words = self.wording();
                 return Ok(if representation { value.repr(&words) } else { value.display(&words) });
             }
@@ -4998,7 +5076,10 @@ impl<'a> Engine<'a> {
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
             return match self.special_call(value, place, Vec::new())? {
                 Some(Value::Text(text)) => Ok(text.to_string()),
-                Some(_) => Err(self.special_fault()),
+                Some(v) => match Self::worth_of(&v) {
+                    Some(Value::Text(text)) => Ok(text.to_string()),
+                    _ => Err(self.special_fault()),
+                },
                 None => {
                     let module = self.class_word("main");
                     Ok(if module.is_empty() { format!("<{} object>", object.class.name) }
@@ -7271,7 +7352,7 @@ impl<'a> Engine<'a> {
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
                 let generator_running = matches!(&held, Value::Generator(_)) && self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref());
-                Value::Flag(kind_named || kind_maker || kind_doc || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || kind_named || kind_maker || kind_doc || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -7300,7 +7381,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 // An exception answers its own few methods itself.
-                Value::Object(o) if self.exception_class(&o.class) && (self.exception_method_named(name) || (self.stands_on(&o.class, 36) && self.lang.constructor.as_deref() == Some(name))) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
+                Value::Object(o) if self.exception_class(&o.class) && (self.exception_method_named(name) || ((self.stands_on(&o.class, 36) || self.stands_on(&o.class, 19)) && self.lang.constructor.as_deref() == Some(name))) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
                 subject if self.descriptor_of(&subject, name).is_some() => {
                     let d = self.descriptor_of(&subject, name).expect("the descriptor");
                     self.descriptor_read(&d, subject)?
@@ -7674,6 +7755,7 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 self.class_it_spells(top)
             } {
+                Value::Class(c) if self.exception_class(&c) => self.class_get(Value::Class(c), &name, false)?,
                 Value::Class(c) => match c.constant(&name) {
                     Some(v) => v.clone(),
                     None => match c.holder(&name) {
@@ -10773,9 +10855,25 @@ impl<'a> Engine<'a> {
         }
         if let Builtin::Bytes(task @ (14 | 15)) = builtin {
             let mut signed = false;
+            let mut supplied: Vec<bool> = vec![true; args.len()];
             for (key, value) in named {
-                if !Lang::spells(&self.lang.byte_words["ext.builtin.bytes.signed"], &key) { return Err(self.byte_fault("unready")); }
-                signed = self.truth(&value);
+                if Lang::spells(&self.lang.byte_words["ext.builtin.bytes.signed"], &key) { signed = self.truth(&value); continue; }
+                let slot = match key.as_str() {
+                    "length" if task == 14 => 1,
+                    "byteorder" => if task == 14 { 2 } else { 1 },
+                    "bytes" if task == 15 => 0,
+                    _ => return Err(self.byte_fault("arguments")),
+                };
+                if supplied.get(slot).copied().unwrap_or(false) { return Err(self.byte_fault("arguments")); }
+                args.resize(args.len().max(slot + 1), Value::Null);
+                supplied.resize(args.len(), false);
+                supplied[slot] = true;
+                args[slot] = value;
+            }
+            for (index, value) in args.iter_mut().enumerate() {
+                if !supplied[index] {
+                    *value = if task == 14 && index == 1 { Value::Small(1) } else { return Err(self.byte_fault("arguments")); };
+                }
             }
             return self.byte_work(task, &args, signed);
         }
@@ -10890,6 +10988,35 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "integer_size" {
+            if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            let unbound = matches!(receiver, Value::Native(..) | Value::Class(_));
+            if args.len() != usize::from(unbound) { return Err(self.lang.method_errors["arguments"].clone()); }
+            let subject = if unbound { &args[0] } else { receiver };
+            let held = Self::worth_of(subject).unwrap_or_else(|| subject.contents());
+            if !matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
+            let layout = &self.lang.class_details["integer.layout"];
+            let bits = held.as_big()?.bits().max(1);
+            let width: u64 = layout[5].parse().unwrap_or(30);
+            let base: u64 = layout[if matches!(subject, Value::Object(_)) { 6 } else { 3 }].parse().unwrap_or(24);
+            let digit: u64 = layout[4].parse().unwrap_or(4);
+            return Ok(Value::Small((base + bits.div_ceil(width) * digit) as i64));
+        }
+        if matches!(operation, "integer_bytes" | "integer_from_bytes") {
+            let mut items = Vec::new();
+            if operation == "integer_bytes" { items.push((None, receiver.contents())); }
+            items.extend(args.into_iter().map(|v| (None, v)));
+            items.extend(named.into_iter().map(|(n, v)| (Some(n), v)));
+            let result = self.builtin_call(Builtin::Bytes(if operation == "integer_bytes" { 14 } else { 15 }), "", items)?;
+            if let Value::Class(class) = receiver {
+                return match self.class_make(class.clone(), vec![result]) {
+                    Ok(v) => Ok(v),
+                    Err(Fault::Note(message)) => Err(message),
+                    Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+                };
+            }
+            return Ok(result);
+        }
         // A row lengthened where it lies, instead of copied out, added
         // to, and written back. It stands ahead of the reading below
         // because that reading would hold the row a second time, and a
@@ -12012,6 +12139,37 @@ impl<'a> Engine<'a> {
     }
 
     fn byte_work(&mut self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if task == 14 && !args.is_empty() && args.len() <= 3 {
+            let mut normalized = args.to_vec();
+            let mut changed = false;
+            if let Some(number) = Self::worth_of(&args[0]) { normalized[0] = number; changed = true; }
+            if let Some(length) = args.get(1) {
+                if matches!(length, Value::Object(_)) {
+                    normalized[1] = Value::of_big(self.slice_whole(length)?); changed = true;
+                }
+            }
+            if changed { return self.byte_work(task, &normalized, signed); }
+        }
+        if task == 15 && !args.is_empty() && args.len() <= 2
+            && !matches!(args[0], Value::Bytes(..) | Value::Array(_)) {
+            let source = &args[0];
+            let converted = if let Value::Object(object) = source {
+                if let Some(method) = self.class_value(&object.class, "__bytes__") {
+                    let result = match self.class_apply(method, vec![source.clone()]) {
+                        Ok(v) => v,
+                        Err(Fault::Note(message)) => return Err(message),
+                        Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                    };
+                    if !matches!(result, Value::Bytes(_, false, _)) { return Err(self.byte_fault("arguments")); }
+                    result
+                } else { Value::array(self.core_members(source)?) }
+            } else {
+                if matches!(source, Value::Text(_) | Value::Codepoints(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
+                Value::array(self.core_members(source)?)
+            };
+            let mut supplied = args.to_vec(); supplied[0] = converted;
+            return self.byte_work(task, &supplied, signed);
+        }
         if task <= 3 && !args.is_empty() && (task >= 2 || args.len() >= 2) {
             let decode = task == 3;
             let row = if decode { self.byte_row(&args[0], false)? } else { Vec::new() };
@@ -12117,13 +12275,15 @@ impl<'a> Engine<'a> {
             return self.byte_table(&pair(from)?, &pair(to)?);
         }
         if task == 14 || task == 15 {
-            if args.is_empty() || args.len() > if task == 14 { 3 } else { 2 } { return Err(unready()); }
-            let order = args.get(if task == 14 { 2 } else { 1 });
+            if args.is_empty() || args.len() > if task == 14 { 3 } else { 2 } { return Err(bad()); }
+            let order_value = args.get(if task == 14 { 2 } else { 1 }).map(|v| Self::worth_of(v).unwrap_or_else(|| v.contents()));
+            let order = order_value.as_ref();
             let little = match order {
                 None => false,
                 Some(Value::Text(word)) if word.as_ref() == self.lang.byte_words["ext.system.bytes.order"][0] => false,
                 Some(Value::Text(word)) if word.as_ref() == self.lang.byte_words["ext.system.bytes.order"][1] => true,
-                _ => return Err(self.byte_fault("bad_order")),
+                Some(Value::Text(_)) => return Err(self.byte_fault("bad_order")),
+                _ => return Err(bad()),
             };
             if task == 15 {
                 let row = self.byte_row(&args[0], true)?;
@@ -12138,7 +12298,11 @@ impl<'a> Engine<'a> {
             if !signed && number.is_negative() { return Err(self.byte_fault("unsigned")); }
             let width = match args.get(1) {
                 None => 1,
-                Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => n.as_big()?.to_usize().ok_or_else(bad)?,
+                Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                    let count = n.as_big()?;
+                    if count.is_negative() { return Err("ValueError: length argument must be non-negative".into()); }
+                    count.to_isize().map(|n| n as usize).ok_or_else(|| self.byte_fault("overflow"))?
+                },
                 _ => return Err(bad()),
             };
             let mut row = if signed { number.to_signed_bytes_le() } else { number.to_bytes_le().1 };
