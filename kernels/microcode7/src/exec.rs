@@ -9804,10 +9804,11 @@ impl<'a> Machine<'a> {
             (Prim::AsInt | Prim::AsReal | Prim::Magnitude | Prim::Positive | Prim::NumberAlone, [subject @ Value::Thing(_)]) => {
                 let index = match operation { Prim::AsInt => 38, Prim::AsReal => 39, Prim::Magnitude => 40, _ => 41 };
                 match self.ask_special(subject, index, &[])? {
-                    Some(answer) => {
-                        if index == 39 && !matches!(answer, Value::Frac(_)) { return Err(self.bad_answer()); }
-                        answer
+                    Some(answer) if index == 39 => {
+                        let real = Self::underlying(&answer).unwrap_or(answer).settled();
+                        if matches!(real, Value::Frac(_)) { real } else { return Err(self.bad_answer()); }
                     },
+                    Some(answer) => answer,
                     None if index == 41 => match Self::underlying(subject) {
                         Some(number @ Value::Complex(_)) => number,
                         _ => return Ok(None),

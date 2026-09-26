@@ -5914,10 +5914,12 @@ impl<'a> Engine<'a> {
                 let place = match op { Builtin::ToInt => 38, Builtin::AsReal => 39, _ => 40 };
                 match self.special_call(&args[0], place, Vec::new())? {
                     Some(answer) => {
-                        let valid = match op {
-                            Builtin::AsReal => matches!(answer, Value::Real(_) | Value::Frac(_)), _ => true,
-                        };
-                        if !valid { return Err(self.special_fault()); }
+                        let answer = if op == Builtin::AsReal {
+                            Self::worth_of(&answer).unwrap_or(answer).contents()
+                        } else { answer };
+                        if op == Builtin::AsReal && !matches!(answer, Value::Real(_) | Value::Frac(_)) {
+                            return Err(self.special_fault());
+                        }
                         answer
                     }
                     None => return Ok(None),
