@@ -191,6 +191,13 @@ pub enum IteratorKind {
     Busy,
 }
 
+#[derive(Debug)]
+pub struct TraceLink {
+    pub location: u32,
+    pub activation: Rc<Thing>,
+    pub following: Value,
+}
+
 #[derive(Clone)]
 pub enum Value {
     Unpaired(Rc<[u32]>),
@@ -200,7 +207,7 @@ pub enum Value {
     Row(Rc<Vec<Value>>),
     Intrinsic(Prim, Rc<str>),
     Iterator(Rc<RefCell<IteratorState>>),
-    Backtrace(Rc<str>),
+    Backtrace(Rc<TraceLink>),
     Keyed(Rc<Value>, Rc<Value>),
     Attributes(Rc<Thing>),
     Traversal(Rc<Value>, Rc<RefCell<Option<Value>>>),
@@ -785,6 +792,25 @@ impl Value {
         let row = self.arguments_held()?;
         let Value::Thing(thing) = self else { return None };
         if let Some(told) = Self::unicode_fault_text(thing, words) { return Some(told); }
+        let syntax = {
+            let members = thing.holds.borrow();
+            members.iter().find_map(|(key, value)| if key == "\0syntax-layout" { Some(value.clone()) } else { None })
+        };
+        if let Some(Value::Tuple(keys)) = syntax {
+            let members = thing.holds.borrow();
+            let read = |index: usize| -> Value {
+                if let Some(Value::Text(key)) = keys.get(index) {
+                    if let Some((_, value)) = members.iter().find(|(name, _)| name == key.as_ref()) { return value.clone(); }
+                }
+                Value::Nil
+            };
+            let message = read(0).render(words);
+            let filename = match read(1) { Value::Text(path) => Some(path.rsplit('/').next().unwrap_or("").to_owned()), _ => None };
+            let lineno = if let Value::Small(n) = read(2) { Some(n) } else { None };
+            return Some(if let Some(file) = filename {
+                if let Some(n) = lineno { format!("{message} ({file}, line {n})") } else { format!("{message} ({file})") }
+            } else if let Some(n) = lineno { format!("{message} (line {n})") } else { message });
+        }
         // A gatherer, or a system fault with its number, was given the
         // words to show itself with when it was made.
         if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }
@@ -990,6 +1016,7 @@ impl Value {
             // when they carry the same name.
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
+            (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
@@ -1019,6 +1046,7 @@ impl Value {
             (Value::Huge(x), Value::Huge(y)) => Rc::ptr_eq(x, y),
             (Value::Vector(x), Value::Vector(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
             (Value::Dict(x), Value::Dict(y)) => Rc::ptr_eq(x, y),
+            (Value::Backtrace(x), Value::Backtrace(y)) => Rc::ptr_eq(x, y),
             (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Nil, Value::Nil) => true,
@@ -1275,7 +1303,7 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Generator(_) => "<generator>".into(),
             Value::Adorned(_) => String::from("<descriptor>"),
-            Value::Backtrace(words) => words.to_string(),
+            Value::Backtrace(_) => String::from("<traceback object>"),
             Value::Keyed(value, _) => value.bare(),
             Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
             Value::Refusal(word) => word.to_string(),

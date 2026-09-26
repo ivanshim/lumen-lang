@@ -109,6 +109,17 @@ const REQUEST_PARTS: [(&str, &str); 8] = [
 /// for such a stopping, nothing is written and the fault goes back as
 /// it came, for the host to tell in its own way.
 fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool) -> String {
+    let mut message = said.to_owned();
+    if before != 0 && table.has_any("ext.builtin.exceptions.syntax") {
+        let marker = " (detected at line ";
+        if let Some(start) = message.rfind(marker).filter(|_| message.ends_with(')')) {
+            if let Ok(number) = message[start + marker.len()..message.len() - 1].parse::<u32>() {
+                message.truncate(start + marker.len());
+                message.push_str(&format!("{})", number.saturating_sub(before)));
+            }
+        }
+    }
+    let said = message.as_str();
     let key = match fatally {
         true => "ext.system.complaint.fatal",
         false => "ext.system.complaint.reading",
@@ -212,6 +223,11 @@ fn import_rejoined(text: &str, table: &Table, added: u32) -> Option<String> {
 }
 
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
+    // A file reader folds a CRLF pair before passing on its contents.
+    let file_text = if source.contains("\r\n") && table.has_any("ext.builtin.exceptions.syntax") {
+        std::borrow::Cow::Owned(source.replace("\r\n", "\n"))
+    } else { std::borrow::Cow::Borrowed(source) };
+    let source = file_text.as_ref();
     let ahead = lines_before(request);
     let joined = import_rejoined(source, table, ahead);
     let source = joined.as_deref().unwrap_or(source);

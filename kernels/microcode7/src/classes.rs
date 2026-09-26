@@ -744,6 +744,13 @@ impl<'a> Machine<'a> {
         self.apply_class_member(bound,vec![Value::text(key)])
     }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if let Value::Backtrace(link) = &value {
+            let names = self.table.strings("ext.builtin.exceptions.traceback");
+            if names.get(1).map_or(false, |n| n == key) { return Ok(Value::Small(link.location as i64)); }
+            if names.get(2).map_or(false, |n| n == key) { return Ok(link.following.clone()); }
+            if names.get(3).map_or(false, |n| n == key) { return Ok(Value::Thing(link.activation.clone())); }
+            return Err(self.absent_attribute(&value, key));
+        }
         if matches!(&value,Value::Wrapped(6,_)) && self.table.spells("ext.stmt.class.property.setter",key) {return Ok(Self::wrap(13,vec![value]));}
         // Routines, wrapped routines and slots are members that bind, and
         // read as such; a slot writes and removes besides.
@@ -829,6 +836,7 @@ impl<'a> Machine<'a> {
             let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone());
             if let Some(v)=own{return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.of.clone());}
+            if self.is_fault_kind(&t.of) && self.fault_method_word(key) { return Ok(Value::Member(Rc::new(value.clone()), key.to_owned())); }
             // The worth a thing keeps answers for the methods of its kind.
             let native=Self::underlying(&value);
             if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
@@ -937,6 +945,14 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        if self.table.single("ext.builtin.exceptions.traceback.member") == Some(key) {
+            if let Value::Thing(thing) = &subject {
+                if self.is_fault_kind(&thing.of) {
+                    if replacement.is_none() { return Err(String::from("TypeError: __traceback__ may not be deleted").into()); }
+                    if !matches!(&replacement, Some(Value::Nil | Value::Backtrace(_))) { return Err(String::from("TypeError: __traceback__ must be a traceback or None").into()); }
+                }
+            }
+        }
         let writing=replacement.is_some();
         let success=match &subject {
             Value::Thing(t)=>{

@@ -144,6 +144,13 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
 /// for such a stopping, nothing is written here and the fault goes back
 /// as it came, for the host to tell in its own way.
 fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool) -> String {
+    let adjusted = if before > 0 && !lang.syntax_members.is_empty() {
+        said.rsplit_once(" (detected at line ").and_then(|(head, end)| {
+            let line = end.strip_suffix(')')?.parse::<u32>().ok()?;
+            Some(format!("{} (detected at line {})", head, line.saturating_sub(before)))
+        })
+    } else { None };
+    let said = adjusted.as_deref().unwrap_or(said);
     let word = match fatally {
         true => lang.complaint_words.iter().find(|(kind, _)| *kind == lang::Complaint::Fatal).map(|(_, word)| word.as_str()),
         false => lang.reading_word.as_deref(),
@@ -189,6 +196,9 @@ fn whole_import<'a>(source: &'a str, lang: &Lang, before: u32) -> std::borrow::C
 }
 
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
+    // File input has universal newlines before the tokenizer sees it.
+    let universal = (!lang.syntax_members.is_empty() && source.contains("\r\n")).then(|| source.replace("\r\n", "\n"));
+    let source = universal.as_deref().unwrap_or(source);
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
     let read = lex::lex_at(&source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));

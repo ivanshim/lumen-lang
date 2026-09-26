@@ -648,6 +648,7 @@ pub enum Form {
 /// what it does with it.
 #[derive(Debug, Clone)]
 pub struct Clause {
+    pub source_line: u32,
     pub classes: Vec<String>,
     pub choices: Option<Vec<Form>>,
     pub grouped: bool,
