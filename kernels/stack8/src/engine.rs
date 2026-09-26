@@ -28,6 +28,9 @@ enum Passage {
 
 pub struct Engine<'a> {
     trace_frame: Option<Rc<Instance>>,
+    location: Option<(u32, u32, u32, u32)>,
+    frame_class: Option<Rc<Class>>,
+    frame_codes: HashMap<usize, Value>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
     class_maker: Option<Rc<Class>>,
@@ -96,6 +99,7 @@ pub struct Engine<'a> {
     line: u32,
     /// Where the program is written, as the request carried it.
     source: Rc<str>,
+    root_source: Rc<str>,
     /// Where the language's own pages are kept, as the run was started.
     /// Nothing where the run was started with nowhere named, and then a
     /// complaint about a word of the language points at no page.
@@ -954,7 +958,11 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             trace_frame: None,
+            location: None,
+            frame_class: None,
+            frame_codes: HashMap::new(),
             source: Rc::from(""),
+            root_source: Rc::from(""),
             pages_kept: None,
             calls: Vec::new(),
             under: None,
@@ -1154,6 +1162,7 @@ impl<'a> Engine<'a> {
     /// Where the program is written, which a complaint names.
     pub fn written_in(&mut self, place: &str) {
         self.source = Rc::from(place);
+        self.root_source = self.source.clone();
     }
 
     /// Where the language's own pages are kept, as the run was started.
@@ -2678,7 +2687,9 @@ impl<'a> Engine<'a> {
         for (at, cell) in &program.enclosed { frame[*at] = cell.clone(); }
         if program.generator && self.lang.yield_suspends {
             self.left_the_call(false, watching, noted);
-            self.data.push(Value::Generator(Rc::new(RefCell::new(Generator::new(Some(program.clone()), frame, Vec::new())))));
+            let mut generator = Generator::new(Some(program.clone()), frame, Vec::new());
+            generator.trace_frame = self.make_frame(program, &generator.frame, None);
+            self.data.push(Value::Generator(Rc::new(RefCell::new(generator))));
             return Ok(());
         }
         let base = self.data.len();
@@ -2690,10 +2701,13 @@ impl<'a> Engine<'a> {
             (was, self.line)
         });
         let caller_frame = self.trace_frame.take();
+        self.trace_frame = if program.ident == "<comprehension>" { caller_frame.clone() } else { self.make_frame(program, &frame, caller_frame.clone()) };
         let caller_line = self.line;
+        let caller_location = self.location.take();
         self.inside.push(program.within.clone());
         let outcome = self.run_instrs(program, &mut frame);
         self.trace_frame = caller_frame;
+        self.location = caller_location;
         if !self.lang.trace_fields.is_empty() { self.line = caller_line; }
         self.inside.pop();
         if let Some((was, on)) = elsewhere {
@@ -2778,6 +2792,7 @@ impl<'a> Engine<'a> {
     }
 
     fn run_instrs(&mut self, program: &Rc<Routine>, frame: &mut [Value]) -> Flow<()> {
+        if self.trace_frame.is_none() { self.trace_frame = self.make_frame(program, frame, None); }
         let instrs = &program.instrs;
         // A raised value leaves the marks that end a quiet piece unrun,
         // so how much quiet stood when the piece began is what stands
@@ -2812,6 +2827,7 @@ impl<'a> Engine<'a> {
     /// which of its parts it gave way in.
     fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, at: usize, mut suspended: Option<&mut Generator>) -> Flow<Passage> {
         let context_line = self.line;
+        let context_location = self.location;
         if self.lang.catch_group_unsupported.is_some() && plan.clauses.iter().any(|arm| arm.grouped) {
             return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
         }
@@ -2863,14 +2879,17 @@ impl<'a> Engine<'a> {
             // go, so that whatever the leaving raises keeps it as context.
             if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
             let body_line = self.line;
+            let body_location = self.location;
             if !self.lang.trace_fields.is_empty() {
                 self.line = context_line;
+                self.location = context_location;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
             let left = self.invoke(&method, given);
             let left = self.raised_of_note(left);
             if left.is_ok() && !self.lang.trace_fields.is_empty() {
                 self.line = body_line;
+                self.location = body_location;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
             self.caught.truncate(active);
@@ -3402,6 +3421,17 @@ impl<'a> Engine<'a> {
         let outer_base = std::mem::replace(&mut self.held_base, self.caught.len());
         self.caught.append(&mut kept.held);
         let mut locals = std::mem::take(&mut kept.frame);
+        if let Some(frame) = &kept.trace_frame {
+            let fields = frame.fields.borrow();
+            if let (Value::Bond(book), Value::Map(previous)) = (&fields[3].1, &fields[7].1) {
+                for (name, slot) in program.idents.iter().zip(locals.iter_mut()) {
+                    let Some(value) = book_entry(book, name) else { continue };
+                    let before = previous.iter().find(|(key, _)| key_spells(key, name)).map(|(_, value)| value);
+                    if before.map_or(false, |old| old.equals(&value)) { continue; }
+                    match slot { Value::Binding(cell) => *cell.borrow_mut() = value, other => *other = value }
+                }
+            }
+        }
         if kept.waiting {
             if kept.hurled.is_none() { self.data.push(sent.clone()); }
             kept.waiting = false;
@@ -3413,8 +3443,11 @@ impl<'a> Engine<'a> {
         if let Some(place) = &program.written_in { self.source = place.clone(); }
         self.inside.push(program.within.clone());
         let caller_frame = std::mem::replace(&mut self.trace_frame, kept.trace_frame.take());
+        if let Some(active) = &self.trace_frame { active.fields.borrow_mut()[2].1 = caller_frame.clone().map_or(Value::Null, Value::Object); }
         let result = self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept));
+        self.refresh_observed_frame();
         kept.trace_frame = std::mem::replace(&mut self.trace_frame, caller_frame);
+        if let Some(active) = &kept.trace_frame { active.fields.borrow_mut()[2].1 = Value::Null; }
         // The exhaustion class raised inside the body is a fault of the
         // generator, not the end of its walk.
         let result = match result {
@@ -3443,6 +3476,77 @@ impl<'a> Engine<'a> {
         Ok(kept.handed.take())
     }
 
+    pub(super) fn routine_code(&mut self, program: &Rc<Routine>) -> Value {
+        let key = Rc::as_ptr(&program.instrs) as usize;
+        self.frame_codes.entry(key).or_insert_with(|| {
+            let mut body = (**program).clone();
+            body.held.clear();
+            body.enclosed.clear();
+            Self::adapter(7, vec![Value::Routine(Rc::new(body))])
+        }).clone()
+    }
+
+    fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
+        if self.lang.trace_fields.len() < 16 { return None; }
+        let keys = self.lang.trace_fields.clone();
+        let class = match &self.frame_class {
+            Some(class) => class.clone(),
+            None => {
+                let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
+                    name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
+                self.frame_class = Some(class.clone());
+                class
+            }
+        };
+        let code = self.routine_code(program);
+        self.made += 1;
+        Some(Rc::new(Instance { class, mark: self.made, fields: RefCell::new(vec![
+            (keys[4].clone(), Value::Small(program.declared_on as i64)),
+            (keys[5].clone(), code),
+            (keys[11].clone(), back.map_or(Value::Null, Value::Object)),
+            (keys[12].clone(), Value::Null), (keys[13].clone(), Value::Null),
+            ("\0slots".into(), Value::Tuple(Rc::new(locals.to_vec()))),
+            ("\0routine".into(), Value::Routine(program.clone())),
+            ("\0observed".into(), Value::Null),
+        ]) }))
+    }
+
+    pub(super) fn frame_member(&mut self, object: &Rc<Instance>, name: &str) -> Option<Value> {
+        if !self.frame_class.as_ref().map_or(false, |class| Rc::ptr_eq(class, &object.class)) { return None; }
+        let index = self.lang.trace_fields.iter().position(|key| key == name)?;
+        if index == 13 {
+            return Some(Value::Bond(self.book_here(true)));
+        }
+        if index != 12 { return None; }
+        self.refresh_frame(object);
+        Some(object.fields.borrow()[3].1.clone())
+    }
+
+    fn refresh_frame(&mut self, object: &Rc<Instance>) {
+        let fields = object.fields.borrow();
+        let Value::Routine(program) = &fields[6].1 else { return };
+        let Value::Tuple(slots) = &fields[5].1 else { return };
+        let pairs = program.idents.iter().zip(slots.iter()).filter_map(|(name, value)| {
+            let value = match value { Value::Binding(cell) => cell.borrow().clone(), other => other.clone() };
+            (Self::public_name(name) && !matches!(value, Value::Blank | Value::Gap)).then(|| (Value::text(name), value))
+        }).collect();
+        let value = Value::Map(Rc::new(pairs));
+        let existing = fields[3].1.clone();
+        drop(fields);
+        object.fields.borrow_mut()[7].1 = value.clone();
+        if let Value::Bond(cell) = existing { *cell.borrow_mut() = value; }
+        else { object.fields.borrow_mut()[3].1 = Value::Bond(Rc::new(RefCell::new(value))); }
+    }
+
+    fn refresh_observed_frame(&mut self) {
+        if let Some(frame) = self.trace_frame.clone() {
+            if matches!(frame.fields.borrow().get(3).map(|(_, value)| value), Some(Value::Bond(_))) {
+                self.refresh_frame(&frame);
+            }
+        }
+    }
+
     fn trace_of(&self, raised: &Value) -> Value {
         if let (Value::Object(object), Some(key)) = (raised, &self.lang.traceback_member) {
             return object.fields.borrow().iter().find(|(name, _)| name == key).map(|(_, value)| value.clone()).unwrap_or(Value::Null);
@@ -3450,31 +3554,14 @@ impl<'a> Engine<'a> {
         Value::Null
     }
 
-    fn record_trace(&mut self, raised: &Value, program: &Routine) {
+    fn record_trace(&mut self, raised: &Value, _program: &Routine) {
         let Value::Object(object) = raised else { return };
         if !self.exception_class(&object.class) || self.lang.trace_fields.len() < 11 { return; }
-        let names = self.lang.trace_fields.clone();
-        let frame = if let Some(frame) = &self.trace_frame { frame.clone() } else {
-            let code_class = self.code_class();
-            self.made += 1;
-            let code = Value::Object(Rc::new(Instance { class: code_class, mark: self.made, fields: RefCell::new(vec![
-                (names[6].clone(), Value::text(if program.ident == "<program>" { &names[10] } else { &program.ident })),
-                (names[7].clone(), Value::Text(self.source.clone())),
-                (names[8].clone(), Value::Small(program.declared_on.max(1) as i64)),
-            ]) }));
-            let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: names[9].clone(), base: None,
-                answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
-            self.made += 1;
-            let frame = Rc::new(Instance { class, mark: self.made, fields: RefCell::new(vec![
-                (names[4].clone(), Value::Small(self.line as i64)), (names[5].clone(), code),
-            ]) });
-            self.trace_frame = Some(frame.clone());
-            frame
-        };
+        let Some(frame) = self.trace_frame.clone() else { return };
         let prior = self.trace_of(raised);
         if matches!(&prior, Value::Trace(trace) if Rc::ptr_eq(&trace.frame, &frame)) { return; }
         let Some(key) = &self.lang.traceback_member else { return };
-        let trace = Value::Trace(Rc::new(crate::value::Traceback { line: self.line, frame, next: prior }));
+        let trace = Value::Trace(Rc::new(crate::value::Traceback { location: self.location, line: self.line, frame, next: prior }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
     }
 
@@ -3483,7 +3570,9 @@ impl<'a> Engine<'a> {
     }
 
     fn run_portion(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), suspended: Option<&mut Generator>) -> Flow<Passage> {
+        if self.trace_frame.is_none() { self.trace_frame = self.make_frame(program, frame, None); }
         let result = self.run_portion_inner(program, frame, instrs, span, suspended);
+        self.refresh_observed_frame();
         if self.lang.trace_fields.len() < 11 { return result; }
         let result = match result {
             Err(Fault::Note(words)) => match self.carried.take() {
@@ -3811,9 +3900,16 @@ impl<'a> Engine<'a> {
                     let empty = matches!(self.world[*at], Value::Blank);
                     self.data.push(Value::Flag(empty));
                 }
+                Instr::Location(row, column, end_row, end_column) => {
+                    self.line = *row;
+                    self.location = Some((*row, *column, *end_row, *end_column));
+                    if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
+                }
                 Instr::Line(row) => {
+                    self.location = None;
                     self.line = *row;
                     if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
+                    self.refresh_observed_frame();
                     // A statement reached is a fault gone by: the calls
                     // an earlier one was raised under are none of its
                     // business.
@@ -4400,6 +4496,11 @@ impl<'a> Engine<'a> {
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
         if let Value::Generator(held) = &held {
+            if let Some(index @ (14 | 15)) = self.lang.trace_fields.iter().position(|key| key == name) {
+                let state = held.try_borrow().map_err(|_| self.lang.class_unready.first().cloned().unwrap_or_default())?;
+                if index == 14 { return Ok(Some(if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) })); }
+                if let Some(program) = &state.program { return Ok(Some(self.routine_code(program))); }
+            }
             if self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
         }
         if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
@@ -6962,7 +7063,8 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let field = match &held {
-                    Value::Trace(_) => self.lang.trace_fields.get(1..4).map_or(false, |keys| keys.iter().any(|key| key == name.as_ref())),
+                    Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18)),
+                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15)),
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     Value::Slice(_) => self.slice_bound_named(name).is_some(),
@@ -7030,6 +7132,9 @@ impl<'a> Engine<'a> {
                         Some(1) => Value::Small(trace.line as i64),
                         Some(2) => trace.next.clone(),
                         Some(3) => Value::Object(trace.frame.clone()),
+                        Some(16) => Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64),
+                        Some(17) => trace.location.map_or(Value::Null, |p| Value::Small(p.1 as i64)),
+                        Some(18) => trace.location.map_or(Value::Null, |p| Value::Small(p.3 as i64)),
                         _ => return Err(format!("AttributeError: 'traceback' object has no attribute '{}'", name).into()),
                     }
                 },
@@ -7063,6 +7168,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::Object(o) => {
+                    if let Some(value) = self.frame_member(&o, name) { self.data.push(value); return Ok(()); }
                     let found = if self.exception_class(&o.class) && self.lang.exception_cause.as_deref() == Some(name.as_ref()) {
                         Some(o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone()).unwrap_or(Value::Null))
                     } else if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
@@ -7557,7 +7663,7 @@ impl<'a> Engine<'a> {
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
                     if Rc::ptr_eq(&prior.frame, frame) {
-                        let trace = Value::Trace(Rc::new(crate::value::Traceback { line: self.line, frame: frame.clone(), next: Value::Trace(prior) }));
+                        let trace = Value::Trace(Rc::new(crate::value::Traceback { location: self.location, line: self.line, frame: frame.clone(), next: Value::Trace(prior) }));
                         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
                 }
@@ -12570,6 +12676,14 @@ impl<'a> Engine<'a> {
                 answer
             }
             Builtin::ProgramNamespace => {
+                if let [Value::Small(depth)] = args.as_slice() {
+                    let mut current = self.trace_frame.clone().map_or(Value::Null, Value::Object);
+                    for _ in 0..(*depth).max(0) {
+                        current = match current { Value::Object(frame) => frame.fields.borrow()[2].1.clone(), _ => Value::Null };
+                    }
+                    if matches!(current, Value::Null) { return Err("ValueError: call stack is not deep enough".into()); }
+                    return Ok(current);
+                }
                 arity(0)?;
                 Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
                     if name.starts_with('\0') || name.contains(crate::code::OF_A_CLASS) || matches!(value, Value::Blank) { None }

@@ -1886,7 +1886,16 @@ impl<'a> Compiler<'a> {
         if bracketed { self.take(); }
         let mut watchers = Vec::new();
         loop {
+            let begin = self.pos;
+            let start = self.mark();
             self.expr(0)?;
+            if !lang.trace_fields.is_empty() {
+                let position = self.expression_location(begin);
+                let code: Vec<Instr> = self.piece().instrs.drain(start..).collect();
+                self.put(position.clone());
+                for op in relocated(code, 1) { self.put(op); }
+                self.put(position);
+            }
             if lang.class_special.get(33).is_some() {
                 let manager = self.gensym("context");
                 self.write(&manager);
@@ -3539,6 +3548,13 @@ impl<'a> Compiler<'a> {
     }
 
     /// `for v in a..b block`: a counted loop with the bound in a hidden slot.
+    fn expression_location(&self, start: usize) -> Instr {
+        let first = &self.tokens[start];
+        let last = &self.tokens[self.pos.saturating_sub(1).max(start)];
+        Instr::Location((first.row as u32).saturating_sub(self.before), first.column.saturating_sub(1) as u32,
+            (last.end_row as u32).saturating_sub(self.before), last.end_column.saturating_sub(1) as u32)
+    }
+
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
@@ -3586,6 +3602,7 @@ impl<'a> Compiler<'a> {
             self.want_sign(&call.close, "after the range")?;
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
+            let source_at = self.pos;
             let from = self.mark();
             if self.on_any(&lang.array_spread) { self.scope_value()?; }
             else { self.expr(tier + 1)?; self.scope_tail(from)?; }
@@ -3595,10 +3612,13 @@ impl<'a> Compiler<'a> {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 let bag = self.gensym("bag");
+                let position = self.expression_location(source_at);
                 let source: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                if !lang.trace_fields.is_empty() { self.put(position.clone()); }
                 for w in relocated(source, -(from as i64) + self.mark() as i64) {
                     self.put(w);
                 }
+                if !lang.trace_fields.is_empty() { self.put(position); }
                 if !lang.comprehension_for.is_empty() {
                     self.act(Action::ComprehensionItems, 1);
                 }
@@ -8651,7 +8671,15 @@ impl<'a> Compiler<'a> {
             while !self.on_any(&self.lang.comprehension_in) && !self.exhausted() { self.take(); }
             self.take();
             let source_at = self.pos;
+            let start = self.mark();
             self.expr(1)?;
+            if !self.lang.trace_fields.is_empty() {
+                let position = self.expression_location(source_at);
+                let code: Vec<Instr> = self.piece().instrs.drain(start..).collect();
+                self.put(position.clone());
+                for op in relocated(code, 1) { self.put(op); }
+                self.put(position);
+            }
             let source_end = self.pos;
             self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             let seed = self.gensym("generator_source");
@@ -8755,6 +8783,8 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::text(&said));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
             }
+            let expression_start = self.pos;
+            let instruction_start = self.mark();
             if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
                 self.read(&seed);
                 self.pos = end;
@@ -8762,12 +8792,19 @@ impl<'a> Compiler<'a> {
                 self.expr(1)?;
                 self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             }
+            let position = self.expression_location(expression_start);
+            if !self.lang.trace_fields.is_empty() {
+                let code: Vec<Instr> = self.piece().instrs.drain(instruction_start..).collect();
+                self.put(position.clone());
+                for op in relocated(code, 1) { self.put(op); }
+            }
             let bag = self.gensym("comprehension_source");
             self.write(&bag);
             let at = self.gensym("comprehension_place");
             self.constant(Value::Small(0));
             self.write(&at);
             let test = self.mark();
+            if !self.lang.trace_fields.is_empty() { self.put(position); }
             if self.lang.yield_suspends {
                 self.read(&bag);
                 self.read(&at);
@@ -9562,7 +9599,7 @@ fn word_alone(w: &Instr) -> bool {
     };
     match w {
         Instr::Const(_) | Instr::Read(_) | Instr::Glance(_) | Instr::Write(_) | Instr::Skip(_)
-        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Forget(_)
+        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Location(..) | Instr::Forget(_)
         | Instr::Emptied(_) | Instr::Shed | Instr::Nothing | Instr::Ready(_) | Instr::Bump { .. } => true,
         Instr::Act(op, _) => quiet(op),
         Instr::Dyad { op, .. } | Instr::SkipCmp { op, .. } => quiet(op),

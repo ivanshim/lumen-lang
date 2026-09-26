@@ -279,6 +279,7 @@ pub enum CursorSource {
 
 #[derive(Debug)]
 pub struct Traceback {
+    pub location: Option<(u32, u32, u32, u32)>,
     pub line: u32,
     pub frame: Rc<Instance>,
     pub next: Value,

@@ -3201,8 +3201,10 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.exceptions.traceback`: the name of the kind of the trace
   handed to a context's leaving, which the kind builtin answers for one.
   `.traceback.member` is the member holding an exception's own traceback,
-  which stands as nothing in this account, and `.traceback.with` the
-  method that would set one and answers with the same exception.
+  and `.traceback.with` sets it and returns the same exception. The roster
+  also names frame line/code/back/locals/globals fields and generator
+  frame/code members. Suspended generators detach their caller link;
+  completed generators expose no frame.
 - `ext.builtin.exceptions.note` and `.notes`: the method adding a text
   note to an exception and the list the notes stand in, which is absent
   until the first note is added; `.note.invalid` refuses a note that is
@@ -3370,7 +3372,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.program.namespace`: a builtin handing out a map of the
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
-  program has declared without teaching the kernel a test runner.
+  program has declared without teaching the kernel a test runner. With an
+  integer depth it instead returns a running frame for the system library.
 - `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
   and writing a member by its name, the owner given first. The reader
   may be given a third value for an absent member; the writer takes the
@@ -4277,7 +4280,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` `: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
