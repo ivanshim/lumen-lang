@@ -3066,6 +3066,11 @@
     "() got an unexpected keyword argument '",
     "'"
   ],
+  "ext.syntax.call.amiss.order": [
+    "SyntaxError: positional argument follows keyword argument",
+    " unpacking",
+    "SyntaxError: iterable argument unpacking follows keyword argument unpacking"
+  ],
   "ext.syntax.call.amiss.ordered": [
     "TypeError: ",
     "() got some positional-only arguments passed as keyword arguments: '",

@@ -3032,6 +3032,10 @@ only. The extension labels so far, all from PHP:
   it is said rather than the former when any such place was named.
   These are checked in the reference's order: keywords first, then too
   many arguments in order, then empty places.
+  `ext.syntax.call.amiss.order` refuses, as the text is read, an argument
+  written in order after a named one: its first piece is said, with the
+  second after it where a spread of pairs came before. Its third is said
+  for a spread of items written after a spread of pairs.
 - `ext.stmt.function.anonymous`: the name a routine written with
   `ext.stmt.function.short` answers to on its own — Python's `<lambda>`
   — in place of the word every other anonymous routine is compiled
@@ -5101,6 +5105,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.amiss.excess` | - | - | `TypeError: ` `() takes ` `from ` ` to ` ` positional argument` ` positional arguments` ` but ` ` was given` ` were given` ` (and ` ` keyword-only argument)` ` keyword-only arguments)` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.keyword` | - | - | `TypeError: ` `() got multiple values for keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.order` | - | - | `SyntaxError: positional argument follows keyword argument` ` unpacking` `SyntaxError: iterable argument unpacking follows keyword argument unpacking` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.ordered` | - | - | `TypeError: ` `() got some positional-only arguments passed as keyword arguments: '` `, ` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.positional` | - | - | `TypeError: ` `() got multiple values for argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.repeated` | - | - | `SyntaxError: keyword argument repeated: ` | - | - | - | - | - | - | - |

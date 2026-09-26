@@ -8964,6 +8964,9 @@ impl<'a> Compiler<'a> {
         // twice is refused while the program is read, as the reference
         // refuses it.
         let mut spelled: Vec<String> = Vec::new();
+        // Whether a named argument, or a spread of pairs, has been
+        // written yet: what stands in order may not follow either.
+        let (mut after_name, mut after_pairs) = (false, false);
         while !self.at_symbol(&pair.close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
@@ -8979,6 +8982,14 @@ impl<'a> Compiler<'a> {
             let spread = marker && self.lang.bind_names && !labelled
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
+            if let [follows, unpacking, spread_late] = self.lang.call_order.as_slice() {
+                if !tagged && !named_spread && after_pairs {
+                    return Err(if spread { spread_late.clone() } else { format!("{follows}{unpacking}") });
+                }
+                if !tagged && !spread && after_name { return Err(follows.clone()); }
+            }
+            after_name |= tagged;
+            after_pairs |= named_spread && self.lang.bind_names;
             if tagged {
                 let word = self.look().lexeme.clone();
                 let twice = &self.lang.call_keyword_repeated;
