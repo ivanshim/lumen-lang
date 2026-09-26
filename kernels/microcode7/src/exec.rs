@@ -9565,7 +9565,8 @@ impl<'a> Machine<'a> {
             Prim::BitsUp => Some((62, 67)), Prim::BitsDown => Some((63, 68)),
             Prim::BitsBoth => Some((64, 69)), Prim::BitsEither => Some((65, 70)), Prim::BitsOne => Some((66, 71)),
             Prim::Lt => Some((4, 6)), Prim::Gt => Some((6, 4)), Prim::Le => Some((5, 7)), Prim::Ge => Some((7, 5)),
-            Prim::Eq => Some((2, 2)), Prim::Ne => Some((3, 3)), Prim::At => Some((11, usize::MAX)),
+            Prim::Eq => Some((2, 2)), Prim::Ne => Some((3, 3)),
+            Prim::At | Prim::Toward | Prim::Apart => Some((11, usize::MAX)),
             _ => None,
         };
         if let (Some((forward, reverse)), [left, right]) = (pair, operands) {
@@ -10443,7 +10444,7 @@ impl<'a> Machine<'a> {
                 // rows do; two of different kinds, or of a kind without any
                 // order, cannot. The two set kinds count as one kind
                 // here, either holding entries the other may hold too.
-                let orderless = family_of(left) != family_of(right) || matches!(left.settled(), Value::Nil | Value::Dict(_));
+                let orderless = family_of(left) != family_of(right) || matches!(left.settled(), Value::Nil | Value::Dict(_) | Value::Progression(_));
                 let (left, right) = (left.settled(), right.settled());
                 let counts = |x: &Value| matches!(x, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_));
                 let texts = matches!((&left, &right), (Value::Text(_), Value::Text(_)));
@@ -17243,19 +17244,7 @@ impl Machine<'_> {
                     return crate::complex::reckon(self.table, Prim::Power, &input);
                 }
                 if input.len() < 3 || matches!(input[2], Value::Nil) {
-                    let base = as_number(&input[0]); let exponent = as_number(&input[1]);
-                    let e = math::ratio_of(&exponent).ok_or_else(|| self.core_complaint("core.unready", name))?;
-                    let b = math::ratio_of(&base).ok_or_else(|| self.core_complaint("core.unready", name))?;
-                    if e.above.is_negative() || e.beneath != BigInt::from(1) || e.places.is_some() || b.places.is_some() {
-                        let n = crate::data::nearest_binary(&b.above,&b.beneath);
-                        let power = crate::data::nearest_binary(&e.above,&e.beneath);
-                        if n == 0.0 && power < 0.0 { return Err(self.core_complaint("core.power.zero", "")); }
-                        let made = n.powf(power);
-                        if made.is_nan() { return Err(self.core_complaint("core.unready", name)); }
-                        if made.is_infinite() { return Err(self.core_complaint("core.power.overflow", "")); }
-                        return Ok(crate::data::worth_of_binary(made, math::DEFAULT_PLACES));
-                    }
-                    return math::compute(Calc::Power, &base, &exponent).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                    return self.prim(Prim::Power, name, &input[..2]);
                 }
                 if input.iter().any(|v| !matches!(v, Value::Flag(_) | Value::Small(_) | Value::Huge(_))) { return Err(self.core_complaint("core.power.integer", "")); }
                 let modulus = whole(&input[2])?;

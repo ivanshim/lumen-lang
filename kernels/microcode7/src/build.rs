@@ -5833,7 +5833,12 @@ impl<'a> Builder<'a> {
         }
         if let Some(write) = self.chained_places()? { return Ok(write); }
         if self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty()
-            && !self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty() { return self.comma_value(); }
+            && !self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty() {
+            let tuple = self.comma_expression(false)?;
+            return if self.on_writing() {
+                Err(String::from("SyntaxError: 'tuple' is an illegal expression for augmented assignment"))
+            } else { Ok(tuple) };
+        }
         let began = self.pos;
         let boundary = began.checked_sub(1).map_or(true, |at| {
             let prior = &self.tokens[at];
@@ -6045,7 +6050,6 @@ impl<'a> Builder<'a> {
             }
         }
         let plain = compound.is_none();
-        let refused_slice = !plain && slice_target(&expr);
         // `b = &a`: b is tied to a's cell rather than given a copy.
         let tied_to_a_cell = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain;
         let mut shared_value: Option<Form> = None;
@@ -6474,9 +6478,6 @@ impl<'a> Builder<'a> {
             }
             _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
         };
-        let made = if refused_slice {
-            sequence(vec![prim_call(Prim::SliceRefused, Vec::new()), made])
-        } else { made };
         let made = match before_bounds {
             Some(first) => sequence(vec![first, made]),
             None => made,
