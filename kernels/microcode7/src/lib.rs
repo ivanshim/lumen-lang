@@ -270,6 +270,12 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         settled.ok_or_else(|| "The programs of this file take and leave values in a way that does not settle".to_string())?
     };
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
+    for (origin, field, text, _) in request {
+        if origin == "SELF" && field == "library_root" {
+            machine.library_directory = Some(std::path::PathBuf::from(text));
+            break;
+        }
+    }
     if table.flag("ext.stmt.import.value") {
         for (kind, name, text, _) in request {
             if kind == "MODULE" { machine.library_sources.insert(name.clone(), text.clone()); }
