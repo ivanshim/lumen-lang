@@ -155,6 +155,7 @@ struct BindingPlan {
 }
 
 struct Piece {
+    asynchronous: bool,
     comprehension_kind: Option<&'static str>,
     named_expressions: Vec<String>,
     parameters: Vec<String>,
@@ -406,7 +407,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let mut top = Piece { comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+    let mut top = Piece { asynchronous: false, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -1349,7 +1350,8 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        self.pieces.push(Piece { comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+        let asynchronous = (name == "<comprehension>" || name.starts_with("#generator")) && self.piece().asynchronous;
+        self.pieces.push(Piece { asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -4998,6 +5000,7 @@ impl<'a> Compiler<'a> {
     /// A method: a program whose first parameter is the object it is for,
     /// under the name the definition gives (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+        let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let lang = self.lang;
@@ -5026,6 +5029,8 @@ impl<'a> Compiler<'a> {
         // after the name is still a body.
         if self.on_sep() && !self.block_ahead() {
             return self.routine(name, formals, least, true, |a| {
+            a.piece().asynchronous = asynchronous;
+            a.piece().generator = asynchronous;
                 a.constant(Value::Null);
                 a.piece().result_touched = true;
                 a.write(RESULT_CELL);
@@ -5037,6 +5042,8 @@ impl<'a> Compiler<'a> {
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
         let built = self.routine(name, formals, least, true, |a| {
+            a.piece().asynchronous = asynchronous;
+            a.piece().generator = asynchronous;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
             a.spare_values(&spares, &given)?;
             // What a parameter that names a property was given is
@@ -5316,6 +5323,7 @@ impl<'a> Compiler<'a> {
     /// before its brackets binds it; one written where a value stands
     /// has none, and stands for itself.
     fn function_value(&mut self, name: &str) -> Res<()> {
+        let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
         self.declaration_types()?;
         let lang = self.lang;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
@@ -5341,6 +5349,8 @@ impl<'a> Compiler<'a> {
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
         let program = self.routine(name, formals, least, true, |a| {
+            a.piece().asynchronous = asynchronous;
+            a.piece().generator = asynchronous;
             // The names carried away take the slots after the
             // parameters, and are filled from what was carried when the
             // routine is called.
@@ -8753,9 +8763,9 @@ impl<'a> Compiler<'a> {
         if self.on_any(&self.lang.comprehension_async) {
             self.take();
             if !self.on_any(&self.lang.comprehension_for) { return Err("Expected a walk after the asynchronous word".to_string()); }
-            let said = self.lang.comprehension_async_unavailable.first().cloned().unwrap_or_else(|| "Asynchronous walks are not provided".to_string());
-            self.constant(Value::text(&said));
-            self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
+            if !result.is_empty() && !self.piece().asynchronous {
+                return Err("SyntaxError: asynchronous comprehension outside of an asynchronous function".into());
+            }
         }
         if self.on_any(&self.lang.comprehension_for) {
             self.take();

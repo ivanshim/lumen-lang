@@ -74,6 +74,7 @@ struct ScopeWords {
 }
 
 struct Layer {
+    permits_async: bool,
     gathering_kind: Option<&'static str>,
     expression_targets: Vec<String>,
     comprehension: bool,
@@ -396,7 +397,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
-    let top = Layer { gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let top = Layer { permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -407,7 +408,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
+        layers.push(Layer { permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
     if read_in && outer_layers > 1 {
@@ -1462,7 +1463,9 @@ impl<'a> Builder<'a> {
         }
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
-        self.layers.push(Layer { gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        let permits_async = (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>"))
+            && self.layers.last().map_or(false, |scope| scope.permits_async);
+        self.layers.push(Layer { permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
                 if !self.table.has_any("ext.builtin.exceptions.syntax") && known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
@@ -3929,6 +3932,8 @@ impl<'a> Builder<'a> {
     /// A method: a program whose first parameter is the thing it is for,
     /// under the name the definition gives it (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+        let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
+            .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
@@ -3974,6 +3979,8 @@ impl<'a> Builder<'a> {
         self.receiver = params.first().cloned();
         let local_defaults = spares.iter().map(|(place, _)| *place).collect();
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
+            r.layers.last_mut().unwrap().permits_async = deferred;
+            r.generator_seen = deferred;
             let mut items = r.spare_values(spares, &formals)?;
             // What a parameter that names a property was handed is put
             // into the thing before the body runs.
@@ -5230,6 +5237,8 @@ impl<'a> Builder<'a> {
     }
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
+        let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
+            .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
         self.type_names()?;
         if bound && matches!(self.table.prims.get(&name), Some(Prim::Octets(_))) {
             self.arg_names.entry(name.to_owned()).or_insert_with(Vec::new);
@@ -5274,6 +5283,8 @@ impl<'a> Builder<'a> {
         let declared = self.look().shape == Shape::Sign && table.separates(&self.look().lexeme);
         let statics_before = self.statics.len();
         let program = self.routine(&name, Holds::Every, Traps::Yields, params, least, |r| {
+            r.layers.last_mut().unwrap().permits_async = deferred;
+            r.generator_seen = deferred;
             // The names taken away sit in the slots after the
             // parameters, filled from what was taken when it is called.
             for (named, _) in &taken {
@@ -8154,10 +8165,10 @@ impl<'a> Builder<'a> {
         if self.on_any("ext.op.comprehension.async") {
             self.advance();
             if !self.on_any("ext.op.comprehension.for") { return Err("Expected a walk after the asynchronous word".into()); }
-            let words = self.table.single("ext.op.comprehension.async.unavailable").unwrap_or("Asynchronous walks are not provided");
-            let refusal = prim_call(Prim::Raise, vec![constant(Value::text(words))]);
-            let read = self.gather_tail(expression_at, answer, dictionary)?;
-            return Ok(sequence(vec![refusal, read]));
+            if !answer.is_empty() && !self.layers.last().unwrap().permits_async {
+                return Err(String::from("SyntaxError: asynchronous comprehension outside of an asynchronous function"));
+            }
+            return self.gather_tail(expression_at, answer, dictionary);
         }
         if !self.on_any("ext.op.comprehension.for") {
             let after_clauses = self.pos;
@@ -8846,7 +8857,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
+            self.layers.push(Layer { permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {
