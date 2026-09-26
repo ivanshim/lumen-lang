@@ -143,6 +143,10 @@ impl Pattern {
     }
 }
 
+/// The hidden entry a class keeps its annotations' routines under until
+/// they are asked for; a name no program can spell.
+pub const ANNOTATE_WORD: &str = "\0annotate";
+
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {

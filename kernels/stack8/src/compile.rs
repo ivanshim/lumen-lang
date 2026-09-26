@@ -4681,8 +4681,13 @@ impl<'a> Compiler<'a> {
             // and is no member being annotated.
             let named = self.take().lexeme;
             self.take();
-            self.annotation_expression(&lang.assign_words)?;
-            self.gathering().annotated.push((Value::text(&named), Value::Null));
+            // The annotation is kept as a routine answering its value,
+            // worked out only when the class's annotations are asked
+            // for: a name the body has not bound yet -- the class itself
+            // among them -- is bound by then.
+            let deferred = self.deferred_annotation()?;
+            let key = self.mangled_member(&named);
+            self.gathering().annotated.push((Value::text(&key), Value::Routine(deferred)));
             if self.on_assign() {
                 self.take();
                 self.scope_value()?;
@@ -5020,14 +5025,21 @@ impl<'a> Compiler<'a> {
             self.class_cannot_run();
             self.discard();
         }
-        // The names annotated in the body, as the class carries them;
-        // a class that annotated nothing carries nothing.
-        if let (Some(word), false) = (lang.class_annotations.first(), annotated.is_empty()) {
-            let slot = self.gensym("annotations");
-            self.constant(Value::Map(Rc::new(annotated.into())));
+        // The routines answering the body's annotations, kept under a
+        // hidden name until the class's annotations are asked for; a
+        // class that annotated nothing keeps nothing.
+        if lang.class_annotations.first().is_some() && !annotated.is_empty() {
+            // Keys and routines alternate in one row, made as the body runs.
+            let slot = self.gensym("annotate");
+            let count = annotated.len() * 2;
+            for (key, routine) in annotated {
+                self.constant(key);
+                self.constant(routine);
+            }
+            self.act(Action::MakeArray, count);
             self.write(&slot);
-            if !order.iter().any(|old| old == word) { order.push(word.clone()); }
-            shared.push((word.clone(), slot));
+            order.push(crate::code::ANNOTATE_WORD.to_string());
+            shared.push((crate::code::ANNOTATE_WORD.to_string(), slot));
         }
         // A member the body's own live namespace governs -- one it
         // has mirrored a write of -- is settled by that namespace
@@ -5522,6 +5534,27 @@ impl<'a> Compiler<'a> {
         self.want_sign(&call.close, "after parameters")?;
         self.parameter_rules = lang.bind_names.then_some(rules);
         Ok((formals, spares, promoted))
+    }
+
+    /// A class body's annotation, read as a routine of no parameters
+    /// that answers the annotation's value when it is called.
+    fn deferred_annotation(&mut self) -> Res<Rc<Routine>> {
+        self.routine(ANONYMOUS, Vec::new(), 0, true, |a| {
+            // A plain expression: an equals sign after it is the member's
+            // value, no assignment within the annotation.
+            a.expr_at(0, false)?;
+            a.piece().result_touched = true;
+            a.write(RESULT_CELL);
+            Ok(())
+        })
+    }
+
+    /// The key a class carries a member's annotation under: a name that
+    /// begins with two underscores and does not end so is mangled with
+    /// the class's name, as the reference mangles private names.
+    fn mangled_member(&self, named: &str) -> String {
+        let class = self.within.as_ref().map(|(name, _)| name.trim_start_matches('_')).unwrap_or("");
+        if named.starts_with("__") && !named.ends_with("__") && !class.is_empty() { format!("_{class}{named}") } else { named.to_string() }
     }
 
     /// An annotation is kept only long enough to find its end. No

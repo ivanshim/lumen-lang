@@ -717,8 +717,29 @@ impl<'a> Machine<'a> {
         }
     }
     fn member_map(entries:&[(String,Value)])->Value {
-        let pairs=entries.iter().map(|(key,value)|(Value::text(key),value.clone())).collect();
+        let pairs=entries.iter().filter(|(key,_)|!key.starts_with('\0')).map(|(key,value)|(Value::text(key),value.clone())).collect();
         Value::Dict(Rc::new(pairs))
+    }
+    /// A blueprint's annotations: its own, worked out from the routines
+    /// its body kept the first time they are asked for and held after
+    /// that. A body that annotated nothing leaves an empty map of its
+    /// own, and a parent's annotations never come down.
+    pub(super) fn blueprint_annotations(&mut self,b:&Rc<Blueprint>)->Res {
+        let word=self.table.single("ext.stmt.class.annotations").unwrap_or_default().to_owned();
+        if let Some(own)=Self::own_entry(b,&word){return Ok(own);}
+        let mut pairs=Vec::new();
+        // The entry is kept in a cell, as the blueprint's members are; keys
+        // and routines alternate along it.
+        if let Some(Value::Vector(row))=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled()) {
+            for pair in row.chunks(2) {
+                let [key,worth]=pair else{break};
+                let value=match worth {Value::Routine(_)|Value::Bound(..)=>self.apply_class_member(worth.clone(),Vec::new())?,other=>other.clone()};
+                pairs.push((key.clone(),value));
+            }
+        }
+        let made=Value::Dict(Rc::new(pairs.into()));
+        b.shared.borrow_mut().push((word,made.clone()));
+        Ok(made)
     }
     /// A read that ends with the member missing -- the blueprint's own
     /// reading hook having said so, or a property's getter, or nothing
@@ -805,6 +826,7 @@ impl<'a> Machine<'a> {
                 let mut all=Vec::new();all.push(value.clone());all.extend(b.ancestry.iter().map(|p|Value::Blueprint(p.clone())));
                 let result=Value::Tuple(Rc::new(all));return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
+            if self.table.single("ext.stmt.class.annotations")==Some(key){return self.blueprint_annotations(b);}
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
             if let Some(entry)=self.carried_by_kind(&value,key){return Ok(entry);}
             // A class reads what the metaclass that built it holds as
@@ -1333,7 +1355,7 @@ impl<'a> Machine<'a> {
             }
             let mut names=Vec::new();
             let class=match &values[0]{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.of)},Value::Blueprint(b)=>Some(b),_=>None};
-            if let Some(b)=class{for c in std::iter::once(b).chain(b.ancestry.iter()){names.extend(c.shared.borrow().iter().map(|(k,_)|k.clone()));}}
+            if let Some(b)=class{for c in std::iter::once(b).chain(b.ancestry.iter()){names.extend(c.shared.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));}}
             else if let Some((_,attrs))=self.routine_members.iter().find(|(f,_)|f.equals(&values[0])){names.extend(attrs.holds.borrow().iter().map(|(k,_)|k.clone()));}
             names.sort_unstable();names.dedup();return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
         }

@@ -161,6 +161,10 @@ pub struct IteratorState {
     pub walks: Option<Rc<str>>,
 }
 
+/// The hidden entry under which a blueprint keeps the routines answering
+/// its annotations until they are asked for; no program spells it.
+pub const ANNOTATE_WORD: &str = "\0annotate";
+
 #[derive(Clone)]
 pub enum IteratorKind {
     Stored(std::collections::VecDeque<Value>),

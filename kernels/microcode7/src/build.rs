@@ -40,7 +40,8 @@ struct ClassParts {
     /// body bound it first and the methods among the rest. This alone
     /// settles what the namespace of the finished class shows.
     ranking: Vec<String>,
-    annotated_names: Vec<(Value, Value)>,
+    /// Each annotated member's key with the routine answering its annotation.
+    annotated_names: Vec<(Form, Form)>,
     uncertain: Vec<String>,
     arms: usize,
     cannot: bool,
@@ -3505,8 +3506,13 @@ impl<'a> Builder<'a> {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
                 self.pos += 2;
-                self.put_by_annotation(&["stmt.assign"])?;
-                self.parts().annotated_names.push((Value::text(&member), Value::Nil));
+                // The annotation is kept as a routine answering its value,
+                // worked out only once the class's annotations are asked
+                // for, when a name the body had not yet bound -- the class
+                // itself among them -- is bound.
+                let deferred = self.annotation_routine()?;
+                let key = self.private_key(&member);
+                self.parts().annotated_names.push((constant(Value::text(&key)), deferred));
                 if self.on_assign() {
                     self.advance();
                     let value = self.comma_value()?;
@@ -3949,12 +3955,15 @@ impl<'a> Builder<'a> {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
         }
-        // What the body annotated, carried by the class under the table's
-        // word; a body that annotated nothing leaves the class without it.
-        if let (Some(word), false) = (table.strings("ext.stmt.class.annotations").first(), annotated_names.is_empty()) {
-            if ranking.iter().all(|old| old != word) { ranking.push(word.clone()); }
-            attributes.push(word.clone());
-            held.push(constant(Value::Dict(Rc::new(annotated_names.into()))));
+        // The routines answering what the body annotated, carried under
+        // a hidden name until the class's annotations are asked for; a
+        // body that annotated nothing leaves the class without them.
+        if table.has_any("ext.stmt.class.annotations") && !annotated_names.is_empty() {
+            // Keys and routines alternate in one row, made as the body runs.
+            ranking.push(crate::data::ANNOTATE_WORD.to_owned());
+            attributes.push(crate::data::ANNOTATE_WORD.to_owned());
+            let row: Vec<Form> = annotated_names.into_iter().flat_map(|(key, routine)| [key, routine]).collect();
+            held.push(prim_call(Prim::MakeArray, row));
         }
         // The header's keywords ride along as entries under their hidden
         // names, for the building of the class to hand on.
@@ -5436,6 +5445,24 @@ impl<'a> Builder<'a> {
 
     /// Pass over the kind written beside a name. Its brackets shelter
     /// their contents from the marks ending the surrounding declaration.
+    /// A class body's annotation as a routine of no parameters that
+    /// answers the annotation's value, made where the body runs so that
+    /// it is bound to the body's frame.
+    fn annotation_routine(&mut self) -> Res<Form> {
+        let ident = self.table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
+        // A plain expression: an equals sign after it gives the member its
+        // value and is no assignment within the annotation.
+        self.routine(ident, Holds::Every, Traps::Naught, Vec::new(), 0, |b| b.expr_at(0, false))
+    }
+
+    /// The key a blueprint carries a member's annotation under: a name
+    /// beginning with two underscores and not ending so is mangled with
+    /// the class's name, the reference's way with private names.
+    fn private_key(&self, member: &str) -> String {
+        let class = self.within.as_ref().map(|(name, _)| name.trim_start_matches('_')).unwrap_or("");
+        if member.starts_with("__") && !member.ends_with("__") && !class.is_empty() { format!("_{class}{member}") } else { member.to_owned() }
+    }
+
     fn put_by_annotation(&mut self, boundaries: &[&str]) -> Res<()> {
         let table = self.table;
         let mut nesting = Vec::new();
