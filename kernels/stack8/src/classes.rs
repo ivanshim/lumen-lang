@@ -825,6 +825,29 @@ impl<'a> Engine<'a> {
             (v,_) => Ok(v),
         }
     }
+    pub(super) fn integer_member(&self, subject: &Value, name: &str) -> Option<Value> {
+        let layout = self.lang.class_details.get("integer.layout")?;
+        if layout.len() != 7 { return None; }
+        let (kind, subclass) = match subject {
+            Value::Native(Builtin::ToInt, _) => (true, false),
+            Value::Class(c) if Self::kind_beneath(c).as_deref().and_then(|word| self.lang.builtins.get(word)) == Some(&Builtin::ToInt) => (true, Self::own_kind(c).is_none()),
+            Value::Object(_) if Self::worth_of(subject).map_or(false, |v| matches!(v, Value::Small(_) | Value::Huge(_))) => (false, true),
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => (false, false),
+            _ => return None,
+        };
+        if self.lang.byte_words["ext.builtin.bytes.to_int"].iter().any(|word| word.rsplit('.').next() == Some(name)) {
+            let owner = match subject {
+                Value::Object(o) => Value::Class(o.class.clone()),
+                _ if kind => subject.clone(),
+                _ => Value::Native(Builtin::ToInt, Rc::from(self.lang.builtins.iter().find(|(_, b)| **b == Builtin::ToInt)?.0.as_str())),
+            };
+            return Some(Value::ValueMethod(Rc::new((owner, "integer_from_bytes".into()))));
+        }
+        if kind && name == layout[0] { return Some(Value::Small(layout[if subclass { 6 } else { 3 }].parse().ok()?)); }
+        if kind && name == layout[1] { return Some(Value::Small(layout[4].parse().ok()?)); }
+        if name == layout[2] { return Some(Value::ValueMethod(Rc::new((subject.clone(), "integer_size".to_string())))); }
+        None
+    }
     /// A member read that ends in a missing member -- whether the class's
     /// own reading hook said so, or a property's getter, or nothing was
     /// found -- is offered to the class's fallback reader before it is
@@ -880,6 +903,7 @@ impl<'a> Engine<'a> {
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
             Value::Native(op, word) if Self::kind_builtin(op) => {
+                if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
                 if name==self.class_word("doc") {
@@ -920,6 +944,7 @@ impl<'a> Engine<'a> {
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
@@ -958,6 +983,7 @@ impl<'a> Engine<'a> {
                 if member.as_ref().map_or(false,|m|self.takes_writes(m)) {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class.clone());}
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class.clone());}
+                if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 // The worth a thing keeps answers for the methods of its kind.
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|matches!(v.contents(),Value::Set(_))) {
                     if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }

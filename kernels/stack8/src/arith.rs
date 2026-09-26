@@ -336,6 +336,9 @@ pub fn fused(left: f64, right: f64, third: f64) -> Result<f64, String> {
 
 pub fn binary_work(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value, String>> {
     let (x, y) = (Exact::from_value(a)?, Exact::from_value(b)?);
+    if calc == Operation::OverReal && x.is_whole() && y.is_whole() {
+        return Some(integer_quotient(&x.p, &y.p));
+    }
     if x.places.is_none() && y.places.is_none() { return None; }
     let binary = |v: &Value, e: &Exact| {
         if matches!(v, Value::Real(r) if r.below && r.p.is_zero()) { -0.0 }
@@ -350,4 +353,30 @@ pub fn binary_work(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value
         Operation::Floor | Operation::Remainder | Operation::Raise => return None,
     };
     Some(Ok(crate::value::real_of(result, DEFAULT_PLACES)))
+}
+
+/// Round an integer quotient directly at the binary result's spacing.
+fn integer_quotient(a: &BigInt, b: &BigInt) -> Result<Value, String> {
+    if b.is_zero() { return Err("Division by zero".to_string()); }
+    let negative = a.is_negative() != b.is_negative();
+    let signed = |x: f64| if negative { -x } else { x };
+    let (n, d) = (a.abs(), b.abs());
+    let mut exponent = n.bits() as i64 - d.bits() as i64;
+    let overflow = || "OverflowError: integer division result too large for a float".to_string();
+    if exponent > 1024 { return Err(overflow()); }
+    if n.is_zero() || exponent < -1075 { return Ok(crate::value::real_of(signed(0.0), DEFAULT_PLACES)); }
+    let below_power = if exponent >= 0 { n < (&d << exponent as usize) }
+        else { (&n << (-exponent) as usize) < d };
+    if below_power { exponent -= 1; }
+    let spacing = (exponent - 52).max(-1074);
+    let (top, bottom) = if spacing < 0 { (n << (-spacing) as usize, d) }
+        else { (n, d << spacing as usize) };
+    let (mut significand, remainder) = top.div_rem(&bottom);
+    let twice = remainder << 1usize;
+    if twice > bottom || twice == bottom && significand.is_odd() { significand += 1; }
+    let unit = if spacing < -1022 { f64::from_bits(1u64 << (spacing + 1074) as u32) }
+        else { 2.0f64.powi(spacing as i32) };
+    let result = significand.to_f64().unwrap_or(f64::INFINITY) * unit;
+    if result.is_infinite() { return Err(overflow()); }
+    Ok(crate::value::real_of(signed(result), DEFAULT_PLACES))
 }
