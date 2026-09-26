@@ -1,7 +1,6 @@
 # Pickle reductions use the Python reconstruction protocol. The byte
 # envelope remains the runtime's private marshal-based representation.
 import marshal
-import builtins
 import sys
 
 HIGHEST_PROTOCOL = 5
@@ -81,6 +80,7 @@ def _global_name(value):
     for candidate, name in ((iter, 'iter'), (range, 'range'), (reversed, 'reversed'), (enumerate, 'enumerate'), (map, 'map'), (filter, 'filter'), (zip, 'zip'), (abs, 'abs'), (list, 'list'), (dict, 'dict'), (set, 'set'), (frozenset, 'frozenset')):
         if candidate is value:
             return ('builtins', name)
+    import builtins
     for name in dir(builtins):
         if name.startswith('#') or name.startswith('\0'):
             continue
