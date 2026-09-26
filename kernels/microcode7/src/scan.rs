@@ -889,6 +889,7 @@ fn continued_past_end(tokens: &[Token], position: &mut (u32, usize)) -> String {
 }
 
 fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usize)) -> Result<Vec<Token>, String> {
+    let paired_ending = source.as_bytes().ends_with(b"\r\n");
     let input = if table.has_any("ext.builtin.exceptions.syntax") && source.contains('\r') {
         std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
     } else { std::borrow::Cow::Borrowed(source) };
@@ -988,7 +989,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new() };
                 if let Err(mut words) = quote.literal(body, &end, raw, fields, 0) {
                     if !fields && table.has_any("ext.builtin.exceptions.syntax") && words.starts_with("SyntaxError: unterminated ") {
-                        words.push_str(&format!(" (detected at line {})", quote.row));
+                        let mut detected = quote.row;
+                        if !paired_ending && quote.next >= src.len() && src.last() == Some(&'\n') { detected = detected.saturating_sub(1); }
+                        words.push_str(&format!(" (detected at line {detected})"));
                     }
                     return Err(words);
                 }

@@ -244,6 +244,7 @@ struct Cursor<'a> {
     row: usize,
     column: usize,
     out: Vec<Token>,
+    final_crlf: bool,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -749,7 +750,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringField, conversion, 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new() };
+        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), final_crlf: false };
         inner.run(false)?;
         self.out.extend(inner.out.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd)));
         self.push(Shape::Sign, group.close.clone(), 0, line, col);
@@ -997,7 +998,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new() };
+            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), final_crlf: false };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1187,7 +1188,11 @@ impl<'a> Cursor<'a> {
                 if let Some((prefix, mark, raw, format)) = self.string_open() {
                     let origin = (self.row, self.column);
                     if let Err(mut said) = self.rich_string(prefix, &mark, raw, format, 0) {
-                        if !format && !lang.syntax_members.is_empty() && said.starts_with("SyntaxError: unterminated ") { said.push_str(&format!(" (detected at line {})", self.row)); }
+                        if !format && !lang.syntax_members.is_empty() && said.starts_with("SyntaxError: unterminated ") {
+                            let final_newline = !self.final_crlf && self.at == self.text.len() && self.text.last() == Some(&'\n');
+                            let detected = self.row.saturating_sub(usize::from(final_newline));
+                            said.push_str(&format!(" (detected at line {})", detected));
+                        }
                         let missing_quote = lang.fstring_unterminated.as_deref() == Some(said.as_str())
                             || lang.fstring_unterminated_triple.as_deref() == Some(said.as_str());
                         if !format || missing_quote { (self.row, self.column) = origin; }
@@ -1274,6 +1279,7 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
 }
 
 pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
+    let final_crlf = source.ends_with("\r\n");
     let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
         .then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
     let source = normalized.as_deref().unwrap_or(source);
@@ -1282,7 +1288,7 @@ pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, us
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new() };
+            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), final_crlf };
             if let Err(said) = cur.run(true) {
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
@@ -1465,7 +1471,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new() };
+        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), final_crlf: false };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }
