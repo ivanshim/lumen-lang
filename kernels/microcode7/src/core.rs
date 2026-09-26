@@ -38,7 +38,10 @@ impl Value {
             // the word kept of the thing the members came from.
             Self::Iterator(cell) => return cell.try_borrow().map_or("iterator".to_owned(), |state| String::from(match &state.kind {
                 IteratorKind::Living(..) => "list_iterator",
-                IteratorKind::Stepping(..) => "range_iterator",
+                IteratorKind::Stepping(row, _) => match (row.first.to_i64(), row.limit.to_i64(), row.stride.to_i64(), row.count().to_i64()) {
+                    (Some(_), Some(_), Some(_), Some(_)) => "range_iterator",
+                    _ => "longrange_iterator",
+                },
                 IteratorKind::Watching { window: Value::Window(_, portion), .. } => match portion { 'k' => "dict_keyiterator", 'v' => "dict_valueiterator", _ => "dict_itemiterator" },
                 IteratorKind::Summoned { .. } => "callable_iterator",
                 IteratorKind::Count(..) => "enumerate",

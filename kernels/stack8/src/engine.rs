@@ -4040,6 +4040,14 @@ impl<'a> Engine<'a> {
     /// the kind wherever the kind itself is asked what its values can
     /// do. Nothing for a word that names no builtin kind.
     pub(super) fn kind_sample(&self, word: &str) -> Option<Value> {
+        // Retain the concrete kind while using an empty walk to ask
+        // which protocol members the native type exposes.
+        if matches!(word, "iterator" | "list_iterator" | "list_reverseiterator" | "tuple_iterator" | "str_ascii_iterator" | "str_iterator" | "range_iterator" | "longrange_iterator" | "set_iterator" | "dict_keyiterator" | "dict_valueiterator" | "dict_itemiterator" | "dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator" | "bytes_iterator" | "bytearray_iterator" | "callable_iterator" | "enumerate" | "zip" | "map" | "filter" | "reversed" | "generator") {
+            return Some(Self::core_cursor_walked(CursorSource::Items(Rc::new(Vec::new()), 0), Some(Rc::from(word))));
+        }
+        if let Some(portion) = match word { "dict_keys" => Some("keys"), "dict_values" => Some("values"), "dict_items" => Some("items"), _ => None } {
+            return Some(Value::View(Rc::new((Value::Map(Rc::new(Vec::new().into())), portion.to_string()))));
+        }
         Some(match self.lang.builtins.get(word)? {
             Builtin::ToText => Value::text(""),
             Builtin::ToInt => Value::Small(0),
@@ -4197,6 +4205,7 @@ impl<'a> Engine<'a> {
     /// builtin kind, or where that kind carries no such member.
     pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
         let word: Rc<str> = match value {
+            Value::Class(c) => Rc::from(Self::own_kind(c)?),
             Value::Native(_, word) => word.clone(),
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
@@ -4321,6 +4330,7 @@ impl<'a> Engine<'a> {
             14 => holds || matches!(family, Kindred::View(false)),
             15 => holds || matches!(family, Kindred::Walk | Kindred::View(_)),
             16 => matches!(family, Kindred::Walk),
+            42 => matches!(family, Kindred::Row | Kindred::Map | Kindred::Counted | Kindred::View(_)),
             18 | 20 | 28 => number || joined,
             19 => number || setted,
             23 | 31 => number && !matches!(family, Kindred::Complex) || matches!(family, Kindred::Text | Kindred::Bytes(_)),
@@ -4422,6 +4432,7 @@ impl<'a> Engine<'a> {
         if let Some(plain) = match place {
             0 => Some(Builtin::ToText), 1 => Some(Builtin::Repr), 8 => Some(Builtin::Hash), 9 => Some(Builtin::Bool),
             10 => Some(Builtin::Length), 15 => Some(Builtin::Iter), 16 => Some(Builtin::Next),
+            42 => Some(Builtin::Reversed),
             38 | 43 => Some(Builtin::ToInt), 39 => Some(Builtin::AsReal), 40 => Some(Builtin::Absolute),
             _ => None,
         } {
@@ -14305,7 +14316,12 @@ impl Engine<'_> {
             // no word of its own for is asked about by the kind's own
             // name, there being no builtin word to ask in its place.
             if let Some(kind) = Self::kind_beneath(class) {
-                if !self.lang.builtins.contains_key(&kind) { return Ok(value.core_kind() == kind); }
+                if !self.lang.builtins.contains_key(&kind) {
+                    return Ok(match value {
+                        Value::Object(o) => Rc::ptr_eq(&o.class, class) || o.class.lineage.iter().any(|c| Rc::ptr_eq(c, class)),
+                        _ => Self::own_kind(class).is_some() && value.core_kind() == kind,
+                    });
+                }
             }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }

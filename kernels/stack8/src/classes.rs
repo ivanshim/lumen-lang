@@ -91,7 +91,7 @@ impl<'a> Engine<'a> {
         }
     }
     /// The builtin kind a class itself stands for, if it is one.
-    fn own_kind(c: &Class) -> Option<String> {
+    pub(super) fn own_kind(c: &Class) -> Option<String> {
         c.constants.iter().find(|(n, _)| n == "\0kind").map(|(_, v)| v.plain())
     }
     /// The builtin kind a class stands on, through any of its line.
@@ -753,7 +753,7 @@ impl<'a> Engine<'a> {
         }
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
-            Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word) => {
+            Value::Native(op, word) if Self::kind_builtin(op) => {
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
                 if name==self.class_word("doc") {
@@ -794,6 +794,7 @@ impl<'a> Engine<'a> {
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
                 // a thing's method is bound to the thing.
@@ -1192,6 +1193,9 @@ impl<'a> Engine<'a> {
             if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
             // Everything stands beneath the class every other one does.
             if c.name==self.class_word("root"){return Ok(true);}
+            if !subclass && !matches!(value, Value::Object(_)) {
+                if let Some(word)=Self::own_kind(c) { return Ok(value.core_kind()==word); }
+            }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class),Value::Class(c) if subclass=>Some(c),_=>None};
             return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));
         }

@@ -31,7 +31,7 @@ impl<'a> Machine<'a> {
         self.native_kinds.push((word.to_owned(),kind.clone()));
         kind
     }
-    fn native_word(b:&Blueprint)->Option<String> {b.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v.bare())}
+    pub(super) fn native_word(b:&Blueprint)->Option<String> {b.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v.bare())}
     /// The value whose kind a directory should describe: an empty value
     /// of the kind a native kind word names, or the value itself where
     /// it is one of a native kind. Nothing for a blueprint of a class's
@@ -756,8 +756,8 @@ impl<'a> Machine<'a> {
             }
         }
         // A native kind's word read as a class: its maker, and its name.
-        if let Value::Intrinsic(_,word)=&value {
-            if self.table.spells("ext.stmt.class.builtin",word) {
+        if let Value::Intrinsic(op,word)=&value {
+            if Self::names_a_kind(op) {
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
                 if key==self.detail("doc") {
@@ -799,6 +799,7 @@ impl<'a> Machine<'a> {
                 let result=Value::Tuple(Rc::new(all));return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
+            if let Some(entry)=self.carried_by_kind(&value,key){return Ok(entry);}
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
             // method is bound to the thing.
@@ -1195,6 +1196,11 @@ impl<'a> Machine<'a> {
                 if class_only && !self.counts_as_class(subject){return Err(self.not_a_class("core.issubclass.subject"));}
                 // Everything lies under the class everything lies under.
                 if c.name==self.detail("root"){return Ok(true);}
+                match (class_only, subject, Self::native_word(c)) {
+                    (false, Value::Thing(_), _) => {},
+                    (false, _, Some(word)) => return Ok(subject.kind_word()==word),
+                    _ => {},
+                }
                 let b=match subject{Value::Blueprint(b) if class_only=>Some(b),Value::Thing(t) if !class_only=>Some(&t.of),_=>None};
                 Ok(b.map_or(false,|b|Rc::ptr_eq(b,c)||b.ancestry.iter().any(|a|Rc::ptr_eq(a,c))))
             }

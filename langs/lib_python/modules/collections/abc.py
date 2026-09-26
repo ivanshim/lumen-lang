@@ -33,6 +33,25 @@ def _a_walk(value):
     return True
 
 
+def _check_methods(candidate, *methods):
+    lineage = getattr(candidate, '__mro__', None)
+    if lineage is None:
+        for method in methods:
+            if getattr(candidate, method, None) is None:
+                return NotImplemented
+        return True
+    for method in methods:
+        for base in lineage:
+            namespace = base.__dict__
+            if method in namespace:
+                if namespace[method] is None:
+                    return NotImplemented
+                break
+        else:
+            return NotImplemented
+    return True
+
+
 class _Kind(ABC):
     # A kind every container kind below stands on. The claim a class
     # makes to belong to a kind is kept by the metaclass, which every
@@ -47,12 +66,24 @@ class Hashable(_Kind):
 
 
 class Sized(_Kind):
+    @classmethod
+    def __subclasshook__(cls, candidate):
+        if cls is Sized:
+            return _check_methods(candidate, '__len__')
+        return NotImplemented
+
     @abstractmethod
     def __len__(self):
         raise NotImplementedError('__len__')
 
 
 class Container(_Kind):
+    @classmethod
+    def __subclasshook__(cls, candidate):
+        if cls is Container:
+            return _check_methods(candidate, '__contains__')
+        return NotImplemented
+
     @abstractmethod
     def __contains__(self, value):
         raise NotImplementedError('__contains__')
@@ -65,12 +96,24 @@ class Callable(_Kind):
 
 
 class Iterable(_Kind):
+    @classmethod
+    def __subclasshook__(cls, candidate):
+        if cls is Iterable:
+            return _check_methods(candidate, '__iter__')
+        return NotImplemented
+
     @abstractmethod
     def __iter__(self):
         raise NotImplementedError('__iter__')
 
 
 class Iterator(Iterable):
+    @classmethod
+    def __subclasshook__(cls, candidate):
+        if cls is Iterator:
+            return _check_methods(candidate, '__iter__', '__next__')
+        return NotImplemented
+
     @abstractmethod
     def __next__(self):
         raise StopIteration
@@ -80,6 +123,12 @@ class Iterator(Iterable):
 
 
 class Reversible(Iterable):
+    @classmethod
+    def __subclasshook__(cls, candidate):
+        if cls is Reversible:
+            return _check_methods(candidate, '__reversed__', '__iter__')
+        return NotImplemented
+
     @abstractmethod
     def __reversed__(self):
         raise NotImplementedError('__reversed__')
@@ -108,6 +157,12 @@ class Generator(Iterator):
 
 
 class Collection(Sized, Iterable, Container):
+    @classmethod
+    def __subclasshook__(cls, candidate):
+        if cls is Collection:
+            return _check_methods(candidate, '__len__', '__iter__', '__contains__')
+        return NotImplemented
+
     pass
 
 
@@ -599,6 +654,8 @@ class _PairList:
 Sequence.register(tuple)
 Sequence.register(str)
 Sequence.register(range)
+Sequence.register(bytes)
+MutableSequence.register(bytearray)
 MutableSequence.register(list)
 Set.register(frozenset)
 MutableSet.register(set)
