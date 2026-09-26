@@ -646,9 +646,16 @@ impl<'a> Cursor<'a> {
         }
         if Some(next) == lang.named_letter && self.look(2) == Some('{') {
             self.step(); self.step(); self.step();
+            let start = self.at;
             while self.look(0).map_or(false, |c| c != '}') { self.step(); }
             if self.look(0).is_none() { return Err(self.string_words()); }
-            self.step(); *fault = true;
+            let name: String = self.text[start..self.at].iter().collect();
+            self.step();
+            match name.as_str() {
+                "EM SPACE" => text.push('\u{2003}'),
+                "EN SPACE" => text.push('\u{2002}'),
+                _ => *fault = true,
+            }
             return Ok(());
         }
         let digits = if Some(next) == lang.codepoint_letter { lang.codepoint_digits }

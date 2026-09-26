@@ -714,10 +714,16 @@ impl Quotation<'_> {
         }
         if table.spells("ext.lexical.escape.named", &letter) && self.source.get(begin + 2) == Some(&'{') {
             self.forward(3);
+            let name_start = self.next;
             while self.here().map_or(false, |c| c != '}') { self.forward(1); }
             if self.here().is_none() { return Err(self.bad()); }
+            let name: String = self.source[name_start..self.next].iter().collect();
             self.forward(1);
-            *missing = true;
+            match name.as_str() {
+                "EM SPACE" => text.push('\u{2003}'),
+                "EN SPACE" => text.push('\u{2002}'),
+                _ => *missing = true,
+            }
             return Ok(());
         }
         let count = ["ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter()
