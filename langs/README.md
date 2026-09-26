@@ -2274,7 +2274,11 @@ only. The extension labels so far, all from PHP:
   own for what it found keeps them in front of the place. A reading the
   kernels cannot yet
   honour — a closure handed over, a setting of optimisation beyond the
-  ordinary — with `ext.builtin.source.unready`. `ext.builtin.import`
+  ordinary — with `ext.builtin.source.unready`. Seeding a dictionary of
+  a program's own with the builtins, where it names none of its own and
+  has no way to be written into, is refused instead with
+  `ext.builtin.source.builtins_immutable`, its one piece the name of the
+  kind that refused the write. `ext.builtin.import`
   fetches a module by its name as the import statement would.
   `ext.system.module.doc` names what a program keeps its opening
   documentation under, text standing alone as its first statement, and
@@ -4583,6 +4587,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.slice.step` | - | - | `step` | - | - | - | - | - | - | - |
 | `ext.builtin.slice.stop` | - | - | `stop` | - | - | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
+| `ext.builtin.source.builtins_immutable` | - | - | `TypeError: cannot assign __builtins__ to ` ` globals` | - | - | - | - | - | - | - |
 | `ext.builtin.source.syntax` | - | - | `SyntaxError: invalid syntax` | - | - | - | - | - | - | - |
 | `ext.builtin.source.syntax.place` | - | - | ` (` `, line ` `)` | - | - | - | - | - | - | - |
 | `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
