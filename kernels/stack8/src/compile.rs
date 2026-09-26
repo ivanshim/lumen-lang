@@ -161,6 +161,7 @@ struct BindingPlan {
 
 struct Piece {
     asynchronous: bool,
+    asynchronous_walk: bool,
     comprehension_kind: Option<&'static str>,
     named_expressions: Vec<String>,
     parameters: Vec<String>,
@@ -412,7 +413,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let mut top = Piece { asynchronous: false, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+    let mut top = Piece { asynchronous_walk: false, asynchronous: false, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -835,8 +836,8 @@ impl<'a> Compiler<'a> {
         let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
         let name = renamed.as_deref().unwrap_or(name);
         // A named write in a comprehension belongs to the function
-        // around its walks; only the walk's hidden names belong here.
-        if self.lang.closes_over && self.piece().ident == "<comprehension>" && !name.starts_with('#') {
+        // around its walks; the reserved iteration targets belong here.
+        if self.lang.closes_over && self.piece().ident == "<comprehension>" && renamed.is_none() && !name.starts_with('#') {
             let owner = (0..self.pieces.len() - 1).rev().find(|&i| self.pieces[i].ident != "<comprehension>").unwrap_or(0);
             let alias = self.pieces[owner].globals.iter().find(|(n, _)| n == name).map(|(_, to)| to.clone());
             if self.pieces[owner].outermost || alias.is_some() {
@@ -1356,7 +1357,7 @@ impl<'a> Compiler<'a> {
         }
         formal_kinds.truncate(formals.len());
         let asynchronous = (name == "<comprehension>" || name.starts_with("#generator")) && self.piece().asynchronous;
-        self.pieces.push(Piece { asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+        self.pieces.push(Piece { asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -5793,6 +5794,10 @@ impl<'a> Compiler<'a> {
                 if depth == 0 { last = at; break; }
             }
             if last != end - 1 { break; }
+            if !self.lang.syntax_members.is_empty() && !self.outer_marks(begin + 1, end - 1, &self.lang.comprehension_for).0.is_empty() {
+                let kind = if self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open) { "list comprehension here. Maybe you meant '==' instead of '='?" } else { "generator expression" };
+                return Err(format!("SyntaxError: cannot assign to {kind}"));
+            }
             listed |= self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open);
             begin += 1;
             end -= 1;
@@ -7136,6 +7141,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
+            if self.piece().comprehension_kind.is_some() { self.piece().asynchronous_walk = true; }
             self.take();
             return self.prefix();
         }
@@ -8657,23 +8663,29 @@ impl<'a> Compiler<'a> {
         let source_at = self.pos;
         self.expr(1)?;
         let source_end = self.pos;
-        self.act(Action::WalkFrom, 1);
+        let first_async = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
+        self.act(if first_async { Action::AsyncWalk } else { Action::WalkFrom }, 1);
         let seed = self.gensym("generator_source");
         let name = self.gensym("generator");
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
+        let mut asynchronous = false;
         let program = self.routine(&name, vec![seed], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");
             r.pos = clause;
             let names = r.comprehension_names.len();
+            r.reserve_comprehension(clause)?;
             r.comprehension_clause(head, "", false)?;
             r.comprehension_names.truncate(names);
             r.want_sign(&pair.close, "after a generator expression")?;
+            r.comprehension_store_error("generator expression")?;
+            asynchronous = r.piece().asynchronous_walk;
             r.piece().generator = true;
             Ok(())
         })?;
         self.generator_source = prior;
         self.constant(Value::Routine(program));
         self.act(Action::Invoke(Rc::from(name)), 2);
+        if asynchronous { self.act(Action::AsyncGenerator, 1); }
         Ok(())
     }
 
@@ -8699,7 +8711,8 @@ impl<'a> Compiler<'a> {
             let source_at = self.pos;
             self.expr(1)?;
             let source_end = self.pos;
-            self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
+            let asynchronous = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
+            self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             let seed = self.gensym("generator_source");
             let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
             self.pos = entry;
@@ -8732,6 +8745,7 @@ impl<'a> Compiler<'a> {
         self.piece().comprehension_kind = Some(if map { "dict comprehension" } else if pair.close == "]" { "list comprehension" } else { "set comprehension" });
         let head = self.pos;
         let bindings = self.comprehension_names.len();
+        self.reserve_comprehension(clause)?;
         let result = self.gensym("comprehension");
         self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);
         self.write(&result);
@@ -8739,17 +8753,19 @@ impl<'a> Compiler<'a> {
         self.comprehension_clause(head, &result, map)?;
         self.comprehension_names.truncate(bindings);
         self.want_sign(&pair.close, "after a comprehension")?;
+        let kind = if map { "dict comprehension" } else if pair.close == "]" { "list comprehension" } else { "set comprehension" };
+        self.comprehension_store_error(kind)?;
         self.read(&result);
         Ok(())
     }
 
     /// The head is read last, once all its names have their own cells.
-    fn comprehension_locals(&mut self, mut start: usize, mut end: usize) -> Res<()> {
+    fn comprehension_locals(&mut self, mut start: usize, mut end: usize, floor: usize) -> Res<()> {
         if start == end { return Ok(()); }
         let (cuts, _) = self.outer_marks(start, end, &self.lang.tuple_marks);
         if !cuts.is_empty() {
             for stop in cuts.into_iter().chain(Some(end)) {
-                self.comprehension_locals(start, stop)?;
+                self.comprehension_locals(start, stop, floor)?;
                 start = stop + 1;
             }
             return Ok(());
@@ -8768,7 +8784,7 @@ impl<'a> Compiler<'a> {
             }
             if close + 1 == end {
                 end -= 1;
-                return self.comprehension_locals(start + 1, end);
+                return self.comprehension_locals(start + 1, end, floor);
             }
         }
         if end == start + 1 && self.tokens[start].shape == Shape::Instr {
@@ -8776,15 +8792,54 @@ impl<'a> Compiler<'a> {
             if self.piece().named_expressions.contains(&name) {
                 return Err(format!("SyntaxError: comprehension inner loop cannot rebind assignment expression target '{name}'"));
             }
-            let own = self.gensym("comprehension_name");
+            if self.comprehension_names[floor..].iter().any(|(bound, _)| bound == &name) { return Ok(()); }
+            let own = if self.lang.closes_over && !self.lang.syntax_members.is_empty() { name.clone() }
+                else { self.gensym("comprehension_name") };
+            self.comprehension_names.push((name, own.clone()));
             self.cell_to_write(&own);
-            self.comprehension_names.push((name, own));
+        }
+        Ok(())
+    }
+
+    fn comprehension_store_error(&self, kind: &str) -> Res<()> {
+        if !self.lang.syntax_members.is_empty() && self.on_writing() {
+            return Err(if self.on_assign() { format!("SyntaxError: cannot assign to {kind}{}", if kind == "generator expression" { "" } else { " here. Maybe you meant '==' instead of '='?" }) }
+                else { format!("SyntaxError: '{kind}' is an illegal expression for augmented assignment") });
+        }
+        Ok(())
+    }
+
+    fn reserve_comprehension(&mut self, clause: usize) -> Res<()> {
+        let floor = self.comprehension_names.len();
+        let mut at = clause;
+        let mut nesting = 0;
+        while at < self.tokens.len() {
+            let token = &self.tokens[at];
+            if token.shape == Shape::Finish { break; }
+            if nesting == 0 && token.shape == Shape::Instr && Lang::spells(&self.lang.comprehension_for, &token.lexeme) {
+                let (joins, _) = self.outer_marks(at + 1, self.tokens.len(), &self.lang.comprehension_in);
+                let end = *joins.first().ok_or("Expected a comprehension source")?;
+                self.comprehension_locals(at + 1, end, floor)?;
+                at = end + 1;
+                continue;
+            }
+            if token.shape == Shape::Sign {
+                let pairs = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets];
+                if pairs.into_iter().flatten().any(|pair| pair.open == token.lexeme) { nesting += 1; }
+                else if pairs.into_iter().flatten().any(|pair| pair.close == token.lexeme) {
+                    if nesting == 0 { break; }
+                    nesting -= 1;
+                }
+            }
+            at += 1;
         }
         Ok(())
     }
 
     fn comprehension_clause(&mut self, head: usize, result: &str, map: bool) -> Res<()> {
-        if self.on_any(&self.lang.comprehension_async) {
+        let asynchronous = self.on_any(&self.lang.comprehension_async);
+        if asynchronous {
+            self.piece().asynchronous_walk = true;
             self.take();
             if !self.on_any(&self.lang.comprehension_for) { return Err("Expected a walk after the asynchronous word".to_string()); }
             if !result.is_empty() && !self.piece().asynchronous {
@@ -8796,13 +8851,14 @@ impl<'a> Compiler<'a> {
             let target_start = self.pos;
             let (joins, _) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in);
             let target_end = *joins.first().ok_or("Expected the comprehension's collection word")?;
+            self.comprehension_locals(target_start, target_end, 0)?;
             self.pos = target_end + 1;
             if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
                 self.read(&seed);
                 self.pos = end;
             } else {
                 self.expr(1)?;
-                self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
+                self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             }
             let bag = self.gensym("comprehension_source");
             self.write(&bag);
@@ -8827,7 +8883,6 @@ impl<'a> Compiler<'a> {
             let item = self.gensym("comprehension_item");
             self.write(&item);
             let resume = self.pos;
-            self.comprehension_locals(target_start, target_end)?;
             self.give_places(target_start, target_end, &item)?;
             self.pos = resume;
             self.comprehension_clause(head, result, map)?;
@@ -8990,6 +9045,9 @@ impl<'a> Compiler<'a> {
     fn arguments(&mut self, pair: &Brackets) -> Res<usize> {
         if !self.lang.syntax_members.is_empty() { self.check_generator_arguments()?; }
         if let Some(clause) = self.comprehension_ahead() {
+            if !self.lang.syntax_members.is_empty() && self.look_ahead(1).is_lexeme(Shape::Sign, "=") {
+                return Err("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into());
+            }
             self.lazy_comprehension(pair, clause)?;
             return Ok(1);
         }
