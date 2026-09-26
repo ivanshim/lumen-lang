@@ -1,1 +1,1 @@
-TypeError: 'NoneType' object does not support the context manager protocol
+TypeError: 'NoneType' object does not support the context manager protocol (missed __exit__ method)
