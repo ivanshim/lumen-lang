@@ -5894,6 +5894,16 @@ impl<'a> Engine<'a> {
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        if matches!(op, Action::Awaited) {
+            let mut answer = self.drop_top()?;
+            if let Value::Generator(held) = &answer {
+                while self.resume_generator(held, Value::Null)?.is_some() {}
+                let returned = held.borrow().returned.clone();
+                answer = returned;
+            }
+            self.data.push(answer);
+            return Ok(());
+        }
         if matches!(op, Action::AsyncGenerator) {
             let generator = self.drop_top()?;
             self.data.push(Self::adapter(250, vec![generator]));
@@ -7673,7 +7683,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::array(kept.into_iter().map(|v| match v { Value::Hashed(pair) => pair.0.clone(), other => other }).collect())
             }
-            Action::AsyncGenerator | Action::AsyncWalk => unreachable!("asynchronous walks were handled before dispatch"),
+            Action::Awaited | Action::AsyncGenerator | Action::AsyncWalk => unreachable!("asynchronous walks were handled before dispatch"),
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
                 if let Value::Class(class) = &handed {

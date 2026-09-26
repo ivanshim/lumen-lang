@@ -4574,6 +4574,14 @@ impl<'a> Machine<'a> {
                     let (p, env) = self.pick(args, frame)?;
                     self.invoke(p, env, Vec::new())
                 }
+                Prim::AwaitResult => match self.value_of(&args[0], frame)?.settled() {
+                    Value::Generator(state) => loop {
+                        if self.resume(&state, Value::Nil)?.is_none() {
+                            break Ok(state.borrow().result.clone());
+                        }
+                    },
+                    complete => Ok(complete),
+                },
                 Prim::AsyncGathered => {
                     let value = self.value_of(&args[0], frame)?;
                     Ok(Value::Wrapped(245, Rc::new(vec![value])))
@@ -10922,7 +10930,7 @@ impl<'a> Machine<'a> {
             }
             // The steps of a walk that a thing may answer for itself are
             // worked out where a call can be made, not here.
-            Prim::AsyncGathered | Prim::AsyncWalked | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
+            Prim::AwaitResult | Prim::AsyncGathered | Prim::AsyncWalked | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                 return Err(format!("{}() is worked out where a call can be made", name))
             }
             Prim::Kept => {

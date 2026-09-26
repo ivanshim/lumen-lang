@@ -4310,6 +4310,9 @@ impl<'a> Compiler<'a> {
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }
+        if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).lexeme) {
+            self.take();
+        }
         if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {self.gathering().unready=true;}
         if self.on_keyword(&lang.function_words) {
             self.take();
@@ -7143,7 +7146,9 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.await_words) {
             if self.piece().comprehension_kind.is_some() { self.piece().asynchronous_walk = true; }
             self.take();
-            return self.prefix();
+            self.prefix()?;
+            self.act(Action::Awaited, 1);
+            return Ok(());
         }
         if self.on_keyword(&lang.yield_words) {
             let yield_at = self.pos;

@@ -3153,6 +3153,8 @@ impl<'a> Builder<'a> {
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }
+        let async_method = self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).lexeme);
+        if async_method { self.advance(); }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
@@ -6805,7 +6807,8 @@ impl<'a> Builder<'a> {
             let scope = self.layers.last_mut().unwrap();
             if scope.gathering_kind.is_some() { scope.async_walk_seen = true; }
             self.advance();
-            return self.monadic_expr();
+            let pending = self.monadic_expr()?;
+            return Ok(prim_call(Prim::AwaitResult, vec![pending]));
         }
         if self.key("ext.stmt.yield") {
             let begins = self.pos;

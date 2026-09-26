@@ -845,10 +845,12 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.loop.else`: a switch; the `stmt.else` block after a for or
   while loop runs when its test ends the loop, including an empty walk.
   A break leaves that block behind; a continue does not.
-- `ext.stmt.async` and `ext.op.await`: the former is read before a
-  function, for loop or with block and dropped. The latter hands back
-  the value of its operand. Neither schedules nor suspends a run in
-  this stage; an await may stand outside a function too.
+- `ext.stmt.async` before a function or method keeps its body suspended
+  until asked to run. Before a for loop or with block it is read and
+  dropped. `ext.op.await` runs a supported suspended body to completion,
+  hands back its return value and propagates its exceptions. An operand
+  already holding a value is returned as it stands. These forms do not
+  schedule concurrent tasks; an await may stand outside a function too.
 - `ext.stmt.yield.suspends`: a switch; calling a routine containing a
   yield keeps its words and bindings unrun. Each asking runs to the next
   yield, and the next asking begins where that one left off. A delegated

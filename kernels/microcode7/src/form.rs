@@ -362,6 +362,7 @@ pub enum Prim {
     /// thing that is its own walk is wound back and answers with itself;
     /// anything else answers with itself.
     Walked,
+    AwaitResult,
     AsyncGathered,
     AsyncWalked,
     /// Whether a walk has more to hand out, what is at hand, what it is
