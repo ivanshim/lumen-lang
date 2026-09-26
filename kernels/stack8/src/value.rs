@@ -747,7 +747,7 @@ impl Value {
             }
             Value::Object(o) => {
                 if let Some(args) = self.raised_arguments() {
-                    return format!("{}({})", o.class.name, args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "));
+                    return format!("{}({})", o.class_now().name, args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "));
                 }
                 self.display(sp)
             }
@@ -759,7 +759,7 @@ impl Value {
 
     fn raised_arguments(&self) -> Option<Vec<Value>> {
         let Value::Object(object) = self else { return None };
-        if !object.class.all_fields().iter().any(|(n, _)| n == "\0exception") { return None; }
+        if !object.class_now().all_fields().iter().any(|(n, _)| n == "\0exception") { return None; }
         let fields = object.fields.borrow();
         if let Some((_, Value::Tuple(args))) = fields.iter().find(|(n, _)| n == "\0arguments") { return Some(args.as_ref().clone()); }
         Some(fields.iter().filter(|(n, _)| n == "message").map(|(_, v)| v.clone()).collect())
@@ -781,7 +781,7 @@ impl Value {
     /// their wording belong to Python alone, and are reached only
     /// through the markers Python's own roster puts on its classes.
     fn unicode_error_text(o: &Rc<Instance>, sp: &Wording) -> Option<String> {
-        let kind = o.class.all_fields().iter().find_map(|(n, _)| match n.as_str() {
+        let kind = o.class_now().all_fields().iter().find_map(|(n, _)| match n.as_str() {
             "\0unicode-encode" => Some(0u8), "\0unicode-decode" => Some(1u8),
             "\0unicode-translate" => Some(2u8), _ => None,
         })?;
@@ -837,7 +837,7 @@ impl Value {
         if let Some((_, Value::Text(shown))) = o.fields.borrow().iter().find(|(n, _)| n == "\0shown") { return Some(shown.to_string()); }
         Some(match args.as_slice() {
             [] => String::new(),
-            [one] if o.class.all_fields().iter().any(|(n, _)| n == "\0quoted") => one.repr(sp),
+            [one] if o.class_now().all_fields().iter().any(|(n, _)| n == "\0quoted") => one.repr(sp),
             [one] => one.display(sp),
             many => Self::tuple_text(many, sp),
         })
@@ -1413,7 +1413,7 @@ impl Value {
             Value::Descriptor(_) => "<descriptor>".to_string(),
             Value::Trace(_) => "<traceback object>".to_string(),
             Value::Hashed(pair) => pair.0.plain(),
-            Value::Fields(o) => format!("<attributes of {}>", o.class.name),
+            Value::Fields(o) => format!("<attributes of {}>", o.class_now().name),
             Value::Declined(word) => word.to_string(),
             Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),
             Value::Routine(p) => {
@@ -1435,7 +1435,7 @@ impl Value {
                 _ => "<member wrapper>".to_string(),
             },
             Value::Adapter(_) => "<member wrapper>".to_string(),
-            Value::Object(o) => format!("<object {}>", o.class.name),
+            Value::Object(o) => format!("<object {}>", o.class_now().name),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
         }
@@ -1701,8 +1701,15 @@ pub fn who_keeps(filed: &str) -> (&str, Option<&str>) {
 
 /// One object: the class that made it and what it holds. An object is a
 /// handle, so two names for it see one another's writes.
+impl Instance {
+    pub fn class_now(&self) -> Rc<Class> {
+        self.replacement_class.borrow().clone().unwrap_or_else(|| self.class.clone())
+    }
+}
+
 #[derive(Debug)]
 pub struct Instance {
+    pub replacement_class: RefCell<Option<Rc<Class>>>,
     pub class: Rc<Class>,
     pub fields: RefCell<Vec<(String, Value)>>,
     /// Which object this is by the order it was made, counting from

@@ -20,7 +20,7 @@ impl Value {
     pub fn kind_word(&self) -> String {
         let word = match self {
             Self::Complex(_) => "complex",
-            Self::Thing(thing) => return thing.of.name.to_owned(),
+            Self::Thing(thing) => return thing.blueprint().name.to_owned(),
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().kind_word(),
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Dict(_) => "dict",
             Self::Set(_) => if self.set_sealed() { "frozenset" } else { "set" },

@@ -3174,6 +3174,7 @@ impl<'a> Builder<'a> {
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }
+        if self.key("ext.stmt.async") { self.advance(); }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
@@ -3597,6 +3598,23 @@ impl<'a> Builder<'a> {
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
             let end = table.single("ext.stmt.class.bases.close").ok_or("The bases need a closing mark")?;
+            let mut levels = Vec::new();
+            let mut spreading = false;
+            for token in &self.tokens[self.pos..] {
+                let word = token.lexeme.as_str();
+                if levels.is_empty() && word == end { break; }
+                if levels.is_empty() && (table.spells("op.mul", word) || table.spells("op.pow", word)) { spreading = true; }
+                match word {
+                    "(" => levels.push(")"), "[" => levels.push("]"), "{" => levels.push("}"),
+                    _ if levels.last().copied() == Some(word) => { levels.pop(); }, _ => {}
+                }
+            }
+            if spreading {
+                let arguments = self.args("syntax.call.close", "syntax.call.separator")?;
+                let kept = self.gensym("header_arguments");
+                setup.push(Form::Write(kept.clone(), Box::new(prim_call(Prim::MakeTuple, arguments))));
+                handed_words.push(("\0header".to_owned(), Form::Read(kept)));
+            } else {
             let mut first = true;
             while !self.sign(end) {
                 let expanded = table.spells("op.mul", &self.look().lexeme) || table.spells("op.pow", &self.look().lexeme);
@@ -3637,6 +3655,7 @@ impl<'a> Builder<'a> {
                 }
             }
             self.need_sign(end, "after the bases")?;
+            }
         }
         let full_name = self.full_name_of(&named);
         let previous = self.within.replace((named.clone(), parent.as_ref().map(|s| s.ident.to_string())));

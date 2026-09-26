@@ -4376,6 +4376,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.inline_values` | - | - | `_has_inline_values` | - | - | - | - | - | - | - |
 | `ext.builtin.input` | - | - | `input` | - | - | - | - | - | - | - |
 | `ext.builtin.input.reader` | - | - | `sys` `_input` | - | - | - | - | - | - | - |
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
@@ -4985,6 +4986,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.descriptor.set` | - | - | `__set__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.unbound` | - | - | `TypeError: unbound method ` `.` `() needs an argument` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.flags` | - | - | `__flags__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.getitem` | - | - | `__class_getitem__` | - | - | - | - | - | - | - |
@@ -5005,6 +5007,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.prepare` | - | - | `__prepare__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.doc` | - | - | `doc` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fdel` | - | - | `fdel` | - | - | - | - | - | - | - |
@@ -5335,3 +5338,7 @@ The `ext.builtin.exceptions.traceback` roster starts with the traceback class
 name, followed by the line, next and frame members, frame line and code members,
 code name, filename and first-line members, frame class name and module code name.
 Frames are allocated on demand when an exception first records its location.
+
+`ext.stmt.class.detail.prepare` names the metaclass namespace preparation method.
+
+`ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.

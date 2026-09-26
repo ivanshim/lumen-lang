@@ -4323,6 +4323,7 @@ impl<'a> Compiler<'a> {
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }
+        if self.on_keyword(&lang.async_words) { self.take(); }
         if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {self.gathering().unready=true;}
         if self.on_keyword(&lang.function_words) {
             self.take();
@@ -4647,6 +4648,24 @@ impl<'a> Compiler<'a> {
             self.want_sign(&open, "before the bases")?;
             let close = lang.bases_close.clone().ok_or("Class bases need a closing mark")?;
             let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+            let mut depth = 0usize;
+            let mut expanded = false;
+            for token in &self.tokens[self.pos..] {
+                if depth == 0 && token.lexeme == close { break; }
+                if depth == 0 && (Lang::spells(&lang.call_spread, &token.lexeme) || Lang::spells(&lang.call_spread_pairs, &token.lexeme)) { expanded = true; }
+                match token.lexeme.as_str() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {}
+                }
+            }
+            if expanded {
+                let pair = lang.calling.clone().expect("class call marks");
+                let count = self.arguments(&pair)?;
+                self.act(Action::MakeTuple, count);
+                let slot = self.gensym("class_header");
+                self.write(&slot);
+                carried_words.push(("\0header".to_string(), slot));
+            } else {
             let mut count = 0;
             while !self.at_symbol(&close) {
                 let spread = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
@@ -4684,6 +4703,7 @@ impl<'a> Compiler<'a> {
                 if apart.as_ref().map_or(false, |s| self.at_symbol(s)) { self.take(); } else { break; }
             }
             self.want_sign(&close, "after the bases")?;
+            }
         }
         let qualification = self.qualified(&name);
         let outer = self.within.replace((name.clone(), base.clone()));
