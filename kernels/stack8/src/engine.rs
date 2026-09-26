@@ -13075,9 +13075,15 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let Value::Text(text) = &args[0] else { unreachable!() };
                 // A separator may stand between two figures and nowhere else.
+                // The message names the very string handed over, in
+                // its own repr, the way CPython's own float() does.
+                let amiss = |slf: &mut Self, of: &Value| -> String {
+                    let prefix = slf.lang.to_real_text_amiss[0].clone();
+                    match slf.special_text(of, true) { Ok(shown) => format!("{prefix}: {shown}"), Err(_) => prefix }
+                };
                 let text = match self.lang.number_separator_between_digits(text) {
                     Some(joined) => joined,
-                    None => return Err(self.lang.to_real_text_amiss[0].clone()),
+                    None => return Err(amiss(self, &args[0])),
                 };
                 let text = &text;
                 let plain = text.trim().to_ascii_lowercase();
@@ -13091,8 +13097,9 @@ impl<'a> Engine<'a> {
                     if self.lang.shortest_reals { return Ok(crate::value::real_of(number, arith::DEFAULT_PLACES)); }
                     if !number.is_finite() { return Ok(crate::value::outside_number(number, arith::DEFAULT_PLACES)); }
                 }
-                let number = number_spelled(text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
-                self.at_real_width(arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?)
+                let number = number_spelled(text).ok_or_else(|| amiss(self, &args[0]))?;
+                let widened = match arith::to_real(&number, arith::DEFAULT_PLACES) { Some(w) => w, None => return Err(amiss(self, &args[0])) };
+                self.at_real_width(widened)
             }
             Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
                 let Value::Flag(b) = args[0] else { unreachable!() };

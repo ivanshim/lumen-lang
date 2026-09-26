@@ -12977,7 +12977,13 @@ impl<'a> Machine<'a> {
                         } else { None };
                     if let Some(real) = special { return Ok(crate::data::worth_of_binary(real, math::DEFAULT_PLACES)); }
                 }
-                let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
+                // The message names the very string handed over, in
+                // its own repr, the way CPython's own float() does.
+                let shown = v.first().map(|first| first.representation(self.wording()));
+                let failure = || match &shown {
+                    Some(shown) => format!("{}: {}", self.argument_fault("ext.builtin.to_real.text.amiss", None), shown),
+                    None => self.argument_fault("ext.builtin.to_real.text.amiss", None),
+                };
                 // Figures may be grouped with a separator, which has to
                 // stand between two of them; anywhere else it is a fault.
                 let regrouped = match v.first() {
