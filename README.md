@@ -238,6 +238,13 @@ label of its definition is compared with the other languages in
 
 ## Testing
 
+Set `LUMEN_ROOT` to the repository root when running a copied binary with
+stack8 or microcode7. Library `__file__` paths then use
+`$LUMEN_ROOT/langs/lib_python/modules`, and `test.support` finds reference
+files under `$LUMEN_ROOT/tests/python`. Module source remains embedded in
+the binary; the matching files must exist at that root. Relative roots
+are resolved at startup. When unset, the original build-time path is used.
+
 Every example runs on every kernel:
 
 ```bash

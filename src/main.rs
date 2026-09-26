@@ -276,6 +276,15 @@ fn run_all() {
     // has only to bind it: the full kernels take it, the others do not
     // read the labels that name it.
     let mut request = web::gathered(text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
+    // Resolve the optional library location before the program can change directory.
+    if let Some(root) = std::env::var_os("LUMEN_ROOT") {
+        let root = std::path::PathBuf::from(root);
+        let root = std::fs::canonicalize(&root).unwrap_or_else(|_| {
+            std::env::current_dir().unwrap_or_default().join(root)
+        });
+        let modules = root.join("langs/lib_python/modules");
+        request.push(("SELF".to_string(), "library_root".to_string(), modules.to_string_lossy().into_owned(), false));
+    }
     for (name, source) in embedded_modules::MODULES {
         request.push(("MODULE".to_string(), name.to_string(), source.to_string(), false));
     }

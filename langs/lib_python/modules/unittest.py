@@ -778,6 +778,11 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
         raise 'NotImplementedError: selecting tests from command arguments is not supported'
     loader = TestLoader()
     suite = loader.loadTestsFromModule(module)
+    only = _only_classes()
+    if only is not None:
+        # A long file can be run in parts: LUMEN_UNITTEST_ONLY names the test
+        # classes to run (comma-separated), in the order a whole run takes them.
+        suite = TestSuite([tests for tests in suite.tests if tests.class_.__name__ in only])
     if testRunner is None:
         testRunner = TextTestRunner(verbosity=verbosity)
     result = testRunner.run(suite)
@@ -786,6 +791,14 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
             raise SystemExit('test run failed')
         __finish()
     return _TestProgram(result)
+
+
+def _only_classes():
+    import os
+    names = os.environ.get('LUMEN_UNITTEST_ONLY', '')
+    if names == '':
+        return None
+    return names.split(',')
 
 
 def _word_before(left, right):
