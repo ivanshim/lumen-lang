@@ -23,7 +23,7 @@ impl Value {
             Value::Complex(_) => "complex",
             Value::Small(_) | Value::Huge(_) => "int",
             Value::Real(_) | Value::Frac(_) => "float",
-            Value::Text(_) => "str",
+            Value::Text(_) | Value::Codepoints(_) => "str",
             Value::Flag(_) => "bool",
             Value::Null => "NoneType",
             Value::Array(_) => "list",
@@ -131,6 +131,11 @@ impl Value {
                 let mut h = (number.abs() % modulus).to_i64()?;
                 if number.is_negative() { h = -h; }
                 Some(finish(h))
+            }
+            Value::Codepoints(row) => {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                row.hash(&mut h);
+                Some(finish(h.finish() as i64))
             }
             Value::Text(s) => {
                 if s.is_empty() { return Some(0); }

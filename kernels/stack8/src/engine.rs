@@ -5457,8 +5457,8 @@ impl<'a> Engine<'a> {
                 Value::text(&crate::strings::ascii_escaped(&said))
             }
             Builtin::ToText if args.len() == 1 => {
-                self.digits_shown(&args[0])?;
-                Value::text(&self.special_text(&args[0], false)?)
+                if matches!(args[0], Value::Codepoints(_)) { args[0].clone() }
+                else { self.digits_shown(&args[0])?; Value::text(&self.special_text(&args[0], false)?) }
             }
             Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
             // A thing may say what whole number, real, or magnitude it
@@ -8321,6 +8321,19 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_)) {
+            if let (Some(mut left), Some(right)) = (a.text_codes(), b.text_codes()) {
+                if matches!(op, Action::Add) { left.extend(right); return Ok(Value::from_codes(left)); }
+                if matches!(op, Action::Contains | Action::Lacks) {
+                    let found = left.is_empty() || right.windows(left.len()).any(|part| part == left);
+                    return Ok(Value::Flag(found == matches!(op, Action::Contains)));
+                }
+                if matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                    let order = left.cmp(&right);
+                    return Ok(Value::Flag(match op { Action::Lt => order.is_lt(), Action::Le => !order.is_gt(), Action::Gt => order.is_gt(), _ => !order.is_lt() }));
+                }
+            }
+        }
         // A key handed out with its hash still stands for the key.
         if let Value::Hashed(pair) = a { return self.dyadic(op, &pair.0, b); }
         if let Value::Hashed(pair) = b { return self.dyadic(op, a, &pair.0); }
@@ -9520,6 +9533,15 @@ impl<'a> Engine<'a> {
     }
 
     fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::Codepoints(row) = target {
+            if let Value::Slice(parts) = at {
+                let (_, _, _, places) = self.slice_places(parts, row.len())?;
+                return Ok(Value::from_codes(places.into_iter().map(|i| row[i]).collect()));
+            }
+            let mut i = at.as_big()?.to_i64().ok_or_else(|| crate::strings::fault(self.lang, "index"))?;
+            if i < 0 { i += row.len() as i64; }
+            return row.get(i as usize).map(|&n| Value::from_codes(vec![n])).ok_or_else(|| crate::strings::fault(self.lang, "index"));
+        }
         if matches!(target, Value::Set(_)) { return Err(self.core_fault("core.unindexable", &target.core_kind())); }
         if let (Value::Text(s), true) = (target, self.lang.text_negative_index) {
             if !matches!(at, Value::Slice(_)) {
@@ -10000,6 +10022,7 @@ impl<'a> Engine<'a> {
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| match k { Value::Hashed(p) => p.0.clone(), _ => k.clone() }).collect()),
             Value::Bytes(row, ..) => Ok(row.borrow().iter().map(|&b| Value::Small(b as i64)).collect()),
             Value::Words(items, _) => Ok(items.iter().map(|s| Value::text(s)).collect()),
+            Value::Codepoints(row) => Ok(row.iter().map(|&n| Value::from_codes(vec![n])).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
                 let mut items = Vec::new();
@@ -10229,6 +10252,14 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if matches!(builtin, Builtin::Bytes(0..=3)) && !named.is_empty() {
+            for (key, value) in std::mem::take(&mut named) {
+                let at = match key.as_str() { "encoding" => 1, "errors" => 2, _ => return Err(self.byte_fault("arguments")) };
+                if args.len() > at { return Err(self.byte_fault("arguments")); }
+                while args.len() < at { args.push(Value::text("utf-8")); }
+                args.push(value);
+            }
+        }
         if let Builtin::Bytes(task @ (14 | 15)) = builtin {
             let mut signed = false;
             for (key, value) in named {
@@ -10423,7 +10454,7 @@ impl<'a> Engine<'a> {
                 }),
             };
         }
-        if operation == "encode" && matches!(&contents, Value::Text(_)) {
+        if operation == "encode" && matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             let mut supplied = args;
             for (key, value) in named {
                 let at = match key.as_str() { "encoding"=>0, "errors"=>1, _=>return Err(self.byte_fault("unready")) };
@@ -10432,11 +10463,10 @@ impl<'a> Engine<'a> {
                 supplied.push(value);
             }
             if supplied.len() > 2 { return Err(self.byte_fault("arguments")); }
-            if let Some(errors) = supplied.get(1) { if !matches!(errors, Value::Text(s) if s.as_ref()=="strict") { return Err(self.byte_fault("unready")); } }
-            supplied.truncate(1); supplied.insert(0, contents);
+            supplied.insert(0, contents);
             return self.byte_call(2, &supplied);
         }
-        if matches!(&contents, Value::Bytes(..)) || operation == "encode" && matches!(&contents, Value::Text(_)) {
+        if matches!(&contents, Value::Bytes(..)) || operation == "encode" && matches!(&contents, Value::Text(_) | Value::Codepoints(_)) {
             // A working that writes where the row lies is asked of a
             // changeable row alone; a fixed row has no such member.
             let changeable = matches!(&contents, Value::Bytes(_, true, _));
@@ -11348,7 +11378,7 @@ impl<'a> Engine<'a> {
     /// A row of bytes read back as text, the encoding and then the error
     /// policy standing after it. Only a row of bytes can be read so:
     /// text is turned away by name, and every other value by its kind.
-    fn text_from_bytes(&self, args: &[Value]) -> Res<Value> {
+    fn text_from_bytes(&mut self, args: &[Value]) -> Res<Value> {
         if args.len() > 3 { return Err(self.lang.to_string_unready[0].clone()); }
         let words = &self.lang.to_string_undecodable;
         let part = |at: usize| words.get(at).cloned().unwrap_or_default();
@@ -11357,22 +11387,98 @@ impl<'a> Engine<'a> {
             Value::Text(_) => return Err(part(0)),
             other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
         };
-        if let Some(policy) = args.get(2) {
-            let Value::Text(policy) = policy else { return Err(self.byte_fault("arguments")); };
-            if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
-        }
-        self.byte_decode(&row, self.byte_codec(args.get(1))?)
+        self.byte_transcode(false, &row, args)
     }
 
-    fn byte_call(&self, task: u8, args: &[Value]) -> Res<Value> {
+    fn codec_library(&mut self, member: &str, args: Vec<Value>) -> Res<Value> {
+        let module = self.route_module("codecs")?;
+        let routine = self.member_of(module, member)?.ok_or_else(|| self.byte_fault("unready"))?;
+        self.call_held(routine, args)
+    }
+
+    fn byte_transcode(&mut self, encode: bool, row: &[u8], args: &[Value]) -> Res<Value> {
+        if args.is_empty() || args.len() > 3 { return Err(self.byte_fault("arguments")); }
+        let policy = match args.get(2) {
+            None => "strict".to_owned(),
+            Some(Value::Text(s)) => s.to_string(),
+            _ => return Err(self.byte_fault("arguments")),
+        };
+        let codec = match self.byte_codec(args.get(1)) {
+            Ok(n) if n < 3 => n,
+            _ => return self.codec_library(if encode { "_encode" } else { "_decode" }, args.to_vec()),
+        };
+        if encode && matches!(args[0], Value::Codepoints(_)) { return self.codec_library("_encode_surrogates", args.to_vec()); }
+        let name = self.byte_codec_name(codec);
+        let mut output = Vec::new();
+        let mut decoded: Vec<u32> = Vec::new();
+        if encode {
+            let Value::Text(text) = &args[0] else { return Err(self.byte_fault("arguments")); };
+            if codec == Self::CODEC_WIDE { return Ok(self.byte_make(text.as_bytes().to_vec(), false)); }
+            let letters: Vec<char> = text.chars().collect();
+            let limit = if codec == Self::CODEC_SEVEN { 128 } else { 256 };
+            let mut at = 0;
+            while at < letters.len() {
+                if (letters[at] as u32) < limit { output.push(letters[at] as u8); at += 1; continue; }
+                let end = at + letters[at..].iter().take_while(|c| **c as u32 >= limit).count();
+                if policy == "ignore" { at = end; continue; }
+                if policy == "replace" { output.resize(output.len() + end - at, b'?'); at = end; continue; }
+                let answer = self.codec_library("_encode_error", vec![Value::text(&name), args[0].clone(), Value::Small(at as i64), Value::Small(end as i64), Value::text(&format!("ordinal not in range({limit})")), Value::text(&policy)])?;
+                let Value::Tuple(pair) = answer else { return Err(self.byte_fault("arguments")); };
+                match &pair[0] {
+                    Value::Bytes(bytes, ..) => output.extend_from_slice(&bytes.borrow()),
+                    Value::Text(replacement) => output.extend(self.byte_encode(replacement, codec)?),
+                    _ => return Err(self.byte_fault("arguments")),
+                }
+                at = pair[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
+            }
+            return Ok(self.byte_make(output, false));
+        }
+        if codec == Self::CODEC_BYTEWISE { return self.byte_decode(row, codec); }
+        let mut offset = 0;
+        while offset < row.len() {
+            let tail = &row[offset..];
+            let failure = if codec == Self::CODEC_SEVEN {
+                tail.iter().position(|b| *b >= 128).map(|i| (i, 1, "ordinal not in range(128)"))
+            } else {
+                std::str::from_utf8(tail).err().map(|e| {
+                    let i = e.valid_up_to();
+                    let why = if e.error_len().is_none() { "unexpected end of data" }
+                        else if (194..=244).contains(&tail[i]) { "invalid continuation byte" } else { "invalid start byte" };
+                    (i, e.error_len().unwrap_or(tail.len() - i), why)
+                })
+            };
+            let Some((valid, count, why)) = failure else {
+                decoded.extend(std::str::from_utf8(tail).map_err(|_| self.byte_fault("unready"))?.chars().map(u32::from)); break;
+            };
+            decoded.extend(std::str::from_utf8(&tail[..valid]).map_err(|_| self.byte_fault("unready"))?.chars().map(u32::from));
+            let start = offset + valid;
+            let end = start + count;
+            if policy == "replace" { decoded.push(0xfffd); offset = end; }
+            else if policy == "ignore" { offset = end; }
+            else {
+                let answer = self.codec_library("_decode_error", vec![Value::text(&name), self.byte_make(row.to_vec(), false), Value::Small(start as i64), Value::Small(end as i64), Value::text(why), Value::text(&policy)])?;
+                let Value::Tuple(pair) = answer else { return Err(self.byte_fault("arguments")); };
+                let replacement = pair[0].text_codes().ok_or_else(|| self.byte_fault("arguments"))?;
+                decoded.extend(replacement);
+                offset = pair[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
+            }
+        }
+        Ok(Value::from_codes(decoded))
+    }
+
+    fn byte_call(&mut self, task: u8, args: &[Value]) -> Res<Value> {
         self.byte_work(task, args, false)
     }
 
-    fn byte_work(&self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
-        if matches!(task, 0..=3) && args.len() == 3 {
-            let Value::Text(policy) = &args[2] else { return Err(self.byte_fault("arguments")); };
-            if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
-            return self.byte_work(task, &args[..2], signed);
+    fn byte_work(&mut self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if task <= 3 && !args.is_empty() && (task >= 2 || args.len() >= 2) {
+            let decode = task == 3;
+            let row = if decode { self.byte_row(&args[0], false)? } else { Vec::new() };
+            let result = self.byte_transcode(!decode, &row, args)?;
+            if task == 1 {
+                if let Value::Bytes(cell, ..) = result { return Ok(self.byte_make(cell.borrow().clone(), true)); }
+            }
+            return Ok(result);
         }
         let bad = || self.byte_fault("arguments");
         let unready = || self.byte_fault("unready");
@@ -11781,6 +11887,7 @@ impl<'a> Engine<'a> {
             Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
                 arity(1)?;
+                if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 self.utter(s);
                 Value::Null
@@ -12743,6 +12850,7 @@ impl<'a> Engine<'a> {
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
             Builtin::ToText => {
                 arity(1)?;
+                if matches!(args[0], Value::Codepoints(_)) { return Ok(args[0].clone()); }
                 self.digits_shown(&args[0])?;
                 Value::text(&self.told(&args[0], &sp))
             }
@@ -12799,6 +12907,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Bytes(row, ..) => Value::Small(row.borrow().len() as i64),
+                    Value::Codepoints(row) => Value::Small(row.len() as i64),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) | Value::Tuple(items) => Value::Small(items.len() as i64),
                     Value::Set(s) => Value::Small(s.borrow().held.len() as i64),
@@ -12824,6 +12933,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::CodeOf => {
                 arity(1)?;
+                if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 match s.chars().next() {
                     Some(c) => Value::Small(c as i64),
@@ -12841,6 +12951,7 @@ impl<'a> Engine<'a> {
                     .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
                 match char::from_u32(code) {
                     Some(c) => Value::text(&c.to_string()),
+                    None if (0xd800..=0xdfff).contains(&code) && !self.lang.byte_words["ext.system.bytes.encodings"].is_empty() => Value::from_codes(vec![code]),
                     None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
                 }
             }
@@ -12863,7 +12974,7 @@ impl<'a> Engine<'a> {
                     let which = match &args[0] {
                         Value::Complex(_) => Some(Builtin::Complex),
                         Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
-                        Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
+                        Value::Text(_) | Value::Codepoints(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
                         Value::Set(_) => Some(if args[0].set_fixed() { Builtin::Frozen } else { Builtin::Set }), Value::Map(_) => Some(Builtin::Dict),
                         // A counted row and a span of bounds are kinds

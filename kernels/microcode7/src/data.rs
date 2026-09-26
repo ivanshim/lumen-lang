@@ -193,6 +193,7 @@ pub enum IteratorKind {
 
 #[derive(Clone)]
 pub enum Value {
+    Unpaired(Rc<[u32]>),
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
     Window(Rc<Value>, char),
@@ -640,6 +641,7 @@ impl Value {
                 Ok(held) if held.sealed => Ok(held.whole_address()),
                 _ => Err("set"),
             },
+            Value::Unpaired(numbers) => Ok(format!("unpaired:{numbers:?}")),
             Value::Text(word) => Ok(format!("text:{word}")),
             Value::Octets { changeable: true, .. } => Err("bytearray"),
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
@@ -755,6 +757,7 @@ impl Value {
         let object = get("object");
         let single = end == start + 1 && start >= 0;
         let one = if !single { None } else { match &object {
+            Some(Value::Unpaired(numbers)) if marker != 1 => numbers.get(start as usize).map(|&n| Self::unicode_escaped(n)),
             Some(Value::Text(s)) if marker != 1 => usize::try_from(start).ok().and_then(|i| s.chars().nth(i)).map(|c| Self::unicode_escaped(c as u32)),
             Some(Value::Octets { cell, .. }) if marker == 1 => usize::try_from(start).ok().and_then(|i| cell.borrow().get(i).copied()).map(|b| format!("{:02x}", b)),
             _ => None,
@@ -789,6 +792,38 @@ impl Value {
         }
     }
 
+    pub fn character_numbers(&self) -> Option<Vec<u32>> {
+        match self {
+            Value::Unpaired(numbers) => Some(numbers.to_vec()),
+            Value::Text(word) => Some(word.chars().map(|c| c as u32).collect()),
+            _ => None,
+        }
+    }
+
+    pub fn characters(numbers: Vec<u32>) -> Value {
+        let mut word = String::new();
+        for &number in &numbers {
+            let Some(letter) = char::from_u32(number) else { return Value::Unpaired(Rc::from(numbers)); };
+            word.push(letter);
+        }
+        Value::text(&word)
+    }
+
+    pub fn unpaired_quoted(numbers: &[u32]) -> String {
+        let delimiter = if numbers.contains(&39) && !numbers.contains(&34) { '"' } else { '\'' };
+        let pieces = numbers.iter().map(|&n| match n {
+            0xd800..=0xdfff => format!("\\u{:04x}", n),
+            10 => String::from("\\n"), 13 => String::from("\\r"), 9 => String::from("\\t"),
+            92 => String::from("\\\\"),
+            n if n == delimiter as u32 => format!("\\{delimiter}"),
+            n => match char::from_u32(n) {
+                Some(c) if !c.is_control() => c.to_string(),
+                _ => Self::unicode_escaped(n),
+            },
+        }).collect::<String>();
+        format!("{delimiter}{pieces}{delimiter}")
+    }
+
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -797,7 +832,7 @@ impl Value {
         Some(match self {
             Value::Small(_) | Value::Huge(_) => Kind::Whole,
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
-            Value::Text(_) => Kind::Chars,
+            Value::Text(_) | Value::Unpaired(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
             Value::TextRow(..) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
@@ -829,6 +864,7 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
             Value::TextRow(words, _) => !words.is_empty(),
+            Value::Unpaired(numbers) => !numbers.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Tuple(parts) => !parts.is_empty(),
             Value::Nil | Value::Unset => false,
@@ -849,6 +885,7 @@ impl Value {
             Value::Frac(_) => return Err("Cannot coerce rational to integer".to_string()),
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
+            Value::Unpaired(_) => return Err("ValueError: invalid literal for int()".to_string()),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::TextRow(..) | Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
@@ -931,6 +968,7 @@ impl Value {
                     _ => left.first == right.first && left.stride == right.stride,
                 }
             }
+            (Value::Unpaired(one), Value::Unpaired(two)) => one == two,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -1209,6 +1247,7 @@ impl Value {
                 Some(d) => decimal_string(&e.above, &e.beneath, d),
                 None => format!("{}/{}", e.above, e.beneath),
             },
+            Value::Unpaired(numbers) => Self::unpaired_quoted(numbers),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => if *b { "true" } else { "false" }.to_string(),
             Value::Nil | Value::Unset => "null".to_string(),

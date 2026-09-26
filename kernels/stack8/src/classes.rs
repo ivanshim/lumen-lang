@@ -1145,7 +1145,7 @@ impl<'a> Engine<'a> {
     pub(super) fn kind_holds(&self,op:&Builtin,word:&str,value:&Value)->bool {
         match op {
             Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),
-            Builtin::ToText=>matches!(value,Value::Text(_)),
+            Builtin::ToText=>matches!(value,Value::Text(_) | Value::Codepoints(_)),
             Builtin::AsReal=>matches!(value,Value::Real(_)),
             Builtin::List=>matches!(value,Value::Array(_)),
             Builtin::SortOf=>matches!(value,Value::Class(_)|Value::Native(..)|Value::ByteKind(..)|Value::SortOf(_))||self.kind_spelled(value).is_some(),

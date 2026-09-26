@@ -24,7 +24,7 @@ impl Value {
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().kind_word(),
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Dict(_) => "dict",
             Self::Set(_) => if self.set_sealed() { "frozenset" } else { "set" },
-            Self::Text(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
+            Self::Text(_) | Self::Unpaired(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
             Self::Nil => "NoneType", Self::Progression(_) => "range",
             Self::Octets { changeable, .. } => if *changeable { "bytearray" } else { "bytes" },
@@ -147,6 +147,11 @@ impl Value {
                 let real = crate::complex::decimal_value(pair.0).hash_number()?;
                 let imaginary = crate::complex::decimal_value(pair.1).hash_number()?;
                 real.wrapping_add(1_000_003i64.wrapping_mul(imaginary))
+            }
+            Self::Unpaired(numbers) => {
+                let mut code = 0_i64;
+                for &n in numbers.iter() { code = code.wrapping_mul(1_000_003) ^ i64::from(n); }
+                code
             }
             Self::Text(chars) if chars.is_empty() => 0,
             Self::Text(chars) => {
