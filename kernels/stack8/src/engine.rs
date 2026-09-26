@@ -5297,6 +5297,9 @@ impl<'a> Engine<'a> {
     /// in-place method's answer, unless it has none or declined.
     fn settled_in_place(&mut self, op: &Action, held: &Value, by: &Value) -> Res<Option<Value>> {
         let Some(place) = Self::in_place_method(op) else { return Ok(None) };
+        if place == 49 && self.lang.sequence_values {
+            if let Some(repeated) = self.sequence_in_place(true, held, by)? { return Ok(Some(repeated)); }
+        }
         let thing = held.contents();
         if !matches!(thing, Value::Object(_)) { return Ok(None); }
         Ok(match self.special_call(&thing, place, vec![by.clone()])? {
@@ -5519,7 +5522,7 @@ impl<'a> Engine<'a> {
         }
         // A thing standing for a whole number is that number wherever a
         // row, a text or a range is read at a place.
-        if let (Some((11, _)), Value::Object(_), true) = (places, b, Self::counts_places(a)) {
+        if let (Some((11, _)), Value::Object(_), true) = (places, b, Self::counts_places(a) || matches!(a, Value::Bytes(..))) {
             if let Some(index) = self.special_index(b)? { return self.special_dyad(op, a, &index); }
         }
         if let Some((direct, reflected)) = places {
@@ -5544,6 +5547,14 @@ impl<'a> Engine<'a> {
             let same_class = matches!((a, b), (Value::Object(x), Value::Object(y)) if Rc::ptr_eq(&x.class, &y.class));
             if !first_right && (direct < 8 || !same_class) {
                 if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
+            }
+            if matches!(op, Action::Mul) {
+                let sequence = |v: &Value| matches!(v, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Bytes(..));
+                if sequence(a) && Self::plain_thing(b) {
+                    if let Some(times) = self.special_index(b)? { return self.special_dyad(op, a, &times); }
+                } else if sequence(b) && Self::plain_thing(a) {
+                    if let Some(times) = self.special_index(a)? { return self.special_dyad(op, &times, b); }
+                }
             }
             // An arithmetic, matrix or bit working that a plain thing
             // stands in and neither side's methods took is refused with
@@ -6754,6 +6765,7 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?);
+                let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
                         let mut found = Vec::new();
@@ -6800,7 +6812,14 @@ impl<'a> Engine<'a> {
                     let middle = items.drain(*at..until).collect();
                     items.insert(*at, Value::array(middle));
                 } else if items.len() > *count {
-                    let told = self.apart_fault(&self.lang.unpack_long, &[count.to_string()]);
+                    let mut expected = count.to_string();
+                    if sized_builtin {
+                        if let Some(join) = self.lang.unpack_long.get(2) {
+                            expected.push_str(join);
+                            expected.push_str(&items.len().to_string());
+                        }
+                    }
+                    let told = self.apart_fault(&self.lang.unpack_long, &[expected]);
                     return Err(told.unwrap_or_else(|| "Too many values".to_string()).into());
                 }
                 Value::array(items)
@@ -8661,10 +8680,8 @@ impl<'a> Engine<'a> {
             // answered here, so that it is refused in these words.
             Action::Mul if texted(a) || texted(b) => {
                 let by = if texted(a) { b } else { a };
-                match by {
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(None),
-                    other => Err(self.sequence_repeat_fault(other)),
-                }
+                self.sequence_count(by)?;
+                Ok(None)
             }
             Action::Lt | Action::Le | Action::Gt | Action::Ge if rowed(a) && rowed(b) && a.core_kind() == b.core_kind() => {
                 let (left, right) = (items(a), items(b));
@@ -8704,7 +8721,9 @@ impl<'a> Engine<'a> {
         let (Value::Bond(cell) | Value::Collection(cell, _)) = target else { return Ok(None) };
         let Value::Array(items) = cell.borrow().clone() else { return Ok(None) };
         let row = if repeat {
-            self.sequence_repeated(&items, self.sequence_count(&given.contents())?)?
+            let given = given.contents();
+            let count = self.special_index(&given)?.unwrap_or(given);
+            self.sequence_repeated(&items, self.sequence_count(&count)?)?
         } else {
             let mut row = items.as_ref().clone();
             let taken = self.comprehension_items(given).map_err(|_| self.core_fault("core.uniterable", &given.core_kind()))?;
@@ -10771,17 +10790,21 @@ impl<'a> Engine<'a> {
                     destination = self.member_of(module, &route[1])?.unwrap_or(Value::Null);
                     if matches!(destination, Value::Null) { return Ok(Value::Null); }
                 }
-                let mut parts = Vec::new();
-                for value in &args { parts.push(self.special_text(value, false)?); }
-                let text = parts.join(&between) + &ending;
                 let writer = match self.member_of(destination.clone(), &route[2])? {
                     Some(writer) => writer,
-                    None => return Err(self.lang.print_file_unready[0].clone()),
+                    None => return Err(self.member_amiss(&destination, &route[2])),
                 };
-                self.call_held(writer, vec![Value::text(&text)])?;
+                for (index, value) in args.iter().enumerate() {
+                    if index > 0 { self.call_held(writer.clone(), vec![Value::text(&between)])?; }
+                    let text = self.special_text(value, false)?;
+                    self.call_held(writer.clone(), vec![Value::text(&text)])?;
+                }
+                self.call_held(writer, vec![Value::text(&ending)])?;
                 if flushed {
                     let word = self.lang.print_flush[0].clone();
-                    if let Some(method) = self.member_of(destination, &word)? { self.call_held(method, Vec::new())?; }
+                    let method = self.member_of(destination.clone(), &word)?
+                        .ok_or_else(|| self.member_amiss(&destination, &word))?;
+                    self.call_held(method, Vec::new())?;
                 }
                 return Ok(Value::Null);
             }

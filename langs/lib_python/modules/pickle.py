@@ -1,11 +1,6 @@
-# A value handed out as bytes and taken back as itself. What is written
-# here is what marshal writes -- this runtime's own writing, not the
-# reference implementation's pickle protocol -- with a slice taken as
-# well, so a stream written here is read back only here and says so
-# rather than pretending to a protocol it does not have. There is one
-# form, so a protocol number is taken and looked at for range and has no
-# other effect. A thing of a class of its own is refused instead of
-# being written by the class's name, which nothing here can find again.
+# Boolean roots use the standard pickle encodings for protocols 0--5.
+# Other values still use this runtime's marshal representation, including
+# slices, and can only be read back here. User-defined objects are refused.
 import marshal
 
 HIGHEST_PROTOCOL = 5
@@ -39,11 +34,24 @@ def _reach(protocol):
 
 
 def dumps(obj, protocol=None, *, fix_imports=True, buffer_callback=None):
-    _reach(protocol)
+    protocol = _reach(protocol)
+    if type(obj) is bool:
+        if protocol < 2:
+            return b'I01\n.' if obj else b'I00\n.'
+        return b'\x80' + bytes([protocol]) + (b'\x88.' if obj else b'\x89.')
     return marshal._write(obj, True, _refuse)
 
 
 def loads(data, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=None):
+    if data == b'I01\n.':
+        return True
+    if data == b'I00\n.':
+        return False
+    if len(data) == 4 and data[0] == 128 and 2 <= data[1] <= HIGHEST_PROTOCOL and data[3] == 46:
+        if data[2] == 136:
+            return True
+        if data[2] == 137:
+            return False
     return marshal._read(data)
 
 

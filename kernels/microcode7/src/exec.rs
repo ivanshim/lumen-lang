@@ -4002,8 +4002,8 @@ impl<'a> Machine<'a> {
                 }
                 // A thing standing for a whole number is that number
                 // where a row or a text is shortened at a place.
-                let named = if matches!(target, Value::Vector(_) | Value::Text(_)) && matches!(named, Value::Thing(_)) {
-                    let asked = self.stood_for_whole(&named);
+                let named = if matches!(target.settled(), Value::Vector(_) | Value::Text(_)) && matches!(named.settled(), Value::Thing(_)) {
+                    let asked = self.stood_for_whole(&named.settled());
                     if let Some(away) = self.got_away.take() { return Err(away); }
                     asked?.unwrap_or(named)
                 } else { named };
@@ -5827,6 +5827,9 @@ impl<'a> Machine<'a> {
         if matches!(at, 12 | 13) {
             let mut operands = vec![receiver.settled()];
             operands.extend(arguments.iter().cloned());
+            if at == 12 && matches!(operands[0], Value::Vector(_)) {
+                if let Some(index) = self.stood_for_whole(&operands[1])? { operands[1] = index; }
+            }
             // What goes into a place goes in as it stands: a worth
             // read out of its cell first would be a copy, and a name
             // for it would no longer be a name for what the holder
@@ -6904,17 +6907,21 @@ impl<'a> Machine<'a> {
                     sink = self.attribute(&namespace, &route[1]).unwrap_or(Value::Nil);
                     if matches!(sink, Value::Nil) { return Ok(Some(Value::Nil)); }
                 }
-                let mut written = String::new();
-                for (at, item) in positional.iter().enumerate() {
-                    if at != 0 { written.push_str(&join); }
-                    written.push_str(&self.object_words(item, false)?);
+                let writer = self.attribute(&sink, &route[2])
+                    .ok_or_else(|| self.member_missing(&sink, &route[2]))?;
+                let mut first = true;
+                for item in positional {
+                    if !first { self.apply_held(writer.clone(), vec![Value::text(&join)])?; }
+                    first = false;
+                    let rendered = self.object_words(&item, false)?;
+                    self.apply_held(writer.clone(), vec![Value::text(&rendered)])?;
                 }
-                written.push_str(&tail);
-                let writer = self.attribute(&sink, &route[2]).ok_or_else(|| self.argument_fault("ext.builtin.print.file.unready", None))?;
-                self.apply_held(writer, vec![Value::text(&written)])?;
+                self.apply_held(writer, vec![Value::text(&tail)])?;
                 if drained {
-                    if let Some(method) = table.single("ext.builtin.print.flush").and_then(|word| self.attribute(&sink, word)) {
-                        self.apply_held(method, Vec::new())?;
+                    if let Some(word) = table.single("ext.builtin.print.flush") {
+                        let flush = self.attribute(&sink, word)
+                            .ok_or_else(|| self.member_missing(&sink, word))?;
+                        self.apply_held(flush, Vec::new())?;
                     }
                 }
                 return Ok(Some(Value::Nil));
@@ -9589,6 +9596,20 @@ impl<'a> Machine<'a> {
                     if !matches!(result, Value::Refusal(_)) { return Ok(Some(result)); }
                 }
             }
+            if operation == Prim::Times {
+                let row_side = [left, right].iter().position(|value|
+                    matches!(value, Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Octets { .. }));
+                if let Some(at) = row_side {
+                    let count = if at == 0 { right } else { left };
+                    if matches!(count, Value::Thing(_)) && Self::underlying(count).is_none() {
+                        if let Some(whole) = self.stood_for_whole(count)? {
+                            let mut normalized = operands.to_vec();
+                            normalized[1 - at] = whole;
+                            return self.prim(operation, "", &normalized).map(Some);
+                        }
+                    }
+                }
+            }
             // An arithmetic, matrix or bit working with a thing of no
             // native worth on either side, which no method took, is
             // refused with its sign and both kinds named.
@@ -9735,7 +9756,7 @@ impl<'a> Machine<'a> {
             // A thing standing for a whole number is that number where a
             // row, a text, a tuple or a progression is read, or a row or
             // a text shortened, at a place.
-            (Prim::At | Prim::Fetch | Prim::Toward | Prim::Apart | Prim::Erase, [row, key @ Value::Thing(_)]) if matches!(row.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_)) => {
+            (Prim::At | Prim::Fetch | Prim::Toward | Prim::Apart | Prim::Erase, [row, key @ Value::Thing(_)]) if matches!(row.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_) | Value::Octets { .. }) => {
                 match self.stood_for_whole(key)? {
                     Some(whole) => self.prim(operation, "", &[row.clone(), whole])?,
                     None => return Ok(None),
@@ -11050,7 +11071,14 @@ impl<'a> Machine<'a> {
                     return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
                 }
                 if star.is_none() && values.len() != wanted {
-                    let said = self.apart_words("ext.stmt.unpack.long", &[wanted.to_string()]);
+                    let count = match &v[0] {
+                        Value::Vector(_) | Value::Tuple(_) | Value::Dict(_) => {
+                            self.table.strings("ext.stmt.unpack.long").get(2)
+                                .map(|between| format!("{wanted}{between}{}", values.len()))
+                        }
+                        _ => None,
+                    }.unwrap_or_else(|| wanted.to_string());
+                    let said = self.apart_words("ext.stmt.unpack.long", &[count]);
                     return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
                 }
                 if let Some(middle) = star {
@@ -13802,10 +13830,7 @@ impl<'a> Machine<'a> {
             // refused in these words rather than the reader's.
             Prim::Times if matches!(left, Value::Text(_)) || matches!(right, Value::Text(_)) => {
                 let by = if matches!(left, Value::Text(_)) { right } else { left };
-                match by {
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(None),
-                    other => Err(self.repeating_refused(other)),
-                }
+                self.repeat_count(by).map(|_| None)
             }
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if strung(left) && strung(right) && left.kind_word() == right.kind_word() => {
                 let (first, second) = (inside(left), inside(right));
@@ -13840,7 +13865,12 @@ impl<'a> Machine<'a> {
         let cell = cell.clone();
         let Value::Vector(items) = cell.borrow().clone() else { return Ok(None) };
         let row = if repeat {
-            self.laid_again(&items, self.repeat_count(&given.settled())?)?
+            let original = given.settled();
+            let quantity = match self.stood_for_whole(&original)? {
+                Some(index) => index,
+                None => original,
+            };
+            self.laid_again(&items, self.repeat_count(&quantity)?)?
         } else {
             let mut row = items.as_ref().clone();
             let kind = given.kind_word();
