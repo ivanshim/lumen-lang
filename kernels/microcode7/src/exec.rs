@@ -5897,6 +5897,11 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+        if let Some(answer) = self.integer_attribute(value, name) { return Some(answer); }
+        if matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_))
+            && self.table.spells("ext.builtin.bytes.from_int", name) {
+            return Some(Value::Member(Rc::new(value.clone()), "integer_bytes".into()));
+        }
         if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
         // A walk over a routine's own body answers whether it is on the
         // way through the machine at this very moment: exactly when the
@@ -6344,6 +6349,29 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "integer_size" {
+            let loose = matches!(receiver, Value::Blueprint(_) | Value::Intrinsic(..));
+            if !keywords.is_empty() || arguments.len() != usize::from(loose) { return Err(self.method_fault("arguments").into()); }
+            let object = if loose { &arguments[0] } else { receiver };
+            let actual = Self::underlying(object).unwrap_or_else(|| object.settled());
+            let number = self.octet_whole(&actual)?;
+            let layout = self.table.strings("ext.stmt.class.detail.integer.layout");
+            let base = layout[if matches!(object, Value::Thing(_)) { 6 } else { 3 }].parse::<u64>().unwrap_or(24);
+            let digit_bits = layout[5].parse::<u64>().unwrap_or(30);
+            let digits = (number.bits().max(1) - 1) / digit_bits + 1;
+            let bytes = base + digits * layout[4].parse::<u64>().unwrap_or(4);
+            return Ok(Value::Small(bytes as i64));
+        }
+        if name == "integer_from_bytes" || name == "integer_bytes" {
+            let mut supplied = arguments;
+            let work = if name == "integer_bytes" { supplied.insert(0, receiver.settled()); 14 } else { 15 };
+            let number = self.builtin_names(Prim::Octets(work), "", &mut supplied, keywords)?
+                .ok_or_else(|| self.octet_error("arguments"))?;
+            return match receiver {
+                Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![number]),
+                _ => Ok(number),
+            };
+        }
         // One more member set on the end of a list, in the place the
         // list already occupies. This comes first of all: further down
         // the contents are read out into a worth of their own, and a
@@ -6863,10 +6891,23 @@ impl<'a> Machine<'a> {
         if let Prim::Octets(which @ (14 | 15)) = op {
             let mut negative_allowed = false;
             for (key, worth) in keywords {
-                if !table.spells("ext.builtin.bytes.signed", &key) { return Err(self.octet_error("unready").into()); }
-                negative_allowed = worth.is_true();
+                if table.spells("ext.builtin.bytes.signed", &key) { negative_allowed = self.object_truth(&worth)?; continue; }
+                let destination = if key == "byteorder" { usize::from(which == 14) + 1 }
+                    else if key == "length" && which == 14 { 1 }
+                    else if key == "bytes" && which == 15 { 0 }
+                    else { return Err(self.octet_error("arguments").into()); };
+                if positional.get(destination).map_or(false, |v| !matches!(v, Value::Unset)) { return Err(self.octet_error("arguments").into()); }
+                while positional.len() <= destination { positional.push(Value::Unset); }
+                positional[destination] = worth;
             }
-            return self.octet_work(which, positional, negative_allowed).map(Some).map_err(Into::into);
+            for (slot, value) in positional.iter_mut().enumerate() {
+                if matches!(value, Value::Unset) {
+                    if which != 14 || slot != 1 { return Err(self.octet_error("arguments").into()); }
+                    *value = Value::Small(1);
+                }
+            }
+            return self.octet_work(which, positional, negative_allowed).map(Some)
+                .map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)));
         }
         if op == Prim::Say && table.single("ext.builtin.print.sep").is_some() {
             let route = table.strings("ext.builtin.print.redirect");
@@ -8648,6 +8689,40 @@ impl<'a> Machine<'a> {
     }
 
     fn octet_work(&mut self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
+        if operation == 14 && matches!(values.len(), 1..=3) {
+            let integer = Self::underlying(&values[0]);
+            let length = match values.get(1) {
+                Some(v @ Value::Thing(_)) => Some(Value::from_big(self.span_whole(v)?)),
+                _ => None,
+            };
+            if integer.is_some() || length.is_some() {
+                let mut plain = values.to_vec();
+                if let Some(n) = integer { plain[0] = n; }
+                if let Some(n) = length { plain[1] = n; }
+                return self.octet_work(operation, &plain, negative_allowed);
+            }
+        }
+        if operation == 15 && matches!(values.len(), 1 | 2) && !matches!(values[0], Value::Octets { .. } | Value::Vector(_)) {
+            let source = &values[0];
+            let offered = match source {
+                Value::Thing(thing) => self.inherited_entry(&thing.of, "__bytes__"),
+                _ => None,
+            };
+            let gathered = if let Some(method) = offered {
+                match self.apply_class_member(method, vec![source.clone()]) {
+                    Ok(bytes @ Value::Octets { changeable: false, .. }) => bytes,
+                    Ok(_) => return Err(self.octet_error("arguments")),
+                    Err(Escape::Error(words)) => return Err(words),
+                    Err(escape) => { self.got_away = Some(escape); return Err(String::new()); }
+                }
+            } else {
+                if matches!(source, Value::Text(_) | Value::Unpaired(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.octet_error("arguments")); }
+                let members = self.gathered_members(source)?;
+                Value::Vector(Rc::new(members))
+            };
+            let mut replaced = values.to_vec(); replaced[0] = gathered;
+            return self.octet_work(operation, &replaced, negative_allowed);
+        }
         if !values.is_empty() && operation < 4 && (operation > 1 || values.len() > 1) {
             let input = if operation == 3 { self.octet_contents(&values[0], false)? } else { Vec::new() };
             let answer = self.convert_text(operation != 3, &input, values)?;
@@ -8744,13 +8819,15 @@ impl<'a> Machine<'a> {
             }
             14 | 15 => {
                 let maximum = if operation == 14 { 3 } else { 2 };
-                if values.is_empty() || values.len() > maximum { return Err(refusal()); }
+                if values.is_empty() || values.len() > maximum { return Err(wrong()); }
                 let order = self.table.strings("ext.system.bytes.order");
-                let reversed = match values.get(maximum - 1) {
+                let ordering = values.get(maximum - 1).map(|v| Self::underlying(v).unwrap_or_else(|| v.settled()));
+                let reversed = match ordering.as_ref() {
                     None => false,
                     Some(Value::Text(name)) if name.as_ref() == order[0] => false,
                     Some(Value::Text(name)) if name.as_ref() == order[1] => true,
-                    _ => return Err(self.octet_error("bad_order")),
+                    Some(Value::Text(_)) => return Err(self.octet_error("bad_order")),
+                    _ => return Err(wrong()),
                 };
                 if operation == 15 {
                     let mut content = self.octet_gathered(&values[0], true, true)?;
@@ -8761,7 +8838,9 @@ impl<'a> Machine<'a> {
                 }
                 let number = self.octet_whole(&values[0])?;
                 if !negative_allowed && number < BigInt::zero() { return Err(self.octet_error("unsigned")); }
-                let width = match values.get(1) { None => 1, Some(n) => self.octet_whole(n)?.to_usize().ok_or_else(wrong)? };
+                let requested = match values.get(1) { None => BigInt::from(1), Some(n) => self.octet_whole(n)? };
+                if requested < BigInt::from(0) { return Err(String::from("ValueError: length argument must be non-negative")); }
+                let width = requested.to_isize().map(|n| n as usize).ok_or_else(|| self.octet_error("overflow"))?;
                 let mut content = if number.is_zero() { Vec::new() } else if negative_allowed { number.to_signed_bytes_be() } else { number.to_bytes_be().1 };
                 if content.len() > width { return Err(self.octet_error("overflow")); }
                 content.reverse();
@@ -11417,6 +11496,10 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
+                if self.integer_attribute(&v[0], &word).is_some()
+                    || matches!(v[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.table.spells("ext.builtin.bytes.from_int", &word) {
+                    return Ok(Value::Flag(true));
+                }
                 // A kind value and an intrinsic are each named, where the
                 // table has a member for a name.
                 if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(..) | Value::OctetKind { .. }) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }

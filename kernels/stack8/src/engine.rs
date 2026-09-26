@@ -4490,6 +4490,11 @@ impl<'a> Engine<'a> {
             if let Some(view) = raw { return Ok(Some(Value::View(Rc::new((view.0.clone(), "mapping".to_string()))))); }
         }
         let held = value.contents();
+        if let Some(size) = self.integer_member(&held, name) { return Ok(Some(size)); }
+        if matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_))
+            && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) {
+            return Ok(Some(Value::ValueMethod(Rc::new((held, "integer_bytes".to_string())))));
+        }
         if matches!(held, Value::Object(_) | Value::Class(_)) { return Ok(None); }
         // A walk over a routine's own body answers whether it is on the
         // way through the machine at this very moment: exactly when the
@@ -7230,7 +7235,7 @@ impl<'a> Engine<'a> {
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
                 let generator_running = matches!(&held, Value::Generator(_)) && self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref());
-                Value::Flag(kind_named || kind_maker || kind_doc || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || kind_named || kind_maker || kind_doc || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -10731,9 +10736,25 @@ impl<'a> Engine<'a> {
         }
         if let Builtin::Bytes(task @ (14 | 15)) = builtin {
             let mut signed = false;
+            let mut supplied: Vec<bool> = vec![true; args.len()];
             for (key, value) in named {
-                if !Lang::spells(&self.lang.byte_words["ext.builtin.bytes.signed"], &key) { return Err(self.byte_fault("unready")); }
-                signed = self.truth(&value);
+                if Lang::spells(&self.lang.byte_words["ext.builtin.bytes.signed"], &key) { signed = self.truth(&value); continue; }
+                let slot = match key.as_str() {
+                    "length" if task == 14 => 1,
+                    "byteorder" => if task == 14 { 2 } else { 1 },
+                    "bytes" if task == 15 => 0,
+                    _ => return Err(self.byte_fault("arguments")),
+                };
+                if supplied.get(slot).copied().unwrap_or(false) { return Err(self.byte_fault("arguments")); }
+                args.resize(args.len().max(slot + 1), Value::Null);
+                supplied.resize(args.len(), false);
+                supplied[slot] = true;
+                args[slot] = value;
+            }
+            for (index, value) in args.iter_mut().enumerate() {
+                if !supplied[index] {
+                    *value = if task == 14 && index == 1 { Value::Small(1) } else { return Err(self.byte_fault("arguments")); };
+                }
             }
             return self.byte_work(task, &args, signed);
         }
@@ -10848,6 +10869,35 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "integer_size" {
+            if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            let unbound = matches!(receiver, Value::Native(..) | Value::Class(_));
+            if args.len() != usize::from(unbound) { return Err(self.lang.method_errors["arguments"].clone()); }
+            let subject = if unbound { &args[0] } else { receiver };
+            let held = Self::worth_of(subject).unwrap_or_else(|| subject.contents());
+            if !matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
+            let layout = &self.lang.class_details["integer.layout"];
+            let bits = held.as_big()?.bits().max(1);
+            let width: u64 = layout[5].parse().unwrap_or(30);
+            let base: u64 = layout[if matches!(subject, Value::Object(_)) { 6 } else { 3 }].parse().unwrap_or(24);
+            let digit: u64 = layout[4].parse().unwrap_or(4);
+            return Ok(Value::Small((base + bits.div_ceil(width) * digit) as i64));
+        }
+        if matches!(operation, "integer_bytes" | "integer_from_bytes") {
+            let mut items = Vec::new();
+            if operation == "integer_bytes" { items.push((None, receiver.contents())); }
+            items.extend(args.into_iter().map(|v| (None, v)));
+            items.extend(named.into_iter().map(|(n, v)| (Some(n), v)));
+            let result = self.builtin_call(Builtin::Bytes(if operation == "integer_bytes" { 14 } else { 15 }), "", items)?;
+            if let Value::Class(class) = receiver {
+                return match self.class_make(class.clone(), vec![result]) {
+                    Ok(v) => Ok(v),
+                    Err(Fault::Note(message)) => Err(message),
+                    Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+                };
+            }
+            return Ok(result);
+        }
         // A row lengthened where it lies, instead of copied out, added
         // to, and written back. It stands ahead of the reading below
         // because that reading would hold the row a second time, and a
@@ -11970,6 +12020,37 @@ impl<'a> Engine<'a> {
     }
 
     fn byte_work(&mut self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if task == 14 && !args.is_empty() && args.len() <= 3 {
+            let mut normalized = args.to_vec();
+            let mut changed = false;
+            if let Some(number) = Self::worth_of(&args[0]) { normalized[0] = number; changed = true; }
+            if let Some(length) = args.get(1) {
+                if matches!(length, Value::Object(_)) {
+                    normalized[1] = Value::of_big(self.slice_whole(length)?); changed = true;
+                }
+            }
+            if changed { return self.byte_work(task, &normalized, signed); }
+        }
+        if task == 15 && !args.is_empty() && args.len() <= 2
+            && !matches!(args[0], Value::Bytes(..) | Value::Array(_)) {
+            let source = &args[0];
+            let converted = if let Value::Object(object) = source {
+                if let Some(method) = self.class_value(&object.class, "__bytes__") {
+                    let result = match self.class_apply(method, vec![source.clone()]) {
+                        Ok(v) => v,
+                        Err(Fault::Note(message)) => return Err(message),
+                        Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                    };
+                    if !matches!(result, Value::Bytes(_, false, _)) { return Err(self.byte_fault("arguments")); }
+                    result
+                } else { Value::array(self.core_members(source)?) }
+            } else {
+                if matches!(source, Value::Text(_) | Value::Codepoints(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
+                Value::array(self.core_members(source)?)
+            };
+            let mut supplied = args.to_vec(); supplied[0] = converted;
+            return self.byte_work(task, &supplied, signed);
+        }
         if task <= 3 && !args.is_empty() && (task >= 2 || args.len() >= 2) {
             let decode = task == 3;
             let row = if decode { self.byte_row(&args[0], false)? } else { Vec::new() };
@@ -12075,13 +12156,15 @@ impl<'a> Engine<'a> {
             return self.byte_table(&pair(from)?, &pair(to)?);
         }
         if task == 14 || task == 15 {
-            if args.is_empty() || args.len() > if task == 14 { 3 } else { 2 } { return Err(unready()); }
-            let order = args.get(if task == 14 { 2 } else { 1 });
+            if args.is_empty() || args.len() > if task == 14 { 3 } else { 2 } { return Err(bad()); }
+            let order_value = args.get(if task == 14 { 2 } else { 1 }).map(|v| Self::worth_of(v).unwrap_or_else(|| v.contents()));
+            let order = order_value.as_ref();
             let little = match order {
                 None => false,
                 Some(Value::Text(word)) if word.as_ref() == self.lang.byte_words["ext.system.bytes.order"][0] => false,
                 Some(Value::Text(word)) if word.as_ref() == self.lang.byte_words["ext.system.bytes.order"][1] => true,
-                _ => return Err(self.byte_fault("bad_order")),
+                Some(Value::Text(_)) => return Err(self.byte_fault("bad_order")),
+                _ => return Err(bad()),
             };
             if task == 15 {
                 let row = self.byte_row(&args[0], true)?;
@@ -12096,7 +12179,11 @@ impl<'a> Engine<'a> {
             if !signed && number.is_negative() { return Err(self.byte_fault("unsigned")); }
             let width = match args.get(1) {
                 None => 1,
-                Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => n.as_big()?.to_usize().ok_or_else(bad)?,
+                Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                    let count = n.as_big()?;
+                    if count.is_negative() { return Err("ValueError: length argument must be non-negative".into()); }
+                    count.to_isize().map(|n| n as usize).ok_or_else(|| self.byte_fault("overflow"))?
+                },
                 _ => return Err(bad()),
             };
             let mut row = if signed { number.to_signed_bytes_le() } else { number.to_bytes_le().1 };

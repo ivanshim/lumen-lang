@@ -7810,6 +7810,9 @@ impl<'a> Builder<'a> {
                         }
                         return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]));
                     }
+                    if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(14))) {
+                        return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(Value::text(&named))]));
+                    }
                     if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(_))) {
                         args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
                         return Ok(sequence(args));

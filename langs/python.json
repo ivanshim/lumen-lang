@@ -2693,6 +2693,9 @@
     "TypeError: ",
     ".__new__() takes exactly one argument (the type to instantiate)"
   ],
+  "ext.stmt.class.detail.integer.layout": [
+    "__basicsize__", "__itemsize__", "__sizeof__", "24", "4", "30", "32"
+  ],
   "ext.stmt.class.detail.root.members": [
     "__eq__",
     "__ne__",

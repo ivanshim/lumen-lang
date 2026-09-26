@@ -1019,6 +1019,37 @@ impl<'a> Machine<'a> {
             _ => None,
         }
     }
+    pub(super) fn integer_attribute(&self, value: &Value, key: &str) -> Option<Value> {
+        let words = self.table.strings("ext.stmt.class.detail.integer.layout");
+        if words.len() < 7 { return None; }
+        let mut derived = false;
+        let is_type = match value {
+            Value::Intrinsic(Prim::AsInt, _) => true,
+            Value::Blueprint(b) => {
+                let primitive = Self::native_beneath(b)?;
+                if self.table.prims.get(&primitive) != Some(&Prim::AsInt) { return None; }
+                derived = Self::native_word(b).is_none();
+                true
+            }
+            Value::Thing(_) => {
+                if !matches!(Self::underlying(value)?, Value::Small(_) | Value::Huge(_)) { return None; }
+                false
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => false,
+            _ => return None,
+        };
+        if self.table.strings("ext.builtin.bytes.to_int").iter().any(|word| word.rsplit('.').next() == Some(key)) {
+            let owner = if let Value::Thing(instance) = value { Value::Blueprint(instance.of.clone()) }
+                else if is_type { value.clone() }
+                else { Value::Intrinsic(Prim::AsInt, Rc::from(self.table.single("builtin.to_int")?)) };
+            return Some(Value::Member(Rc::new(owner), "integer_from_bytes".into()));
+        }
+        let at = words.iter().take(3).position(|word| word == key)?;
+        if at == 2 { return Some(Value::Member(Rc::new(value.clone()), "integer_size".into())); }
+        if !is_type { return None; }
+        let slot = if at == 1 { 4 } else if derived { 6 } else { 3 };
+        words[slot].parse().ok().map(Value::Small)
+    }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         let sought=self.seek_class_member(value.clone(),key,direct);
         if direct{return sought;}
@@ -1050,6 +1081,7 @@ impl<'a> Machine<'a> {
         // A native kind's word read as a class: its maker, and its name.
         if let Value::Intrinsic(op,word)=&value {
             if Self::names_a_kind(op) {
+                if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
                 if key==self.detail("doc") {
@@ -1091,6 +1123,7 @@ impl<'a> Machine<'a> {
                 let result=Value::Tuple(Rc::new(all));return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
+            if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
             if let Some(entry)=self.carried_by_kind(&value,key){return Ok(entry);}
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
@@ -1128,6 +1161,7 @@ impl<'a> Machine<'a> {
             if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
                 if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
             }
+            if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
             if let Some(root)=self.from_the_root(key,true) {
                 if !native.as_ref().map_or(false,|under|Self::kind_method_named(self.table,key).is_some()||self.attribute(&under.settled(),key).is_some()) {
                     // The maker takes a class and stays loose; the hook

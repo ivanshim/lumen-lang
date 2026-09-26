@@ -8421,6 +8421,8 @@ impl<'a> Compiler<'a> {
                     // its refusal.
                     else if lang.member_amiss.is_some() { self.act(Action::Grab(Rc::from(named.as_str())), 1); }
                     else { self.scope_fault(&lang.set_words["ext.builtin.set.method.unavailable"]); }
+                } else if matches!(native, Some(Builtin::Bytes(14))) && call.is_none() {
+                    self.act(Action::Grab(Rc::from(named.as_str())), 1);
                 } else if matches!(native, Some(Builtin::Bytes(_))) && call.is_none() {
                     self.discard();
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
