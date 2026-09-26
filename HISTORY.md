@@ -1817,3 +1817,38 @@ is the measure.
 The repository now carries an MIT licence for its own code (`LICENSE`);
 the CPython and PHP tests under `tests/` keep their own licences.
 `docs/OVERVIEW.md` is a one-page account of the project.
+
+### 1ab. Batch 19 merged as #507; batch 20a is the first batch checked on Lambda
+
+Pull request #507 merged into main at 8a13986 (batch 19, the MIT licence
+and docs/OVERVIEW.md). Batch 20 grew to seventeen branches, so it goes in
+as smaller pull requests; 20a folds the eight that merge with one another
+without conflicts. All counts both kernels unless noted.
+
+fix/generators: generator and coroutine corners (test_generators 27 to
+29). fix/call-arguments: positional-only and keyword-only parameters,
+their errors and CPython's wording (test_positional_only_arg 7 to 20,
+test_keywordonlyarg 8 to 10, test_syntax 50 to 56). fix/class-operations:
+function and class attributes (test_funcattrs 13 to 32, test_class 16/17
+to 21). fix/complex: the complex type's construction, arithmetic and
+formatting (test_complex 19 to 32). fix/sequences: list and tuple
+semantics, with CPython's own LyingTuple/LyingList helpers restored in the
+test library's seq_tests (test_list 44/45 to 55/56, test_tuple 26 to 32).
+fix/fractions: the fractions module (test_fractions 19 to 26). fix/operators: augmented assignment and comparison
+(test_augassign 5 to 7, test_compare +1). fix/small-files: index
+conversion, print's writer calls, bool's pickle forms and unpacking errors
+(test_index 36/37 to 55 of 55, test_print +1, test_bool +1).
+
+Merged, the fifty files count 1882 passing tests on stack8 and 1894 on
+microcode7, up from 1774 and 1781, with no passing test lost on either.
+
+How it was checked. The instance was replaced blue/green by a c8g.4xlarge
+built from its image and then stepped down to a c8g.2xlarge (8 cores):
+the bursty checks moved to AWS Lambda (arm64, one vCPU each, the build
+box's own glibc shipped with the binary). The full scratch check runs as
+about 700 invocations at once in under two minutes, the example gates
+(1,224 runs) in about one, and forty-nine of the fifty reference files
+in about twelve; test_set and scratch/reader-tail/4 stay on the instance.
+The Lambda results matched the instance's run of the same tree exactly.
+fix/relocatable-library lets a binary find its library through
+LUMEN_ROOT, so any worktree's own build can be checked on Lambda.
