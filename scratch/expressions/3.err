@@ -1,1 +1,1 @@
-TypeError: %d format: a real number is required, not list
+TypeError: format argument: %d requires a real number, not list
