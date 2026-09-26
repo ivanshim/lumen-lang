@@ -1852,3 +1852,33 @@ in about twelve; test_set and scratch/reader-tail/4 stay on the instance.
 The Lambda results matched the instance's run of the same tree exactly.
 fix/relocatable-library lets a binary find its library through
 LUMEN_ROOT, so any worktree's own build can be checked on Lambda.
+
+### 1ac. Batch 20a merged as #508; batch 20b, and the checks moved to Lambda for good
+
+Pull request #508 merged into main at 33f9458. Batch 20b folds six
+branches. fix/relocatable-library: the host resolves `LUMEN_ROOT` once and
+passes the library directory to both kernels, so a copied binary finds
+its library files wherever the tree is; unset, nothing changes.
+fix/unittest-only: `LUMEN_UNITTEST_ONLY` names the test classes a
+reference file's `unittest.main()` runs, so a file as long as test_set can
+be run in parts; run class by class and joined in the order a whole run
+takes them, test_set gives the same 644-character progress line on both
+kernels. fix/math: the math module's helpers as CPython's tests use them
+(test_math 51 to 72, test_float +1). fix/enum: IntEnum and StrEnum in the
+library. fix/compile-eval: compile() and the builtins around it
+(test_builtin 47 to 55, test_scope +1). fix/listcomps: comprehension
+assignment targets, comprehensions in asynchronous functions, class cells
+(test_listcomps 43 to 54, test_dictcomps 9 to 10).
+
+Merged, the fifty files count 1926 on stack8 and 1938 on microcode7, up
+from 1882 and 1894, with no passing test lost. file-builtin/28 was
+rewritten for the merge: both kernels print the same line, 55 passing.
+
+scripts/lambda/ holds the Lambda checker (README there): a worktree's own
+build is packed with the build machine's loader and C library and checked
+by several hundred invocations at once: the scratch records in about two
+minutes, the example gates in about one, all fifty reference files in
+about twelve (test_set one class per invocation). Every result matched the
+same check on the build machine. With every check on Lambda, the build
+machine only builds and probes, and is resized between jobs in about
+three minutes (stop, change the type, start).
