@@ -28,6 +28,7 @@ enum Passage {
 
 pub struct Engine<'a> {
     trace_frame: Option<Rc<Instance>>,
+    inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
     frame_codes: HashMap<usize, Value>,
@@ -1072,6 +1073,7 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             trace_frame: None,
+            inline_comp: None,
             location: None,
             frame_class: None,
             frame_codes: HashMap::new(),
@@ -3059,11 +3061,16 @@ impl<'a> Engine<'a> {
         });
         let caller_frame = self.trace_frame.take();
         self.trace_frame = if program.ident == "<comprehension>" { caller_frame.clone() } else { self.make_frame(program, &frame, caller_frame.clone()) };
+        let previous_comp = std::mem::replace(&mut self.inline_comp, if program.ident == "<comprehension>" {
+            caller_frame.as_ref().map(|owner| (Rc::as_ptr(owner) as usize, program.idents.clone(), frame.clone()))
+        } else { None });
         let caller_line = self.line;
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
         let outcome = self.run_instrs(program, &mut frame);
         self.trace_frame = caller_frame;
+        self.inline_comp = previous_comp;
+        self.refresh_observed_frame();
         self.location = caller_location;
         if !self.lang.trace_fields.is_empty() { self.line = caller_line; }
         self.inside.pop();
@@ -3904,11 +3911,22 @@ impl<'a> Engine<'a> {
         let fields = object.fields.borrow();
         let Value::Routine(program) = &fields[6].1 else { return };
         let Value::Tuple(slots) = &fields[5].1 else { return };
-        let pairs = program.idents.iter().zip(slots.iter()).filter_map(|(name, value)| {
+        let mut pairs: Vec<(Value, Value)> = program.idents.iter().zip(slots.iter()).filter_map(|(name, value)| {
             let value = match value { Value::Binding(cell) => cell.borrow().clone(), other => other.clone() };
             (Self::public_name(name) && !matches!(value, Value::Blank | Value::Gap)).then(|| (Value::text(name), value))
         }).collect();
-        let value = Value::Map(Rc::new(pairs));
+        if let Some((owner, names, values)) = &self.inline_comp {
+            if *owner == Rc::as_ptr(object) as usize {
+                for (name, value) in names.iter().zip(values) {
+                    let held = match value { Value::Binding(cell) => cell.borrow().clone(), other => other.clone() };
+                    if Self::public_name(name) && !matches!(held, Value::Blank | Value::Gap) {
+                        pairs.retain(|(key, _)| key.plain() != *name);
+                        pairs.push((Value::text(name), held));
+                    }
+                }
+            }
+        }
+        let value = Value::Map(Rc::new(pairs.into()));
         let existing = fields[3].1.clone();
         drop(fields);
         object.fields.borrow_mut()[7].1 = value.clone();
@@ -17991,7 +18009,7 @@ impl Engine<'_> {
         let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {
             match value {
                 None | Some(Value::Null) => Ok(None),
-                Some(Value::Bond(cell)) if matches!(&*cell.borrow(), Value::Map(_)) => Ok(Some(cell.clone())),
+                Some(Value::Bond(cell) | Value::Collection(cell, _)) if matches!(&*cell.borrow(), Value::Map(_)) => Ok(Some(cell.clone())),
                 // A program's own value, standing in for a dictionary of
                 // its own through the class it answers to: kept in a
                 // cell of its own so the rest of a reading works with it
