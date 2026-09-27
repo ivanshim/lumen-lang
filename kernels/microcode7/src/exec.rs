@@ -4214,7 +4214,15 @@ impl<'a> Machine<'a> {
             self.attend_to_gone();
         }
         match node {
-            Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
+            Form::Const(Value::Routine(p)) => {
+                // A closure can keep its defining frame, which in turn keeps
+                // the closure. Remember the frame so collection can find and
+                // break that otherwise invisible cycle (and run finalizers).
+                if crate::ghost::bidding() {
+                    crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(p), Rc::downgrade(frame)));
+                }
+                Ok(Value::Bound(p.clone(), frame.clone()))
+            }
             Form::Const(Value::OctetKind { changeable, .. }) if !self.wildcard_names.is_empty() => {
                 let held = self.spread_value(self.octet_kind_word(*changeable));
                 match held { Some(value) => Ok(value), None => match node { Form::Const(value) => Ok(value.clone()), _ => unreachable!() } }
