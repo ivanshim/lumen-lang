@@ -883,6 +883,11 @@ pub struct Routine {
     /// inside one: what a class keeps to itself is reached from here and
     /// nowhere else.
     pub within: Option<Rc<str>>,
+    /// The names a declaration wrote between brackets for its type
+    /// parameters, in the order they were written. Empty where it
+    /// wrote none, from which the row of type parameters is made
+    /// the first time it is asked for.
+    pub type_params: Vec<String>,
     /// The line the program was written on, which a fault raised on the
     /// way into it names: such a fault belongs where the program is
     /// written and not where the call stood.

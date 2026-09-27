@@ -1101,6 +1101,34 @@ impl<'a> Machine<'a> {
         code.written_in.as_ref().and_then(|place| self.loaded_spaces.get(place)).cloned()
             .unwrap_or_else(|| self.detail("main").to_owned())
     }
+    /// The row of type parameters a routine was declared with: one
+    /// holder per name the declaration wrote, made by the hinting
+    /// module's own maker, in the order the names were written. No
+    /// names written, an empty row.
+    fn routine_type_row(&mut self, code: &Routine) -> Res {
+        let mut items = Vec::new();
+        if !code.type_params.is_empty() {
+            let maker = self.hint_maker()?;
+            for name in &code.type_params {
+                items.push(self.apply_class_member(maker.clone(), vec![Value::text(name)])?);
+            }
+        }
+        Ok(Value::Tuple(Rc::new(items)))
+    }
+    /// The maker of type-parameter names: the hinting module's own
+    /// maker, from the module the program already holds where it holds
+    /// one, and read in from the library where it holds none.
+    fn hint_maker(&mut self) -> Res {
+        let module = match self.imported.get("typing") {
+            Some(held) => held.clone(),
+            None => self.load_namespace("typing").map_err(Escape::from)?,
+        };
+        let maker = match &module {
+            Value::Thing(thing) => thing.holds.borrow().iter().find(|(key,_)| key=="TypeVar").map(|(_,held)| match held { Value::Shared(cell)=>cell.borrow().clone(), other=>other.clone() }),
+            _ => None,
+        };
+        maker.ok_or_else(|| self.class_unready())
+    }
     fn routine_kept(&mut self, value: &Value, key: &str, fresh: Value) -> Value {
         let at=self.routine_storage(value);
         let apart=format!("{key}\0");
@@ -1447,6 +1475,15 @@ impl<'a> Machine<'a> {
         }else if let Value::Routine(_)|Value::Bound(..)=&value {
             let (code,room)=self.routine_standing(&value);
             if let Some(held)=self.routine_holding(&value,key){return Ok(held);}
+            // The row of type parameters the declaration wrote, made on
+            // the first asking and kept, so every asking answers the
+            // selfsame row.
+            if key==self.detail("type_params") {
+                let index=self.routine_storage(&value);
+                let made=self.routine_type_row(&code)?;
+                self.routine_members[index].1.holds.borrow_mut().push((format!("\0{key}\0"),made.clone()));
+                return Ok(made);
+            }
             // Annotation expressions stand outside the function's own
             // frame, including any frame that carries default values.
             let annotation_room = if code.carried.is_empty() { room.clone() }
@@ -1791,6 +1828,16 @@ impl<'a> Machine<'a> {
                     };
                     let index = self.routine_storage(&subject);
                     Self::change_entry(&mut self.routine_members[index].1.holds.borrow_mut(), &format!("\0{key}\0"), Some(item));
+                    return Ok(Value::Nil);
+                }
+                if key==self.detail("type_params") {
+                    // The row of type parameters takes a row and nothing
+                    // else, and is never taken away.
+                    if !matches!(replacement.as_ref().map(Value::settled),Some(Value::Tuple(_))) {
+                        return Err(self.detail("defaults.amiss").to_owned().into());
+                    }
+                    let index=self.routine_storage(&subject);
+                    Self::change_entry(&mut self.routine_members[index].1.holds.borrow_mut(), &format!("\0{key}\0"), replacement);
                     return Ok(Value::Nil);
                 }
                 // The name and the full name take text and nothing else;

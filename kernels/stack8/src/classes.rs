@@ -1204,6 +1204,17 @@ impl<'a> Engine<'a> {
             Value::Routine(f) => {
                 let f=&Self::routine_now(f);
                 if let Some(v)=self.routine_member(&subject,name) {return Ok(v);}
+                // The row of type parameters the declaration wrote, made
+                // the first asking and kept, so every asking answers the
+                // selfsame row.
+                if name==self.class_word("type_params") {
+                    let at=self.function_storage(&subject);
+                    let own=format!("\0{name}");
+                    if let Some(held)=self.function_members[at].1.fields.borrow().iter().find(|(n,_)|*n==own).map(|(_,v)|v.clone()) {return Ok(held);}
+                    let held=self.routine_type_values(f)?;
+                    self.function_members[at].1.fields.borrow_mut().push((own,held.clone()));
+                    return Ok(held);
+                }
                 let annotation_name = self.lang.class_annotations.first().map(String::as_str).unwrap_or("");
                 let annotate_name = self.lang.class_details.get("code.fields").and_then(|v| v.get(10)).map(String::as_str).unwrap_or("");
                 if !annotation_name.is_empty() && name == annotation_name {
@@ -1339,6 +1350,34 @@ impl<'a> Engine<'a> {
     /// names a kind: the value `int`, not the class standing for it.
     pub(super) fn spelled_kind(&self, word: &str) -> Option<Value> {
         self.lang.builtins.get(word).copied().filter(|op| Self::kind_builtin(op)).map(|op| Value::Native(op, Rc::from(word)))
+    }
+    /// The row of type parameters a routine was declared with: for each
+    /// name written between the brackets, a holder made by the hinting
+    /// module's own maker, in the order the names were written. No
+    /// names written, an empty row.
+    fn routine_type_values(&mut self, f: &Routine) -> Flow<Value> {
+        let mut items = Vec::new();
+        if !f.type_params.is_empty() {
+            let maker = self.type_holder()?;
+            for name in &f.type_params {
+                items.push(self.class_apply(maker.clone(), vec![Value::text(name)])?);
+            }
+        }
+        Ok(Value::Tuple(Rc::new(items)))
+    }
+    /// The maker of type-parameter names: the hinting module's own
+    /// maker, from the module the program already holds where it holds
+    /// one, and read in from the library where it does not.
+    fn type_holder(&mut self) -> Flow<Value> {
+        let module = match self.modules.get("typing") {
+            Some(held) => held.clone(),
+            None => self.import_module("typing")?,
+        };
+        let maker = match &module {
+            Value::Object(space) => space.fields.borrow().iter().find(|(n,_)| n=="TypeVar").map(|(_,v)| match v { Value::Bond(cell)=>cell.borrow().clone(), other=>other.clone() }),
+            _ => None,
+        };
+        maker.ok_or_else(|| self.class_refusal())
     }
     fn routine_now(f: &Rc<Routine>) -> Rc<Routine> {
         f.revised.borrow().clone().unwrap_or_else(|| f.clone())
@@ -1732,6 +1771,16 @@ impl<'a> Engine<'a> {
                     };
                     let at = self.function_storage(&subject);
                     Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(), &format!("\0{name}"), Some(given), false).map_err(|_| absent)?;
+                    return Ok(Value::Null);
+                }
+                if name==self.class_word("type_params") {
+                    // The row of type parameters takes a row and nothing
+                    // else, and cannot be taken away at all.
+                    if !matches!(value.as_ref().map(Value::contents), Some(Value::Tuple(_))) {
+                        return Err(self.class_word("defaults.amiss").to_string().into());
+                    }
+                    let at=self.function_storage(&subject);
+                    Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(), &format!("\0{name}"), value, false).map_err(|_| absent)?;
                     return Ok(Value::Null);
                 }
                 let at=self.function_storage(&subject);

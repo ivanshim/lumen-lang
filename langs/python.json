@@ -2606,6 +2606,9 @@
   "ext.stmt.class.detail.defaults": [
     "__defaults__"
   ],
+  "ext.stmt.class.detail.type_params": [
+    "__type_params__"
+  ],
   "ext.stmt.class.detail.doc": [
     "__doc__"
   ],
