@@ -2736,6 +2736,20 @@ impl<'a> Compiler<'a> {
         self.put(Instr::Write(slot));
     }
 
+    /// Whether the word at hand may stand at the head of the expression
+    /// a decorator must be. A word the language keeps for statements --
+    /// `pass`, a loop word, a word that only opens a statement -- cannot
+    /// begin a value; the handful that can, the literals and the prefix
+    /// operators, are the reader's answer here.
+    fn may_adorn(&self) -> bool {
+        let lang = self.lang;
+        let word = &self.look().lexeme;
+        if !lang.keywords.contains(word) { return true; }
+        [&lang.true_words, &lang.false_words, &lang.null_words, &lang.ellipsis_words, &lang.lambda_words, &lang.await_words]
+            .into_iter().any(|spellings| Lang::spells(spellings, word))
+            || lang.monadic.contains_key(word)
+    }
+
     /// Keep each value before binding the routine, then pass the bound
     /// routine through them from the last written to the first.
     fn decorated_function(&mut self) -> Res<()> {
@@ -2745,7 +2759,8 @@ impl<'a> Compiler<'a> {
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
-            self.expr(0)?;
+            if !self.may_adorn() { return Err(amiss()); }
+            self.expr_at(0, false)?;
             if self.look().shape != Shape::LineEnd {
                 return Err(amiss());
             }
@@ -4886,7 +4901,9 @@ impl<'a> Compiler<'a> {
         }
         let mut decorators = Vec::new();
         while lang.class_details.get("root").map_or(false,|v|!v.is_empty()) && self.on_any(&lang.decorator_words) {
-            self.take();self.expr(0)?;
+            self.take();
+            if !self.may_adorn() { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
+            self.expr_at(0,false)?;
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }

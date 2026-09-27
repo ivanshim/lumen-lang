@@ -2742,6 +2742,17 @@ impl<'a> Builder<'a> {
         Ok(sequence(writes))
     }
 
+    /// A decorator stands where a `namedexpr_test` may. A reserved word
+    /// can lead one only where the table also reads it as the opening of
+    /// a value; the rest, `pass` among them, open a statement instead.
+    fn adornment_head_ok(&self) -> bool {
+        let table = self.table;
+        let head = &self.look().lexeme;
+        if !table.keywords.contains(head) || table.monadic.contains_key(head) { return true; }
+        ["ext.op.lambda", "ext.op.await", "literal.true", "literal.false", "literal.null", "ext.literal.ellipsis"]
+            .iter().any(|label| table.spells(label, head))
+    }
+
     /// The writes before the definition gather its decorators. Those
     /// after it rebind the name, taking the gathered values backwards.
     fn decorate(&mut self) -> Res<Form> {
@@ -2749,7 +2760,10 @@ impl<'a> Builder<'a> {
         let mut decorators = Vec::new();
         loop {
             let mark = self.advance().lexeme;
-            let value = self.expr(0)?;
+            if !self.adornment_head_ok() {
+                return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+            }
+            let value = self.expr_at(0, false)?;
             let mut cell = self.gensym("adornment");
             // A complaint names the mark the reader wrote, though the
             // value lives in a cell the program cannot name.
@@ -3703,7 +3717,9 @@ impl<'a> Builder<'a> {
         }
         let mut wrappers=Vec::new();
         while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
-            self.advance();let expression=self.expr(0)?;let address=self.gensym("member_wrapper");
+            self.advance();
+            if !self.adornment_head_ok() { return Err(table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string()); }
+            let expression=self.expr_at(0,false)?;let address=self.gensym("member_wrapper");
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }

@@ -1385,6 +1385,10 @@ impl Value {
                 },
                 _ => "<member wrapper>".into(),
             },
+            // Both wrapper kinds are written as the wrapping builtin
+            // around the routine they hold, as CPython writes them.
+            Value::Wrapped(4, parts) => format!("<staticmethod({})>", parts[0].bare()),
+            Value::Wrapped(5, parts) => format!("<classmethod({})>", parts[0].bare()),
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);

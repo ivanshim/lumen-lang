@@ -5656,6 +5656,14 @@ impl<'a> Engine<'a> {
                 self.set_text(cell, &name, wrapped)
             }
             Value::Text(text) if representation => Ok(crate::strings::quoted(text)),
+            // A routine wrapped as a static or class method reads as the
+            // wrapping builtin around the routine it holds, as CPython
+            // writes it.
+            Value::Adapter(w) if w.0==4 || w.0==5 => {
+                let wrapping=if w.0==4 { self.lang.class_static.first() } else { self.lang.class_method.first() };
+                let inner=self.special_text(&w.1[0],true)?;
+                Ok(wrapping.map_or_else(|| "<member wrapper>".to_string(),|word|format!("<{word}({inner})>")))
+            }
             _ => Ok(value.display(&self.wording())),
         }
     }

@@ -633,6 +633,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
+                5 => Err(self.core_fault("core.uncallable", "classmethod").into()),
                 13 if args.len() == 1 => {
                     let Value::Adapter(property) = &w.1[0] else { return Err(self.class_refusal()); };
                     let mut members = property.1.clone();
@@ -1204,10 +1205,10 @@ impl<'a> Engine<'a> {
                 }
                 if !annotate_name.is_empty() && name == annotate_name { return Ok(f.annotation.clone().map_or(Value::Null, Value::Routine)); }
                 if name==self.class_word("globals") && f.written_in.is_none() {return Ok(Value::Bond(self.outer_book_made()));}
-                if name==self.class_word("name") {return Ok(Value::text(&f.ident));}
-                if name==self.class_word("qualified") {return Ok(Value::text(&f.qualified));}
+                if name==self.class_word("name") {return Ok(self.routine_held(&subject,name,Value::text(&f.ident)));}
+                if name==self.class_word("qualified") {return Ok(self.routine_held(&subject,name,Value::text(&f.qualified)));}
                 if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
-                if name==self.class_word("module") {return Ok(Value::text(self.class_word("main")));}
+                if name==self.class_word("module") {let place=self.class_word("main").to_string();return Ok(self.routine_held(&subject,name,Value::text(&place)));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
                     if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
@@ -1274,6 +1275,15 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==4 || w.0==5 => {
                 if name==self.class_word("function"){return Ok(w.1[0].clone());}
+                // CPython 3.10 and after hand the wrapper the routine
+                // it holds under `__wrapped__`, and read the routine's
+                // own metadata through the wrapper unchanged.
+                if name=="__wrapped__" { return Ok(w.1[0].clone()); }
+                let inner=w.1[0].clone();
+                let carried=[self.class_word("module"),self.class_word("qualified"),self.class_word("name"),self.class_word("doc")];
+                let copied=carried.iter().any(|word|!word.is_empty()&&*word==name)
+                    || self.lang.class_annotations.first().map_or(false,|word|word==name);
+                if copied { return self.class_get(inner,name,true); }
             }
             Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
                 return Self::cell_held(w).ok_or_else(||self.class_word("cell.empty").to_string().into());
@@ -1439,6 +1449,17 @@ impl<'a> Engine<'a> {
             (None,None) => return false,
         }
         true
+    }
+    /// One of a routine's own readings that must answer the selfsame
+    /// object on every asking -- its name, full name and module -- kept
+    /// where the program's own writes to them are kept, so a later read
+    /// finds it and a later write writes over it.
+    fn routine_held(&mut self, subject: &Value, name: &str, fresh: Value) -> Value {
+        let at=self.function_storage(subject);
+        let own=format!("\0{name}");
+        if let Some(held)=self.function_members[at].1.fields.borrow().iter().find(|(n,_)|*n==own).map(|(_,v)|v.clone()){return held;}
+        self.function_members[at].1.fields.borrow_mut().push((own,fresh.clone()));
+        fresh
     }
     fn function_storage(&mut self, function: &Value) -> usize {
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
@@ -1675,7 +1696,7 @@ impl<'a> Engine<'a> {
                         return Err(if pieces.len()==2 {format!("{}{name}{}",pieces[0],pieces[1]).into()} else {self.class_refusal()});
                     };
                 }
-                if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") || self.lang.class_annotations.first().map_or(false, |s| s == name) {
+                if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") || name==self.class_word("module") || self.lang.class_annotations.first().map_or(false, |s| s == name) {
                     let own=format!("\0{name}");
                     Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),&own,Some(value.unwrap_or(Value::Null)),false).map_err(|_|absent)?;
                     return Ok(Value::Null);
