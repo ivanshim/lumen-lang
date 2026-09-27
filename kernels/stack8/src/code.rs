@@ -583,6 +583,16 @@ pub enum Builtin {
     /// The raised value the innermost clause is holding, itself and
     /// whole, or nothing where no clause holds one (ext.system.fault.held).
     FaultItself,
+    /// A weak hold on a value, carried by the program's own reference
+    /// object, with a routine to call once the value goes
+    /// (ext.builtin.weak.make).
+    WeakMake,
+    /// The value a weak hold points at, or nothing once it has gone
+    /// (ext.builtin.weak.get).
+    WeakGet,
+    /// Find and break the rounds of values nothing reaches any more
+    /// (ext.builtin.gc.collect).
+    Collect,
     /// Whether a path names a file, a directory, or nothing.
     FileKind,
     /// The host's own facts: working directory, system, machine, environment.
@@ -924,4 +934,10 @@ pub struct Plan {
     /// on the class formed, last so a member named twice keeps its
     /// place among `shared_names` but stands on the newer value.
     pub has_book: bool,
+}
+
+impl Drop for Routine {
+    fn drop(&mut self) {
+        crate::faint::plain_departing();
+    }
 }

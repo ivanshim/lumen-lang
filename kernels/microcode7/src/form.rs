@@ -199,6 +199,16 @@ pub enum Prim {
     /// The value the innermost clause holds as raised, whole, or nil
     /// where none is held (ext.system.fault.held).
     FaultWhole,
+    /// A weak hold on a thing, borne by the program's own reference
+    /// object, with something to call once the thing goes
+    /// (ext.builtin.weak.make).
+    WeakMake,
+    /// What a weak hold is on, or nil once it has gone
+    /// (ext.builtin.weak.get).
+    WeakGet,
+    /// Find and cut the rounds of things nothing reaches any more
+    /// (ext.builtin.gc.collect).
+    Collect,
     /// What a path names: a file, a directory, or neither.
     PathSort,
     /// The host's facts as a row: directory, system, machine, surroundings.
@@ -563,6 +573,9 @@ pub enum Form {
     /// nothing else can see that place, and cloning what it held would
     /// cost a copy of everything gathered so far on every step.
     Take(Address),
+    /// Read a compiler-owned temporary and discard its slot, even when
+    /// the result is a shared value which must itself remain unchanged.
+    Release(Address),
     /// The same, read as it stands and with nothing said about it: a
     /// binding that holds nothing at all reads as nothing at all, so
     /// that writing it elsewhere leaves that place unwritten too.
@@ -793,4 +806,10 @@ pub struct Routine {
     /// stands they are every bit as much in reach.
     pub reaching: Vec<Address>,
     pub body: Form,
+}
+
+impl Drop for Routine {
+    fn drop(&mut self) {
+        crate::ghost::anything_departing();
+    }
 }

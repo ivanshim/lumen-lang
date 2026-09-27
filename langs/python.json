@@ -50,6 +50,19 @@
   "ext.builtin.file.kind": [
     "__file_kind"
   ],
+  "ext.builtin.weak.make": [
+    "__weak_make"
+  ],
+  "ext.builtin.weak.get": [
+    "__weak_get"
+  ],
+  "ext.builtin.weak.refused": [
+    "TypeError: cannot create weak reference to '",
+    "' object"
+  ],
+  "ext.builtin.gc.collect": [
+    "__gc_collect"
+  ],
   "ext.builtin.file.read": [
     "__file_read"
   ],
@@ -812,6 +825,7 @@
     "UnicodeTranslateError",
     "IndentationError",
     "TabError",
+    "ReferenceError",
     "MemoryError",
     "BufferError",
     "StopAsyncIteration"
@@ -2539,6 +2553,9 @@
   ],
   "ext.stmt.class.constructor": [
     "__init__"
+  ],
+  "ext.stmt.class.finaliser": [
+    "__del__"
   ],
   "ext.stmt.class.detail.allocate": [
     "__new__"

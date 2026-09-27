@@ -155,6 +155,9 @@ pub struct IteratorState {
     pub kind: IteratorKind,
     pub peek: Option<Value>,
     pub done: bool,
+    /// The thing of the program's own this walk was asked of, kept so
+    /// that it lives as long as the walk, as the reference has it.
+    pub from_thing: Option<Value>,
     /// The word the reference gives a walk of the very thing this walk
     /// was made from. Gathering the members loses which kind of thing
     /// they came from, and this keeps that much of it.
@@ -258,6 +261,9 @@ pub enum Value {
     Routine(Rc<Routine>),
     Method(Rc<Routine>, Rc<Thing>),
     Adorned(Rc<Adornment>),
+    /// A weak hold on a thing behind a pointer: it keeps nothing about
+    /// and gives the thing back only while it is still there.
+    Dim(Rc<crate::ghost::Dim>),
     /// A program bound to the frame it was made in.
     Bound(Rc<Routine>, Rc<Env>),
     KindOf(Kind),
@@ -904,7 +910,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Wrapped(..) | Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::TextCall { .. } | Value::Intrinsic(..) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::TextCall { .. } | Value::Intrinsic(..) | Value::Iterator(_) | Value::Adorned(_) | Value::Dim(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
             Value::Set(_) => Kind::Set,
         })
     }
@@ -953,7 +959,7 @@ impl Value {
             Value::TextRow(..) | Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::TextCall { .. } | Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::TextCall { .. } | Value::Adorned(_) | Value::Dim(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
             Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(..) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
@@ -1355,6 +1361,7 @@ impl Value {
                 "<generator>".into()
             },
             Value::Adorned(_) => String::from("<descriptor>"),
+            Value::Dim(_) => String::from("<weak hold>"),
             Value::Backtrace(_) => String::from("<traceback object>"),
             Value::Keyed(value, _) => value.bare(),
             Value::Attributes(t) => format!("<attributes of {}>", t.blueprint().name),
@@ -2116,4 +2123,24 @@ fn rounded_binary(above: &BigInt, beneath: &BigInt) -> f64 {
     let field = if significand < 0x10000000000000 { 0 } else { power.max(-1022) + 1023 };
     if field >= 2047 { return f64::from_bits(signed + (2047u64 << 52)); }
     f64::from_bits(signed + ((field as u64) << 52) + (significand & 0xfffffffffffff))
+}
+
+/// A thing on its way out tells the listeners, and one whose class bids
+/// farewell is put back together so that the machine may bid it.
+impl Drop for Thing {
+    fn drop(&mut self) {
+        crate::ghost::thing_departing(self);
+    }
+}
+
+impl Drop for Blueprint {
+    fn drop(&mut self) {
+        crate::ghost::anything_departing();
+    }
+}
+
+impl Drop for SetStore {
+    fn drop(&mut self) {
+        crate::ghost::anything_departing();
+    }
 }

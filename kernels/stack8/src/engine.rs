@@ -1038,6 +1038,7 @@ impl<'a> Engine<'a> {
     }
 
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
+        crate::faint::name_last_word(lang.finaliser.clone());
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         let mut world: Vec<Value> = idents.iter().map(|word| if lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
@@ -1421,6 +1422,7 @@ impl<'a> Engine<'a> {
             at += 1;
             let Some(thing) = standing else { continue };
             let Some(method) = thing.class_now().method(&named).cloned() else { continue };
+            if !crate::faint::first_words(&thing) { continue; }
             let _ = self.invoke(&method, vec![Value::Object(thing)]);
         }
         self.things_made.borrow_mut().clear();
@@ -1493,6 +1495,86 @@ impl<'a> Engine<'a> {
     /// The complaints waiting are handed to the routine the program put
     /// in their way, oldest first. A routine answering false leaves its
     /// complaint to be written out as it would have been.
+    /// Whatever went away since the last step is seen to: last words
+    /// are said, sleeping walks are closed, watchers are told. What any
+    /// of them raises is written to the error stream and dropped, since
+    /// nothing in the program stands where it could be caught.
+    fn settle_departed(&mut self) {
+        loop {
+            let (words, walks, gone) = crate::faint::settle();
+            if words.is_empty() && walks.is_empty() && gone.is_empty() { return; }
+            for (object, routine) in words {
+                self.speak_ignoring(routine, vec![Value::Object(object)]);
+            }
+            for walk in walks {
+                if let Err(fault) = self.close_generator(&walk) {
+                    self.ignore_fault(fault, &Value::Generator(walk.clone()));
+                }
+            }
+            for (told, bearer) in gone {
+                self.speak_ignoring(told, vec![bearer]);
+            }
+        }
+    }
+
+    /// A call made on the run's behalf, whose raised value nobody can
+    /// take: it is told and let go.
+    fn speak_ignoring(&mut self, callee: Value, args: Vec<Value>) {
+        let shown = callee.clone();
+        if let Err(words) = self.call_held(callee, args) {
+            let fault = self.carried.take().unwrap_or(Fault::Note(words));
+            self.ignore_fault(fault, &shown);
+        }
+    }
+
+    fn ignore_fault(&mut self, fault: Fault, about: &Value) {
+        if matches!(fault, Fault::Finished) { return; }
+        let sp = self.wording();
+        let told = fault.told(&sp);
+        let told = told.trim_start_matches('\0');
+        eprintln!("Exception ignored in: {}", about.representation(&sp));
+        eprintln!("{told}");
+    }
+
+    /// The program asked for the rounds nothing reaches to be found and
+    /// broken. Their objects say their last words first, and the rounds
+    /// are looked for again afterwards, since last words may keep an
+    /// object alive; then every round still unreached is emptied, the
+    /// counting frees the rest, and the watchers are told.
+    fn collect_cycles(&mut self) -> usize {
+        loop {
+            let mut graph = crate::faint::Graph::from_candidates();
+            let unreached = graph.unreached();
+            let mut spoke = false;
+            for value in &unreached {
+                match value {
+                    Value::Object(o) => {
+                        let Some(words) = crate::faint::last_word_of(&o.class) else { continue };
+                        if crate::faint::first_words(o) {
+                            spoke = true;
+                            self.speak_ignoring(words, vec![Value::Object(o.clone())]);
+                        }
+                    }
+                    Value::Generator(g) if crate::faint::asleep(g) => {
+                        spoke = true;
+                        if let Err(fault) = self.close_generator(g) {
+                            self.ignore_fault(fault, value);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if spoke { continue; }
+            let count = unreached.len();
+            let grave = crate::faint::Graph::sever(&unreached);
+            drop(unreached);
+            drop(graph);
+            drop(grave);
+            self.settle_departed();
+            return count;
+        }
+    }
+
     fn hand_over_complaints(&mut self) -> Flow<()> {
         self.any_waiting.set(false);
         loop {
@@ -2344,6 +2426,25 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Clear the binding itself so retained frames and closures observe
+    /// deletion too, rather than keeping the old value through its cell.
+    fn forget_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
+        for &s in &slot.near {
+            if self.lang.closes_over {
+                if let Value::Binding(cell) = &frame[s] { *cell.borrow_mut() = Value::Blank; continue; }
+            }
+            frame[s] = Value::Blank;
+        }
+        if slot.near.is_empty() {
+            if let Some(kept) = self.book_of(slot.far) {
+                self.write_booked(kept, &slot.ident, None);
+                if let Some(fled) = self.carried.take() { return Err(fled); }
+            }
+            self.world[slot.far] = Value::Blank;
+        }
+        Ok(())
+    }
+
     /// Whether a binding stands for a shared cell, which cannot be read
     /// in place because what it holds lives elsewhere.
     fn shares_cell(&self, slot: &Cell, frame: &[Value]) -> bool {
@@ -3045,6 +3146,9 @@ impl<'a> Engine<'a> {
         if outcome.is_ok() && self.any_waiting.get() {
             outcome = self.hand_over_complaints();
         }
+        if crate::faint::pending() {
+            self.settle_departed();
+        }
         if outcome.is_err() {
             self.hushed.set(quiet);
         }
@@ -3318,7 +3422,7 @@ impl<'a> Engine<'a> {
         // A fault the clause itself met is raised while the
         // value it took is still held, and so has it as context.
         let outcome = self.raised_of_note(outcome);
-        if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
+        if let Some(slot) = &arm.held { self.forget_cell(slot, frame)?; }
         outcome.map(|end| match end {
             Passage::Along(mark) if mark == arm.body.1 => Passage::Along(plan.after),
             other => other,
@@ -3397,7 +3501,7 @@ impl<'a> Engine<'a> {
             self.entering = None;
             if let Some(cell) = &arm.held { self.store_cell(cell, frame, taken.clone())?; }
             let outcome = self.run_span(program, frame, instrs, arm.body);
-            if let Some(cell) = &arm.held { self.put_cell(cell, frame, Value::Blank); }
+            if let Some(cell) = &arm.held { self.forget_cell(cell, frame)?; }
             match outcome {
                 Ok(Passage::Along(at)) if at == arm.body.1 => {}
                 Ok(other) => return Ok(other),
@@ -3442,6 +3546,7 @@ impl<'a> Engine<'a> {
         state.closed = true;
         state.current = None;
         state.frame.clear();
+        state.trace_frame = None;
         state.stack.clear();
         state.items.clear();
         state.resume.clear();
@@ -3639,6 +3744,7 @@ impl<'a> Engine<'a> {
         if let Some(value) = hurled {
             if kept.closed || !kept.started || kept.program.is_none() {
                 kept.closed = true;
+                kept.trace_frame = None;
                 kept.returned = Value::Null;
                 kept.resume.clear();
                 kept.held.clear();
@@ -3723,6 +3829,7 @@ impl<'a> Engine<'a> {
             kept.returned = if result.is_err() { Value::Null } else { kept.stack.pop().unwrap_or(Value::Null) };
             kept.stack.clear();
             kept.frame.clear();
+            kept.trace_frame = None;
             kept.resume.clear();
             kept.held.clear();
         }
@@ -3815,6 +3922,12 @@ impl<'a> Engine<'a> {
         let prior = self.trace_of(raised);
         if matches!(&prior, Value::Trace(trace) if Rc::ptr_eq(&trace.frame, &frame)) { return; }
         let Some(key) = &self.lang.traceback_member else { return };
+        // A caught exception can close a cycle through its frame's locals.
+        // That cycle may hold a finalisable object without being reachable
+        // from it, so the first traceback makes the exception a candidate.
+        if matches!(prior, Value::Null) {
+            crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object)));
+        }
         let trace = Value::Trace(Rc::new(crate::value::Traceback { location: self.location, line: self.line, frame, next: prior }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
     }
@@ -4144,21 +4257,7 @@ impl<'a> Engine<'a> {
                     self.store_cell(slot, frame, Value::Null)?;
                 }
                 Instr::Nothing => {}
-                Instr::Forget(slot) => {
-                    for &s in &slot.near {
-                        if self.lang.closes_over {
-                            if let Value::Binding(cell) = &frame[s] { *cell.borrow_mut() = Value::Blank; continue; }
-                        }
-                        frame[s] = Value::Blank;
-                    }
-                    if slot.near.is_empty() {
-                        if let Some(kept) = self.book_of(slot.far) {
-                            self.write_booked(kept, &slot.ident, None);
-                            if let Some(fled) = self.carried.take() { return Err(fled); }
-                        }
-                        self.world[slot.far] = Value::Blank;
-                    }
-                }
+                Instr::Forget(slot) => self.forget_cell(slot, frame)?,
                 Instr::Ready(slot) => {
                     self.world.resize(self.registry.idents.len(), Value::Blank);
                     if matches!(self.world[slot.far], Value::Blank) {
@@ -4187,6 +4286,11 @@ impl<'a> Engine<'a> {
                 Instr::Line(row) => {
                     self.location = None;
                     self.line = *row;
+                    // Whatever went away during the last statement is seen
+                    // to between statements, never in the middle of one.
+                    if crate::faint::pending() {
+                        self.settle_departed();
+                    }
                     if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(*row as i64); }
                     self.refresh_observed_frame();
                     // A statement reached is a fault gone by: the calls
@@ -6286,6 +6390,11 @@ impl<'a> Engine<'a> {
         if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
             let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
             let answer = self.builtin(op, &word, &mut settled)?;
+            // A walk over a thing's worth keeps the thing, as the
+            // reference's does: the thing lives as long as the walk.
+            if let (Builtin::Iter, Value::Cursor(state), Some(thing @ Value::Object(_))) = (op, &answer, args.first()) {
+                state.borrow_mut().origin = Some(thing.clone());
+            }
             if let (Builtin::Tuple, Value::Tuple(row)) = (op, &answer) {
                 return Ok(Some(Value::Tuple(Rc::new(row.as_ref().clone()))));
             }
@@ -7800,7 +7909,10 @@ impl<'a> Engine<'a> {
                 }
                 if self.fuller_classes() {let made=self.class_make(class,args)?;self.data.push(made);return Ok(());}
                 self.made += 1;
-                let object = Rc::new(Instance {replacement_class: RefCell::new(None),  class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
+                let object = Rc::new(Instance {replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
+                if self.lang.finaliser.is_some() && crate::faint::last_word_of(&class).is_some() {
+                    crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&object)));
+                }
                 if self.lang.destructor.is_some() {
                     self.things_made.borrow_mut().push(Rc::downgrade(&object));
                 }
@@ -8880,6 +8992,9 @@ impl<'a> Engine<'a> {
                     let items = self.call_items(std::mem::take(&mut args))?;
                     self.builtin_call(*builtin, name, items)
                 } else { self.builtin(*builtin, name, &mut args) };
+                // What the builtin was given is let go now, not when the
+                // next builtin is called: a value's last holder may be here.
+                args.clear();
                 self.buffer = args;
                 match self.carried.take() {
                     Some(fled) => return Err(fled),
@@ -13535,6 +13650,27 @@ impl<'a> Engine<'a> {
                 arity(0)?;
                 self.caught.last().cloned().unwrap_or(Value::Null)
             }
+            Builtin::WeakMake => {
+                arity(3)?;
+                let Some(hold) = crate::faint::hold_of(&args[0]) else {
+                    let kind = args[0].core_kind();
+                    let head = self.lang.weak_refused.first().cloned().unwrap_or_default();
+                    let tail = self.lang.weak_refused.get(1).cloned().unwrap_or_default();
+                    return Err(format!("{head}{kind}{tail}"));
+                };
+                let bearer = match &args[1] { Value::Object(o) => Rc::downgrade(o), _ => std::rc::Weak::new() };
+                let told = match &args[2] { Value::Null => None, other => Some(other.clone()) };
+                crate::faint::make(hold, bearer, told)
+            }
+            Builtin::WeakGet => {
+                arity(1)?;
+                let Value::Faint(faint) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()) };
+                faint.hold.revive().unwrap_or(Value::Null)
+            }
+            Builtin::Collect => {
+                arity(0)?;
+                Value::Small(self.collect_cycles() as i64)
+            }
             Builtin::FaultInHand => {
                 if args.len() > 1 { return Err(self.lang.module_helper_amiss.clone()); }
                 let held = match args.first() { Some(given) => Some(given.clone()), None => self.caught.last().cloned() };
@@ -15447,7 +15583,7 @@ impl Engine<'_> {
     }
 
     fn core_cursor(source: CursorSource) -> Value {
-        Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false, walked: None })))
+        Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false, origin: None, walked: None })))
     }
 
     fn core_cursor_walked(source: CursorSource, walked: Option<Rc<str>>) -> Value {
@@ -15692,6 +15828,7 @@ impl Engine<'_> {
         }
         let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
+        if let (Value::Cursor(state), Value::Object(_)) = (&walk, source) { state.borrow_mut().origin = Some(source.clone()); }
         Ok(walk)
     }
 
