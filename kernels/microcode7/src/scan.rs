@@ -759,8 +759,13 @@ impl Quotation<'_> {
                     self.forward(1);
                 }
                 if self.here() == Some('}') && self.next != begin + 3 {
+                    let name: String = self.source[begin + 3..self.next].iter().collect();
                     self.forward(1);
-                    *missing = true;
+                    match name.as_str() {
+                        "EM SPACE" => text.push('\u{2003}'),
+                        "EN SPACE" => text.push('\u{2002}'),
+                        _ => *missing = true,
+                    }
                     return Ok(());
                 }
             }

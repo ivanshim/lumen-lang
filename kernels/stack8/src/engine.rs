@@ -11597,9 +11597,17 @@ impl<'a> Engine<'a> {
         let radix = if base == 0 { if prefix == 0 { 10 } else { prefix } } else { base as u32 };
         let prefixed = prefix != 0 && prefix == radix;
         let digits = if prefixed { digits[2..].strip_prefix('_').unwrap_or(&digits[2..]) } else { digits };
-        let valid = !digits.is_empty() && !digits.starts_with('_') && !digits.ends_with('_') && !digits.contains("__")
-            && digits.chars().all(|c| c == '_' || c.is_ascii() && c.is_digit(radix));
-        let cleaned = digits.replace('_', "");
+        let mut cleaned = String::new();
+        let mut valid = !digits.is_empty() && !digits.starts_with('_') && !digits.ends_with('_') && !digits.contains("__");
+        for c in digits.chars() {
+            if c == '_' { cleaned.push(c); continue; }
+            let digit = c.to_digit(radix).or_else(|| unicode_decimal_digit(c).filter(|_| radix >= 10));
+            match digit.filter(|d| *d < radix) {
+                Some(d) => cleaned.push(char::from_digit(d, radix).unwrap()),
+                None => { valid = false; break; }
+            }
+        }
+        cleaned.retain(|c| c != '_');
         if !valid || (base == 0 && !prefixed && cleaned.starts_with('0') && cleaned.chars().any(|c| c != '0')) {
             return Err(invalid());
         }
@@ -15081,7 +15089,7 @@ impl Engine<'_> {
             }
             CursorSource::Indexed(thing, at) => (iter, vec![thing.clone()], Some(Value::of_big(at.clone()))),
             CursorSource::IndexedBack(thing, at) => (native(Builtin::Reversed), vec![thing.clone()], Some(Value::of_big(at.clone()))),
-            CursorSource::Called(work, stop) => (iter, vec![work.clone(), stop.clone()], None),
+            CursorSource::Called(work, stop, types) => (iter, vec![work.clone(), stop.clone()], types.clone()),
             CursorSource::Numbered(walk, n) => (native(Builtin::Enumerate), vec![walk.clone(), Value::of_big(n.clone())], None),
             CursorSource::Combined(walks, work, exact) => {
                 let mut inputs = Vec::new();
@@ -15105,6 +15113,11 @@ impl Engine<'_> {
     fn pickle_position(&mut self, receiver: &Value, position: &Value) -> Res<Value> {
         let Value::Cursor(cell) = receiver else { return Err("TypeError: expected iterator".into()) };
         let mut held = cell.borrow_mut();
+        if let CursorSource::Called(_, _, types) = &mut held.source {
+            if !Self::valid_stop_types(position) { return Err("TypeError: stop_exception must be an exception class or tuple of exception classes".into()); }
+            *types = Some(position.clone());
+            return Ok(Value::Null);
+        }
         if let CursorSource::Combined(_, _, exact) = &mut held.source {
             *exact = self.truth(position);
             return Ok(Value::Null);
@@ -15281,8 +15294,8 @@ impl Engine<'_> {
         // for members before it answers, so it is asked with the cursor
         // left free, and its answer is judged against the state the
         // cursor is in once it has answered.
-        let summoned = match &cell.borrow().source { CursorSource::Called(work, stop) => Some((work.clone(), stop.clone())), _ => None };
-        if let Some((work, stop)) = summoned {
+        let summoned = match &cell.borrow().source { CursorSource::Called(work, stop, types) => Some((work.clone(), stop.clone(), types.clone())), _ => None };
+        if let Some((work, stop, types)) = summoned {
             {
                 let mut state = cell.borrow_mut();
                 if let Some(value) = state.pending.take() { return Ok(Some(value)); }
@@ -15290,7 +15303,7 @@ impl Engine<'_> {
             }
             let answered = match self.core_apply(&work, Vec::new()) {
                 Ok(value) => value,
-                Err(words) => { if self.stop_raised() { cell.borrow_mut().finished = true; return Ok(None); } return Err(words); }
+                Err(words) => { if self.stop_raised() || types.as_ref().map_or(false, |types| self.selected_stop_raised(types)) { cell.borrow_mut().finished = true; return Ok(None); } return Err(words); }
             };
             let mut state = cell.borrow_mut();
             if state.finished { return Ok(None); }
@@ -15603,6 +15616,27 @@ impl Engine<'_> {
         Ok(self.kind_holds(&b, &word, value))
     }
 
+    fn valid_stop_types(value: &Value) -> bool {
+        match value {
+            Value::Class(_) => true,
+            Value::Tuple(items) => items.iter().all(Self::valid_stop_types),
+            _ => false,
+        }
+    }
+
+    fn selected_stop_raised(&mut self, selected: &Value) -> bool {
+        fn accepts(selected: &Value, class: &Rc<Class>) -> bool {
+            match selected {
+                Value::Class(wanted) => Engine::exception_beneath(class, wanted),
+                Value::Tuple(items) => items.iter().any(|item| accepts(item, class)),
+                _ => false,
+            }
+        }
+        let caught = matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if accepts(selected, &object.class));
+        if caught { self.carried = None; }
+        caught
+    }
+
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
@@ -15656,7 +15690,21 @@ impl Engine<'_> {
         let mut default = None;
         let mut exact = false;
         let mut dict_kw = Vec::new();
+        let mut iter_stop_value = None;
+        let mut iter_stop_exception = None;
         for (word, value) in named {
+            if b == Builtin::Iter && Lang::spells(&self.lang.iter_stop_value, &word) {
+                if iter_stop_value.is_some() || args.len() != 1 {
+                    return Err(self.core_fault("core.arity", name));
+                }
+                iter_stop_value = Some(value);
+                continue;
+            }
+            if b == Builtin::Iter && Lang::spells(&self.lang.iter_stop_exception, &word) {
+                if iter_stop_exception.is_some() { return Err(Self::named_fault(&self.lang.call_duplicate, &word)); }
+                iter_stop_exception = Some(value);
+                continue;
+            }
             let spells = |label: &str| self.lang.core_words.get(label).map_or(false, |words| Lang::spells(words, &word));
             if b == Builtin::Dict { dict_kw.push((Value::text(&word), value)); continue; }
             if matches!(b, Builtin::Sorted | Builtin::Minimum | Builtin::Maximum) && spells("key") { key = value; continue; }
@@ -15683,6 +15731,7 @@ impl Engine<'_> {
             args.resize_with(place.max(args.len()), || Value::Gap);
             if args.len() == place { args.push(value); } else { args[place] = value; }
         }
+        if let Some(stop) = iter_stop_value { args.push(stop); }
         let arity = |lo, hi| if (lo..=hi).contains(&args.len()) && !args.iter().any(|v| matches!(v, Value::Gap)) { Ok(()) }
             else {
                 let label = if lo == 1 && hi == 1 { "core.arity.one" } else if lo == hi { "core.arity.exact" } else { "core.arity" };
@@ -15693,6 +15742,14 @@ impl Engine<'_> {
             };
         let number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), other => other.clone() };
         let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.integer", &v.core_kind())) };
+        if let Some(types) = &iter_stop_exception {
+            if !Self::valid_stop_types(types) {
+                return Err("TypeError: stop_exception must be an exception class or tuple of exception classes".into());
+            }
+            let callable = matches!(args.first(), Some(Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::Method(..) | Value::Adapter(_) | Value::Object(_)))
+                || args.first().map_or(false, |value| self.special_value(value, 16).is_some());
+            if !callable { return Err("TypeError: iter(v, stop_exception=...) requires a callable".into()); }
+        }
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
@@ -15856,7 +15913,10 @@ impl Engine<'_> {
             }
             Builtin::Iter => {
                 arity(1, 2)?;
-                if args.len() == 2 { return Ok(Self::core_cursor(CursorSource::Called(args[0].clone(), args[1].clone()))); }
+                if args.len() == 2 || iter_stop_exception.is_some() {
+                    let sentinel = args.get(1).cloned().unwrap_or(Value::Null);
+                    return Ok(Self::core_cursor(CursorSource::Called(args[0].clone(), sentinel, iter_stop_exception.clone())));
+                }
                 if matches!(args[0], Value::Cursor(_)) { return Ok(args[0].clone()); }
                 match living { Some(source) => Self::core_cursor(source), None => self.core_iterator(&args[0])? }
             }
@@ -17310,3 +17370,9 @@ impl Engine<'_> {
 }
 #[path = "classes.rs"]
 mod classes;
+
+fn unicode_decimal_digit(character: char) -> Option<u32> {
+    const ZEROES: &[u32] = &[0x30,0x660,0x6f0,0x7c0,0x966,0x9e6,0xa66,0xae6,0xb66,0xbe6,0xc66,0xce6,0xd66,0xde6,0xe50,0xed0,0xf20,0x1040,0x1090,0x17e0,0x1810,0x1946,0x19d0,0x1a80,0x1a90,0x1b50,0x1bb0,0x1c40,0x1c50,0xa620,0xa8d0,0xa900,0xa9d0,0xa9f0,0xaa50,0xabf0,0xff10,0x104a0,0x10d30,0x11066,0x110f0,0x11136,0x111d0,0x112f0,0x11450,0x114d0,0x11650,0x116c0,0x11730,0x118e0,0x11950,0x11c50,0x11d50,0x11da0,0x11f50,0x16a60,0x16ac0,0x16b50,0x1d7ce,0x1e140,0x1e2f0,0x1e4f0,0x1e950,0x1fbf0];
+    let code = character as u32;
+    ZEROES.iter().find_map(|zero| code.checked_sub(*zero).filter(|digit| *digit < 10))
+}

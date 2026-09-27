@@ -4404,6 +4404,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.issubclass` | - | - | `issubclass` | - | - | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
+| `ext.builtin.iter.stop_exception` | - | - | `stop_exception` | - | - | - | - | - | - | - |
+| `ext.builtin.iter.stop_value` | - | - | `stop_value` | - | - | - | - | - | - | - |
 | `ext.builtin.iterable` | - | - | `iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
@@ -5382,3 +5384,9 @@ use these to report integer storage sizes, including inherited attributes.
 `ext.builtin.core.power.integer` optionally carries three further strings for
 the prefix, separator and suffix of a refused three-operand power, naming
 all three operand types after their special methods have declined.
+Python iter() also names its sentinel as stop_value and accepts a
+stop_exception class or tuple of classes for callable iterators.
+
+`ext.builtin.iter.stop_value` names the corresponding keyword accepted by Python callable iterators.
+
+`ext.builtin.iter.stop_exception` names the corresponding keyword accepted by Python callable iterators.

@@ -195,7 +195,7 @@ ext.op.sequence.subscript:L ext.op.sequence.missing:L ext.op.sequence.assign:L e
 ext.builtin.exec:L ext.builtin.compile:L ext.builtin.compile.modes:L ext.builtin.compile.parameters:L \
 ext.builtin.compile.kind:L ext.builtin.source.syntax:L ext.builtin.source.syntax.place:L ext.builtin.source.unready:L ext.builtin.source.builtins_immutable:L \
 ext.builtin.import:L ext.system.module.doc:L ext.system.module.builtins:L ext.system.names.module:L ext.builtin.ascii:L \
-ext.text.format.complex.zero:L ext.text.format.complex.align:L ext.op.rem.format.byte:L ext.builtin.frozenset:L ";
+ext.text.format.complex.zero:L ext.text.format.complex.align:L ext.op.rem.format.byte:L ext.builtin.frozenset:L  ext.builtin.iter.stop_value:L ext.builtin.iter.stop_exception:L";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
     table.split_whitespace().map(|e| {

@@ -7394,8 +7394,9 @@ impl<'a> Machine<'a> {
                     if !was_digit { return Err(invalid_text()); }
                     was_digit = false;
                 } else {
-                    if !c.is_ascii() || c.to_digit(base).is_none() { return Err(invalid_text()); }
-                    digits.push(c);
+                    let worth = c.to_digit(base).or_else(|| decimal_value(c).filter(|_| base >= 10));
+                    let Some(worth) = worth.filter(|number| *number < base) else { return Err(invalid_text()); };
+                    digits.push(char::from_digit(worth, base).unwrap());
                     was_digit = true;
                 }
             }
@@ -17204,7 +17205,10 @@ impl Machine<'_> {
                 state = Some(Value::from_big(offset.clone()));
                 vec![source.clone()]
             }
-            IteratorKind::Summoned { work, stop } => vec![work.clone(), stop.clone()],
+            IteratorKind::Summoned { work, stop, stop_exception } => {
+                state = stop_exception.clone();
+                vec![work.clone(), stop.clone()]
+            },
             IteratorKind::Count(source, offset) => {
                 constructor = builtin(Prim::Numbered);
                 vec![source.clone(), Value::from_big(offset.clone())]
@@ -17235,7 +17239,10 @@ impl Machine<'_> {
     fn restore_iterator(&mut self, subject: &Value, state: &Value) -> Result<Value, String> {
         let Value::Iterator(handle) = subject else { return Err("TypeError: expected iterator".to_owned()); };
         let mut current = handle.borrow_mut();
-        if let IteratorKind::Parallel { exact, .. } = &mut current.kind {
+        if let IteratorKind::Summoned { stop_exception, .. } = &mut current.kind {
+            if !Self::valid_stop_types(state) { return Err("TypeError: stop_exception must be an exception class or tuple of exception classes".to_owned()); }
+            *stop_exception = Some(state.clone());
+        } else if let IteratorKind::Parallel { exact, .. } = &mut current.kind {
             *exact = state.is_true();
         } else {
             let raw = state.settled();
@@ -17421,8 +17428,8 @@ impl Machine<'_> {
         // A summoned callable may reach back into this very iterator
         // before it answers, so the iterator is not marked busy while it
         // runs, and what it answers is weighed once it is back.
-        let summons = match &cell.borrow().kind { IteratorKind::Summoned { work, stop } => Some((work.clone(), stop.clone())), _ => None };
-        if let Some((work, stop)) = summons {
+        let summons = match &cell.borrow().kind { IteratorKind::Summoned { work, stop, stop_exception } => Some((work.clone(), stop.clone(), stop_exception.clone())), _ => None };
+        if let Some((work, stop, stop_exception)) = summons {
             {
                 let mut held = cell.borrow_mut();
                 if held.done { return Ok(None); }
@@ -17430,7 +17437,7 @@ impl Machine<'_> {
             }
             let answer = match self.core_run(&work, Vec::new()) {
                 Ok(value) => value,
-                Err(complaint) => return if self.walk_halted() { cell.borrow_mut().done = true; Ok(None) } else { Err(complaint) },
+                Err(complaint) => return if self.walk_halted() || stop_exception.as_ref().map_or(false, |types| self.selected_walk_halted(types)) { cell.borrow_mut().done = true; Ok(None) } else { Err(complaint) },
             };
             let mut held = cell.borrow_mut();
             if held.done { return Ok(None); }
@@ -17605,6 +17612,27 @@ impl Machine<'_> {
 
     /// Whether what got away from a call is the fault that ends a walk;
     /// if so it is taken back, and the walk simply ends.
+    fn valid_stop_types(value: &Value) -> bool {
+        match value {
+            Value::Blueprint(_) => true,
+            Value::Tuple(items) => items.iter().all(Self::valid_stop_types),
+            _ => false,
+        }
+    }
+
+    fn selected_walk_halted(&mut self, selected: &Value) -> bool {
+        fn accepts(selected: &Value, thrown: &Blueprint) -> bool {
+            match selected {
+                Value::Blueprint(wanted) => thrown.goes_by(&wanted.name, false),
+                Value::Tuple(items) => items.iter().any(|item| accepts(item, thrown)),
+                _ => false,
+            }
+        }
+        let caught = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thrown))) if accepts(selected, &thrown.of));
+        if caught { self.got_away = None; }
+        caught
+    }
+
     fn walk_halted(&mut self) -> bool {
         let halted = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thrown))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| thrown.of.goes_by(name, false)));
         if halted { self.got_away = None; }
@@ -17806,8 +17834,20 @@ impl Machine<'_> {
         let mut fallback = None;
         let mut exact = false;
         let mut additions = Vec::new();
+        let mut iter_stop_value = None;
+        let mut iter_stop_exception = None;
         for (label, value) in keywords {
             let is = |tail: &str| self.table.spells(&format!("ext.builtin.{}", tail), &label);
+            if op == Prim::Iterator && is("iter.stop_value") {
+                if iter_stop_value.is_some() || input.len() != 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
+                iter_stop_value = Some(value);
+                continue;
+            }
+            if op == Prim::Iterator && is("iter.stop_exception") {
+                if iter_stop_exception.is_some() { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&label))); }
+                iter_stop_exception = Some(value);
+                continue;
+            }
             match op {
                 Dictionary => { additions.push((Value::text(&label), value)); continue; }
                 Ordered | Least | Greatest if is("key") => { ordering = Some(value); continue; }
@@ -17836,6 +17876,7 @@ impl Machine<'_> {
             if input.len() <= slot { input.resize(slot + 1, Value::Unset); }
             input[slot] = value;
         }
+                if let Some(stop) = iter_stop_value { input.push(stop); }
         let require = |lower, upper| -> Result<(), String> {
             if input.len() < lower || input.len() > upper || input.iter().any(|v| matches!(v, Value::Unset)) {
                 let which = if lower == 1 && upper == 1 { "core.arity.one" } else if lower == upper { "core.arity.exact" } else { "core.arity" };
@@ -18029,7 +18070,16 @@ impl Machine<'_> {
             }
             Iterator => {
                 require(1, 2)?;
-                if input.len() == 2 { return Ok(Self::cursor_value(IteratorKind::Summoned { work: input[0].clone(), stop: input[1].clone() })); }
+                if let Some(types) = &iter_stop_exception {
+                    if !Self::valid_stop_types(types) { return Err("TypeError: stop_exception must be an exception class or tuple of exception classes".into()); }
+                    let callable = matches!(input.first(), Some(Value::Intrinsic(..) | Value::Routine(_) | Value::Bound(..) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..) | Value::Thing(_)))
+                        || input.first().map_or(false, |value| self.appointed(value, 16).is_some());
+                    if !callable { return Err("TypeError: iter(v, stop_exception=...) requires a callable".into()); }
+                }
+                if input.len() == 2 || iter_stop_exception.is_some() {
+                    let sentinel = input.get(1).cloned().unwrap_or(Value::Nil);
+                    return Ok(Self::cursor_value(IteratorKind::Summoned { work: input[0].clone(), stop: sentinel, stop_exception: iter_stop_exception.clone() }));
+                }
                 match live { Some(kind) => Ok(Self::cursor_value(kind)), None => self.iterated_value(&input[0]) }
             }
             NextItem => {
@@ -18504,3 +18554,9 @@ impl crate::formatting::Elsewhere for Machine<'_> {
 
 #[path = "classes.rs"]
 mod classes;
+
+fn decimal_value(c: char) -> Option<u32> {
+    let n = c as u32;
+    let blocks = [0x30,0x660,0x6f0,0x7c0,0x966,0x9e6,0xa66,0xae6,0xb66,0xbe6,0xc66,0xce6,0xd66,0xde6,0xe50,0xed0,0xf20,0x1040,0x1090,0x17e0,0x1810,0x1946,0x19d0,0x1a80,0x1a90,0x1b50,0x1bb0,0x1c40,0x1c50,0xa620,0xa8d0,0xa900,0xa9d0,0xa9f0,0xaa50,0xabf0,0xff10,0x104a0,0x10d30,0x11066,0x110f0,0x11136,0x111d0,0x112f0,0x11450,0x114d0,0x11650,0x116c0,0x11730,0x118e0,0x11950,0x11c50,0x11d50,0x11da0,0x11f50,0x16a60,0x16ac0,0x16b50,0x1d7ce,0x1e140,0x1e2f0,0x1e4f0,0x1e950,0x1fbf0];
+    blocks.iter().find_map(|start| n.checked_sub(*start).filter(|digit| *digit < 10))
+}

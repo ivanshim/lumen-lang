@@ -671,7 +671,13 @@ impl<'a> Cursor<'a> {
                 self.step();
                 while self.look(0).map_or(false, |c| c != '}' && !lang.quotes.contains(&c) && c != '\n') { self.step(); }
                 if self.look(0) == Some('}') && self.at > begin + 3 {
-                    self.step(); *fault = true;
+                    let name: String = self.text[begin + 3..self.at].iter().collect();
+                    self.step();
+                    match name.as_str() {
+                        "EM SPACE" => text.push('\u{2003}'),
+                        "EN SPACE" => text.push('\u{2002}'),
+                        _ => *fault = true,
+                    }
                     return Ok(());
                 }
             }
