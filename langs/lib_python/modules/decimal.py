@@ -221,6 +221,104 @@ class Decimal:
             mantissa = digits[0] + '.' + digits[1:]
         return sign + mantissa + 'E' + ('+' if adjusted >= 0 else '') + str(adjusted)
 
+    def __format__(self, spec):
+        # Work with decimal digits throughout, including halfway rounding.
+        # Converting through a binary float would lose both precision and
+        # trailing zeros before the requested presentation is known.
+        import re
+        match = re.fullmatch(r'(?:(.)([<>=^])|([<>=^]))?([+ -])?(0)?([0-9]*)(,)?(?:\.([0-9]+))?([eEfFgG%])?', spec)
+        if match is None:
+            raise ValueError('invalid format string')
+        fill, alignment, plain_align, sign, zero, width, grouping, precision, kind = match.groups()
+        alignment = alignment or plain_align or '>'
+        fill = fill or ' '
+        if zero:
+            fill, alignment = '0', '='
+        width = int(width) if width else 0
+        precision = int(precision) if precision is not None else None
+        kind = kind or ('G' if getcontext().capitals else 'g')
+        coefficient, exponent = self._int, self._exp
+        if kind == '%':
+            exponent += 2
+        if self._nan or self._inf:
+            body = 'NaN' if self._nan else 'Infinity'
+            if zero:
+                fill, alignment = ' ', '>'
+        else:
+            figures = len(str(coefficient))
+            adjusted = exponent + figures - 1
+            if precision is None:
+                target = exponent
+            elif kind in 'fF%':
+                target = -precision
+            elif kind in 'eE':
+                target = adjusted - precision
+            else:
+                target = adjusted - max(precision, 1) + 1
+            if target > exponent:
+                divisor = 10 ** (target - exponent)
+                kept, rest = divmod(coefficient, divisor)
+                rounding = getcontext().rounding
+                increment = False
+                if rounding == 'ROUND_UP':
+                    increment = rest != 0
+                elif rounding == 'ROUND_CEILING':
+                    increment = rest != 0 and not self._sign
+                elif rounding == 'ROUND_FLOOR':
+                    increment = rest != 0 and self._sign
+                elif rounding == 'ROUND_05UP':
+                    increment = rest != 0 and kept % 10 in (0, 5)
+                elif rounding != 'ROUND_DOWN':
+                    increment = rest * 2 > divisor or (rest * 2 == divisor and (rounding == 'ROUND_HALF_UP' or (rounding == 'ROUND_HALF_EVEN' and kept % 2 == 1)))
+                coefficient, exponent = kept + int(increment), target
+            elif target < exponent and kind in 'eEfF%':
+                coefficient *= 10 ** (exponent - target)
+                exponent = target
+            if precision is not None and kind in 'gGeE':
+                limit = max(precision, 1) if kind in 'gG' else precision + 1
+                if len(str(coefficient)) > limit:
+                    coefficient //= 10
+                    exponent += 1
+            digits = str(coefficient)
+            adjusted = exponent + len(digits) - 1
+            if kind in 'eE' or kind in 'gG' and (exponent > 0 or adjusted < -6):
+                if coefficient == 0:
+                    adjusted = 0 if precision is not None else exponent
+                if precision is not None and kind in 'eE':
+                    digits = (digits + '0' * precision)[:precision + 1]
+                body = digits[0] + ('.' + digits[1:] if len(digits) > 1 else '')
+                body += ('E' if kind in 'EG' else 'e') + ('+' if adjusted >= 0 else '-') + str(abs(adjusted))
+            else:
+                point = len(digits) + exponent
+                if point <= 0:
+                    body = '0.' + '0' * (-point) + digits
+                elif point < len(digits):
+                    body = digits[:point] + '.' + digits[point:]
+                else:
+                    body = digits + '0' * exponent
+            if grouping:
+                parts = body.split('.', 1)
+                whole = parts[0]
+                groups = []
+                while len(whole) > 3:
+                    groups.insert(0, whole[-3:])
+                    whole = whole[:-3]
+                groups.insert(0, whole)
+                body = ','.join(groups) + ('.' + parts[1] if len(parts) > 1 else '')
+        prefix = '-' if self._sign else ('+' if sign == '+' else (' ' if sign == ' ' else ''))
+        if kind == '%':
+            body += '%'
+        padding = max(0, width - len(prefix) - len(body))
+        if alignment == '=':
+            return prefix + fill * padding + body
+        result = prefix + body
+        if alignment == '<':
+            return result + fill * padding
+        if alignment == '^':
+            left = padding // 2
+            return fill * left + result + fill * (padding - left)
+        return fill * padding + result
+
     def __repr__(self):
         return "Decimal('" + self.__str__() + "')"
 

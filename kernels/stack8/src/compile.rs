@@ -1347,8 +1347,14 @@ impl<'a> Compiler<'a> {
 
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
         let source = self.pos;
-        let first_body = self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).next();
-        let doc = first_body.filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.clone());
+        let mut leading = self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).peekable();
+        let mut literal = String::new();
+        let mut quoted = false;
+        while leading.peek().map_or(false, |t| t.shape == Shape::Quote) {
+            quoted = true;
+            literal.push_str(&leading.next().unwrap().lexeme);
+        }
+        let doc = (quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
