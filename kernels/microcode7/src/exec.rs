@@ -876,7 +876,7 @@ impl<'a> Machine<'a> {
 
     /// Whether a word names one of the few methods a fault answers itself.
     fn fault_method_word(&self, word: &str) -> bool {
-        ["ext.builtin.exceptions.note", "ext.builtin.exceptions.traceback.with", "ext.builtin.exceptions.group.split", "ext.builtin.exceptions.group.subgroup", "ext.builtin.exceptions.group.derive"]
+        ["ext.builtin.exceptions.note", "ext.builtin.exceptions.setstate", "ext.builtin.exceptions.reduce", "ext.builtin.exceptions.traceback.with", "ext.builtin.exceptions.group.split", "ext.builtin.exceptions.group.subgroup", "ext.builtin.exceptions.group.derive"]
             .iter().any(|label| self.table.single(label) == Some(word))
     }
 
@@ -936,6 +936,43 @@ impl<'a> Machine<'a> {
             return self.alter_class_member(Value::Thing(thing), &key, Some(row), true);
         }
         let unready = self.argument_fault("ext.builtin.exceptions.unready", None);
+        if self.table.single("ext.builtin.exceptions.reduce") == Some(word) {
+            if !given.is_empty() { return Err(String::from("TypeError: BaseException.__reduce__() takes no arguments").into()); }
+            let kind = thing.blueprint();
+            let args_word = self.table.single("ext.builtin.exceptions.args").unwrap_or("args");
+            let holding = thing.holds.borrow();
+            let given_args = holding.iter().find(|(key, _)| key == args_word).map(|(_, value)| match value {
+                Value::Arguments(row) => Value::Tuple(row.clone()),
+                other => other.clone(),
+            }).unwrap_or(Value::Tuple(Rc::new(vec![])));
+            let mut inputs = match given_args { Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
+            if self.stands_under(&kind, 20) {
+                if let Some((_, file)) = holding.iter().find(|(key, _)| key == "filename") {
+                    if !matches!(file, Value::Nil) {
+                        inputs.push(file.clone());
+                        if let Some((_, last)) = holding.iter().find(|(key, _)| key == "filename2") {
+                            if !matches!(last, Value::Nil) { inputs.push(Value::Nil); inputs.push(last.clone()); }
+                        }
+                    }
+                }
+            }
+            let import_kind = self.stands_under(&kind, 19);
+            let attribute_kind = self.stands_under(&kind, 12);
+            let excluded = [args_word, "__traceback__", "__cause__", "__context__", "__suppress_context__", "__notes__", "name", "obj", "errno", "strerror", "filename", "filename2", "encoding", "object", "start", "end", "reason", "msg", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line", "path", "name_from", "code", "value", "_metadata"];
+            let extras: Vec<_> = holding.iter().filter(|(key, value)| !key.starts_with('\0') && !excluded.contains(&key.as_str()) || ((import_kind && (key == "name" || key == "path")) || attribute_kind && key == "name") && !matches!(value, Value::Nil)).map(|(key, item)| (Value::text(key), item.clone())).collect();
+            let mut result = vec![Value::Blueprint(kind), Value::Tuple(Rc::new(inputs))];
+            if !extras.is_empty() { result.push(Value::Dict(Rc::new(extras.into()))); }
+            return Ok(Value::Tuple(Rc::new(result)));
+        }
+        if self.table.single("ext.builtin.exceptions.setstate") == Some(word) {
+            let [value] = given else { return Err(String::from("TypeError: state is not a dictionary").into()) };
+            let Value::Dict(pairs) = value.settled() else { return Err(String::from("TypeError: state is not a dictionary").into()) };
+            for (key, item) in pairs.iter() {
+                let Value::Text(name) = key else { return Err(String::from("TypeError: attribute name must be string").into()) };
+                self.alter_class_member(Value::Thing(thing.clone()), name, Some(item.clone()), true)?;
+            }
+            return Ok(Value::Nil);
+        }
         if self.table.single("ext.builtin.exceptions.note") == Some(word) {
             let [Value::Text(_)] = given else { return Err(self.argument_fault("ext.builtin.exceptions.note.invalid", None).into()) };
             let key = self.table.single("ext.builtin.exceptions.notes").unwrap_or_default().to_string();
@@ -2184,7 +2221,9 @@ impl<'a> Machine<'a> {
         if let Some(key) = key_value {
             let kind = self.table.single("ext.system.fault.class.key")?;
             let Value::Blueprint(kind) = self.fault_kinds.get(kind)?.clone() else { return None };
-            return Some(self.make_fault(kind, vec![key], Value::Nil));
+            let fault = self.make_fault(kind, vec![key], Value::Nil);
+            self.keep_context(&fault);
+            return Some(fault);
         }
         let named = self.class_of_fault(told)?;
         let Some(Value::Blueprint(of)) = self.fault_kinds.get(&named).cloned().or_else(|| self.class_bound(&named)) else { return None };
@@ -14502,7 +14541,7 @@ impl<'a> Machine<'a> {
                 match char::from_u32(code) {
                     Some(c) => Value::text(&c.to_string()),
                     None if code >= 0xd800 && code <= 0xdfff && self.table.has_any("ext.system.bytes.encodings") => Value::characters(vec![code]),
-                    None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
+                    None => return Err(format!("ValueError: {}() argument {} is not a valid Unicode code point", name, code)),
                 }
             }
             // Saying the run is over is done where the call is made,

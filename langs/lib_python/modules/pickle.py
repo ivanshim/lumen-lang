@@ -164,6 +164,8 @@ def _reduce(value, protocol):
     if native is not None and native[0] == 'numbered' and native[1] is not None:
         return (native[1], (native[2], native[3]), _state(value))
     cls = type(value)
+    if isinstance(value, BaseException):
+        return value.__reduce__()
     for base in (list, dict, set, frozenset, tuple, int, float, str):
         if isinstance(value, base) and cls is not base:
             return (_new_builtin, (cls, __reduce_native__(value, False)), _state(value))

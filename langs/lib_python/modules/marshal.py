@@ -281,6 +281,8 @@ def _write(value, slices, refuse):
 def _read(data):
     if isinstance(data, str):
         raise TypeError('a str is not written-out bytes')
+    if not data:
+        raise EOFError('EOF read where object expected')
     return _Reader(data.decode()).get()
 
 

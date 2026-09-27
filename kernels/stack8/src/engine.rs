@@ -386,7 +386,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -779,7 +779,7 @@ impl<'a> Engine<'a> {
 
     /// Whether a name is one of the methods an exception answers itself.
     fn exception_method_named(&self, name: &str) -> bool {
-        [&self.lang.note_method, &self.lang.traceback_setter, &self.lang.group_split, &self.lang.group_subgroup, &self.lang.group_derive]
+        [&self.lang.note_method, &self.lang.setstate_method, &self.lang.reduce_method, &self.lang.traceback_setter, &self.lang.group_split, &self.lang.group_subgroup, &self.lang.group_derive]
             .into_iter().flatten().any(|word| word == name)
     }
 
@@ -824,6 +824,38 @@ impl<'a> Engine<'a> {
             return self.class_write(Value::Object(object), &key, Some(Value::Tuple(Rc::new(args.to_vec()))), true);
         }
         let unready = self.lang.exception_unready.clone().unwrap_or_default();
+        if self.lang.reduce_method.as_deref() == Some(name) {
+            if !args.is_empty() { return Err("TypeError: BaseException.__reduce__() takes no arguments".into()); }
+            let class = object.class_now();
+            let args_key = self.lang.exception_args.as_deref().unwrap_or("args");
+            let fields = object.fields.borrow();
+            let positional = fields.iter().find(|(key, _)| key == args_key).map(|(_, value)| value.clone()).unwrap_or(Value::Tuple(Rc::new(Vec::new())));
+            let mut passed = match positional { Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
+            if self.stands_on(&class, 20) {
+                if let Some((_, file)) = fields.iter().find(|(key, _)| key == "filename") {
+                    if !matches!(file, Value::Null) {
+                        passed.push(file.clone());
+                        let second = fields.iter().find(|(key, _)| key == "filename2").map(|(_, item)| item.clone()).unwrap_or(Value::Null);
+                        if !matches!(second, Value::Null) { passed.extend([Value::Null, second]); }
+                    }
+                }
+            }
+            let import_fault = self.stands_on(&class, 19);
+            let attribute_fault = self.stands_on(&class, 12);
+            let extras: Vec<_> = fields.iter().filter(|(key, value)| !key.starts_with('\0') && ![args_key, "__traceback__", "__cause__", "__context__", "__suppress_context__", "__notes__", "name", "obj", "errno", "strerror", "filename", "filename2", "encoding", "object", "start", "end", "reason", "msg", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line", "path", "name_from", "code", "value", "_metadata"].contains(&key.as_str()) || (import_fault && ["name", "path"].contains(&key.as_str()) || attribute_fault && key == "name") && !matches!(value, Value::Null)).map(|(key, item)| (Value::text(key), item.clone())).collect();
+            let mut answer = vec![Value::Class(class), Value::Tuple(Rc::new(passed))];
+            if !extras.is_empty() { answer.push(Value::Map(Rc::new(extras.into()))); }
+            return Ok(Value::Tuple(Rc::new(answer)));
+        }
+        if self.lang.setstate_method.as_deref() == Some(name) {
+            let [state] = args else { return Err("TypeError: state is not a dictionary".into()) };
+            let Value::Map(entries) = state.contents() else { return Err("TypeError: state is not a dictionary".into()) };
+            for (key, item) in entries.iter() {
+                let Value::Text(word) = key else { return Err("TypeError: attribute name must be string".into()) };
+                self.class_write(Value::Object(object.clone()), word, Some(item.clone()), true)?;
+            }
+            return Ok(Value::Null);
+        }
         if self.lang.note_method.as_deref() == Some(name) {
             let [Value::Text(_)] = args else { return Err(self.lang.note_invalid.clone().unwrap_or_default().into()) };
             let key = self.lang.notes_member.clone().unwrap_or_default();
@@ -1811,13 +1843,17 @@ impl<'a> Engine<'a> {
         if let Some(key) = told.strip_prefix("\0key-text:") {
             let name = self.lang.fault_key.as_ref()?;
             let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
-            return Some(self.exception_instance(class, vec![Value::text(key)], Value::Null));
+            let raised = self.exception_instance(class, vec![Value::text(key)], Value::Null);
+            self.chain_context(&raised);
+            return Some(raised);
         }
         if let Some(key) = told.strip_prefix("\0key-number:") {
             let name = self.lang.fault_key.as_ref()?;
             let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
             let number = key.parse::<BigInt>().ok()?;
-            return Some(self.exception_instance(class, vec![Value::of_big(number)], Value::Null));
+            let raised = self.exception_instance(class, vec![Value::of_big(number)], Value::Null);
+            self.chain_context(&raised);
+            return Some(raised);
         }
         // A key of any other kind was kept whole when it was found
         // absent, and stands as the fault's one argument.
@@ -1825,7 +1861,9 @@ impl<'a> Engine<'a> {
             let held = self.absent_key.borrow_mut().take()?;
             let name = self.lang.fault_key.as_ref()?;
             let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
-            return Some(self.exception_instance(class, vec![held], Value::Null));
+            let raised = self.exception_instance(class, vec![held], Value::Null);
+            self.chain_context(&raised);
+            return Some(raised);
         }
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.native_exceptions.get(&named).or_else(|| self.class_named(&named)).cloned() else { return None };
@@ -14422,7 +14460,7 @@ impl<'a> Engine<'a> {
                 match char::from_u32(code) {
                     Some(c) => Value::text(&c.to_string()),
                     None if (0xd800..=0xdfff).contains(&code) && !self.lang.byte_words["ext.system.bytes.encodings"].is_empty() => Value::from_codes(vec![code]),
-                    None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
+                    None => return Err(format!("ValueError: {}() argument {} is not a valid Unicode code point", name, code)),
                 }
             }
             Builtin::Leave => return Err("the run is over".to_string()),
