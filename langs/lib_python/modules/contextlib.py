@@ -100,7 +100,9 @@ class _ContextFactory:
         return _GeneratorContextManager(self.function, args, keywords)
 
 def contextmanager(function):
-    return _ContextFactory(function).call
+    def helper(*args, **keywords):
+        return _GeneratorContextManager(function, args, keywords)
+    return helper
 
 class _ExitCallback:
     def __init__(self, function, args, keywords):

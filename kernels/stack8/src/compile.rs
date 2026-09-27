@@ -550,6 +550,20 @@ fn compile_pass(
             a.record_stop();
             return Err(format!("Unexpected '{}'", a.look().lexeme));
         }
+        a.note_syntax_warnings(0);
+        if !lang.syntax_warning_words.is_empty() {
+            for pair in a.tokens.windows(2) {
+                let [number, next] = pair else { continue };
+                if number.shape != Shape::Numeral || next.shape != Shape::Instr
+                    || number.row != next.row || number.end_column != next.column { continue; }
+                if !["and", "or", "in", "not", "if", "else", "for", "is"].contains(&next.lexeme.as_str()) { continue; }
+                let kind = if number.lexeme.starts_with("0x") { "hexadecimal" }
+                    else if number.lexeme.starts_with("0o") { "octal" }
+                    else if number.lexeme.starts_with("0b") { "binary" } else { "decimal" };
+                let warning = (format!("invalid {kind} literal"), number.row, next.column);
+                if !a.registry.warnings.contains(&warning) { a.registry.warnings.push(warning); }
+            }
+        }
     } else if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.record_stop();
@@ -1983,6 +1997,17 @@ impl<'a> Compiler<'a> {
         }
         for at in began..end {
             let token = &self.tokens[at];
+            if token.shape == Shape::Numeral && at + 1 < end {
+                let following = &self.tokens[at + 1];
+                if following.shape == Shape::Instr && token.row == following.row
+                    && token.end_column == following.column
+                    && ["and", "or", "in", "not", "if", "else", "for", "is"].contains(&following.lexeme.as_str()) {
+                    let kind = if token.lexeme.starts_with("0x") { "hexadecimal" }
+                        else if token.lexeme.starts_with("0o") { "octal" }
+                        else if token.lexeme.starts_with("0b") { "binary" } else { "decimal" };
+                    found.push((format!("invalid {kind} literal"), token.row, following.column));
+                }
+            }
             if token.shape == Shape::Instr && lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, Action::Same)) {
                 let negated = at + 1 < end && self.tokens[at + 1].shape == Shape::Instr && Lang::spells(&lang.identity_not, &self.tokens[at + 1].lexeme);
                 let mut right = at + 1 + usize::from(negated);

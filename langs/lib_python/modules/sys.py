@@ -8,7 +8,7 @@ argv = __program_namespace()['__program_argv']
 # is searched, in order, before the library carried inside this run.
 # Nothing stands here by default, since nothing outside the library
 # this run carries is on the way until a program puts it there.
-path = []
+path = [argv[0].rsplit('/', 1)[0] if '/' in argv[0] else '']
 maxsize = 9223372036854775807
 version_info = (3, 14, 0, 'final', 0)
 platform = 'linux'

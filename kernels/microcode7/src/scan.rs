@@ -1508,7 +1508,21 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             if strict {
                 while at(k).map_or(false, |x| table.extends_name(x)) { k += 1; }
             }
-            let spelling: String = src[pos..k].iter().collect();
+            let mut spelling: String = src[pos..k].iter().collect();
+            if strict && check_numeral(&spelling, table).is_err() && table.has_any("ext.builtin.exceptions.syntax") {
+                for word in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+                    if let Some(beginning) = spelling.strip_suffix(word) {
+                        if !beginning.is_empty() && check_numeral(beginning, table).is_ok()
+                            && !(beginning == "0" && word == "or")
+                            && !(beginning.starts_with("0x") && matches!(word, "and" | "else")) {
+                            let kept = beginning.len();
+                            k -= word.len();
+                            spelling.truncate(kept);
+                            break;
+                        }
+                    }
+                }
+            }
             if strict {
                 if let Err(mut words) = check_numeral(&spelling, table) {
                     if table.has_any("ext.builtin.exceptions.syntax") {
@@ -1941,7 +1955,7 @@ fn failed_digit(spelling: &str, complaint: &str) -> usize {
         let c = chars[index];
         let next = chars.get(index + 1);
         if c == '_' {
-            if !next.map_or(false, |n| n.is_digit(base)) { return index; }
+            if !next.map_or(false, |n| n.is_digit(base) || base < 10 && n.is_ascii_digit()) { return index; }
         } else if !c.is_digit(base) {
             if skip != 0 {
                 return if base != 16 && c.is_ascii_digit() { index } else { index.saturating_sub(1) };
