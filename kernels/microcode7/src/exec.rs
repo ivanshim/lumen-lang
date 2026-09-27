@@ -5263,7 +5263,14 @@ impl<'a> Machine<'a> {
                         }
                     }
                     if let Some(Value::Span(bounds)) = &key {
-                        let value = collection_read(&value);
+                        let mut value = collection_read(&value);
+                        let is_vector = matches!(f.cells.borrow()[i].settled(), Value::Vector(_));
+                        if is_vector && !matches!(value, Value::Vector(_) | Value::Tuple(_) | Value::Set(_) | Value::Progression(_) | Value::Text(_) | Value::Dict(_)) {
+                            let members = self.object_members(&value).map_err(|words| {
+                                if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
+                            })?;
+                            value = Value::Vector(Rc::new(members));
+                        }
                         let old = f.cells.borrow()[i].clone();
                         match old {
                             Value::Shared(cell) => {
@@ -5928,8 +5935,9 @@ impl<'a> Machine<'a> {
     /// value of a native kind answers to it as a member of its own.
     pub(super) fn native_place(&self, value: &Value, name: &str) -> Option<usize> {
         let mark = Self::native_mark(value)?;
-        if matches!(mark, 'e' | 'E') && self.table.single("ext.stmt.class.constructor") == Some(name) {
-            return Some(usize::MAX);
+        if self.table.single("ext.stmt.class.constructor") == Some(name) {
+            if matches!(mark, 'e' | 'E') { return Some(usize::MAX); }
+            if mark == 'l' { return Some(usize::MAX - 1); }
         }
         let at = self.table.strings("ext.stmt.class.special").iter().position(|word| word == name)?;
         Self::mark_answers(mark, at).then_some(at)
@@ -5963,6 +5971,18 @@ impl<'a> Machine<'a> {
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' own.
     fn native_member_run(&mut self, receiver: &Value, name: &str, at: usize, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if at == usize::MAX - 1 {
+            if !keywords.is_empty() || arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
+            let holder = Self::native_cell(receiver);
+            let source_is_self = arguments.first().map_or(false, |input| {
+                holder.as_ref().map_or(false, |cell| Self::native_cell(input).map_or(false, |other| Rc::ptr_eq(cell, &other)))
+                    || matches!((input.settled(), receiver.settled()), (Value::Vector(left), Value::Vector(right)) if Rc::ptr_eq(&left, &right))
+            });
+            if let Some(cell) = &holder { *cell.borrow_mut() = Value::Vector(Rc::new(Vec::new())); }
+            let values = if source_is_self { Vec::new() } else { match arguments.first() { Some(input) => self.object_members(input)?, None => Vec::new() } };
+            if let Some(cell) = holder { *cell.borrow_mut() = Value::Vector(Rc::new(values)); }
+            return Ok(Value::Nil);
+        }
         if at == usize::MAX {
             match receiver.settled() {
                 Value::Set(store) => {
@@ -6067,9 +6087,16 @@ impl<'a> Machine<'a> {
         // it stands, as it does for a span written to by its sign.
         if at == 12 {
             if let Value::Span(bounds) = arguments[0].clone() {
+                let mut incoming = arguments[1].clone();
+                if Self::native_mark(receiver) == Some('l') && !matches!(incoming.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Set(_) | Value::Progression(_) | Value::Text(_) | Value::Dict(_)) {
+                    let members = self.object_members(&incoming).map_err(|words| {
+                        if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
+                    })?;
+                    incoming = Value::Vector(Rc::new(members));
+                }
                 match Self::native_cell(receiver) {
-                    Some(cell) => self.span_written(&mut cell.borrow_mut(), &bounds, &arguments[1])?,
-                    None => self.span_written(&mut receiver.settled(), &bounds, &arguments[1])?,
+                    Some(cell) => self.span_written(&mut cell.borrow_mut(), &bounds, &incoming)?,
+                    None => self.span_written(&mut receiver.settled(), &bounds, &incoming)?,
                 }
                 return Ok(Value::Nil);
             }
@@ -9588,6 +9615,13 @@ impl<'a> Machine<'a> {
         }
         match self.appointment(subject, index) {
             None => Ok(None),
+            Some(Value::Wrapped(4, contents)) => {
+                match self.apply_class_member(contents[0].clone(), tail.to_vec()) {
+                    Ok(answer) => Ok(Some(answer)),
+                    Err(Escape::Error(message)) => Err(message),
+                    Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
+                }
+            }
             Some(Value::Routine(_) | Value::Bound(..)) => {
                 let (body, scope) = self.appointed_within(subject, index).expect("the method just found");
                 let arguments = std::iter::once(subject.clone()).chain(tail.iter().cloned()).collect();
@@ -9721,6 +9755,31 @@ impl<'a> Machine<'a> {
                 let whole = Value::Mutable(place, false);
                 if self.collections_read_alike() { return Ok(whole.repr(&self.wording())); }
                 return Ok(self.show(std::slice::from_ref(&whole)));
+            }
+            if matches!(inner, Value::Vector(_)) && Self::carries_instance(&inner) {
+                let ceiling = self.table.count("ext.system.recursion.limit");
+                if ceiling.is_some_and(|limit| self.standing >= limit) {
+                    if let Some(words) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{words}")); }
+                }
+                self.standing += 1;
+                let shown = (|| {
+                    let among = Among::members(&inner);
+                    if let Some(marks) = among.instead { return Ok(marks.to_string()); }
+                    let mut pieces = Vec::new();
+                    let mut offset = 0;
+                    loop {
+                        let member = match place.borrow().settled() {
+                            Value::Vector(row) => row.get(offset).cloned(),
+                            _ => None,
+                        };
+                        let Some(value) = member else { break };
+                        pieces.push(self.object_words(&value, true)?);
+                        offset += 1;
+                    }
+                    Ok(format!("[{}]", pieces.join(", ")))
+                })();
+                self.standing -= 1;
+                return shown;
             }
             return self.object_words(&inner, quoted || represented);
         }
@@ -10932,6 +10991,8 @@ impl<'a> Machine<'a> {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
             } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
+                self.prim_values(op, name, v)?
+            } else if op == Prim::Quoted && v.first().map_or(false, |item| matches!(item, Value::Shared(_) | Value::Mutable(..)) && Self::carries_instance(&item.settled())) {
                 self.prim_values(op, name, v)?
             } else if (self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences())
                 && matches!(v.first(), Some(Value::Shared(_) | Value::Mutable(..))) {
@@ -14507,7 +14568,7 @@ impl<'a> Machine<'a> {
         Ok((begin..end, picked, unit))
     }
 
-    fn span_written(&self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
+    fn span_written(&mut self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
         if let Value::Shared(cell) = handed {
             let contents = cell.borrow().clone();
             return self.span_written(held, bounds, &contents);
@@ -14544,7 +14605,11 @@ impl<'a> Machine<'a> {
             Value::Text(letters) => letters.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
             Value::Vector(values) | Value::Tuple(values) => values.iter().cloned().collect(),
-            _ => return Err(self.span_complaint("assign")),
+            _ => self.object_members(handed).map_err(|words| {
+                if words.contains("not iterable") || words.contains("not an iterable") {
+                    self.span_complaint("assign")
+                } else { words }
+            })?,
         };
         if !unit && picked.len() != coming.len() {
             let wording = self.table.strings("ext.op.index.slice.length");
@@ -17490,6 +17555,8 @@ impl Machine<'_> {
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
                 if op == Prim::Belongs && matches!(item, Value::Window(..)) { continue; }
+                if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
+                    && Self::carries_instance(&item.settled()) { continue; }
                 *item = item.settled();
             }
         }

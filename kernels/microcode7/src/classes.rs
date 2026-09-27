@@ -662,6 +662,7 @@ impl<'a> Machine<'a> {
             (None,Some(word))=>{
                 let initial = match self.table.prims.get(word) {
                     Some(Prim::Uniques) => Vec::new(),
+                    Some(Prim::Listed) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     Some(Prim::Unchanging) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     _ => given.clone(),
                 };
@@ -1893,7 +1894,7 @@ impl<'a> Machine<'a> {
                 if key==self.detail("allocate"){return self.apply_class_member(Self::wrap(14,vec![Value::text(&word)]),args);}
                 if self.table.single("ext.stmt.class.constructor")==Some(key){
                     return match Self::underlying(&receiver) {
-                        Some(under @ Value::Set(_)) => {
+                        Some(under) if matches!(under.settled(), Value::Set(_) | Value::Vector(_)) => {
                             let (positional, named) = self.open_arguments(args)?;
                             self.value_member(&under, key, positional, named)
                         }
