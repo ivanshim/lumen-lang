@@ -387,7 +387,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -3253,6 +3253,7 @@ impl<'a> Engine<'a> {
             }
             self.caught.truncate(active);
             left?;
+            if plan.async_context { self.perform(&Action::Awaited, 1)?; }
             let answer = self.drop_top()?;
             self.data.truncate(kept);
             if matches!(&ending, Err(Fault::Thrown(_))) && self.special_truth(&answer)? {
@@ -6741,6 +6742,9 @@ impl<'a> Engine<'a> {
     }
 
     fn async_step(&mut self, walker: &Value) -> Res<Option<Value>> {
+        if matches!(walker, Value::Generator(state) if state.borrow().program.as_ref().map_or(false, |program| program.code_flags & 512 != 0)) {
+            return self.core_step(walker);
+        }
         let method = self.special_method(walker, 84).ok_or_else(|| self.special_fault())?;
         let stepped = self.invoke(&method, vec![walker.clone()]).and_then(|()| {
             let value = self.drop_top()?;
@@ -6986,6 +6990,9 @@ impl<'a> Engine<'a> {
                 // it hands over is marked, so that each step asks that
                 // walk's own word for the next member.
                 let subject = self.drop_top()?.contents();
+                if matches!(&subject, Value::Generator(state) if state.borrow().program.as_ref().map_or(false, |program| program.code_flags & 512 != 0)) {
+                    return Ok(self.data.push(Value::Adapter(Rc::new((30, vec![subject])))));
+                }
                 let told = self.special_call(&subject, 83, Vec::new());
                 if let Some(fled) = self.carried.take() { return Err(fled); }
                 let Some(walker) = told? else {
@@ -17880,10 +17887,17 @@ impl Engine<'_> {
             Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
             _ => return Err(self.source_unready()),
         };
-        let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err(self.source_unready()) };
-        // Flags and inheritance are read and let be; another setting of
-        // optimisation than the ordinary is not honoured.
-        if args.get(5).map_or(false, |value| !matches!(value, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(self.source_unready()); }
+        let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
+        let flags = match args.get(3).map(Value::contents) {
+            None | Some(Value::Null) => 0,
+            Some(Value::Small(bits)) => bits,
+            _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
+        };
+        if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        if args.get(5).map_or(false, |value| !matches!(value.contents(), Value::Null | Value::Small(-1..=2))) {
+            return Err("ValueError: compile(): invalid optimize value".into());
+        }
+        let allow_top_await = flags & 8192 != 0;
         let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
@@ -17891,6 +17905,7 @@ impl Engine<'_> {
         self.source_escape_warnings(&source, &file)?;
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
+        trial.allow_top_level_await = allow_top_await;
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
         }
@@ -17899,11 +17914,8 @@ impl Engine<'_> {
         }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
-        // `co_flags` names its bits the reference does; nothing here
-        // ever sets the coroutine bit, since top-level `await` is not
-        // run, so a reading of it is always nought, which is enough
-        // for a program only asking whether that one bit is clear.
-        let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64)), ("co_flags".to_string(), Value::Small(0))];
+        let bits = if trial.top_level_coroutine { 128 } else { 0 };
+        let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64)), ("co_flags".to_string(), Value::Small(bits))];
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
@@ -17947,13 +17959,14 @@ impl Engine<'_> {
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
-        let (source, file, mode) = match first {
-            Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
-            Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing)),
+        let (source, file, mode, top_await) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
+            Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
-                (fields[0].1.plain(), Some(fields[1].1.plain()), mode)
+                let asynchronous = fields.iter().any(|(name, value)| name == "co_flags" && matches!(value, Value::Small(bits) if bits & 128 != 0));
+                (fields[0].1.plain(), Some(fields[1].1.plain()), mode, asynchronous)
             }
             _ => return Err(self.core_fault("core.arity", name)),
         };
@@ -17977,8 +17990,8 @@ impl Engine<'_> {
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, values)) => self.run_text_within(&source, file, mode, names, values),
-                None => self.run_text_here_about(&source, file, mode),
+                Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await),
+                None => self.run_text_here_about(&source, file, mode, top_await),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -18007,17 +18020,17 @@ impl Engine<'_> {
                 }
             }
         }
-        self.run_text_booked(&source, file, mode, outer, near)
+        self.run_text_booked(&source, file, mode, outer, near, top_await)
     }
 
     /// Text run where the call stands: inside a text book, in that
     /// book; else against the outermost names.
-    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize) -> Res<Value> {
+    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool) -> Res<Value> {
         if let Some(at) = self.reading_in {
             let (near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
             return match outer {
-                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near)),
-                None => self.run_text_booked(source, file, mode, near, None),
+                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await),
+                None => self.run_text_booked(source, file, mode, near, None, top_await),
             };
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
@@ -18025,7 +18038,7 @@ impl Engine<'_> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, None)?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
     }
@@ -18036,7 +18049,7 @@ impl Engine<'_> {
     /// writes to a frame of its own making, a copy of the routine's, so
     /// the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>) -> Res<Value> {
+    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool) -> Res<Value> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
@@ -18054,6 +18067,7 @@ impl Engine<'_> {
             (named, base)
         });
         self.registry.value_only = mode == 1;
+        self.registry.allow_top_level_await = top_await;
         let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
             Ok(program) => program,
             Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
@@ -18081,7 +18095,7 @@ impl Engine<'_> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
-    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Res<Value> {
+    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool) -> Res<Value> {
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -18101,7 +18115,7 @@ impl Engine<'_> {
         if own_natives {
             for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
         }
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local))?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await)?;
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -18117,10 +18131,11 @@ impl Engine<'_> {
     /// one statement shown as it runs, which is an expression written
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
-    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
+    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool) -> Res<(Rc<Routine>, bool)> {
         let amiss;
         {
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
+            registry.allow_top_level_await = top_await;
             if mode == 2 {
                 registry.value_only = true;
                 if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }

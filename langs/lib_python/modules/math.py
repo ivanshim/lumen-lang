@@ -263,8 +263,8 @@ def fsum(values):
     for x in values:
         if type(x) != type(1.0):
             _check_real(x)
-        x = float(x)
-        if isnan(x):
+            x = float(x)
+        if x != x:
             saw_nan = True
             continue
         if x == inf:

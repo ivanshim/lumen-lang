@@ -8,7 +8,12 @@ NoneType = type(None)
 
 
 class FunctionType:
-    pass
+    def __init__(self, code, globals):
+        self.__code__ = code
+        self.__globals__ = globals
+
+    def __call__(self):
+        return eval(self.__code__, self.__globals__)
 
 
 LambdaType = FunctionType

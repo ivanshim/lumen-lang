@@ -148,6 +148,7 @@ enum Owed {
 #[derive(Debug)]
 struct Warded {
     context: Option<Address>,
+    async_context: bool,
     clauses: Vec<Clause>,
     last: Option<Form>,
     otherwise: Option<Form>,
@@ -193,6 +194,7 @@ pub struct Suspension {
     /// The thing of the program's own whose members these are, kept so
     /// that it lives as long as the walk over it, as the reference has it.
     stepping_through: Option<Value>,
+    source_reading: Option<usize>,
 }
 
 impl Suspension {
@@ -248,7 +250,7 @@ impl Suspension {
         Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
-            holding: Vec::new(), walked: None, stepping_through: None }
+            holding: Vec::new(), walked: None, stepping_through: None, source_reading: None }
     }
 }
 
@@ -263,7 +265,7 @@ impl Drop for Suspension {
                 inner: self.inner.take(), members: self.members.take(), ready: self.ready.take(),
                 overseen: self.overseen.take(), of: self.of.clone(),
                 holding: std::mem::take(&mut self.holding), walked: self.walked.take(),
-                stepping_through: self.stepping_through.take(),
+                stepping_through: self.stepping_through.take(), source_reading: self.source_reading,
             };
             self.ended = true;
             crate::ghost::walk_departing(Rc::new(RefCell::new(again)));
@@ -3112,6 +3114,7 @@ impl<'a> Machine<'a> {
             inner: None, members: Some(members.into_iter()), ready: None, overseen, of: None,
             walked: None,
             stepping_through: matches!(source, Value::Thing(_)).then(|| source.clone()),
+            source_reading: None,
         })))
     }
 
@@ -3381,7 +3384,15 @@ impl<'a> Machine<'a> {
     /// A step back into a sleeping body, either handing it a value or
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown at them is raised on the spot.
-    fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
+    fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
+        let previous = self.reading_now;
+        if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) { self.reading_now = Some(book); }
+        let result = self.step_into_body(generator, sent, hurled, given);
+        self.reading_now = previous;
+        result
+    }
+
+    fn step_into_body(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
         // what comes back out of that reaches the body itself.
@@ -3652,7 +3663,7 @@ impl<'a> Machine<'a> {
                         let form = |input| match input { Input::Form(f) => *f, Input::Address(a) => Form::Read(a), Input::Const(v) => Form::Const(v) };
                         state.owed.push(Owed::Find(Form::Apply(Callee::Prim(op, name), vec![form(a), form(b)])));
                     }
-                    Form::Attempt { context, body, clauses, last, otherwise } => {
+                    Form::Attempt { context, async_context, body, clauses, last, otherwise } => {
                         // A try with no suspension anywhere inside it, and
                         // a gathered clause, are left to the plain
                         // reckoning; the rest is taken on piece by piece.
@@ -3661,10 +3672,10 @@ impl<'a> Machine<'a> {
                                 || last.as_deref().map_or(false, suspension_within)
                                 || otherwise.as_deref().map_or(false, suspension_within));
                         if plain {
-                            let whole = Form::Attempt { context, body, clauses, last, otherwise };
+                            let whole = Form::Attempt { context, async_context, body, clauses, last, otherwise };
                             state.found.push(self.value_of(&whole, &frame)?);
                         } else {
-                            let plan = Rc::new(Warded { context, clauses, last: last.map(|form| *form), otherwise: otherwise.map(|form| *form) });
+                            let plan = Rc::new(Warded { context, async_context, clauses, last: last.map(|form| *form), otherwise: otherwise.map(|form| *form) });
                             let floor = state.found.len();
                             // Counted from the caller's own held faults,
                             // since a later step back in may stand at
@@ -3775,7 +3786,7 @@ impl<'a> Machine<'a> {
                     // Nothing was raised: a manager is told the body is
                     // done with, and an else part runs in the body's place.
                     if let Some(address) = &plan.context {
-                        self.leaving(&frame, address, None)?;
+                        self.leaving(&frame, address, None, plan.async_context)?;
                     } else if let Some(otherwise) = plan.otherwise.clone() {
                         state.owed.push(Owed::Find(otherwise));
                         state.owed.push(Owed::Drop);
@@ -3858,7 +3869,7 @@ impl<'a> Machine<'a> {
                     let raised = raised.clone();
                     self.save_traceback(&raised, false);
                     if let Some(address) = &plan.context {
-                        match self.leaving(&frame, address, Some(&raised)) {
+                        match self.leaving(&frame, address, Some(&raised), plan.async_context) {
                             Ok(true) => { state.found.push(Value::Nil); return Ok(()); }
                             Ok(false) => continue,
                             Err(met) => { escape = met; continue; }
@@ -3900,7 +3911,16 @@ impl<'a> Machine<'a> {
 
     /// The manager of a watched body is told the body is done with. It
     /// answers whether a value raised there is to be let go.
-    fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>) -> Result<bool, Escape> {
+    fn context_await(&mut self, value: Value) -> Res {
+        match value.settled() {
+            Value::Generator(state) => loop {
+                if self.resume(&state, Value::Nil)?.is_none() { break Ok(state.borrow().result.clone()); }
+            },
+            other => Ok(other),
+        }
+    }
+
+    fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>, async_context: bool) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
         if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
         let unready = self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned();
@@ -3919,6 +3939,7 @@ impl<'a> Machine<'a> {
         let asked = self.raised_if_error(asked);
         self.holding_fault.truncate(preceding);
         let answer = asked?.ok_or_else(|| self.bad_answer())?;
+        let answer = if async_context { self.context_await(answer)? } else { answer };
         Ok(raised.is_some() && self.object_truth(&answer)?)
     }
 
@@ -4722,7 +4743,7 @@ impl<'a> Machine<'a> {
                 self.keep_context(&raised);
                 Err(Escape::Thrown(raised))
             }
-            Form::Attempt { context, body, clauses, last, otherwise } => {
+            Form::Attempt { context, async_context, body, clauses, last, otherwise } => {
                 let context_line = self.row;
                 let context_extent = self.extent;
                 if self.table.has_any("ext.stmt.catch.group.unsupported") && clauses.iter().any(|part| part.grouped) {
@@ -4775,6 +4796,7 @@ impl<'a> Machine<'a> {
                     let asked = self.raised_if_error(asked);
                     self.holding_fault.truncate(preceding);
                     let answer = asked?.ok_or_else(|| self.bad_answer())?;
+                    let answer = if *async_context { self.context_await(answer)? } else { answer };
                     return match body_result {
                         Err(Escape::Thrown(_)) if self.object_truth(&answer)? => Ok(Value::Nil),
                         outcome => outcome,
@@ -8567,6 +8589,7 @@ impl<'a> Machine<'a> {
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
         if program.generator && self.table.flag("ext.stmt.yield.suspends") {
             let mut suspension = Suspension::body(&program, frame.clone());
+            suspension.source_reading = self.reading_now;
             suspension.trace_state = self.activation(&program, &frame, None);
             return Ok(Value::Generator(Rc::new(RefCell::new(suspension))));
         }
@@ -10747,6 +10770,9 @@ impl<'a> Machine<'a> {
     fn async_walk(&mut self, v: &[Value]) -> Result<Value, Escape> {
         let [subject] = v else { return Err(Escape::Error(format!("an asynchronous walk expects 1 argument, got {}", v.len()))) };
         let subject = subject.settled();
+        if matches!(&subject, Value::Generator(state) if state.borrow().of.as_ref().map_or(false, |program| program.flags & 512 != 0)) {
+            return Ok(Value::Wrapped(61, Rc::new(vec![subject])));
+        }
         let asked = self.ask_special(&subject, 83, &[]).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)))?;
         let Some(walker) = asked else {
             let kind = match &subject { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
@@ -10769,6 +10795,9 @@ impl<'a> Machine<'a> {
     }
 
     fn awaited_step(&mut self, walker: &Value) -> Result<Option<Value>, String> {
+        if matches!(walker, Value::Generator(state) if state.borrow().of.as_ref().map_or(false, |program| program.flags & 512 != 0)) {
+            return self.next_value(walker);
+        }
         let (routine, scope) = self.appointed_within(walker, 84).ok_or_else(|| self.bad_answer())?;
         let result = self.invoke(routine, scope, vec![walker.clone()]).and_then(|value| self.await_completion(value));
         let stepped = match result {
@@ -12378,7 +12407,7 @@ impl<'a> Machine<'a> {
             }
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
-            Prim::StartContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
+            Prim::StartContext | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
                 if work == crate::text::Work::MAKETRANS && values.len() == 1 {
@@ -17775,25 +17804,29 @@ impl<'a> Machine<'a> {
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
             _ => return Err(self.source_refused()),
         };
-        let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err(self.source_refused()) };
-        // Flags and inheritance are read and let be; optimisation beyond
-        // the ordinary setting is not honoured.
-        if v.get(5).map_or(false, |worth| !matches!(worth, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(self.source_refused()); }
+        let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
+        let flags = match v.get(3).map(Value::settled) {
+            None | Some(Value::Nil) => 0,
+            Some(Value::Small(bits)) => bits,
+            _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
+        };
+        if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        if v.get(5).map_or(false, |value| !matches!(value.settled(), Value::Nil | Value::Small(-1..=2))) {
+            return Err("ValueError: compile(): invalid optimize value".into());
+        }
+        let top_await = flags & 8192 != 0;
         self.report_escape_notices(&source, &file)?;
         let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[])?;
+        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await)?;
         for (message, row, column) in &built.warnings {
             self.syntax_warning(mode, message, &file, *row, *column, &source)?;
         }
         let kind = self.code_blueprint();
-        // `co_flags` names its bits the reference does; nothing here
-        // ever sets the coroutine bit, since top-level `await` is not
-        // run, so a reading of it is always nought, which is enough for
-        // a program only asking whether that one bit is clear.
-        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64)), ("co_flags".to_owned(), Value::Small(0))];
+        let flags = if built.program.generator { 128 } else { 0 };
+        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64)), ("co_flags".to_owned(), Value::Small(flags))];
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -17833,13 +17866,14 @@ impl<'a> Machine<'a> {
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
         let Some(first) = v.first().map(Value::settled) else { return Err(self.core_complaint("core.arity", name)) };
-        let (source, file, mode) = match first {
-            Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
-            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing)),
+        let (source, file, mode, top_await) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
+            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
             Value::Thing(code) if self.table.single("ext.builtin.compile.kind") == Some(code.blueprint().name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
-                (holds[0].1.bare(), Some(holds[1].1.bare()), mode)
+                let async_code = holds.iter().any(|(name, worth)| name == "co_flags" && matches!(worth, Value::Small(flags) if flags & 128 != 0));
+                (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code)
             }
             _ => return Err(self.core_complaint("core.arity", name)),
         };
@@ -17862,8 +17896,8 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine),
-                None => self.perform_here(&source, file, mode),
+                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await),
+                None => self.perform_here(&source, file, mode, top_await),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -17894,17 +17928,17 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        self.perform_booked(&source, file, mode, outer, near)
+        self.perform_booked(&source, file, mode, outer, near, top_await)
     }
 
     /// Text run where the call stands: within the reading under way, in
     /// its dictionaries; else among the outermost names.
-    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize) -> Result<Value, String> {
+    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool) -> Result<Value, String> {
         if let Some(which) = self.reading_now {
             let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
             return match outer {
-                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near)),
-                None => self.perform_booked(source, file, mode, near, None),
+                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await),
+                None => self.perform_booked(source, file, mode, near, None, top_await),
             };
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
@@ -17913,7 +17947,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[])?;
+        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await)?;
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         self.text_concluded(&built, &file, mode, shown)
@@ -17925,7 +17959,7 @@ impl<'a> Machine<'a> {
     /// writes to a frame of its own, standing apart from the routine's,
     /// so the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>) -> Result<Value, String> {
+    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool) -> Result<Value, String> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -17970,7 +18004,7 @@ impl<'a> Machine<'a> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
-    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Result<Value, String> {
+    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool) -> Result<Value, String> {
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -17986,7 +18020,7 @@ impl<'a> Machine<'a> {
             _ => false,
         };
         let shadowed: Vec<String> = if own_natives { self.table.prims.keys().cloned().collect() } else { Vec::new() };
-        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed)?;
+        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await)?;
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -18002,12 +18036,12 @@ impl<'a> Machine<'a> {
     /// statement shown as it runs, which is an expression written out
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
-    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String]) -> Result<(crate::build::Built, bool), String> {
+    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
         if mode == 2 {
-            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), true, shadowed) { return Ok((built, true)); }
+            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), true, shadowed, top_await) { return Ok((built, true)); }
         }
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, mode == 1, shadowed)
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, mode == 1, shadowed, top_await)
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
@@ -18019,7 +18053,7 @@ impl<'a> Machine<'a> {
         let top = self.outermost.clone();
         let prior = self.active_trace.take();
         self.frames_named.push(built.program.clone());
-        let ran = self.value_of(&built.program.body, &top);
+        let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
         self.frames_named.pop();
         self.active_trace = prior;
         self.written_in = was_in;
@@ -18035,7 +18069,7 @@ impl<'a> Machine<'a> {
             self.utter(&format!("{}\n", quoted.bare()));
             return Ok(Value::Nil);
         }
-        Ok(if mode == 1 { answer } else { Value::Nil })
+        Ok(if mode == 1 || built.program.generator { answer } else { Value::Nil })
     }
 }
 

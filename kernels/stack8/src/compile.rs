@@ -48,6 +48,8 @@ pub struct Registry {
     /// handed over to be weighed is: nothing may follow it. The mark is
     /// spent by that reading.
     pub value_only: bool,
+    pub allow_top_level_await: bool,
+    pub top_level_coroutine: bool,
     /// The names the outermost statements declared global, for text
     /// read into two dictionaries: a name so declared is written to the
     /// outer one.
@@ -223,6 +225,7 @@ pub struct Compiler<'a> {
     pieces: Vec<Piece>,
     counter: usize,
     yield_operand: bool,
+    forbids_await: bool,
     awkward_place: bool,
     for_binding: Option<(String, usize)>,
     writing_place: bool,
@@ -370,6 +373,7 @@ pub fn compile_within(
     let wants_value = std::mem::take(&mut table.value_only);
     if lang.closes_over {
         let mut survey = Registry::default();
+        survey.allow_top_level_await = table.allow_top_level_await;
         if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value) {
             table.stopped_at = survey.stopped_at;
             table.stopped_column = survey.stopped_column;
@@ -489,7 +493,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let mut top = Piece { asynchronous_walk: false, asynchronous: false, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+    let mut top = Piece { asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -532,7 +536,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { syntax_try_nesting: 0, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { syntax_try_nesting: 0, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -654,7 +658,8 @@ fn compile_pass(
     }
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    a.registry.top_level_coroutine = unit.generator;
+    Ok(Rc::new(Routine { annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1501,7 +1506,7 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        let asynchronous = (name == "<comprehension>" || name.starts_with("#generator")) && self.piece().asynchronous;
+        let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
         self.pieces.push(Piece { asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
             outermost: false,
             ident: name.to_string(),
@@ -1770,6 +1775,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let Some(pair) = &lang.index_brackets else { return Ok(false); };
         if !lang.type_parameters || !self.at_symbol(&pair.open) { return Ok(false); }
+        let old_rule = std::mem::replace(&mut self.forbids_await, true);
         self.take();
         let mut ends = lang.tuple_marks.clone();
         ends.push(pair.close.clone());
@@ -1788,6 +1794,7 @@ impl<'a> Compiler<'a> {
             if self.at_symbol(&pair.close) { break; }
         }
         self.want_sign(&pair.close, "after type parameters")?;
+        self.forbids_await = old_rule;
         Ok(true)
     }
 
@@ -2116,11 +2123,14 @@ impl<'a> Compiler<'a> {
             }
         }
         if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).shape == Shape::Instr {
+            let old_rule = std::mem::replace(&mut self.forbids_await, true);
             self.take();
             self.want_name("as the type alias")?;
             self.declaration_types()?;
             self.expect_assign("after the type alias")?;
-            return self.annotation_expression(&[]);
+            let result = self.annotation_expression(&[]);
+            self.forbids_await = old_rule;
+            return result;
         }
         if Lang::spells(&lang.ellipsis_words, &self.look().lexeme)
             && (matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Close | Shape::Finish)
@@ -2161,6 +2171,13 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.async_words, &w) {
                 self.take();
+                if self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words) {
+                    if !self.piece().asynchronous || self.in_class_body() {
+                        let keyword = if self.on_keyword(&lang.for_words) { "async for" } else { "async with" };
+                        return Err(format!("SyntaxError: '{keyword}' outside async function"));
+                    }
+                    if self.pieces.len() == 1 { self.piece().generator = true; }
+                }
                 if !(self.on_keyword(&lang.function_words) || self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words)) {
                     return Err(format!("Expected a function, for loop or with block after '{}', got '{}'", w, self.look().lexeme));
                 }
@@ -2169,7 +2186,7 @@ impl<'a> Compiler<'a> {
                 // asynchronous, and stands only within a coroutine.
                 self.coroutine_next = self.on_keyword(&lang.function_words);
                 self.asynchronous = self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words);
-                if self.asynchronous && !self.in_coroutine && !lang.syntax_members.is_empty() {
+                if self.asynchronous && !self.in_coroutine && !(self.pieces.len() == 1 && self.piece().asynchronous) && !lang.syntax_members.is_empty() {
                     return Err(format!("SyntaxError: '{} {}' outside async function", w, self.look().lexeme));
                 }
                 return self.stmt();
@@ -2396,7 +2413,7 @@ impl<'a> Compiler<'a> {
                     manager
                 };
                 let cell = self.cell_to_write(&watched);
-                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
+                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), async_context: false, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
                 watchers.push(mark);
             }
             if self.on_keyword(&lang.with_as_words) {
@@ -4327,7 +4344,7 @@ impl<'a> Compiler<'a> {
     fn indented_attempt(&mut self) -> Res<()> {
         self.take();
         let mark = self.put(Instr::Attempt(Box::new(Attempt {
-            context: None, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
+            context: None, async_context: false, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
         })));
         let body = self.guarded_attempt_body()?;
         let mut clauses: Vec<Taking> = Vec::new();
@@ -4433,7 +4450,7 @@ impl<'a> Compiler<'a> {
             return Err("A try needs a catch or a last part".to_string());
         }
         let after = self.mark();
-        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, body, clauses, otherwise, last, after }));
+        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, async_context: false, body, clauses, otherwise, last, after }));
         Ok(())
     }
 
@@ -5404,6 +5421,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn class_type_parameters(&mut self) -> Res<()> {
+        let old_rule = std::mem::replace(&mut self.forbids_await, true);
         let lang = self.lang;
         let from = self.mark();
         self.take();
@@ -5420,6 +5438,7 @@ impl<'a> Compiler<'a> {
         }
         self.want_sign(&lang.type_params_close[0], "after the type parameters")?;
         self.piece().instrs.truncate(from);
+        self.forbids_await = old_rule;
         Ok(())
     }
 
@@ -5891,6 +5910,7 @@ impl<'a> Compiler<'a> {
                 || matches!(token.shape, Shape::Open | Shape::Close)) {
                 break;
             }
+            if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }
             if token.shape == Shape::Sign {
                 if let Some(pair) = pairs.iter().find(|pair| pair.open == token.lexeme) {
                     closing.push(pair.close.clone());
@@ -7860,7 +7880,16 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
+            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
+            if self.forbids_await || !self.piece().asynchronous || class_expression {
+                let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
+                return Err(format!("SyntaxError: 'await' {phrase}"));
+            }
             if self.piece().comprehension_kind.is_some() { self.piece().asynchronous_walk = true; }
+            if self.pieces.first().map_or(false, |outer| outer.asynchronous)
+                && self.pieces.iter().skip(1).all(|inner| inner.comprehension_kind.is_some()) {
+                self.pieces[0].generator = true;
+            }
             self.take();
             self.prefix()?;
             self.act(Action::Awaited, 1);
@@ -9461,7 +9490,10 @@ impl<'a> Compiler<'a> {
         self.generator_source = prior;
         self.constant(Value::Routine(program));
         self.act(Action::Invoke(Rc::from(name)), 2);
-        if asynchronous { self.act(Action::AsyncGenerator, 1); }
+        if asynchronous {
+            self.act(Action::AsyncGenerator, 1);
+            if self.pieces.len() == 1 && self.pieces[0].asynchronous { self.piece().generator = true; }
+        }
         Ok(())
     }
 
@@ -9507,6 +9539,7 @@ impl<'a> Compiler<'a> {
                 Ok(())
             })?;
             self.generator_source = prior;
+            if self.pieces.len() == 1 && self.pieces[0].asynchronous && self.tokens[clause..self.pos].iter().any(|t| Lang::spells(&self.lang.comprehension_async, &t.lexeme) || Lang::spells(&self.lang.await_words, &t.lexeme)) { self.piece().generator = true; }
             self.constant(Value::Routine(program));
             self.act(Action::Invoke(Rc::from("<comprehension>")), 2);
             return Ok(());
@@ -9626,7 +9659,8 @@ impl<'a> Compiler<'a> {
             self.piece().asynchronous_walk = true;
             self.take();
             if !self.on_any(&self.lang.comprehension_for) { return Err("Expected a walk after the asynchronous word".to_string()); }
-            if !result.is_empty() && !self.piece().asynchronous {
+            let in_class = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
+            if !result.is_empty() && (!self.piece().asynchronous || in_class) {
                 return Err("SyntaxError: asynchronous comprehension outside of an asynchronous function".into());
             }
         }

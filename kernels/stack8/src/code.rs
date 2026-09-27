@@ -20,6 +20,7 @@ use crate::value::Value;
 #[derive(Debug, Clone)]
 pub struct Attempt {
     pub context: Option<Cell>,
+    pub async_context: bool,
     pub body: (usize, usize),
     pub clauses: Vec<Taking>,
     pub otherwise: Option<(usize, usize)>,
@@ -168,6 +169,7 @@ pub enum Action {
     MakeTuple,
     Adorn(u8),
     ContextEnter,
+    AsyncContextEnter,
     SettleObjects,
     Import(String, Option<String>, bool),
     ImportAll,

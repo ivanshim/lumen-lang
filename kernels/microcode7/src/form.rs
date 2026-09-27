@@ -59,6 +59,7 @@ pub enum Prim {
     /// An asynchronous manager's leaving method, bound (true), or what
     /// its entering method answers (false).
     AsyncContext(bool),
+    StartAsyncContext,
     DistinctObjects,
     Repr,
     Iterate,
@@ -597,7 +598,7 @@ pub enum Form {
     /// part that runs however the body ends.
     Again,
     Assert { condition: Box<Form>, message: Box<Form> },
-    Attempt { context: Option<Address>, body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
+    Attempt { context: Option<Address>, async_context: bool, body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
     /// A statement together with the line of the source it was written
