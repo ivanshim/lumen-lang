@@ -103,7 +103,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
         "is_integer", "__index__", "__truediv__"];
     const FRACTION: &[&str] = &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"];
     let names: &[&str] = match value.contents() {
-        Value::Text(_) => TEXT,
+        Value::Text(_) | Value::Codepoints(_) => TEXT,
         Value::Array(_) => ROW,
         Value::Map(_) => PAIRS,
         Value::Fields(_) => &["clear"],

@@ -9,12 +9,61 @@ use crate::unicode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextOp {
-    Splitlines, Partition, Rpartition, Expandtabs, Swapcase, Casefold,
+    Getnewargs, Splitlines, Partition, Rpartition, Expandtabs, Swapcase, Casefold,
     Capitalize, Title, Istitle, Isidentifier, Isprintable, Isdecimal,
     Isnumeric, Isascii, Removeprefix, Removesuffix, FormatMap, Maketrans,
     Translate, Encode, Join, Split, Rsplit, Strip, Lstrip, Rstrip, Center,
     Ljust, Rjust, Zfill, Count, Find, Rfind, Index, Rindex, Startswith,
     Endswith, Replace, Upper, Lower, Length, Repr,
+}
+
+pub fn operation(name: &str) -> Option<TextOp> {
+    match name {
+        "splitlines" => Some(TextOp::Splitlines),
+        "partition" => Some(TextOp::Partition),
+        "rpartition" => Some(TextOp::Rpartition),
+        "expandtabs" => Some(TextOp::Expandtabs),
+        "swapcase" => Some(TextOp::Swapcase),
+        "casefold" => Some(TextOp::Casefold),
+        "capitalize" => Some(TextOp::Capitalize),
+        "title" => Some(TextOp::Title),
+        "istitle" => Some(TextOp::Istitle),
+        "isidentifier" => Some(TextOp::Isidentifier),
+        "isprintable" => Some(TextOp::Isprintable),
+        "isdecimal" => Some(TextOp::Isdecimal),
+        "isnumeric" => Some(TextOp::Isnumeric),
+        "isascii" => Some(TextOp::Isascii),
+        "removeprefix" => Some(TextOp::Removeprefix),
+        "removesuffix" => Some(TextOp::Removesuffix),
+        "format_map" => Some(TextOp::FormatMap),
+        "maketrans" => Some(TextOp::Maketrans),
+        "translate" => Some(TextOp::Translate),
+        "encode" => Some(TextOp::Encode),
+        "join" => Some(TextOp::Join),
+        "split" => Some(TextOp::Split),
+        "rsplit" => Some(TextOp::Rsplit),
+        "strip" => Some(TextOp::Strip),
+        "lstrip" => Some(TextOp::Lstrip),
+        "rstrip" => Some(TextOp::Rstrip),
+        "center" => Some(TextOp::Center),
+        "ljust" => Some(TextOp::Ljust),
+        "rjust" => Some(TextOp::Rjust),
+        "zfill" => Some(TextOp::Zfill),
+        "count" => Some(TextOp::Count),
+        "find" => Some(TextOp::Find),
+        "rfind" => Some(TextOp::Rfind),
+        "index" => Some(TextOp::Index),
+        "rindex" => Some(TextOp::Rindex),
+        "startswith" => Some(TextOp::Startswith),
+        "endswith" => Some(TextOp::Endswith),
+        "replace" => Some(TextOp::Replace),
+        "upper" => Some(TextOp::Upper),
+        "lower" => Some(TextOp::Lower),
+        "length" => Some(TextOp::Length),
+        "repr" => Some(TextOp::Repr),
+        "__getnewargs__" => Some(TextOp::Getnewargs),
+        _ => None,
+    }
 }
 
 pub fn fault(lang: &Lang, key: &str) -> String {
@@ -32,21 +81,37 @@ pub fn already_named(lang: &Lang, said: &str) -> bool {
         .map_or(false, |words| words.iter().any(|w| said.starts_with(w)))
 }
 
-fn integer(v: &Value, lang: &Lang) -> Result<i64, String> {
+fn integer(v: &Value, _lang: &Lang) -> Result<i64, String> {
     match v {
         Value::Small(n) => Ok(*n),
         Value::Flag(b) => Ok(i64::from(*b)),
         Value::Huge(n) => Ok(n.to_i64().unwrap_or(if n.sign() == num_bigint::Sign::Minus { i64::MIN } else { i64::MAX })),
-        _ => Err(fault(lang, "integer")),
+        _ => Err(format!("TypeError: '{}' object cannot be interpreted as an integer", v.core_kind())),
     }
 }
 
-fn text<'a>(v: &'a Value, lang: &Lang) -> Result<&'a str, String> {
-    match v { Value::Text(s) => Ok(s), _ => Err(fault(lang, "string")) }
+fn text<'a>(v: &'a Value, _lang: &Lang) -> Result<&'a str, String> {
+    match v { Value::Text(s) => Ok(s), _ => Err(format!("TypeError: must be str, not {}", v.core_kind())) }
+}
+
+fn checked_name(op: TextOp) -> &'static str {
+    use TextOp::*;
+    match op {
+        Getnewargs => "__getnewargs__", Isascii => "isascii", Isdecimal => "isdecimal", Isnumeric => "isnumeric", Istitle => "istitle",
+        Partition => "partition", Rpartition => "rpartition", Removeprefix => "removeprefix", Removesuffix => "removesuffix", Translate => "translate",
+        Splitlines => "splitlines", Expandtabs => "expandtabs", _ => "",
+    }
 }
 
 pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, lang: &Lang) -> Result<(), String> {
+    if op == TextOp::Maketrans && !named.is_empty() { return Err("TypeError: str.maketrans() takes no keyword arguments".into()); }
     let initial = args.len();
+    let method = checked_name(op);
+    if !named.is_empty() && !method.is_empty() {
+        if !matches!(op, TextOp::Expandtabs | TextOp::Splitlines) { return Err(format!("TypeError: str.{method}() takes no keyword arguments")); }
+        let total = initial.saturating_sub(1) + named.len();
+        if total > 1 { return Err(format!("TypeError: {method}() takes at most 1 argument ({total} given)")); }
+    }
     let mut used = Vec::new();
     for (key, value) in named {
         let fits = |tail: &str| lang.text_words.get(&format!("ext.builtin.text.keyword.{tail}"))
@@ -59,6 +124,7 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
             TextOp::Encode if fits("encoding") => 1,
             TextOp::Encode if fits("errors") => 2,
             TextOp::Replace if fits("count") => 3,
+            _ if !method.is_empty() => return Err(format!("TypeError: '{key}' is an invalid keyword argument for {method}()")),
             _ => return Err(fault(lang, "arguments")),
         };
         if place < initial || used.contains(&place) { return Err(fault(lang, "arguments")); }
@@ -153,7 +219,7 @@ pub(crate) fn recase(s: &str, op: TextOp) -> String {
 
 fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
     if args.len() == 1 {
-        let Value::Map(pairs) = &args[0] else { return Err(fault(lang,"mapping")); };
+        let Value::Map(pairs) = &args[0] else { return Err("TypeError: if you give only one argument to maketrans it must be a dict".into()); };
         let mut table = Vec::new();
         for (key, value) in pairs.iter() {
             let key = match key {
@@ -167,7 +233,13 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
         }
         return Ok(Value::Map(Rc::new(table.into())));
     }
-    if !(2..=3).contains(&args.len()) { return Err(fault(lang,"arguments")); }
+    if !(2..=3).contains(&args.len()) {
+        return Err(format!("TypeError: maketrans expected at {} {} argument{}, got {}", if args.is_empty() { "least" } else { "most" }, if args.is_empty() { 1 } else { 3 }, if args.is_empty() { "" } else { "s" }, args.len()));
+    }
+    for at in 1..args.len() {
+        if !matches!(args[at], Value::Text(_)) { return Err(format!("TypeError: maketrans() argument {} must be str, not {}", at + 1, args[at].core_kind())); }
+    }
+    if !matches!(args[0], Value::Text(_)) { return Err("TypeError: first maketrans argument must be a string if there is a second argument".into()); }
     let from = text(&args[0],lang)?;
     let to = text(&args[1],lang)?;
     if from.chars().count() != to.chars().count() { return Err(fault(lang,"maketrans.length")); }
@@ -182,7 +254,7 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
 }
 
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
-    let opened: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect();
+    let opened: Vec<Value> = args.iter().map(Value::contents).collect();
     let args = opened.as_slice();
 
     use TextOp::*;
@@ -192,6 +264,18 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     if op == Repr {
         if args.len() != 1 { return Err(fault(lang,"arguments")); }
         return Ok(Value::text(&repr(&args[0],words)));
+    }
+    if let Some(Value::Codepoints(codes)) = args.first() {
+        if op == Getnewargs {
+            if args.len() != 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", args.len() - 1)); }
+            return Ok(Value::Tuple(Rc::new(vec![Value::from_codes(codes.to_vec())])));
+        }
+        if matches!(op, Isascii | Isdecimal | Isnumeric | Istitle | Isidentifier | Isprintable) {
+            let clean: String = codes.iter().map(|n| char::from_u32(*n).unwrap_or('\0')).collect();
+            let mut supplied = args.to_vec(); supplied[0] = Value::text(&clean);
+            let result = run(op, _name, &supplied, lang, words)?;
+            return Ok(if op == Isascii { Value::Flag(false) } else { result });
+        }
     }
     let Some(Value::Text(source)) = args.first() else { return Err(fault(lang,"receiver")); };
     let params = &args[1..];
@@ -203,6 +287,13 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         Replace => (2,3), _ => (0,0),
     };
     if params.len() < least || params.len() > most {
+        let method = checked_name(op);
+        if !method.is_empty() {
+            return Err(if most == 0 { format!("TypeError: str.{method}() takes no arguments ({} given)", params.len()) }
+                else if least == 1 { format!("TypeError: str.{method}() takes exactly one argument ({} given)", params.len()) }
+                else { format!("TypeError: {method}() takes at most 1 argument ({} given)", params.len()) });
+        }
+
         // These seven answer for their own count of arguments by name,
         // as CPython's do, rather than by the one complaint every other
         // text working shares.
@@ -215,12 +306,16 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         }
         return Err(fault(lang,"arguments"));
     }
+    if matches!(op, Splitlines | Expandtabs) && !params.is_empty() {
+        if i32::try_from(integer(&params[0], lang)?).is_err() { return Err("OverflowError: Python int too large to convert to C int".into()); }
+    }
     let s: &str = source;
     let number = |at: usize, default: i64| -> Result<i64,String> {
         params.get(at).map_or(Ok(default), |v| integer(v,lang))
     };
     let result = match op {
         Encode => return Err(fault(lang,"encode")),
+        Getnewargs => Value::Tuple(Rc::new(vec![Value::text(s)])),
         Length => Value::Small(s.chars().count() as i64),
         Upper | Lower | Swapcase | Casefold | Capitalize | Title => Value::text(&recase(s,op)),
         Isascii => Value::Flag(s.is_ascii()),
@@ -242,10 +337,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             Value::Flag(good && seen)
         }
         Splitlines => {
-            let keep = match params.first() {
-                None => false, Some(Value::Array(row)) => !row.is_empty(), Some(Value::Map(row)) => !row.is_empty(),
-                Some(Value::Object(_)) => return Err(fault(lang,"protocol")), Some(v) => v.is_true(),
-            };
+            let keep = number(0, 0)? != 0;
             let mut parts = Vec::new(); let mut start=0; let mut chars=s.char_indices().peekable();
             while let Some((at,c))=chars.next() {
                 if matches!(c,'\n'|'\r'|'\u{b}'|'\u{c}'|'\u{1c}'|'\u{1d}'|'\u{1e}'|'\u{85}'|'\u{2028}'|'\u{2029}') {
@@ -264,7 +356,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             let parts=match at {Some(at)=>vec![s[..at].to_string(),sep.to_string(),s[at+sep.len()..].to_string()],
                 None if op==Partition=>vec![s.to_string(),String::new(),String::new()],
                 None=>vec![String::new(),String::new(),s.to_string()]};
-            Value::Words(Rc::new(parts),true)
+            Value::Tuple(Rc::new(parts.iter().map(|part| Value::text(part)).collect()))
         }
         Expandtabs => {
             let size=number(0,8)?.max(0) as usize;
@@ -279,7 +371,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             Value::text(&out)
         }
         Removeprefix | Removesuffix => {
-            let affix=text(&params[0],lang)?;
+            let affix=text(&params[0],lang).map_err(|_| format!("TypeError: {}() argument must be str, not {}", checked_name(op), params[0].core_kind()))?;
             Value::text(if op==Removeprefix {s.strip_prefix(affix)} else {s.strip_suffix(affix)}.unwrap_or(s))
         }
         Strip | Lstrip | Rstrip => {
@@ -331,7 +423,11 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             let valid=start<=stop && start<=length;
             let window=if valid {&s[chars[start]..chars[stop]]} else {""};
             if op==Startswith || op==Endswith {
-                let choices=match &params[0] {Value::Array(v)=>v.as_ref().clone(),Value::Words(v,true)=>v.iter().map(|s|Value::text(s)).collect(),v=>vec![v.clone()]};
+                let choices=match &params[0] {
+                    Value::Tuple(v)=>v.as_ref().clone(), Value::Words(v,true)=>v.iter().map(|s|Value::text(s)).collect(),
+                    v @ Value::Text(_)=>vec![v.clone()],
+                    v=>return Err(format!("TypeError: {} first arg must be str or a tuple of str, not {}", if op==Startswith {"startswith"} else {"endswith"}, v.core_kind())),
+                };
                 let mut yes=false;
                 for v in choices {let wanted=text(&v,lang)?;if valid && if op==Startswith {window.starts_with(wanted)} else {window.ends_with(wanted)} {yes=true;break;}}
                 Value::Flag(yes)
@@ -353,16 +449,22 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         Translate => {
             let table = &params[0];
             if matches!(table, Value::Object(_)) { return Err(fault(lang,"protocol")); }
-            if !matches!(table, Value::Map(_) | Value::Array(_) | Value::Words(..) | Value::Text(_)) { return Err(fault(lang,"mapping")); }
+            if !matches!(table, Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Words(..) | Value::Text(_)) { return Err(format!("TypeError: '{}' object is not subscriptable", table.core_kind())); }
             let mut out=String::new();
             for c in s.chars() {
                 let replacement = match table {
                     Value::Map(pairs) => pairs.iter().find(|(key,_)|key.equals(&Value::Small(c as i64))).map(|(_,v)|v.clone()),
-                    Value::Array(items) => items.get(c as usize).cloned(),
+                    Value::Array(items) | Value::Tuple(items) => items.get(c as usize).cloned(),
                     Value::Words(items, _) => items.get(c as usize).map(|s|Value::text(s)),
                     Value::Text(word) => word.chars().nth(c as usize).map(|v|Value::text(&v.to_string())),
                     _ => unreachable!(),
                 };
+                let replacement = replacement.map(|value| {
+                    if let Value::Object(object) = &value {
+                        if let Some((_, text @ Value::Text(_))) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.clone(); }
+                    }
+                    value
+                });
                 match replacement.as_ref() {
                     None=>out.push(c),Some(Value::Null)=>{},Some(Value::Text(t))=>out.push_str(t),
                     Some(v @ (Value::Small(_)|Value::Huge(_)|Value::Flag(_)))=>{let n=integer(v,lang)?;if !(0..0x110000).contains(&n) {return Err(fault(lang,"codepoint"));} out.push(char::from_u32(n as u32).ok_or_else(||fault(lang,"surrogate"))?);}
@@ -373,7 +475,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         }
         Join => {
             let items=match &params[0] {
-                Value::Array(items)=>items.as_ref().clone(),Value::Words(items,_)=>items.iter().map(|s|Value::text(s)).collect(),
+                Value::Array(items)|Value::Tuple(items)=>items.as_ref().clone(),Value::Words(items,_)=>items.iter().map(|s|Value::text(s)).collect(),
                 Value::Map(pairs)=>pairs.iter().map(|(k,_)|k.clone()).collect(),Value::Text(t)=>t.chars().map(|c|Value::text(&c.to_string())).collect(),
                 Value::Counted(range) if range.length() == num_bigint::BigInt::from(0) => Vec::new(),
                 Value::Counted(_) => return Err(fault(lang,"join")),

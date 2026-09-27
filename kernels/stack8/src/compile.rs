@@ -7241,6 +7241,7 @@ impl<'a> Compiler<'a> {
         match token.shape {
             Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
                 Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
+            Shape::Codepoints => self.constant(Value::from_codes(token.lexeme.split(',').map(|n| n.parse::<u32>().unwrap()).collect())),
             Shape::Quote => self.constant(Value::text(&token.lexeme)),
             Shape::StringFault => {
                 self.constant(Value::text(&token.lexeme));
@@ -7449,10 +7450,10 @@ impl<'a> Compiler<'a> {
                 let v = parse_number(&tok.lexeme, lang)?;
                 self.constant(v);
             }
-            Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault => {
+            Shape::Bytes | Shape::Quote | Shape::Codepoints | Shape::StringBegin | Shape::StringFault => {
                 let bytes = tok.shape == Shape::Bytes;
                 self.string_piece()?;
-                while lang.adjacent_strings && matches!(self.look().shape, Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault) {
+                while lang.adjacent_strings && matches!(self.look().shape, Shape::Bytes | Shape::Quote | Shape::Codepoints | Shape::StringBegin | Shape::StringFault) {
                     if bytes != (self.look().shape == Shape::Bytes) {
                         return Err(lang.byte_words["ext.lexical.string.bytes.mixed"][0].clone());
                     }

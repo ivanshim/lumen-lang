@@ -131,6 +131,7 @@ impl<'a> Engine<'a> {
         let Some(op) = self.lang.builtins.get(word).copied() else { return Err(self.class_refusal()); };
         let items = self.call_items(args)?;
         let made = self.builtin_call(op, word, items)?;
+        let made = if word == "str" { Self::worth_of(&made).unwrap_or(made) } else { made };
         let kept = match made.contents() {
             held @ (Value::Array(_) | Value::Map(_)) => Value::Collection(Rc::new(RefCell::new(held)), true),
             other => other,
@@ -623,7 +624,8 @@ impl<'a> Engine<'a> {
                 19 if args.len() == 2 => {
                     let Value::Text(spec) = &args[1] else { return Err(self.class_refusal()) };
                     let spec = spec.to_string();
-                    self.special_format(&args[0], &spec).map(|shown| Value::text(&shown)).map_err(Fault::Note)
+                    if spec.is_empty() { self.special_text(&args[0], false).map(|shown| Value::text(&shown)).map_err(Fault::Note) }
+                    else { Err(Fault::Note(format!("TypeError: unsupported format string passed to {}.__format__", args[0].core_kind()))) }
                 }
                 20..=27 => self.property_work(w.0, args),
                 _ => Err(self.class_refusal()),
@@ -1030,6 +1032,9 @@ impl<'a> Engine<'a> {
                 // The worth a thing keeps answers for the methods of its kind.
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|matches!(v.contents(),Value::Set(_))) {
                     if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }
+                }
+                if let Some(word @ Value::Text(_)) = Self::worth_of(&subject) {
+                    if let Some(method) = self.builtin_member(&word, name)? { return Ok(method); }
                 }
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|!matches!(v.contents(),Value::Set(_))) {
                     if matches!(worth.contents(), Value::Complex(_)) && self.native_special(&worth, name) {
@@ -1730,7 +1735,10 @@ impl<'a> Engine<'a> {
         };
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
-    pub(super) fn class_work(&mut self,which:u8,args:Vec<Value>)->Flow<Value> {
+    pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
+        if (3..=6).contains(&which) && args.len() >= 2 {
+            if let Some(Value::Text(word)) = Self::worth_of(&args[1]) { args[1] = Value::Text(word); }
+        }
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {
             0|1 if args.len()==2=>Ok(Value::Flag(self.beneath(&one,&args[1],which==1)?)),

@@ -4654,6 +4654,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.fault.walk` | - | - | `TypeError: can only join an iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.text.find` | - | - | `find` `str.find` | - | - | - | - | - | - | - |
 | `ext.builtin.text.format_map` | - | - | `format_map` `str.format_map` | - | - | - | - | - | - | - |
+| `ext.builtin.text.getnewargs` | - | - | `__getnewargs__` `str.__getnewargs__` | - | - | - | - | - | - | - |
 | `ext.builtin.text.index` | - | - | `index` `str.index` | - | - | - | - | - | - | - |
 | `ext.builtin.text.isascii` | - | - | `isascii` `str.isascii` | - | - | - | - | - | - | - |
 | `ext.builtin.text.isdecimal` | - | - | `isdecimal` `str.isdecimal` | - | - | - | - | - | - | - |
@@ -5362,6 +5363,8 @@ The `ext.builtin.exceptions.traceback` roster starts with the traceback class
 name, followed by the line, next and frame members, frame line and code members,
 code name, filename and first-line members, frame class name and module code name.
 Frames are allocated on demand when an exception first records its location.
+
+`ext.builtin.text.getnewargs` exposes a string’s reconstruction arguments as a one-item tuple containing a fresh base string.
 
 `ext.lexical.escape.named.amiss` supplies the malformed named-character escape
 complaint, with two `{}` slots for its first and last byte positions. The

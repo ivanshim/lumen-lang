@@ -124,6 +124,7 @@ impl<'a> Machine<'a> {
         let Some(op)=self.table.prims.get(word).copied()else{return Err(self.class_unready());};
         let (positional,named)=self.open_arguments(given)?;
         let made=if named.is_empty(){self.prim(op,word,&positional)?}else{self.core_primitive(op,word,positional,named)?};
+        let made = if word == "str" { Self::underlying(&made).unwrap_or(made) } else { made };
         let kept=match made.settled(){
             held @ (Value::Vector(_)|Value::Dict(_))=>Value::Mutable(Rc::new(RefCell::new(held)),true),
             other=>other,
@@ -597,7 +598,8 @@ impl<'a> Machine<'a> {
                     59 if values.len()==2=>{
                         let Value::Text(spec)=&values[1] else{return Err(self.class_unready())};
                         let spec=spec.to_string();
-                        self.thing_in_spec(&values[0],&spec).map(|shown|Value::text(&shown)).map_err(Escape::from)
+                        if !spec.is_empty() { return Err(format!("TypeError: unsupported format string passed to {}.__format__", values[0].kind_word()).into()); }
+                        self.object_words(&values[0],false).map(|word|Value::text(&word)).map_err(Escape::from)
                     }
                     13 if values.len()==1=>{
                         let Value::Wrapped(6, property)=&kept[0] else{return Err(self.class_unready());};
@@ -1213,6 +1215,9 @@ impl<'a> Machine<'a> {
             if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
                 if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
             }
+            if let Some(text @ Value::Text(_)) = &native {
+                if let Some(member) = self.attribute(text, key) { return Ok(member); }
+            }
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
             if let Some(root)=self.from_the_root(key,true) {
                 if !native.as_ref().map_or(false,|under|Self::kind_method_named(self.table,key).is_some()||self.attribute(&under.settled(),key).is_some()) {
@@ -1761,7 +1766,12 @@ impl<'a> Machine<'a> {
         };
         self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
     }
-    pub(super) fn work_on_class(&mut self,op:u8,values:Vec<Value>)->Res {
+    pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
+        if matches!(op, 3|4|5|6) {
+            if let Some(name) = values.get_mut(1) {
+                if let Some(text @ Value::Text(_)) = Self::underlying(name) { *name = text; }
+            }
+        }
         if op<=1 && values.len()==2{return Ok(Value::Flag(self.is_beneath(&values[0],&values[1],op==1)?));}
         // Both questions want two arguments and name themselves where
         // they are handed another count of them.

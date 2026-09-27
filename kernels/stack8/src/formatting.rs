@@ -9,7 +9,12 @@ type Result<T> = std::result::Result<T, String>;
 
 /// What the engine is asked before a field of a template is written:
 /// the answer stands in the field, and nothing hands it back.
-pub type Offer<'a> = dyn FnMut(&Value, &str, &str) -> Result<Option<String>> + 'a;
+pub enum FieldRequest<'a> {
+    Render(&'a str, &'a str),
+    Attribute(&'a str),
+    Item(Value),
+}
+pub type Offer<'a> = dyn FnMut(&Value, FieldRequest<'_>) -> Result<Option<Value>> + 'a;
 
 /// The same offer for a text mark, which asks only for the words of a
 /// value: the show, the representation or the ascii of it.
@@ -163,6 +168,7 @@ impl Writer<'_> {
         let kind = rule.code;
         if let Value::Text(text) = value {
             if !matches!(kind, '\0' | 's') { return Err(self.unknown(value, kind)); }
+            if rule.sign == ' ' { return Err("ValueError: Space not allowed in string format specifier".into()); }
             if rule.sign != '\0' { return Err(self.fault("ext.text.format.sign.string", &[])); }
             if rule.unsigned_zero { return Err(self.fault("ext.text.format.zero.string", &[])); }
             if rule.alternate { return Err(self.fault("ext.text.format.alternate.string", &[])); }
@@ -358,6 +364,7 @@ impl Writer<'_> {
             while let Some(&c) = chars.get(at) {
                 if c == '[' { brackets = true; }
                 if c == ']' { brackets = false; }
+                if !brackets && c == '{' { return Err(self.fault("ext.text.format.invalid", &[])); }
                 if !brackets && matches!(c, '!' | ':' | '}') { break; }
                 at += 1;
             }
@@ -367,8 +374,22 @@ impl Writer<'_> {
                 let key = if at == from { "ext.text.format.brace.single" } else { "ext.text.format.brace.open" };
                 return Err(self.fault(key, &[]));
             }
+            let mut nesting = 0usize;
+            let mut indexed = false;
+            let closed = chars[from..].iter().any(|c| {
+                if *c == '[' { indexed = true; }
+                if *c == ']' { indexed = false; }
+                if indexed { return false; }
+                if *c == '{' { nesting += 1; }
+                if *c == '}' { if nesting == 0 { return true; } nesting -= 1; }
+                false
+            });
+            if !closed { return Err(self.fault("ext.text.format.brace.open", &[])); }
+            if chars.get(at) == Some(&'!') && !chars.get(at + 1).map_or(false, |c| matches!(c, 's'|'r'|'a')) {
+                return Err(self.fault("ext.text.format.conversion", &[]));
+            }
             let name: String = chars[from..at].iter().collect();
-            let value = self.lookup(&name, args, next, manual)?;
+            let value = self.lookup(&name, args, next, manual, offered)?;
             let mut conversion = String::new();
             if chars.get(at) == Some(&'!') {
                 at += 1;
@@ -390,15 +411,15 @@ impl Writer<'_> {
             }
             if chars.get(at) != Some(&'}') { return Err(self.fault("ext.text.format.brace.open", &[])); }
             at += 1;
-            match offered(&value, &spec, &conversion)? {
-                Some(written) => out.push_str(&written),
+            match offered(&value, FieldRequest::Render(&spec, &conversion))? {
+                Some(written) => out.push_str(&written.plain()),
                 None => out.push_str(&self.field(&value, &spec, &conversion)?),
             }
         }
         Ok(out)
     }
 
-    fn lookup(&self, name: &str, args: &[(Option<String>, Value)], next: &mut usize, manual: &mut bool) -> Result<Value> {
+    fn lookup(&self, name: &str, args: &[(Option<String>, Value)], next: &mut usize, manual: &mut bool, offered: &mut Offer<'_>) -> Result<Value> {
         let end = name.find(['.', '[']).unwrap_or(name.len());
         let first = &name[..end];
         let position = if first.is_empty() {
@@ -427,24 +448,16 @@ impl Writer<'_> {
             if let Some(tail) = rest.strip_prefix('.') {
                 let end = tail.find(['.', '[']).unwrap_or(tail.len());
                 let member = &tail[..end];
-                value = match &value {
-                    Value::Object(o) => o.fields.borrow().iter().find(|(k, _)| k == member).map(|(_, v)| v.clone()),
-                    _ => None,
-                }.ok_or_else(|| self.fault("ext.text.format.unready", &[]))?;
+                if member.is_empty() { return Err(self.fault("ext.text.format.invalid", &[])); }
+                value = offered(&value, FieldRequest::Attribute(member))?.ok_or_else(|| self.fault("ext.text.format.unready", &[]))?;
                 rest = &tail[end..];
             } else if let Some(tail) = rest.strip_prefix('[') {
                 let end = tail.find(']').ok_or_else(|| self.fault("ext.text.format.invalid", &[]))?;
                 let key = &tail[..end];
-                let index = key.parse::<usize>().ok();
-                let found = match &value {
-                    Value::Map(pairs) => pairs.iter().find(|(k, _)| match (k, index) {
-                        (Value::Text(s), None) => s.as_ref() == key,
-                        (k, Some(n)) => k.equals(&Value::of_big(n.into())), _ => false,
-                    }).map(|(_, v)| v.clone()),
-                    Value::Array(a) | Value::Tuple(a) => index.and_then(|n| a.get(n).cloned()),
-                    Value::Text(s) => index.and_then(|n| s.chars().nth(n)).map(|c| Value::text(&c.to_string())),
-                    _ => None,
-                };
+                let index = key.parse::<i64>().ok();
+                if !key.is_empty() && key.bytes().all(|b| b.is_ascii_digit()) && index.is_none() { return Err(self.fault("ext.text.format.digits", &[])); }
+                let asked = index.map_or_else(|| Value::text(key), |n| Value::of_big(n.into()));
+                let found = offered(&value, FieldRequest::Item(asked))?;
                 value = found.ok_or_else(|| self.key_missing(key))?;
                 rest = &tail[end + 1..];
             } else { return Err(self.fault("ext.text.format.invalid", &[])); }
@@ -517,7 +530,9 @@ impl Writer<'_> {
                 at += 1;
                 rule.precision = Some(if chars.get(at) == Some(&'*') {
                     if keyed.is_some() { return Err(self.fault("ext.text.format.unready", &[])); }
-                    at += 1; self.star(&args, &mut used)?.max(0) as usize
+                    at += 1;
+                    let precision = self.star(&args, &mut used)?;
+                    i32::try_from(precision).map_err(|_| "OverflowError: Python int too large to convert to C int".to_string())?.max(0) as usize
                 } else { self.count(&chars, &mut at, "ext.text.format.precision.big", false)?.unwrap_or(0) });
             }
             if chars.get(at).map_or(false, |c| "hlL".contains(*c)) { at += 1; }
@@ -596,7 +611,7 @@ impl Writer<'_> {
         let v = args.get(*used).ok_or_else(|| self.fault("ext.op.rem.format.few", &[]))?;
         *used += 1;
         if !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.fault("ext.op.rem.format.star", &[])); }
-        v.as_big()?.to_i64().filter(|n| n.unsigned_abs() <= 100000).ok_or_else(|| self.fault("ext.text.format.unready", &[]))
+        v.as_big()?.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C ssize_t".to_string())
     }
 }
 
@@ -665,19 +680,31 @@ fn complex_parts(value: &Value) -> Option<(f64, f64)> {
     }
 }
 
+// Binary64 fractions terminate within 1,074 decimal places. Beyond
+// that finite expansion the requested places are all zeroes.
+fn expanded_decimal(number: f64, places: usize, scientific: bool) -> String {
+    let kept = places.min(1074);
+    let mut result = if scientific { format!("{number:.kept$e}") } else { format!("{number:.kept$}") };
+    if number.is_finite() && places > kept {
+        let at = result.find('e').unwrap_or(result.len());
+        result.insert_str(at, &"0".repeat(places - kept));
+    }
+    result
+}
+
 fn decimal(number: f64, rule: &Rule) -> String {
     let places = rule.precision.unwrap_or(6);
     let code = rule.code.to_ascii_lowercase();
     let mut body = match code {
-        'f' | '%' => format!("{number:.places$}"),
-        'e' => format!("{number:.places$e}"),
+        'f' | '%' => expanded_decimal(number, places, false),
+        'e' => expanded_decimal(number, places, true),
         '\0' if rule.precision.is_none() => {
             if number != 0.0 && !(0.0001..1e16).contains(&number) { format!("{number:e}") }
             else { number.to_string() }
         }
         _ => {
             let significant = places.max(1);
-            let exponential = format!("{:.*e}", significant - 1, number);
+            let exponential = expanded_decimal(number, significant - 1, true);
             let (mantissa, exponent) = exponential.split_once('e').unwrap();
             let exponent: i32 = exponent.parse().unwrap();
             let threshold = significant as i32 - i32::from(code == '\0');
@@ -688,7 +715,7 @@ fn decimal(number: f64, rule: &Rule) -> String {
                 format!("{mantissa}e{exponent}")
             } else {
                 let digits = (significant as i32 - 1 - exponent).max(0) as usize;
-                let fixed = format!("{number:.digits$}");
+                let fixed = expanded_decimal(number, digits, false);
                 if !rule.alternate && fixed.contains('.') { fixed.trim_end_matches('0').trim_end_matches('.').to_string() } else { fixed }
             }
         }

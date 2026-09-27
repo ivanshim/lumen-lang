@@ -871,7 +871,7 @@ impl Value {
                 Some('\n') => result.push_str("\\n"),
                 Some('\r') => result.push_str("\\r"),
                 Some('\t') => result.push_str("\\t"),
-                Some(c) if c.is_control() => result.push_str(&Self::unicode_escaped(n)),
+                Some(c) if crate::unicode::bits(c) & 1 == 0 => result.push_str(&Self::unicode_escaped(n)),
                 Some(c) => result.push(c),
             }
         }
@@ -1101,6 +1101,9 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        if let (Value::Object(instance), plain @ Value::Text(_)) | (plain @ Value::Text(_), Value::Object(instance)) = (self, other) {
+            if let Some((_, value @ Value::Text(_))) = instance.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return value.equals(plain); }
+        }
         // Two of a kind, and that kind a plain one: answered outright,
         // before the number tower is entered or a cell is looked into.
         // These three are the great bulk of all the asking.

@@ -229,7 +229,10 @@ def intern(string):
 def getsizeof(value, default=None):
     # A rough count of the value's payload and its enclosing record.
     if isinstance(value, str):
-        return 49 + len(value) * 4
+        largest = max((ord(char) for char in value), default=0)
+        width = 1 if largest < 256 else (2 if largest < 65536 else 4)
+        header = 40 if largest < 128 else 56
+        return header + width * (len(value) + 1)
     if isinstance(value, list):
         return 56 + len(value) * 8
     if isinstance(value, int):

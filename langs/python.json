@@ -1721,6 +1721,7 @@
     "split",
     "str.split"
   ],
+  "ext.builtin.text.getnewargs": ["__getnewargs__", "str.__getnewargs__"],
   "ext.builtin.text.splitlines": [
     "splitlines",
     "str.splitlines"
