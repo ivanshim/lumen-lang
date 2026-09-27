@@ -17718,6 +17718,9 @@ impl Engine<'_> {
             if end.is_none() && message.contains("prefixes") {
                 finish = col + text.chars().skip(col as usize - 1).take_while(char::is_ascii_alphabetic).count() as i64;
             }
+            if end.is_none() && message.starts_with("did you mean 'lazy from") {
+                finish = col + "lazy".chars().count() as i64;
+            }
             if message.starts_with("unterminated ") && !message.contains("detected at line") {
                 let detected = source.lines().count().max(row);
                 message.push_str(&format!(" (detected at line {detected})"));

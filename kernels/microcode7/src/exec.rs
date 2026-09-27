@@ -17634,6 +17634,7 @@ impl<'a> Machine<'a> {
                 let remainder: String = text.chars().skip(offset as usize - 1).collect();
                 if words.starts_with("leading zeros") { end_offset = offset + remainder.chars().take_while(|c| *c == '0' || *c == '_').count() as i64; }
                 if end.is_none() && words.contains("prefixes") { end_offset = offset + remainder.chars().take_while(char::is_ascii_alphabetic).count() as i64; }
+                if end.is_none() && words.starts_with("did you mean 'lazy from") { end_offset = offset + "lazy".chars().count() as i64; }
                 if words.starts_with("unterminated ") && !words.contains("detected at line") {
                     words = format!("{words} (detected at line {})", source.lines().count().max(line as usize));
                 }
