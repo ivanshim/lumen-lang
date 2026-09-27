@@ -10507,6 +10507,12 @@ impl<'a> Engine<'a> {
             // nothing of that size to answer with, and a real which
             // only happens to overflow the working stays quiet, as it
             // was already at the width before this was asked.
+            // Ordering, though, is asked exactly: a float beside an
+            // integer too wide for the width still stands before or
+            // after it by its true worth, and is not stopped.
+            if matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                return Ok(self.within_width(self.dyadic_exact(op, a, b)?));
+            }
             let widened = |v: &Value| -> Res<Value> {
                 match arith::to_real(v, places) {
                     Some(real) => {

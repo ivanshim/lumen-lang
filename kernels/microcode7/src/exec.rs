@@ -14522,10 +14522,12 @@ impl<'a> Machine<'a> {
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
                 // Two numbers are set against each other at the width
                 // the language holds them in, as they are worked at it.
-                let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
-                    true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
-                    false => (v[0].clone(), v[1].clone()),
-                };
+                // Ordering, though, is asked exactly: a float beside an
+                // integer too wide for the width still stands before or
+                // after it by its true worth, and is not carried to the
+                // width first, so that rounding there does not change
+                // the answer.
+                let (left, right) = (v[0].clone(), v[1].clone());
                 let below = |a: &Value, b: &Value| -> Result<bool, String> {
                     match math::below(a, b) {
                         Some(r) => Ok(r),
