@@ -16,9 +16,21 @@ pub enum FieldRequest<'a> {
 }
 pub type Offer<'a> = dyn FnMut(&Value, FieldRequest<'_>) -> Result<Option<Value>> + 'a;
 
-/// The same offer for a text mark, which asks only for the words of a
-/// value: the show, the representation or the ascii of it.
-pub type Words<'a> = dyn FnMut(&Value, char) -> Result<Option<String>> + 'a;
+/// What a value is asked before a field of a template is written.
+/// `Unsaid` means a text mark found no method of its own to ask, and
+/// the writer falls back on its own words; `Said` carries the words it
+/// answered with. `Whole` carries the number a numeric mark was
+/// answered with; `Missing` and `BadMethod` carry the name a complaint
+/// should give the value, and mark a method that was absent or
+/// answered with the wrong kind.
+pub enum Answer {
+    Unsaid,
+    Said(String),
+    Whole(Value),
+    Missing(String),
+    BadMethod(String),
+}
+pub type Ask<'a> = dyn FnMut(&Value, char, bool) -> Result<Answer> + 'a;
 
 pub struct Writer<'a> {
     pub lang: &'a Lang,
@@ -495,7 +507,7 @@ impl Writer<'_> {
     /// of bytes says so: it knows the mark that shows a row of bytes,
     /// it seeks a keyed mark's name among keys that are rows of bytes,
     /// and a character mark holds one byte alone.
-    pub fn percent(&self, text: &str, argument: &Value, offered: &mut Words<'_>, of_bytes: bool) -> Result<String> {
+    pub fn percent(&self, text: &str, argument: &Value, asked: &mut Ask<'_>, of_bytes: bool) -> Result<String> {
         let settled = argument.contents();
         let argument = &settled;
         let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![one] };
@@ -582,10 +594,11 @@ impl Writer<'_> {
                 return Err(self.percent_unknown(code, mark_position, at - 1, of_bytes));
             }
             let result = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
-                let shown = match offered(value, code)? {
-                    Some(said) => said,
-                    None if code == 's' && matches!(value, Value::Text(_)) => self.representation_plain(value)?,
-                    None => self.representation(value, code == 'a')?,
+                let shown = match asked(value, code, false)? {
+                    Answer::Said(said) => said,
+                    Answer::Unsaid if code == 's' && matches!(value, Value::Text(_)) => self.representation_plain(value)?,
+                    Answer::Unsaid => self.representation(value, code == 'a')?,
+                    _ => unreachable!(),
                 };
                 let shown: String = shown.chars().take(rule.precision.unwrap_or(usize::MAX)).collect();
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
@@ -596,15 +609,24 @@ impl Writer<'_> {
                     Value::Text(s) if !of_bytes && s.chars().count() == 1 => s.to_string(),
                     Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value, of_bytes)
                         .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
-                    _ => {
-                        let required = if of_bytes { "an integer in range(256) or a single byte" }
-                            else { "an integer or a unicode character" };
-                        let subject = match value {
-                            Value::Text(s) if !of_bytes => format!("a string of length {}", s.chars().count()),
-                            Value::Bytes(row, mutable, _) if of_bytes => format!("a {} object of length {}", if *mutable { "bytearray" } else { "bytes" }, row.borrow().len()),
-                            _ => self.kind(value).to_string(),
-                        };
-                        return Err(self.fault("ext.op.rem.format.character", &[&location, required, &subject]));
+                    _ => match asked(value, code, true)? {
+                        Answer::Whole(whole) => self.character(&whole, of_bytes)
+                            .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
+                        Answer::Missing(name) | Answer::BadMethod(name) => {
+                            let required = if of_bytes { "an integer in range(256) or a single byte" }
+                                else { "an integer or a unicode character" };
+                            let subject = if !name.is_empty() {
+                                name
+                            } else {
+                                match value {
+                                    Value::Text(s) if !of_bytes => format!("a string of length {}", s.chars().count()),
+                                    Value::Bytes(row, mutable, _) if of_bytes => format!("a {} object of length {}", if *mutable { "bytearray" } else { "bytes" }, row.borrow().len()),
+                                    _ => value.core_kind(),
+                                }
+                            };
+                            return Err(self.fault("ext.op.rem.format.character", &[&location, required, &subject]));
+                        },
+                        _ => unreachable!(),
                     },
                 };
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
@@ -612,16 +634,34 @@ impl Writer<'_> {
             } else if matches!(code, 'd' | 'i' | 'u' | 'o' | 'x' | 'X') {
                 let integral = matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 let decimal = matches!(code, 'd' | 'i' | 'u');
+                let mut held: Option<Value> = None;
+                let mut accepted = integral || (decimal && matches!(value, Value::Real(r) if !r.outside()));
                 if decimal {
                     if let Value::Real(r) = value {
                         if r.outside() { return Err(self.fault(if r.no_number() { "ext.op.rem.format.nan" } else { "ext.op.rem.format.infinity" }, &[])); }
                     }
                 }
-                if !integral && !(decimal && matches!(value, Value::Real(r) if !r.outside())) {
+                if !accepted {
                     let key = if decimal { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
-                    return Err(self.fault(key, &[&location, &code.to_string(), self.kind(value)]));
+                    match asked(value, code, true)? {
+                        Answer::Whole(whole) => {
+                            accepted = matches!(&whole, Value::Small(_) | Value::Huge(_) | Value::Flag(_))
+                                || (decimal && matches!(&whole, Value::Real(r) if !r.outside()));
+                            held = Some(whole);
+                        }
+                        Answer::Missing(name) | Answer::BadMethod(name) => {
+                            let named = if name.is_empty() { value.core_kind() } else { name };
+                            return Err(self.fault(key, &[&location, &code.to_string(), &named]));
+                        }
+                        _ => unreachable!(),
+                    }
                 }
-                let n = value.as_big()?;
+                if !accepted {
+                    let key = if decimal { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
+                    let named = value.core_kind();
+                    return Err(self.fault(key, &[&location, &code.to_string(), &named]));
+                }
+                let n = match &held { Some(whole) => whole.as_big()?, None => value.as_big()? };
                 let mut digits = n.abs().to_str_radix(if decimal { 10 } else if code == 'o' { 8 } else { 16 });
                 if code == 'X' { digits.make_ascii_uppercase(); }
                 if let Some(p) = rule.precision { digits = "0".repeat(p.saturating_sub(digits.len())) + &digits; }
@@ -629,10 +669,23 @@ impl Writer<'_> {
                 if rule.alternate { head.push_str(match code { 'o' => "0o", 'x' => "0x", 'X' => "0X", _ => "" }); }
                 rule.pad(&head, &digits, '>')
             } else {
-                let n = match value {
+                let mut held: Option<Value> = None;
+                let ready = matches!(value, Value::Real(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
+                if !ready {
+                    match asked(value, code, true)? {
+                        Answer::Whole(w) if matches!(&w, Value::Real(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => held = Some(w),
+                        Answer::Missing(name) | Answer::BadMethod(name) => {
+                            let named = if name.is_empty() { value.core_kind() } else { name };
+                            return Err(self.fault("ext.op.rem.format.real", &[&location, &code.to_string(), &named]));
+                        },
+                        _ => unreachable!(),
+                    }
+                }
+                let chosen = held.as_ref().unwrap_or(value);
+                let n = match chosen {
                     Value::Real(r) => { let n = crate::value::as_binary(&r.p, &r.q); if r.below && n == 0.0 { -0.0 } else { n } },
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big()?.to_f64().filter(|n| n.is_finite()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?,
-                    _ => return Err(self.fault("ext.op.rem.format.real", &[&location, &code.to_string(), self.kind(value)])),
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => chosen.as_big()?.to_f64().filter(|n| n.is_finite()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?,
+                    _ => unreachable!(),
                 };
                 let mut body = if n.is_nan() { "nan".into() } else if n.is_infinite() { "inf".into() } else { decimal(n.abs(), &rule) };
                 if code.is_ascii_uppercase() { body.make_ascii_uppercase(); }

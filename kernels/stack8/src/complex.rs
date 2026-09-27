@@ -202,6 +202,10 @@ pub fn construct(lang: &Lang, values: &[Value]) -> Result<Value,String> {
         let (a,b) = read(text).ok_or_else(|| fault(lang, "invalid"))?;
         return Ok(made(lang, a,b));
     }
+    if let Value::Codepoints(_) = &values[0] {
+        if values.len() != 1 { return Err(fault(lang, "arguments")); }
+        return Err(fault(lang, "invalid"));
+    }
     let (a,b) = parts(&values[0]).ok_or_else(|| if matches!(values[0], Value::Huge(_)) { conversion_fault(lang, &values[0]) } else { fault(lang, "arguments") })?;
     if values.len() == 1 {
         return Ok(if matches!(values[0], Value::Complex(_)) { values[0].clone() } else { made(lang, a,b) });

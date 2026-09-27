@@ -2186,6 +2186,7 @@ impl<'a> Machine<'a> {
                 return Ok(shown);
             }
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Nil | Value::Ellipsis => return Ok(item.render(self.wording())),
+            Value::Unpaired(numbers) => return Ok(Value::unpaired_quoted(numbers)),
             Value::Text(_) => {}
             _ => return Err(self.table.single("ext.op.rem.format.unsupported").unwrap_or_default().to_string()),
         }
@@ -8009,6 +8010,9 @@ impl<'a> Machine<'a> {
             let mut number = BigInt::parse_bytes(digits.as_bytes(), base).ok_or_else(|| invalid_text())?;
             if negative { number = -number; }
             return Ok(Value::from_big(number));
+        }
+        if let Value::Unpaired(_) = &values[0] {
+            return Err(invalid_text());
         }
         if values.len() > 1 { return Err(complaint("text.required")); }
         match &values[0] {
@@ -14963,7 +14967,7 @@ impl<'a> Machine<'a> {
                 let whole = math::whole_part(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
                 Value::from_big(whole)
             }
-            Prim::AsReal if self.table.flag("ext.builtin.to_real.text") && (v.is_empty() || matches!(v.first(), Some(Value::Text(_)))) => {
+            Prim::AsReal if self.table.flag("ext.builtin.to_real.text") && (v.is_empty() || matches!(v.first(), Some(Value::Text(_) | Value::Unpaired(_)))) => {
                 if v.len() > 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
                 if let Some(Value::Text(source)) = v.first() {
                     let source = source.trim().to_ascii_lowercase();
@@ -14987,7 +14991,10 @@ impl<'a> Machine<'a> {
                     Some(Value::Text(chars)) => Some(Value::text(&crate::data::ungrouped_figures(chars, &self.table.letters("ext.lexical.number.separator")).ok_or_else(failure)?)),
                     _ => None,
                 };
-                let v: Vec<Value> = regrouped.into_iter().chain(v.iter().skip(1).cloned()).collect();
+                let v: Vec<Value> = match regrouped {
+                    Some(joined) => std::iter::once(joined).chain(v.iter().skip(1).cloned()).collect(),
+                    None => v.to_vec(),
+                };
                 if let Some(Value::Text(text)) = v.first() {
                     let lower = text.trim().to_ascii_lowercase();
                     let letters = lower.trim_start_matches(['+', '-']);
@@ -19719,6 +19726,57 @@ impl crate::formatting::Elsewhere for Machine<'_> {
         let held = item.settled();
         if !self.speaks_for(&held) { return Ok(None); }
         self.object_words(&held, quoted).map(Some)
+    }
+
+    fn value_numbered(&mut self, item: &Value, code: char) -> Result<crate::formatting::NumberAnswer, String> {
+        let held = item.settled();
+        if !self.speaks_for(&held) { return Ok(crate::formatting::NumberAnswer::Missing(String::new())); }
+        let qualified: Option<String> = match &held {
+            Value::Thing(t) => {
+                let blueprint = t.blueprint();
+                let qualifier = self.detail("qualified");
+                let qualname = if qualifier.is_empty() {
+                    blueprint.name.clone()
+                } else if let Some(Value::Text(word)) = self.inherited_entry(&blueprint, qualifier) {
+                    if word.is_empty() { blueprint.name.clone() } else { word.to_string() }
+                } else {
+                    blueprint.name.clone()
+                };
+                let moduler = self.detail("module");
+                if moduler.is_empty() {
+                    Some(qualname)
+                } else if let Some(Value::Text(module)) = self.inherited_entry(&blueprint, moduler) {
+                    Some(if module.is_empty() { qualname } else { format!("{module}.{qualname}") })
+                } else {
+                    Some(qualname)
+                }
+            }
+            _ => None,
+        };
+        let named = |other: &Value| qualified.clone().unwrap_or_else(|| other.kind_word());
+        let worth = || Self::underlying(&held).map(|w| w.settled()).filter(|w| match code {
+            'd' | 'i' | 'u' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => matches!(w, Value::Frac(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
+            _ => matches!(w, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
+        });
+        if matches!(code, 'd' | 'i' | 'u') {
+            match self.ask_special(&held, 38, &[])? {
+                None => {}
+                Some(Value::Flag(flag)) => return Ok(crate::formatting::NumberAnswer::Whole(Value::Small(i64::from(flag)))),
+                Some(whole @ (Value::Small(_) | Value::Huge(_))) => return Ok(crate::formatting::NumberAnswer::Whole(whole)),
+                Some(_) => return Ok(crate::formatting::NumberAnswer::BadMethod(named(&held))),
+            }
+            if let Some(index) = self.stood_for_whole(&held)? { return Ok(crate::formatting::NumberAnswer::Whole(index)); }
+        } else if matches!(code, 'e' | 'E' | 'f' | 'F' | 'g' | 'G') {
+            match self.ask_special(&held, 39, &[])? {
+                None => {}
+                Some(real @ (Value::Frac(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => return Ok(crate::formatting::NumberAnswer::Whole(real)),
+                Some(_) => return Ok(crate::formatting::NumberAnswer::BadMethod(named(&held))),
+            }
+            if let Some(index) = self.stood_for_whole(&held)? { return Ok(crate::formatting::NumberAnswer::Whole(index)); }
+        } else if let Some(index) = self.stood_for_whole(&held)? {
+            return Ok(crate::formatting::NumberAnswer::Whole(index));
+        }
+        Ok(if let Some(worth) = worth() { crate::formatting::NumberAnswer::Whole(worth) } else { crate::formatting::NumberAnswer::Missing(named(&held)) })
     }
 }
 

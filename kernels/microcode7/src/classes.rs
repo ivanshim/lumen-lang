@@ -786,6 +786,9 @@ impl<'a> Machine<'a> {
         let created=match (allocator,&native) {
             (Some(allocator),_)=>{let mut args=vec![Value::Blueprint(class.clone())];args.extend(given.clone());self.apply_class_member(allocator,args)?},
             (None,Some(word))=>{
+                if matches!(word.as_str(),"str_iterator"|"str_ascii_iterator"){
+                    return Err(format!("TypeError: cannot create '{}' instances",word).into());
+                }
                 let initial = match self.table.prims.get(word) {
                     Some(Prim::Uniques) => Vec::new(),
                     Some(Prim::AsReal) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => {

@@ -770,6 +770,9 @@ impl<'a> Engine<'a> {
             let mut given = vec![Value::Class(c.clone())]; given.extend(args.clone());
             self.class_apply(f,given)?
         } else if let Some(word) = &kind {
+            if matches!(word.as_str(), "str_iterator" | "str_ascii_iterator") {
+                return Err(format!("TypeError: cannot create '{}' instances", word).into());
+            }
             let mut initial = args.clone();
             match self.lang.builtins.get(word) {
                 Some(Builtin::Set) => initial.clear(),
