@@ -6611,9 +6611,16 @@ impl<'a> Builder<'a> {
                 while head + 1 < tail && self.tokens[head].lexeme == "(" && self.tokens[tail - 1].lexeme == ")" {
                     head += 1; tail -= 1;
                 }
-                let initial = &self.tokens[head].lexeme;
-                let bad = if self.table.spells("ext.stmt.function.short", initial) { Some("cannot assign to lambda") }
-                    else if self.table.spells("ext.stmt.yield", initial) { Some("cannot assign to yield expression here. Maybe you meant '==' instead of '='?") } else { None };
+                let single = head + 1 == tail;
+                let token = &self.tokens[head];
+                let initial = &token.lexeme;
+                let bad: Option<String> = if self.table.spells("ext.stmt.function.short", initial) { Some("cannot assign to lambda".to_owned()) }
+                    else if self.table.spells("ext.stmt.yield", initial) { Some(if single { "assignment to yield expression not possible".to_owned() } else { "cannot assign to yield expression here. Maybe you meant '==' instead of '='?".to_owned() }) }
+                    else if single && matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) { Some("cannot assign to literal here. Maybe you meant '==' instead of '='?".to_owned()) }
+                    else if single && self.table.spells("ext.literal.ellipsis", initial) { Some("cannot assign to ellipsis here. Maybe you meant '==' instead of '='?".to_owned()) }
+                    else if single && token.shape == Shape::Bare && (self.table.spells("literal.null", initial) || self.table.spells("literal.true", initial) || self.table.spells("literal.false", initial)) { Some(format!("cannot assign to {initial}")) }
+                    else if single && token.shape == Shape::Bare && initial == "__debug__" && token.row as u32 > self.before { Some("cannot assign to __debug__".to_owned()) }
+                    else { None };
                 if let Some(bad) = bad {
                     let ending = &self.tokens[tail - 1];
                     self.range_end = Some((ending.column + ending.lexeme.chars().count(), ending.row));
@@ -7313,6 +7320,14 @@ impl<'a> Builder<'a> {
         let origin = self.pos;
         if floor == 0 && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
             let word = self.advance().lexeme;
+            if table.has_any("ext.builtin.exceptions.syntax") {
+                if table.spells("literal.true", &word) || table.spells("literal.false", &word) || table.spells("literal.null", &word) {
+                    return Err(format!("SyntaxError: cannot use assignment expressions with {word}"));
+                }
+                if word == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".to_owned());
+                }
+            }
             let layer = self.layers.last_mut().unwrap();
             if layer.gathering_kind.is_some() { layer.expression_targets.push(word.clone()); }
             self.advance();
@@ -8077,7 +8092,7 @@ impl<'a> Builder<'a> {
             if targets && table.has_any("ext.builtin.exceptions.syntax") {
                 let token = self.look();
                 let description = match token.lexeme.as_str() {
-                    "None" | "False" | "True" => Some(token.lexeme.as_str()),
+                    "None" | "False" | "True" | "__debug__" => Some(token.lexeme.as_str()),
                     "*" => Some("starred"),
                     "not" | "~" | "-" | "+" => Some("expression"),
                     _ if matches!(token.shape, Shape::Quote | Shape::Numeral | Shape::ByteQuote) => Some("literal"),

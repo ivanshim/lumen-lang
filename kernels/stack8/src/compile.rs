@@ -6729,9 +6729,16 @@ impl<'a> Compiler<'a> {
                 let mut start = self.pos;
                 let mut end = equal;
                 while start + 1 < end && self.tokens[start].is_lexeme(Shape::Sign, "(") && self.tokens[end - 1].is_lexeme(Shape::Sign, ")") { start += 1; end -= 1; }
-                let word = self.tokens[start].lexeme.as_str();
-                let message = if self.lang.short_function.as_ref().map_or(false, |(name, _)| name == word) { Some("cannot assign to lambda") }
-                    else if Lang::spells(&self.lang.yield_words, word) { Some("cannot assign to yield expression here. Maybe you meant '==' instead of '='?") } else { None };
+                let single = start + 1 == end;
+                let token = &self.tokens[start];
+                let word = token.lexeme.as_str();
+                let message: Option<String> = if self.lang.short_function.as_ref().map_or(false, |(name, _)| name == word) { Some("cannot assign to lambda".to_string()) }
+                    else if Lang::spells(&self.lang.yield_words, word) { Some(if single { "assignment to yield expression not possible".to_string() } else { "cannot assign to yield expression here. Maybe you meant '==' instead of '='?".to_string() }) }
+                    else if single && matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("cannot assign to literal here. Maybe you meant '==' instead of '='?".to_string()) }
+                    else if single && Lang::spells(&self.lang.ellipsis_words, word) { Some("cannot assign to ellipsis here. Maybe you meant '==' instead of '='?".to_string()) }
+                    else if single && token.shape == Shape::Instr && (Lang::spells(&self.lang.null_words, word) || Lang::spells(&self.lang.true_words, word) || Lang::spells(&self.lang.false_words, word)) { Some(format!("cannot assign to {word}")) }
+                    else if single && token.shape == Shape::Instr && word == "__debug__" && token.row as u32 > self.before { Some("cannot assign to __debug__".to_string()) }
+                    else { None };
                 if let Some(message) = message {
                     let last = &self.tokens[end - 1];
                     self.registry.stopped_end = last.column + last.lexeme.chars().count();
@@ -7562,7 +7569,20 @@ impl<'a> Compiler<'a> {
         let begins = self.pos;
         let from = self.mark();
         if floor == 0 && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
+            let at = self.look().clone();
             let named = self.take().lexeme;
+            if !lang.syntax_members.is_empty() {
+                if lang.true_words.contains(&named) || lang.false_words.contains(&named) || lang.null_words.contains(&named) {
+                    self.registry.stopped_end = at.column + at.lexeme.chars().count();
+                    self.registry.stopped_end_row = at.row;
+                    return Err(format!("SyntaxError: cannot use assignment expressions with {named}"));
+                }
+                if named == "__debug__" {
+                    self.registry.stopped_end = at.column + at.lexeme.chars().count();
+                    self.registry.stopped_end_row = at.row;
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
+            }
             if self.piece().comprehension_kind.is_some() { self.piece().named_expressions.push(named.clone()); }
             self.take();
             self.cell_to_write(&named);
@@ -8583,6 +8603,7 @@ impl<'a> Compiler<'a> {
                 let word = self.look().lexeme.as_str();
                 let kind = if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("literal") }
                     else if ["None", "True", "False"].contains(&word) { Some(word) }
+                    else if word == "__debug__" { Some("__debug__") }
                     else if word == "*" { Some("starred") }
                     else if ["+", "-", "~", "not"].contains(&word) { Some("expression") } else { None };
                 if let Some(kind) = kind { return Err(format!("SyntaxError: cannot delete {kind}")); }
