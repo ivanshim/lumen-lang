@@ -120,6 +120,7 @@ pub struct Builder<'a> {
     surveyed: HashMap<usize, ScopeWords>,
     survey: bool,
     kind_mark: Option<usize>,
+    syntax_try_nesting: usize,
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -517,7 +518,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { syntax_try_nesting: 0, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -2243,6 +2244,25 @@ impl<'a> Builder<'a> {
 
     fn plain_or_kind(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.look().lexeme == "lazy" && ["import", "from"].contains(&self.glance(1).lexeme.as_str()) {
+                let from = self.glance(1).lexeme == "from";
+                let disallowed = if self.in_class_body() { Some("inside classes") }
+                    else if !self.naming.is_empty() { Some("inside functions") }
+                    else if self.syntax_try_nesting != 0 { Some("inside try/except blocks") }
+                    else { None };
+                let words = self.tokens[self.pos..].iter().take_while(|token|
+                    !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) && token.lexeme != ";").collect::<Vec<_>>();
+                let terminal = words.last().copied().unwrap_or(self.look());
+                if let Some(place) = disallowed {
+                    self.range_end = Some((if terminal.end_column == 0 { terminal.column + terminal.lexeme.chars().count() } else { terminal.end_column }, terminal.end_row.max(terminal.row)));
+                    let kind = if from { "from ... import" } else { "import" };
+                    return Err(format!("SyntaxError: lazy {kind} not allowed {place}"));
+                }
+                if from && words.windows(2).any(|pair| pair[0].lexeme == "import" && pair[1].lexeme == "*") {
+                    self.range_end = Some((if terminal.end_column == 0 { terminal.column + terminal.lexeme.chars().count() } else { terminal.end_column }, terminal.end_row.max(terminal.row)));
+                    return Err("SyntaxError: lazy from ... import * is not allowed".to_owned());
+                }
+            }
             let outer = self.key("ext.stmt.global");
             if (outer || self.key("ext.stmt.nonlocal")) && !self.in_class_body() {
                 let origin = self.pos;
@@ -2628,6 +2648,9 @@ impl<'a> Builder<'a> {
             }
             if self.pos == start || !self.key("ext.stmt.import") {
                 path.push_str(&self.module_path(true)?);
+            }
+            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "lazy" {
+                return Err("SyntaxError: use 'lazy from ... ' instead of 'from ... lazy import'".to_owned());
             }
             if self.key("ext.stmt.import") {
                 self.advance();
@@ -3238,11 +3261,18 @@ impl<'a> Builder<'a> {
     /// `try { } catch (A | B $e) { } finally { }`: the body is watched,
     /// the first clause whose class it raises takes it, and the last
     /// part runs however the body ended, so a return leaves through it.
+    fn guarded_attempt_body(&mut self, bare: bool) -> Res<Form> {
+        self.syntax_try_nesting += 1;
+        let result = if bare { self.watched_body() } else { self.body() };
+        self.syntax_try_nesting -= 1;
+        result
+    }
+
     fn attempt_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
         let bare_clauses = table.single("ext.stmt.catch.as").is_some();
-        let body = if bare_clauses { self.watched_body()? } else { self.body()? };
+        let body = self.guarded_attempt_body(bare_clauses)?;
         let open = table.single("syntax.group.open").ok_or_else(|| "A catch needs syntax.group".to_string())?.to_string();
         let close = table.single("syntax.group.close").unwrap().to_string();
         let mut clauses: Vec<Clause> = Vec::new();
@@ -3323,7 +3353,7 @@ impl<'a> Builder<'a> {
                 } else { None };
                 self.need_sign(&close, "after the class caught")?;
             }
-            let body = if bare_clauses { self.watched_body()? } else { self.body()? };
+            let body = self.guarded_attempt_body(bare_clauses)?;
             // A class body lets the caught value's name go when the
             // clause is through with it, as the language this follows
             // does, and so keeps no member under that name.
@@ -3351,14 +3381,14 @@ impl<'a> Builder<'a> {
         }
         let otherwise = if table.flag("ext.stmt.try.else") && self.key("stmt.else") {
             self.advance();
-            let limb = self.watched_body()?;
+            let limb = self.guarded_attempt_body(true)?;
             self.skip_line_ends();
             Some(Box::new(limb))
         } else { None };
         let last = match self.key("ext.stmt.finally") {
             true => {
                 self.advance();
-                Some(Box::new(if bare_clauses { self.watched_body()? } else { self.body()? }))
+                Some(Box::new(self.guarded_attempt_body(bare_clauses)?))
             }
             false => None,
         };
@@ -7180,6 +7210,11 @@ impl<'a> Builder<'a> {
             let expression = self.expr(0)?;
             return Ok(sequence(vec![Form::Write(target.clone(), Box::new(expression)), Form::Read(target)]));
         }
+        if floor == 0 && table.has_any("ext.builtin.exceptions.syntax")
+            && matches!(self.look().lexeme.as_str(), "pass" | "break" | "continue")
+            && self.glance(1).lexeme == "if" {
+            return Err("SyntaxError: expected expression before 'if', but statement is given".to_owned());
+        }
         let mut left = self.monadic_expr()?;
         if floor == 0 && table.spells("ext.op.assign.expression", &self.look().lexeme) {
             let Form::Read(target) = left else {
@@ -7221,6 +7256,9 @@ impl<'a> Builder<'a> {
                     return Err(format!("Expected '{}' in conditional expression", end));
                 }
                 self.advance();
+                if table.has_any("ext.builtin.exceptions.syntax") && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {
+                    return Err("SyntaxError: expected expression after 'else', but statement is given".to_owned());
+                }
                 let no = self.expr(0)?;
                 left = self.choose(test, left, no);
                 continue;
