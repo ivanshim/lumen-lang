@@ -573,6 +573,23 @@ impl<'a> Engine<'a> {
                         let mut given = if *op == Builtin::Set { Vec::new() } else { args };
                         return Ok(self.builtin(*op, name, &mut given)?);
                     }
+                    if self.lang.builtins.get(&word) == Some(&Builtin::Bool) {
+                        return match &kind {
+                            Value::Native(Builtin::Bool, name) if name.as_ref() == word => {
+                                if args.len() > 1 {
+                                    Err(format!("TypeError: bool expected at most 1 argument, got {}", args.len()).into())
+                                } else { Ok(self.builtin(Builtin::Bool, name, &mut args)?) }
+                            }
+                            Value::Native(_, name) => Err(format!("TypeError: bool.__new__({name}): {name} is not a subtype of bool").into()),
+                            Value::Class(class) => Err(format!("TypeError: bool.__new__({0}): {0} is not a subtype of bool", class.name).into()),
+                            other => Err(format!("TypeError: bool.__new__(X): X is not a type object ({})", other.core_kind()).into()),
+                        };
+                    }
+                    if let Value::Native(Builtin::Bool, _) = &kind {
+                        if self.lang.builtins.get(&word) == Some(&Builtin::ToInt) {
+                            return Err("TypeError: int.__new__(bool) is not safe, use bool.__new__()".into());
+                        }
+                    }
                     let Value::Class(c) = kind else { return Err(self.class_refusal()); };
                     let given = if self.lang.builtins.get(&word) == Some(&Builtin::Set) { Vec::new() } else { args };
                     self.thing_of_kind(c, &word, given)
@@ -952,10 +969,15 @@ impl<'a> Engine<'a> {
         }
     }
     pub(super) fn integer_member(&self, subject: &Value, name: &str) -> Option<Value> {
+        if let Value::Native(Builtin::Bool, word) = subject {
+            if name == self.class_word("allocate") {
+                return Some(Self::adapter(14, vec![Value::text(word)]));
+            }
+        }
         let layout = self.lang.class_details.get("integer.layout")?;
         if layout.len() != 7 { return None; }
         let (kind, subclass) = match subject {
-            Value::Native(Builtin::ToInt, _) => (true, false),
+            Value::Native(Builtin::ToInt | Builtin::Bool, _) => (true, false),
             Value::Class(c) if Self::kind_beneath(c).as_deref().and_then(|word| self.lang.builtins.get(word)) == Some(&Builtin::ToInt) => (true, Self::own_kind(c).is_none()),
             Value::Object(_) if Self::worth_of(subject).map_or(false, |v| matches!(v, Value::Small(_) | Value::Huge(_))) => (false, true),
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) => (false, false),

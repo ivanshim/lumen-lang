@@ -5375,7 +5375,7 @@ impl<'a> Machine<'a> {
                             return self.apply_class_member(member, values);
                         }
                     }
-                    if self.has_class_order() && (matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
+                    if self.has_class_order() && (matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Intrinsic(Prim::Truthful, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.table.flag("ext.op.member.pipes") {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -5793,7 +5793,7 @@ impl<'a> Machine<'a> {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
-                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -7178,6 +7178,7 @@ impl<'a> Machine<'a> {
                 .ok_or_else(|| self.octet_error("arguments"))?;
             return match receiver {
                 Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![number]),
+                Value::Intrinsic(Prim::Truthful, _) if name == "integer_from_bytes" => Ok(Value::Flag(self.stands_true(&number))),
                 _ => Ok(number),
             };
         }
@@ -10564,6 +10565,24 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn warn_bool_invert(&mut self) -> Result<(), String> {
+        if !self.table.has_any("ext.builtin.bool.result") { return Ok(()); }
+        let Some(category) = self.fault_kinds.get("DeprecationWarning").cloned() else { return Ok(()); };
+        let namespace = self.load_namespace("warnings")?;
+        let function = match self.read_class_member(namespace, "warn_explicit", true) {
+            Ok(value) => value.settled(),
+            Err(Escape::Error(message)) => return Err(message),
+            Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
+        };
+        let params = vec![Value::text("~ on an instance of bool is deprecated"), category,
+            Value::text("<string>"), Value::Small(1), Value::text("__main__")];
+        match self.apply_class_member(function, params) {
+            Ok(_) => Ok(()),
+            Err(Escape::Error(message)) => Err(message),
+            Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
+        }
+    }
+
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
         if let Value::Attributes(t) = subject { return Ok(t.holds.borrow().iter().any(|(name, x)| !matches!(x, Value::Unset) && !name.starts_with('\0'))); }
         if matches!(subject, Value::Refusal(_)) { return Err(self.core_complaint("core.bool.declined", "")); }
@@ -10578,7 +10597,11 @@ impl<'a> Machine<'a> {
         if let Some(length) = self.ask_special(subject, 10, &[])? {
             if !matches!(length, Value::Small(_) | Value::Huge(_)) { return Err(self.bad_answer()); }
             let number = length.as_big()?;
-            if number < BigInt::from(0) { return Err(self.bad_answer()); }
+            if number < BigInt::from(0) {
+                return Err(if self.table.has_any("ext.builtin.bool.result") {
+                    "ValueError: __len__() should return >= 0".to_owned()
+                } else { self.bad_answer() });
+            }
             return Ok(number != BigInt::from(0));
         }
         if let Some(under) = Self::underlying(subject) { return self.object_truth(&under.settled()); }
@@ -11464,7 +11487,12 @@ impl<'a> Machine<'a> {
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
             (Prim::Length, [one]) if self.appointed(one, 10).is_some() => {
                 let length = self.ask_special(one, 10, &[])?.unwrap();
-                if !matches!(length, Value::Small(_) | Value::Huge(_)) || length.as_big()? < BigInt::from(0) { return Err(self.bad_answer()); }
+                if !matches!(length, Value::Small(_) | Value::Huge(_)) { return Err(self.bad_answer()); }
+                if length.as_big()? < BigInt::from(0) {
+                    return Err(if self.table.has_any("ext.builtin.bool.result") {
+                        "ValueError: __len__() should return >= 0".to_owned()
+                    } else { self.bad_answer() });
+                }
                 length
             }
             (Prim::Hashed, [one]) if matches!(self.appointment(one, 8), Some(Value::Nil)) => {
@@ -11803,6 +11831,9 @@ impl<'a> Machine<'a> {
                 let present = self.find_in_walk(walk, needle, true)?.0.is_some();
                 return Ok(Value::Flag(present == (op == Prim::Contains)));
             }
+        }
+        if op == Prim::BitsOver && matches!(v, [Value::Flag(_)]) {
+            self.warn_bool_invert()?;
         }
         if matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
             if let [first, second] = v {
