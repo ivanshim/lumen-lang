@@ -521,9 +521,16 @@ impl<'a> Engine<'a> {
                 // The maker of a builtin kind: given the class to make a
                 // thing of and what the kind's builtin takes.
                 14 if !args.is_empty() => {
-                    let Value::Class(c) = args.remove(0) else { return Err(self.class_refusal()); };
+                    let kind = args.remove(0);
                     let word = w.1[0].plain();
-                    self.thing_of_kind(c, &word, args)
+                    if let Value::Native(op @ (Builtin::Set | Builtin::Frozen), name) = &kind {
+                        if name.as_ref() != word { return Err(self.class_refusal()); }
+                        let mut given = if *op == Builtin::Set { Vec::new() } else { args };
+                        return Ok(self.builtin(*op, name, &mut given)?);
+                    }
+                    let Value::Class(c) = kind else { return Err(self.class_refusal()); };
+                    let given = if self.lang.builtins.get(&word) == Some(&Builtin::Set) { Vec::new() } else { args };
+                    self.thing_of_kind(c, &word, given)
                 }
                 3 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
                 // A member a builtin kind carries, standing loose: the
@@ -657,7 +664,15 @@ impl<'a> Engine<'a> {
             let mut given = vec![Value::Class(c.clone())]; given.extend(args.clone());
             self.class_apply(f,given)?
         } else if let Some(word) = &kind {
-            self.thing_of_kind(c.clone(), word, args.clone())?
+            let mut initial = args.clone();
+            match self.lang.builtins.get(word) {
+                Some(Builtin::Set) => initial.clear(),
+                Some(Builtin::Frozen) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                    initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
+                }
+                _ => (),
+            }
+            self.thing_of_kind(c.clone(), word, initial)?
         } else {
             self.made += 1;
             Value::Object(Rc::new(Instance {class:c.clone(),fields:RefCell::new(vec![]),mark:self.made}))
@@ -669,6 +684,14 @@ impl<'a> Engine<'a> {
                     let bound=self.bind_class_value(f,Some(object.clone()),o.class.clone())?;
                     let answer = self.class_apply(bound,args)?;
                     if !matches!(answer,Value::Null) { return Err(self.class_refusal()); }
+                } else if let Some(worth @ Value::Set(_)) = Self::worth_of(&object).filter(|v| !v.set_fixed()) {
+                    let mut positional = Vec::new();
+                    let mut keywords = Vec::new();
+                    for (key, value) in self.call_items(args)? {
+                        match key { Some(key) => keywords.push((key, value)), None => positional.push(value) }
+                    }
+                    let name = self.lang.constructor.clone().unwrap_or_default();
+                    self.value_method(&worth, &name, positional, keywords)?;
                 } else if !args.is_empty() && kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() {
                     self.root_refuses_arguments(&c,true)?;
                 }
@@ -1804,7 +1827,14 @@ impl<'a> Engine<'a> {
             // through the worth the thing keeps.
             if let Some(word)=Self::own_kind(c) {
                 if name==self.class_word("allocate"){return self.class_apply(Self::adapter(14,vec![Value::text(&word)]),args);}
-                if self.lang.constructor.as_deref()==Some(name){return Ok(Value::Null);}
+                if self.lang.constructor.as_deref()==Some(name){
+                    if let Some(worth @ Value::Set(_)) = Self::worth_of(&subject) {
+                        let mut given = Vec::new(); let mut named = Vec::new();
+                        for (key, value) in self.call_items(args)? { match key { Some(key) => named.push((key, value)), None => given.push(value) } }
+                        return Ok(self.value_method(&worth, name, given, named)?);
+                    }
+                    return Ok(Value::Null);
+                }
                 if let (Some(worth),Some(op))=(Self::worth_of(&subject),self.lang.value_methods.get(name).cloned()) {
                     let mut positional=Vec::new();let mut named=Vec::new();
                     for (key,v) in self.call_items(args)? {match key{Some(k)=>named.push((k,v)),None=>positional.push(v)}}

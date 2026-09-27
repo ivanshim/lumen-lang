@@ -5574,6 +5574,9 @@ impl<'a> Machine<'a> {
     pub(super) fn kind_member_names(&self, word: &str) -> Vec<String> {
         let Some(sample) = self.kind_stand_in(word) else { return Vec::new() };
         let mut gathered = Vec::new();
+        if matches!(sample, Value::Set(_)) {
+            gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
+        }
         for name in self.table.strings("ext.stmt.class.special") {
             if self.native_member(&sample, name) { gathered.push(name.clone()); }
         }
@@ -5627,6 +5630,9 @@ impl<'a> Machine<'a> {
         if let Value::Span(_) = sample { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
         let mut gathered = Vec::new();
+        if matches!(sample, Value::Set(_)) {
+            gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
+        }
         for name in self.table.strings("ext.stmt.class.special") {
             if self.native_member(sample, name) { gathered.push(name.clone()); }
         }
@@ -5783,6 +5789,9 @@ impl<'a> Machine<'a> {
     /// value of a native kind answers to it as a member of its own.
     pub(super) fn native_place(&self, value: &Value, name: &str) -> Option<usize> {
         let mark = Self::native_mark(value)?;
+        if matches!(mark, 'e' | 'E') && self.table.single("ext.stmt.class.constructor") == Some(name) {
+            return Some(usize::MAX);
+        }
         let at = self.table.strings("ext.stmt.class.special").iter().position(|word| word == name)?;
         Self::mark_answers(mark, at).then_some(at)
     }
@@ -5815,6 +5824,21 @@ impl<'a> Machine<'a> {
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' own.
     fn native_member_run(&mut self, receiver: &Value, name: &str, at: usize, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if at == usize::MAX {
+            match receiver.settled() {
+                Value::Set(store) => {
+                    if store.borrow().sealed { return Ok(Value::Nil); }
+                    if !keywords.is_empty() || arguments.len() > 1 { return Err(self.set_complaint("arguments", "").into()); }
+                    self.work_set(5, &[Value::Set(store.clone())])?;
+                    if let Some(input) = arguments.first() {
+                        let entries = self.set_sources(input)?;
+                        for entry in entries { self.set_include(&store, entry)?; }
+                    }
+                    return Ok(Value::Nil);
+                }
+                _ => return Err(self.bad_answer().into()),
+            }
+        }
         let wanted = match at {
             12 => 2,
             2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=72 => 1,
@@ -9295,7 +9319,10 @@ impl<'a> Machine<'a> {
         // the general road every other iterable-taking builtin walks,
         // so a generator expression handed to `fromkeys` is read out
         // here exactly as a `for` loop over it would read it.
-        let members = self.gathered_members(target)?;
+        let members = match target.settled() {
+            Value::Dict(_) | Value::Set(_) => self.set_sources(target)?,
+            _ => self.gathered_members(target)?,
+        };
         let mut entries: Rc<MapStore> = Rc::new(Vec::new().into());
         for key in members {
             let store: &MapStore = entries.as_ref();
@@ -9439,6 +9466,8 @@ impl<'a> Machine<'a> {
     /// where the builtin would have named itself.
     fn underlying_words(&mut self, name: &str, worth: &Value, quoted: bool) -> Result<String, String> {
         if !Self::worth_leads_with_name(worth) { return self.object_words(worth, quoted); }
+        let plain = worth.settled();
+        if matches!(plain, Value::Set(_)) { return self.set_words(&plain, name, true); }
         // The worth with nothing leading it: a changeable row of bytes
         // reads as the fixed row of the same bytes, a set as its
         // members between braces.
@@ -9447,6 +9476,17 @@ impl<'a> Machine<'a> {
             held => held,
         };
         Ok(format!("{name}({})", self.object_words(&bare, true)?))
+    }
+
+    fn set_words(&mut self, value: &Value, title: &str, named: bool) -> Result<String, String> {
+        let guard = Among::members(value);
+        if guard.instead.is_some() { return Ok(title.to_owned() + "(...)"); }
+        let Value::Set(store) = value else { return Err(self.bad_answer()); };
+        let entries = store.borrow().values();
+        if entries.is_empty() { return Ok(title.to_owned() + "()"); }
+        let parts = entries.iter().map(|entry| self.object_words(entry, true)).collect::<Result<Vec<_>, _>>()?;
+        let body = String::from("{") + &parts.join(", ") + "}";
+        if named { Ok(title.to_owned() + "(" + &body + ")") } else { Ok(body) }
     }
 
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
@@ -9577,18 +9617,10 @@ impl<'a> Machine<'a> {
                 }).collect::<Result<Vec<_>, String>>()?;
                 Ok(String::from("{") + &pieces.join(", ") + "}")
             }
-            // A set cannot reach itself, so its members need no note
-            // left on them the way a list's or a map's do; each is
-            // asked for its own representation, an instance's own
-            // `__repr__` among them, and not the plain address every
-            // other reader of a set's members is given.
             Value::Set(store) => {
-                let members = store.borrow().values();
-                if members.is_empty() { return Ok(store.borrow().spelling.clone() + "()"); }
-                let mut pieces = Vec::with_capacity(members.len());
-                for item in &members { pieces.push(self.object_words(item, true)?); }
-                let inner = String::from("{") + &pieces.join(", ") + "}";
-                Ok(if store.borrow().sealed { store.borrow().spelling.clone() + "(" + &inner + ")" } else { inner })
+                let spelling = store.borrow().spelling.clone();
+                let sealed = store.borrow().sealed;
+                self.set_words(subject, &spelling, sealed)
             }
             Value::Text(s) if quoted => {
                 let mut written = String::from("'");
@@ -14524,9 +14556,9 @@ impl<'a> Machine<'a> {
             store.borrow_mut().put(address, item);
             return Ok(());
         }
+        let kept = self.hash_key(&item)?;
         let entries = store.borrow().entries.clone();
-        let address = self.set_address(&entries, &item)?;
-        let kept = if matches!(item, Value::Thing(_)) { self.hash_key(&item)? } else { item };
+        let address = self.set_address(&entries, &kept)?;
         store.borrow_mut().put(address, kept);
         Ok(())
     }
@@ -14559,7 +14591,7 @@ impl<'a> Machine<'a> {
     fn set_member_found(&mut self, item: &Value, other: &crate::data::SetStore) -> Result<bool, String> {
         if matches!(item, Value::Thing(_) | Value::Keyed(..)) {
             let keyed = self.hash_key(item)?;
-            for held in other.values() {
+            for (_, held) in &other.entries {
                 if self.keys_agree(&held, &keyed)? { return Ok(true); }
             }
             return Ok(false);
@@ -14572,16 +14604,16 @@ impl<'a> Machine<'a> {
     /// happen to be kept at: two stores of the very same things agree
     /// here however either was gathered, thinned, or built back up.
     fn set_beneath(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore) -> Result<bool, String> {
-        for value in one.values() {
-            if !self.set_member_found(&value, other)? { return Ok(false); }
+        for (_, value) in &one.entries {
+            if !self.set_member_found(value, other)? { return Ok(false); }
         }
         Ok(true)
     }
 
     /// Whether no entry of the one store is found among the other's.
     fn set_disjoint(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore) -> Result<bool, String> {
-        for value in one.values() {
-            if self.set_member_found(&value, other)? { return Ok(false); }
+        for (_, value) in &one.entries {
+            if self.set_member_found(value, other)? { return Ok(false); }
         }
         Ok(true)
     }
@@ -14604,24 +14636,31 @@ impl<'a> Machine<'a> {
     fn set_combine(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore, rule: u8) -> Result<crate::data::SetStore, String> {
         let mut answer = crate::data::SetStore::new(&one.spelling, one.sealed);
         for (key, item) in &one.entries {
-            let bare = match item { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() };
-            let shared = self.set_member_found(&bare, other)?;
+            let shared = self.set_member_found(item, other)?;
             let keep = match rule { 0 => true, 1 => shared, _ => !shared };
             if keep { answer.put(key.clone(), item.clone()); }
         }
         if matches!(rule, 0 | 3) {
             for (key, item) in &other.entries {
-                let bare = match item { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() };
-                if !self.set_member_found(&bare, one)? { answer.put(key.clone(), item.clone()); }
+                if !self.set_member_found(item, one)? { answer.put(key.clone(), item.clone()); }
             }
         }
         Ok(answer)
     }
 
+    fn set_sources(&mut self, input: &Value) -> Result<Vec<Value>, String> {
+        let plain = self.underlying_unless(input, &[15]).unwrap_or_else(|| input.settled());
+        if let Value::Set(store) = &plain {
+            return Ok(store.borrow().entries.iter().map(|entry| entry.1.clone()).collect());
+        }
+        if let Value::Dict(pairs) = &plain { return Ok(pairs.iter().map(|entry| entry.0.clone()).collect()); }
+        self.gathered_members(&plain)
+    }
+
     fn gather_set(&mut self, source: Option<&Value>) -> Result<crate::data::SetStore, String> {
         let gathered = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""), false)));
         if let Some(source) = source {
-            for item in self.gathered_members(source)? { self.set_include(&gathered, item)?; }
+            for item in self.set_sources(source)? { self.set_include(&gathered, item)?; }
         }
         let store = gathered.borrow().clone();
         Ok(store)
@@ -14668,7 +14707,7 @@ impl<'a> Machine<'a> {
         if which == 7 {
             let held = target.clone();
             for input in values.iter().skip(1) {
-                let additions = self.gathered_members(input)?;
+                let additions = self.set_sources(input)?;
                 for value in additions { self.set_include(&held, value)?; }
             }
             return Ok(Value::Nil);
@@ -14757,7 +14796,7 @@ impl<'a> Machine<'a> {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::Generator(state) => {
                 let mut members = Vec::new();
-                while let Some(item) = self.resume(state, Value::Nil).map_err(|fault| self.suspension_fault(fault))? { members.push(item); }
+                while let Some(item) = self.resume(state, Value::Nil).map_err(|escape| { self.got_away = Some(escape); self.bad_answer() })? { members.push(item); }
                 members
             }
             Value::Row(values) | Value::Tuple(values) | Value::Vector(values) => values.to_vec(),
@@ -17391,7 +17430,11 @@ impl Machine<'_> {
                         return Ok(standing.clone());
                     }
                 }
-                let entries = match input.first() { Some(v) => self.core_collect(v)?, None => Vec::new() };
+                let entries = match input.first() {
+                    None => Vec::new(),
+                    Some(v) if op == Tupling => self.core_collect(v)?,
+                    Some(v) => self.set_sources(v)?,
+                };
                 if op == Tupling { return Ok(Value::Tuple(Rc::new(entries))); }
                 // A thing among the entries goes in as the set literal puts
                 // it in, under its own hash and its own equality; any other

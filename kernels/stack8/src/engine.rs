@@ -4298,7 +4298,7 @@ impl<'a> Engine<'a> {
         // is the general road every other iterable-taking builtin walks,
         // so a generator expression handed to `fromkeys` is read out
         // here exactly as a `for` loop over it would read it.
-        let items = self.comprehension_items(target)?;
+        let items = if matches!(target.contents(), Value::Map(_) | Value::Set(_)) { self.set_inputs(target)? } else { self.comprehension_items(target)? };
         let mut pairs: Rc<KeyedPairs> = Rc::new(Vec::new().into());
         for key in items {
             let store: &KeyedPairs = pairs.as_ref();
@@ -4405,6 +4405,7 @@ impl<'a> Engine<'a> {
         if matches!(sample, Value::Slice(_)) { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
+        if matches!(family, Kindred::Set(_)) { names.extend(self.lang.constructor.iter().cloned()); }
         for (spelling, working) in self.lang.value_methods.iter() {
             if crate::methods::answered(sample, working) { names.push(spelling.clone()); }
         }
@@ -4718,6 +4719,7 @@ impl<'a> Engine<'a> {
     /// value of a builtin kind answers to it as a member of its own.
     pub(super) fn native_place(&self, subject: &Value, name: &str) -> Option<usize> {
         let family = Self::native_family(subject)?;
+        if matches!(family, Kindred::Set(_)) && self.lang.constructor.as_deref() == Some(name) { return Some(usize::MAX); }
         let place = self.lang.class_special.iter().position(|word| word == name)?;
         Self::family_answers(family, place).then_some(place)
     }
@@ -4747,6 +4749,16 @@ impl<'a> Engine<'a> {
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' too.
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if place == usize::MAX {
+            let Value::Set(cell) = receiver.contents() else { return Err(self.special_fault()); };
+            if cell.borrow().fixed { return Ok(Value::Null); }
+            if args.len() > 1 || !named.is_empty() { return Err(self.set_said(".arguments", "")); }
+            self.set_builtin(Builtin::SetClear, &[Value::Set(cell.clone())])?;
+            if let Some(source) = args.first() {
+                for item in self.set_inputs(source)? { self.set_put(&cell, item)?; }
+            }
+            return Ok(Value::Null);
+        }
         let wanted = match place {
             12 => 2,
             2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=72 => 1,
@@ -5123,22 +5135,27 @@ impl<'a> Engine<'a> {
                 }
                 Ok(format!("{{{}}}", parts.join(", ")))
             }),
-            // A set cannot reach itself, so its members need no note
-            // left on them the way a row's or a map's do; each is asked
-            // for its own representation, a thing's own `__repr__`
-            // among them, and not the plain address every other reader
-            // of a set's members is given.
             Value::Set(cell) => {
-                let members = cell.borrow().items();
-                if members.is_empty() { return Ok(cell.borrow().word.clone() + "()"); }
-                let mut parts = Vec::with_capacity(members.len());
-                for item in &members { parts.push(self.special_text(item, true)?); }
-                let inner = format!("{{{}}}", parts.join(", "));
-                Ok(if cell.borrow().fixed { format!("{}({})", cell.borrow().word, inner) } else { inner })
+                let held = cell.borrow();
+                let name = held.word.clone();
+                let wrapped = held.fixed;
+                drop(held);
+                self.set_text(cell, &name, wrapped)
             }
             Value::Text(_) if representation => self.rem_repr(value),
             _ => Ok(value.display(&self.wording())),
         }
+    }
+
+    fn set_text(&mut self, cell: &Rc<RefCell<crate::value::Members>>, name: &str, wrapped: bool) -> Res<String> {
+        crate::value::set_once(cell, name, || {
+            let members = cell.borrow().items();
+            if members.is_empty() { return Ok(format!("{name}()")); }
+            let mut parts = Vec::with_capacity(members.len());
+            for item in &members { parts.push(self.special_text(item, true)?); }
+            let body = format!("{{{}}}", parts.join(", "));
+            Ok(if wrapped { format!("{name}({body})") } else { body })
+        })
     }
 
     /// Whether a thing keeping this worth names its own class before
@@ -5154,6 +5171,7 @@ impl<'a> Engine<'a> {
     /// name to give is the thing's own class rather than the builtin's.
     fn worth_shown(&mut self, class: &str, worth: &Value, representation: bool) -> Res<String> {
         if !Self::worth_names_class(worth) { return self.special_text(worth, representation); }
+        if let Value::Set(cell) = worth.contents() { return self.set_text(&cell, class, true); }
         // The worth as it reads with no name before it: a row of bytes
         // that can be written to reads as the fixed row of the same
         // bytes, and a set reads as its members between braces.
@@ -5793,7 +5811,9 @@ impl<'a> Engine<'a> {
         // a plain set here as the two plain sets they by then are, and
         // not as a thing this road would otherwise refuse outright.
         if let (Action::Eq | Action::Ne, Value::Set(one), Value::Set(other)) = (op, a, b) {
-            let alike = self.sets_equal(&one.borrow(), &other.borrow())?;
+            let left = one.borrow().clone();
+            let right = other.borrow().clone();
+            let alike = self.sets_equal(&left, &right)?;
             return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
         }
         // A set sign, a set comparison, or a compound set sign between
@@ -6876,7 +6896,7 @@ impl<'a> Engine<'a> {
                 Value::array(together)
             }
             Action::Unpack(count, rest) => {
-                let source = collection_contents(&self.drop_top()?);
+                let source = collection_contents(&self.drop_top()?).contents();
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
@@ -10352,8 +10372,8 @@ impl<'a> Engine<'a> {
     fn set_member_found(&mut self, value: &Value, other: &crate::value::Members) -> Res<bool> {
         if matches!(value, Value::Object(_) | Value::Hashed(_)) {
             let wanted = self.special_key(value)?;
-            for held in other.items() {
-                if self.special_keys_equal(&held, &wanted)? { return Ok(true); }
+            for held in other.held.values() {
+                if self.special_keys_equal(held, &wanted)? { return Ok(true); }
             }
             return Ok(false);
         }
@@ -10365,16 +10385,16 @@ impl<'a> Engine<'a> {
     /// happen to be kept at: two sets of the very same things agree
     /// here however either was gathered, thinned, or built back up.
     fn set_beneath(&mut self, one: &crate::value::Members, other: &crate::value::Members) -> Res<bool> {
-        for value in one.items() {
-            if !self.set_member_found(&value, other)? { return Ok(false); }
+        for value in one.held.values() {
+            if !self.set_member_found(value, other)? { return Ok(false); }
         }
         Ok(true)
     }
 
     /// Whether no member of the one set is found among the other's.
     fn set_disjoint(&mut self, one: &crate::value::Members, other: &crate::value::Members) -> Res<bool> {
-        for value in one.items() {
-            if self.set_member_found(&value, other)? { return Ok(false); }
+        for value in one.held.values() {
+            if self.set_member_found(value, other)? { return Ok(false); }
         }
         Ok(true)
     }
@@ -10397,8 +10417,7 @@ impl<'a> Engine<'a> {
         let mut result = crate::value::Members::empty(one.word.clone(), one.fixed);
         for key in &one.row {
             let value = one.held[key].clone();
-            let bare = match &value { Value::Hashed(pair) => pair.0.clone(), v => v.clone() };
-            let shared = self.set_member_found(&bare, other)?;
+            let shared = self.set_member_found(&value, other)?;
             if how == 0 || (how == 1 && shared) || (how >= 2 && !shared) {
                 result.insert(key.clone(), value);
             }
@@ -10406,8 +10425,7 @@ impl<'a> Engine<'a> {
         if how == 0 || how == 3 {
             for key in &other.row {
                 let value = other.held[key].clone();
-                let bare = match &value { Value::Hashed(pair) => pair.0.clone(), v => v.clone() };
-                if !self.set_member_found(&bare, one)? { result.insert(key.clone(), value); }
+                if !self.set_member_found(&value, one)? { result.insert(key.clone(), value); }
             }
         }
         Ok(result)
@@ -10434,9 +10452,9 @@ impl<'a> Engine<'a> {
             cell.borrow_mut().insert(key, value);
             return Ok(());
         }
+        let kept = self.special_key(&value)?;
         let members = Self::set_pairs(cell);
-        let key = self.set_place(&members, &value)?;
-        let kept = if matches!(value, Value::Object(_)) { self.special_key(&value)? } else { value };
+        let key = self.set_place(&members, &kept)?;
         cell.borrow_mut().insert(key, kept);
         Ok(())
     }
@@ -10450,6 +10468,15 @@ impl<'a> Engine<'a> {
     /// A set gathered from a row of values, each put at the address it
     /// takes there, so that a thing among them is addressed by its own
     /// hash and its own equality wherever it is gathered.
+    fn set_inputs(&mut self, source: &Value) -> Res<Vec<Value>> {
+        if let Some(worth) = self.worth_free_of(source, &[15]) { return self.set_inputs(&worth); }
+        match source.contents() {
+            Value::Map(pairs) => Ok(pairs.iter().map(|(key, _)| key.clone()).collect()),
+            Value::Set(cell) => Ok(Self::set_pairs(&cell).into_iter().map(|(_, value)| value).collect()),
+            _ => self.comprehension_items(source),
+        }
+    }
+
     fn set_gathered(&mut self, items: Vec<Value>) -> Res<crate::value::Members> {
         let word = self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default();
         let cell = Rc::new(RefCell::new(crate::value::Members::empty(word, false)));
@@ -10462,7 +10489,7 @@ impl<'a> Engine<'a> {
         use Builtin::*;
         if op == SetMake {
             if args.len() > 1 { return Err(self.set_said(".arguments", "")); }
-            let items = if args.is_empty() { Vec::new() } else { self.comprehension_items(&args[0])? };
+            let items = if args.is_empty() { Vec::new() } else { self.set_inputs(&args[0])? };
             return Ok(Value::Set(Rc::new(RefCell::new(self.set_gathered(items)?))));
         }
         if op == SetSorted {
@@ -10537,13 +10564,13 @@ impl<'a> Engine<'a> {
         if op == SetUpdate {
             let held = cell.clone();
             for source in &args[1..] {
-                for item in self.comprehension_items(source)? { self.set_put(&held, item)?; }
+                for item in self.set_inputs(source)? { self.set_put(&held, item)?; }
             }
             return Ok(Value::Null);
         }
         let mut result = cell.borrow().clone();
         for other in &args[1..] {
-            let items = self.comprehension_items(other)?;
+            let items = self.set_inputs(other)?;
             let rhs = self.set_gathered(items)?;
             let comparison = match op {
                 SetSubset => Some(self.set_beneath(&result, &rhs)?),
@@ -10592,7 +10619,7 @@ impl<'a> Engine<'a> {
         match value {
             Value::Generator(held) => {
                 let mut items = Vec::new();
-                while let Some(item) = self.resume_generator(held, Value::Null).map_err(|f| f.told(&self.wording()))? { items.push(item); }
+                while let Some(item) = self.resume_generator(held, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() })? { items.push(item); }
                 Ok(items)
             }
             Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
@@ -15324,7 +15351,7 @@ impl Engine<'_> {
                         return Ok(standing.clone());
                     }
                 }
-                let items = args.first().map(|v| self.core_members(v)).transpose()?.unwrap_or_default();
+                let items = args.first().map(|v| if b == Builtin::Tuple { self.core_members(v) } else { self.set_inputs(v) }).transpose()?.unwrap_or_default();
                 if matches!(b, Builtin::Set | Builtin::Frozen) {
                     // A thing among the members is keyed as the set literal
                     // keys it, by its own hash method and its own equality;

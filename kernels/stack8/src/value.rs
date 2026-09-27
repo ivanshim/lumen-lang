@@ -1934,6 +1934,17 @@ pub fn members_once<E>(value: &Value, write: impl FnOnce() -> Result<String, E>)
     written
 }
 
+/// A set can return to itself through a member's representation.
+pub fn set_once<E>(cell: &Rc<RefCell<Members>>, name: &str, write: impl FnOnce() -> Result<String, E>) -> Result<String, E> {
+    let address = Rc::as_ptr(cell) as usize;
+    if !MEMBERS.with(|active| active.borrow_mut().insert(address)) {
+        return Ok(format!("{name}(...)"));
+    }
+    let answer = write();
+    forget_members(Some(address));
+    answer
+}
+
 /// The same for a walk that always has an answer.
 pub(crate) fn members_written(value: &Value, write: impl FnOnce() -> String) -> String {
     let note = match note_members(value) {

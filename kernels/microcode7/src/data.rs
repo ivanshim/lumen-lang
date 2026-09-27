@@ -1822,6 +1822,7 @@ impl Among {
             Value::Dict(pairs) => (Rc::as_ptr(pairs) as usize, "{...}"),
             Value::Tuple(parts) | Value::Row(parts) | Value::Arguments(parts) => (Rc::as_ptr(parts) as usize, "(...)"),
             Value::Vector(items) => (Rc::as_ptr(items) as usize, "[...]"),
+            Value::Set(store) => (Rc::as_ptr(store) as usize, "(...)"),
             _ => return Among { left: None, instead: None },
         };
         AMONG.with(|notes| {
