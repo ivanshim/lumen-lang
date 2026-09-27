@@ -9528,7 +9528,7 @@ impl<'a> Machine<'a> {
             return Ok(None);
         }
         let near = |r: &crate::data::Ratio| -> Result<f64, String> {
-            if r.under && r.above == BigInt::from(0) { return Ok(-0.0); }
+            if r.under && r.above == BigInt::from(0) { return Ok(if r.beneath.is_zero() { -f64::NAN } else { -0.0 }); }
             let bound = crate::data::nearest_binary(&r.above, &r.beneath);
             if r.places.is_none() && !r.above.is_zero() && bound.is_infinite() {
                 return Err("OverflowError: int too large to convert to float".to_string());
@@ -11064,14 +11064,7 @@ impl<'a> Machine<'a> {
             (Prim::NextItem, [one, otherwise]) => self.advance_object(one)?.unwrap_or_else(|| otherwise.clone()),
             (Prim::NextItem, [Value::Cursor(cursor)]) => {
                 if let Some(value) = cursor.borrow_mut().pop_front() { value } else {
-                    let class = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
-                        name: self.table.single("ext.stmt.class.special.stop").unwrap_or_default().to_owned(),
-                        under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![],
-                    };
-                    self.made += 1;
-                    let value = Value::Thing(Rc::new(Thing { of: Rc::new(class), holds: RefCell::new(vec![]), turn: self.made }));
-                    self.got_away = Some(Escape::Thrown(value));
-                    return Err(self.table.single("ext.stmt.class.special.stop").unwrap_or_default().to_string());
+                    return Err(self.table.single("ext.builtin.core.exhausted").unwrap_or_default().to_owned());
                 }
             },
             (Prim::NextItem, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
@@ -13260,7 +13253,7 @@ impl<'a> Machine<'a> {
                     // differently for it, so the minus is put back.
                     if let Value::Frac(e) = &worth {
                         if e.under && num_traits::Zero::is_zero(&e.above) {
-                            return Ok(-0.0);
+                            return Ok(if e.beneath.is_zero() { -f64::NAN } else { -0.0 });
                         }
                     }
                     match math::ratio_of(&worth) {
@@ -14359,7 +14352,7 @@ impl<'a> Machine<'a> {
                 if let Some(Value::Text(source)) = v.first() {
                     let source = source.trim().to_ascii_lowercase();
                     let letters = source.strip_prefix(['+', '-']).unwrap_or(&source);
-                    let special = if self.table.spells("ext.builtin.to_real.nan", letters) { Some(f64::NAN) }
+                    let special = if self.table.spells("ext.builtin.to_real.nan", letters) { Some(f64::NAN.copysign(if source.starts_with('-') { -1.0 } else { 1.0 })) }
                         else if self.table.spells("ext.builtin.to_real.infinity", letters) {
                             Some(if source.starts_with('-') { -f64::INFINITY } else { f64::INFINITY })
                         } else { None };
@@ -14385,7 +14378,7 @@ impl<'a> Machine<'a> {
                     let sign_count = lower.len() - letters.len();
                     let infinity = letters == "inf" || letters == "infinity";
                     if sign_count <= 1 && (infinity || letters == "nan") {
-                        let x = if !infinity { f64::NAN } else if lower.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+                        let x = if !infinity { f64::NAN.copysign(if lower.starts_with('-') { -1.0 } else { 1.0 }) } else if lower.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
                         return Ok(crate::data::past_the_numbers(x, math::DEFAULT_PLACES));
                     }
                     }
@@ -15772,7 +15765,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool, w: Names) -> String {
         // Shown with its kind, a binary real is written in the fewest
         // figures that read back as the same number.
         // A nought under nought is written so, at any width.
-        Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "float(-0)".to_string(),
+        Value::Frac(e) if !num_traits::Zero::is_zero(&e.beneath) && e.under && num_traits::Zero::is_zero(&e.above) => "float(-0)".to_string(),
         Value::Frac(e) if binary_reals => format!("float({})", crate::data::figured(crate::data::nearest_binary(&e.above, &e.beneath), None)),
         Value::Frac(_) => format!("float({})", v.bare()),
         Value::Text(s) => {
@@ -18289,7 +18282,16 @@ impl Machine<'_> {
             }
             if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
-                if let Some(job) = job { return self.work_on_class(job, input).map_err(|e| self.suspension_fault(e)); }
+                if let Some(job) = job {
+                    let outcome = self.work_on_class(job, input);
+                    return outcome.map_err(|escape| match escape {
+                        Escape::Error(text) => text,
+                        other => {
+                            self.got_away = Some(other);
+                            self.bad_answer()
+                        }
+                    });
+                }
             }
         }
         if keywords.is_empty() { if let Some(value) = self.user_operation(op, &input)? { return Ok(value); } }

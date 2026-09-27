@@ -6474,10 +6474,7 @@ impl<'a> Engine<'a> {
                 if let Value::Walk(walk) = &args[0] {
                     let mut walk = walk.borrow_mut();
                     let Some(value) = walk.0.get(walk.1).cloned() else {
-                        let class = Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.special_stop.first().cloned().unwrap_or_default(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) };
-                        self.made += 1;
-                        self.carried = Some(Fault::Thrown(Value::Object(Rc::new(Instance { class: Rc::new(class), fields: RefCell::new(Vec::new()), mark: self.made }))));
-                        return Err(self.lang.special_stop.first().cloned().unwrap_or_default());
+                        return Err(self.core_fault("core.exhausted", ""));
                     };
                     walk.1 += 1;
                     value
@@ -10166,7 +10163,7 @@ impl<'a> Engine<'a> {
         let (Some(x), Some(y)) = (arith::Exact::from_value(&a), arith::Exact::from_value(&b)) else { return Ok(None) };
         if x.places.is_none() && y.places.is_none() && y.p >= BigInt::from(0) { return Ok(None); }
         let binary = |v: &Value, e: &arith::Exact| -> Result<f64, String> {
-            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { return Ok(-0.0); }
+            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { return Ok(if e.q.is_zero() { -f64::NAN } else { -0.0 }); }
             let bound = crate::value::as_binary(&e.p, &e.q);
             if e.places.is_none() && !e.p.is_zero() && bound.is_infinite() {
                 return Err("OverflowError: int too large to convert to float".to_string());
@@ -13946,7 +13943,7 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 let wants = match working.as_str() {
-                    "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+                    "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
                     "fma" => 3,
                     _ => 1,
                 };
@@ -13960,7 +13957,7 @@ impl<'a> Engine<'a> {
                     // for it, so the minus is put back on.
                     if let Value::Real(r) = &worth {
                         if r.below && num_traits::Zero::is_zero(&r.p) {
-                            return Ok(-0.0);
+                            return Ok(if r.q.is_zero() { -f64::NAN } else { -0.0 });
                         }
                     }
                     match arith::Exact::from_value(&worth) {
@@ -13988,6 +13985,7 @@ impl<'a> Engine<'a> {
                     return Ok(value);
                 }
                 let got = match working.as_str() {
+                    "copysign" => x.copysign(y),
                     "sqrt" => x.sqrt(),
                     "exp" => x.exp(),
                     "expm1" => x.exp_m1(),
@@ -14309,7 +14307,7 @@ impl<'a> Engine<'a> {
                 let plain = text.trim().to_ascii_lowercase();
                 let unsigned = plain.strip_prefix(['+', '-']).unwrap_or(&plain);
                 if Lang::spells(&self.lang.infinity_words, unsigned) || Lang::spells(&self.lang.nan_words, unsigned) {
-                    let special = if Lang::spells(&self.lang.nan_words, unsigned) { f64::NAN }
+                    let special = if Lang::spells(&self.lang.nan_words, unsigned) { if plain.starts_with('-') { -f64::NAN } else { f64::NAN } }
                         else if plain.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
                     return Ok(crate::value::real_of(special, arith::DEFAULT_PLACES));
                 }
@@ -14863,7 +14861,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
         // Shown with its kind, a binary real is written in the fewest
         // digits that read back as the same number.
         // A nought below nought is written as such, whatever the width.
-        Value::Real(r) if r.below && num_traits::Zero::is_zero(&r.p) => "float(-0)".to_string(),
+        Value::Real(r) if r.below && num_traits::Zero::is_zero(&r.p) && !num_traits::Zero::is_zero(&r.q) => "float(-0)".to_string(),
         Value::Real(r) if binary_reals => format!("float({})", crate::value::binary_string(crate::value::as_binary(&r.p, &r.q), None)),
         Value::Real(_) | Value::Frac(_) => format!("float({})", v.plain()),
         Value::Text(s) => format!("string({}) \"{}\"", text_width(s, sp.text_is_bytes), s),
@@ -16064,7 +16062,16 @@ impl Engine<'_> {
             }
             if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
-                if let Some(work) = work { return self.class_work(work, args).map_err(|f| f.told(&self.wording())); }
+                if let Some(work) = work {
+                    return match self.class_work(work, args) {
+                        Ok(value) => Ok(value),
+                        Err(Fault::Note(words)) => Err(words),
+                        Err(raised) => {
+                            self.carried = Some(raised);
+                            Err(self.special_fault())
+                        }
+                    };
+                }
             }
         }
         if named.is_empty() { if let Some(value) = self.special_builtin(b, &args)? { return Ok(value); } }

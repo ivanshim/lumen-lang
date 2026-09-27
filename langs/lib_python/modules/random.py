@@ -2,7 +2,8 @@
 _state = 1
 
 def seed(a=None, version=2):
-    global _state
+    global _state, _gauss_next
+    _gauss_next = None
     if a is None:
         a = 1
     _state = int(a) % 2147483648
@@ -67,6 +68,26 @@ def shuffle(sequence):
         saved = sequence[i]
         sequence[i] = sequence[j]
         sequence[j] = saved
+
+def uniform(a, b):
+    return a + (b - a) * random()
+
+
+_gauss_next = None
+
+
+def gauss(mu=0.0, sigma=1.0):
+    import math
+    global _gauss_next
+    z = _gauss_next
+    _gauss_next = None
+    if z is None:
+        angle = random() * math.tau
+        radius = math.sqrt(-2.0 * math.log(1.0 - random()))
+        z = math.cos(angle) * radius
+        _gauss_next = math.sin(angle) * radius
+    return mu + z * sigma
+
 
 
 def getrandbits(k):

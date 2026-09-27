@@ -111,7 +111,7 @@ impl Value {
             Value::Flag(b) => if *b { "True" } else { "False" }.into(),
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => c.borrow().core_repr(shortest),
             Value::Real(r) => {
-                if r.below && r.p == BigInt::from(0) { return "-0.0".into(); }
+                if r.below && r.p == BigInt::from(0) && r.q != BigInt::from(0) { return "-0.0".into(); }
                 let number = crate::value::as_binary(&r.p, &r.q);
                 if shortest { return crate::value::real_roundtrip(number); }
                 if number.is_nan() { "nan".into() } else if number == f64::INFINITY { "inf".into() }
