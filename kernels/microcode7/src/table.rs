@@ -961,6 +961,9 @@ impl Table {
                 }
             }
         }
+        if self.has_any("ext.builtin.exceptions.args") {
+            self.prims.remove("sys.exit");
+        }
         let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
         // The letter that marks an imaginary number is a letter of a
         // number and no word of the language: the scanner reads it

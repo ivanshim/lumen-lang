@@ -452,7 +452,9 @@
   "builtin.typeof": [
     "type"
   ],
-  "builtin.error": [],
+  "builtin.error": [
+    "sys.exit"
+  ],
   "builtin.extern": [],
   "builtin.range": [
     "range"

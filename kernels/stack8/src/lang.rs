@@ -2134,6 +2134,10 @@ impl Lang {
             }
         }
 
+        if r.head("ext.builtin.exceptions.args")?.is_some() {
+            natives.remove("sys.exit");
+        }
+
         let mut kind_names = Vec::new();
         for (tag, kind) in [
             ("system.kind.integer", Sort::Integer), ("system.kind.rational", Sort::Rational),
