@@ -5117,7 +5117,10 @@ impl<'a> Engine<'a> {
     /// value of a builtin kind answers to it as a member of its own.
     pub(super) fn native_place(&self, subject: &Value, name: &str) -> Option<usize> {
         let family = Self::native_family(subject)?;
-        if matches!(family, Kindred::Set(_)) && self.lang.constructor.as_deref() == Some(name) { return Some(usize::MAX); }
+        if self.lang.constructor.as_deref() == Some(name) {
+            if matches!(family, Kindred::Set(_)) { return Some(usize::MAX); }
+            if family == Kindred::Row { return Some(usize::MAX - 1); }
+        }
         let place = self.lang.class_special.iter().position(|word| word == name)?;
         Self::family_answers(family, place).then_some(place)
     }
@@ -5147,6 +5150,21 @@ impl<'a> Engine<'a> {
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' too.
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if place == usize::MAX - 1 {
+            if !named.is_empty() || args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let destination = Self::holding_cell(receiver);
+            let same = match (args.first(), &destination) {
+                (Some(source), Some(cell)) => {
+                    Self::holding_cell(source).map_or(false, |other| Rc::ptr_eq(&other, cell))
+                        || matches!((source.contents(), receiver.contents()), (Value::Array(a), Value::Array(b)) if Rc::ptr_eq(&a, &b))
+                }
+                _ => false,
+            };
+            if let Some(cell) = &destination { *cell.borrow_mut() = Value::array(Vec::new()); }
+            let members = if same { Vec::new() } else if let Some(source) = args.first() { self.special_items(source)? } else { Vec::new() };
+            if let Some(cell) = destination { *cell.borrow_mut() = Value::array(members); }
+            return Ok(Value::Null);
+        }
         if place == usize::MAX {
             let Value::Set(cell) = receiver.contents() else { return Err(self.special_fault()); };
             if cell.borrow().fixed { return Ok(Value::Null); }
@@ -5351,7 +5369,15 @@ impl<'a> Engine<'a> {
             };
         }
         let method = match self.special_value(value, place) {
-            None => return Ok(None), Some(Value::Routine(routine)) => routine,
+            None => return Ok(None),
+            Some(Value::Adapter(wrapped)) if wrapped.0 == 4 => {
+                return match self.class_apply(wrapped.1[0].clone(), args) {
+                    Ok(answer) => Ok(Some(answer)),
+                    Err(Fault::Note(words)) => Err(words),
+                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+                };
+            }
+            Some(Value::Routine(routine)) => routine,
             Some(member) => {
                 let Value::Object(object) = value else { return Err(self.special_fault()); };
                 let bound = self.bind_class_value(member, Some(value.clone()), object.class_now().clone());
@@ -5461,6 +5487,28 @@ impl<'a> Engine<'a> {
                 let whole = Value::Collection(cell, false);
                 let words = self.wording();
                 return Ok(if alike { whole.representation(&words) } else { self.render(std::slice::from_ref(&whole)) });
+            }
+            if matches!(&held, Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) {
+                if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+                    if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
+                }
+                self.reaching += 1;
+                let written = crate::value::members_once(&held, || {
+                    let mut words = Vec::new();
+                    let mut index = 0;
+                    loop {
+                        let next = match cell.borrow().clone().contents() {
+                            Value::Array(row) => row.get(index).cloned(),
+                            _ => None,
+                        };
+                        let Some(member) = next else { break };
+                        words.push(self.special_text(&member, true)?);
+                        index += 1;
+                    }
+                    Ok(format!("[{}]", words.join(", ")))
+                });
+                self.reaching -= 1;
+                return written;
             }
             return self.special_text(&held, representation || quoted);
         }
@@ -10813,7 +10861,7 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn write_slice(&self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
+    fn write_slice(&mut self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
         let given = collection_contents(&given);
         if let Value::Bytes(row, mutable, _) = &target {
             if !mutable { return Err(self.byte_fault("immutable")); }
@@ -10839,7 +10887,11 @@ impl<'a> Engine<'a> {
                 while let Some(held) = row.at(place.clone()) { places.push(held); place += 1; }
                 places
             }
-            _ => return Err(self.lang.slice_assign.clone().unwrap_or_default()),
+            _ => self.special_items(&given).map_err(|words| {
+                if words.contains("not iterable") || words.contains("not an iterable") {
+                    self.lang.slice_assign.clone().unwrap_or_default()
+                } else { words }
+            })?,
         };
         if step == 1 {
             Rc::make_mut(&mut items).splice(start..stop, replacement);
@@ -13380,6 +13432,17 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if builtin == Builtin::Replace && args.len() == 3
+            && matches!(self.key(&args[0]), Value::Slice(_))
+            && matches!(args[2], Value::Bond(_))
+            && !matches!(args[1].contents(), Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
+            let values = self.special_items(&args[1]).map_err(|words| {
+                if words.contains("not iterable") || words.contains("not an iterable") {
+                    self.lang.slice_assign.clone().unwrap_or_default()
+                } else { words }
+            })?;
+            args[1] = Value::array(values);
+        }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };
         let last = args.len().saturating_sub(1);
@@ -13393,7 +13456,8 @@ impl<'a> Engine<'a> {
                 // method spelled with its class before it, keeps its
                 // cell: a walk may then watch the map, and a value given
                 // to every key of a new map stays the one value.
-                if matches!(builtin, Builtin::Reversed | Builtin::ValueMethod) && matches!(held, Value::Map(_) | Value::Array(_)) { continue; }
+                if (matches!(builtin, Builtin::Reversed | Builtin::ValueMethod) && matches!(held, Value::Map(_) | Value::Array(_))
+                    || builtin == Builtin::Repr && matches!(&held, Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_))))) { continue; }
                 *value = held;
             }
         }
@@ -16337,6 +16401,8 @@ impl Engine<'_> {
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
                 if b == Builtin::InstanceOf && matches!(value, Value::View(_)) { continue; }
+                if b == Builtin::Repr && matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))
+                    && matches!(value.contents(), Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) { continue; }
                 *value = value.contents();
             }
         }

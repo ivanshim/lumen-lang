@@ -715,6 +715,9 @@ impl<'a> Engine<'a> {
                 Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }
+                Some(Builtin::List) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                    initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
+                }
                 Some(Builtin::Frozen) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
                 }
@@ -2080,7 +2083,7 @@ impl<'a> Engine<'a> {
             if let Some(word)=Self::own_kind(c) {
                 if name==self.class_word("allocate"){return self.class_apply(Self::adapter(14,vec![Value::text(&word)]),args);}
                 if self.lang.constructor.as_deref()==Some(name){
-                    if let Some(worth @ Value::Set(_)) = Self::worth_of(&subject) {
+                    if let Some(worth) = Self::worth_of(&subject).filter(|held| matches!(held.contents(), Value::Set(_) | Value::Array(_))) {
                         let mut given = Vec::new(); let mut named = Vec::new();
                         for (key, value) in self.call_items(args)? { match key { Some(key) => named.push((key, value)), None => given.push(value) } }
                         return Ok(self.value_method(&worth, name, given, named)?);
