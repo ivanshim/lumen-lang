@@ -6288,6 +6288,9 @@ impl<'a> Machine<'a> {
     }
 
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator")) {
+            return Err(format!("TypeError: cannot create '{}' instances", class.name).into());
+        }
         // A blueprint holding a program for being called answers the call
         // in place of a new thing.
         if let Some(answering) = self.table.single("ext.stmt.class.called").and_then(|word| self.inherited_entry(&class, word)) {
@@ -6804,8 +6807,8 @@ impl<'a> Machine<'a> {
         if let Value::Progression(walk) = &actual {
             if matches!(name, "index" | "count") {
                 if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
-                let along = Self::walk_position(walk, &arguments[0]);
-                if name == "count" { return Ok(Value::Small(if along.is_some() { 1 } else { 0 })); }
+                let (along, matches) = self.find_in_walk(walk, &arguments[0], name == "index")?;
+                if name == "count" { return Ok(Value::from_big(matches)); }
                 return match along {
                     Some(position) => Ok(Value::from_big(position)),
                     None => Err(self.walk_fault("ext.builtin.range.missing", Some(&arguments[0].quoted(false))).into()),
@@ -7033,12 +7036,37 @@ impl<'a> Machine<'a> {
     /// A worth that is no whole number lies nowhere, and so does one
     /// the stride passes over.
     fn walk_position(walk: &crate::data::Progression, worth: &Value) -> Option<BigInt> {
-        let whole = worth.as_big().ok().filter(|n| worth.equals(&Value::from_big(n.clone())))?;
+        let whole = match worth {
+            Value::Flag(bit) => BigInt::from(if *bit { 1 } else { 0 }),
+            Value::Small(n) => BigInt::from(*n),
+            Value::Huge(n) => (**n).clone(),
+            _ => return None,
+        };
         let forward = walk.stride > BigInt::from(0);
         let reached = if forward { whole >= walk.first && whole < walk.limit } else { whole <= walk.first && whole > walk.limit };
         let along = &whole - &walk.first;
         if !reached || &along % &walk.stride != BigInt::from(0) { return None; }
         Some(along / &walk.stride)
+    }
+
+    fn find_in_walk(&mut self, walk: &crate::data::Progression, item: &Value, stop_early: bool) -> Result<(Option<BigInt>, BigInt), String> {
+        if matches!(item, Value::Flag(_) | Value::Small(_) | Value::Huge(_)) {
+            let place = Self::walk_position(walk, item);
+            let amount = if place.is_some() { 1 } else { 0 };
+            return Ok((place, BigInt::from(amount)));
+        }
+        let mut place = BigInt::from(0);
+        let mut earliest = None;
+        let mut amount = BigInt::from(0);
+        while let Some(member) = walk.item(&place) {
+            if self.member_agrees(&member, item)? {
+                if earliest.is_none() { earliest = Some(place.clone()); }
+                amount += 1;
+                if stop_early { break; }
+            }
+            place += 1;
+        }
+        Ok((earliest, amount))
     }
 
     /// Which bound a name reads, where the table names the three.
@@ -10820,6 +10848,12 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Contains | Prim::Absent) {
+            if let [needle, Value::Progression(walk)] = v {
+                let present = self.find_in_walk(walk, needle, true)?.0.is_some();
+                return Ok(Value::Flag(present == (op == Prim::Contains)));
+            }
+        }
         if matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
             if let [first, second] = v {
                 let shape = Self::sequence_shape(first);
@@ -13103,17 +13137,7 @@ impl<'a> Machine<'a> {
                     other => other.clone(),
                 };
                 let present = match (&sought, &v[1]) {
-                    (needle, Value::Progression(sequence)) => {
-                        match needle.as_big().ok().filter(|whole| contained_equal(needle, &Value::from_big(whole.clone()))) {
-                            None => false,
-                            Some(whole) => {
-                                let offset = &whole - &sequence.first;
-                                let position = &offset / &sequence.stride;
-                                (&offset % &sequence.stride) == BigInt::from(0)
-                                    && position >= BigInt::from(0) && position < sequence.count()
-                            }
-                        }
-                    },
+                    (needle, Value::Progression(sequence)) => self.find_in_walk(sequence, needle, true)?.0.is_some(),
                     (needle, Value::Vector(hay) | Value::Tuple(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
                     (key, Value::Dict(entries)) => {
                         let placed = match key.hash_address() {
@@ -13693,8 +13717,8 @@ impl<'a> Machine<'a> {
                 total
             }
             Prim::Span if self.table.flag("ext.builtin.range.value") => {
-                let wrong = || self.argument_fault("ext.syntax.call.amiss", None);
-                if !(1..=3).contains(&v.len()) { return Err(wrong()); }
+                if v.is_empty() { return Err("TypeError: range expected at least 1 argument, got 0".to_string()); }
+                if v.len() > 3 { return Err(format!("TypeError: range expected at most 3 arguments, got {}", v.len())); }
                 let integer = |item: &Value| match item {
                     Value::Huge(big) => Ok((**big).clone()),
                     Value::Small(small) => Ok(BigInt::from(*small)),
@@ -13853,7 +13877,11 @@ impl<'a> Machine<'a> {
                     Value::Set(members) => Value::Small(members.borrow().keys.len() as i64),
                     Value::TextRow(words, _) => Value::Small(words.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
-                    Value::Progression(p) => Value::from_big(p.count()),
+                    Value::Progression(p) => {
+                        let size = p.count();
+                        if size > BigInt::from(i64::MAX) { return Err("OverflowError: Python int too large to convert to C ssize_t".to_string()); }
+                        Value::from_big(size)
+                    }
                     measureless => return Err(match self.table.strings("ext.builtin.core.unsized") {
                         [before, after] => format!("{}{}{}", before, measureless.kind_word(), after),
                         _ => format!("{}() requires a string or array argument", name),
