@@ -4565,7 +4565,10 @@ impl<'a> Engine<'a> {
     /// it is worth, exactly as `d[key]` finds them.
     fn dict_key_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>) -> Res<Value> {
         if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
-        if matches!(args[0].contents(), Value::Array(_) | Value::Map(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
+        // A key the kind cannot hold is refused by its own kind, the
+        // same complaint the subscript makes, rather than read as a
+        // count of arguments the call did not write.
+        if let Some(told) = self.unkeyable(&args[0]) { return Err(told); }
         let key = self.special_key(&args[0])?;
         let (store, found, keyed) = loop {
             let Value::Map(store) = receiver.contents() else { return Err(self.lang.method_errors["unready"].clone()); };
@@ -9450,7 +9453,7 @@ impl<'a> Engine<'a> {
     /// so it is no offence here. Nothing where the value may key one,
     /// or the definition has no words.
     fn unkeyable(&self, key: &Value) -> Option<String> {
-        let [before, after] = self.lang.map_unhashable.as_slice() else { return None };
+        let [before, middle, after] = self.lang.map_unhashable.as_slice() else { return None };
         fn offending(value: &Value) -> Option<String> {
             match value {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => offending(&cell.borrow()),
@@ -9461,7 +9464,11 @@ impl<'a> Engine<'a> {
                 _ => None,
             }
         }
-        offending(key).map(|kind| format!("\0{before}{kind}{after}"))
+        // The reference names the key itself for the mapping it cannot
+        // go in, and the unhashable thing found inside it for the kind
+        // that would not hash: `([1],)` is a tuple refused because a
+        // list lies within it.
+        offending(key).map(|inner| format!("\0{before}{}{middle}{inner}{after}", key.core_kind()))
     }
 
     /// The complaint for a key a map does not hold, told under the class

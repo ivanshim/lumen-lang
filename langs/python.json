@@ -3323,8 +3323,9 @@
     "RuntimeError: dictionary changed size during iteration"
   ],
   "ext.syntax.map.unhashable": [
-    "TypeError: unhashable type: '",
-    "'"
+    "TypeError: cannot use '",
+    "' as a dict key (unhashable type: '",
+    "')"
   ],
   "ext.syntax.map.value_keys": true,
   "ext.syntax.names.shadow_builtins": true,

@@ -3179,7 +3179,7 @@ impl<'a> Machine<'a> {
     /// do, or the table has no such words.
     fn cannot_key(&self, key: &Value) -> Option<String> {
         let words = self.table.strings("ext.syntax.map.unhashable");
-        let [head, tail] = words else { return None };
+        let [head, waist, tail] = words else { return None };
         fn culprit(value: &Value) -> Option<String> {
             match value {
                 Value::Mutable(cell, _) | Value::Shared(cell) => culprit(&cell.borrow()),
@@ -3190,7 +3190,10 @@ impl<'a> Machine<'a> {
                 _ => None,
             }
         }
-        culprit(key).map(|kind| format!("\0{head}{kind}{tail}"))
+        // The key's own kind comes first, for the mapping that cannot
+        // hold it, and the kind that would not hash second: a tuple
+        // holding a list is refused as a tuple because of the list.
+        culprit(key).map(|inner| format!("\0{head}{}{waist}{inner}{tail}", key.kind_word()))
     }
 
     /// The words for a key a map lacks, carried under the class the
@@ -10044,7 +10047,10 @@ impl<'a> Machine<'a> {
     /// plain int it is worth, exactly as `d[key]` finds them.
     fn dict_key_method(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>) -> Result<Value, String> {
         if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments")); }
-        if matches!(arguments[0].settled(), Value::Vector(_) | Value::Dict(_)) { return Err(self.method_fault("arguments")); }
+        // A key the kind cannot hold is turned away by its own kind,
+        // as the subscript turns it away, not read as a wrong count of
+        // arguments.
+        if let Some(words) = self.cannot_key(&arguments[0]) { return Err(words); }
         let hashed = self.hash_key(&arguments[0])?;
         let mut current = receiver.settled();
         let (pairs, found, keyed) = loop {
