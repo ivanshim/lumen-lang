@@ -73,7 +73,7 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
     // one value.
     if q.is_zero() {
         let places = places.unwrap_or(DEFAULT_PLACES);
-        return Value::Real(Rc::new(Real { floating: false, p: p.signum(), q, places, below: false, point: false }));
+        return Value::Real(Rc::new(Real { floating: false, p: p.signum(), q, places, below, point: false }));
     }
     if p.is_zero() {
         return match places {
@@ -341,7 +341,7 @@ pub fn binary_work(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value
     }
     if x.places.is_none() && y.places.is_none() { return None; }
     let binary = |v: &Value, e: &Exact| {
-        if matches!(v, Value::Real(r) if r.below && r.p.is_zero()) { -0.0 }
+        if matches!(v, Value::Real(r) if r.below && r.p.is_zero()) { if e.q.is_zero() { -f64::NAN } else { -0.0 } }
         else { crate::value::as_binary(&e.p, &e.q) }
     };
     let (left, right) = (binary(a, &x), binary(b, &y));
