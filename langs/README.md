@@ -4379,11 +4379,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complex.unready` | - | - | `NotImplementedError: this complex operation is not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.zero` | - | - | `ZeroDivisionError: complex division by zero` | - | - | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
+| `ext.builtin.core.abs.type` | - | - | `TypeError: bad operand type for abs(): '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.exact` | - | - | `TypeError: ` ` expected ` ` arguments, got ` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.one` | - | - | `TypeError: ` `() takes exactly one argument (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string, not '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.core.bool.declined` | - | - | `TypeError: NotImplemented should not be used in a boolean context` | - | - | - | - | - | - | - |
+| `ext.builtin.core.bytes.like` | - | - | `TypeError: a bytes-like object is required, not '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.core.chr.range` | - | - | `ValueError: chr() arg not in range(0x110000)` | - | - | - | - | - | - | - |
 | `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.changed` | - | - | `RuntimeError: dictionary changed size during iteration` `RuntimeError: dictionary keys changed during iteration` `RuntimeError: dict mutated during update` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
@@ -4401,6 +4405,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` `TypeError: unsupported operand type(s) for ** or pow(): '` `', '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
+| `ext.builtin.core.translate.table` | - | - | `ValueError: translation table must be 256 characters long` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uncallable` | - | - | `TypeError: '` `' object is not callable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unindexable` | - | - | `TypeError: '` `' object is not subscriptable` | - | - | - | - | - | - | - |
@@ -5473,6 +5478,12 @@ Frames are allocated on demand when an exception first records its location.
 `ext.stmt.class.detail.prepare` names the metaclass namespace preparation method.
 
 `ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.
+`ext.builtin.core.abs.type` names an unsupported magnitude operand;
+`ext.builtin.core.bool.declined` refuses boolean use of the comparison sentinel.
+
+`ext.builtin.core.chr.range` rejects out-of-range character ordinals.
+`ext.builtin.core.translate.table` and `ext.builtin.core.bytes.like` describe
+invalid byte translation tables and operands, respectively.
 
 `ext.lexical.escape.named.amiss` supplies the malformed named-character escape
 complaint, with two `{}` slots for its first and last byte positions. The

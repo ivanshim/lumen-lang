@@ -17,6 +17,7 @@ class _Writer:
     def __init__(self, slices, refuse):
         self.pieces = []
         self.memo = {}
+        self.kept = []
         self.slices = slices
         self.refuse = refuse
 
@@ -34,6 +35,7 @@ class _Writer:
         # Retain temporary reduction tuples until writing finishes: an
         # address alone can be reused for a different object meanwhile.
         self.memo[where] = (len(self.memo), value)
+        self.kept.append(value)
         return False
 
     def put(self, value):
