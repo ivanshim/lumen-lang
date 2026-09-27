@@ -5332,7 +5332,14 @@ impl<'a> Machine<'a> {
                             return Ok(Value::text(&filled));
                         }
                     }
-                    if self.has_class_order() && matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..)){let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
+                    if self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(called.as_str())) {
+                        let class = subject.settled();
+                        if matches!(class, Value::Blueprint(_) | Value::Intrinsic(Prim::AsReal, _)) {
+                            let member = self.read_class_member(class, &called, false)?;
+                            return self.apply_class_member(member, values);
+                        }
+                    }
+                    if self.has_class_order() && (matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.table.flag("ext.op.member.pipes") {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -6531,6 +6538,9 @@ impl<'a> Machine<'a> {
             && self.table.spells("ext.builtin.bytes.from_int", name) {
             return Some(Value::Member(Rc::new(value.clone()), "integer_bytes".into()));
         }
+        if matches!(value, Value::Intrinsic(Prim::AsReal, _)) && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
+            return Some(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
+        }
         if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
         // A walk over a routine's own body answers whether it is on the
         // way through the machine at this very moment: exactly when the
@@ -7029,6 +7039,34 @@ impl<'a> Machine<'a> {
             return self.value_of(&call, &self.outermost.clone());
         }
 
+        if name == "from_number" {
+            if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            let actual = Self::underlying(receiver).unwrap_or_else(|| receiver.settled());
+            if matches!(actual, Value::Text(_) | Value::Octets { .. } | Value::Complex(_)) {
+                return Err(format!("TypeError: float.from_number() argument must be a real number, not '{}'", receiver.kind_word()).into());
+            }
+            if let Some(index) = self.stood_for_whole(receiver)? {
+                return self.native_working(Prim::AsReal, "float", vec![index]);
+            }
+            return self.native_working(Prim::AsReal, "float", vec![receiver.clone()]);
+        }
+        if name == "float_from_number" {
+            if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+            let converted = self.value_member(&arguments[0], "from_number", Vec::new(), Vec::new())?;
+            return match receiver {
+                Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![converted]),
+                Value::Intrinsic(Prim::AsReal, _) => Ok(converted),
+                _ => Err(self.method_fault("arguments").into()),
+            };
+        }
+        if name == "float_fromhex" {
+            if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+            let number = self.value_member(&arguments[0], "fromhex", Vec::new(), Vec::new())?;
+            return match receiver {
+                Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![number]),
+                _ => Err(self.method_fault("arguments").into()),
+            };
+        }
         if name == "integer_size" {
             let loose = matches!(receiver, Value::Blueprint(_) | Value::Intrinsic(..));
             if !keywords.is_empty() || arguments.len() != usize::from(loose) { return Err(self.method_fault("arguments").into()); }
@@ -9761,9 +9799,12 @@ impl<'a> Machine<'a> {
         let b = near(&base)?;
         let e = near(&exponent)?;
         let fault = |label| self.table.single(label).unwrap_or_default().to_string();
-        if b == 0.0 && e < 0.0 { return Err(fault("ext.op.pow.zero")); }
+        if b == 0.0 && e < 0.0 && e.is_finite() { return Err(fault("ext.op.pow.zero")); }
         if b < 0.0 && b.is_finite() && e.is_finite() && e.trunc() != e {
-            return Err(fault("ext.op.pow.nonreal"));
+            let magnitude = b.abs().powf(e);
+            if magnitude.is_infinite() { return Err(fault("ext.op.pow.overflow")); }
+            let phase = e * std::f64::consts::PI;
+            return Ok(Some(crate::complex::pair(self.table, magnitude * phase.cos(), magnitude * phase.sin())));
         }
         let result = b.powf(e);
         if b.is_finite() && e.is_finite() && result.is_infinite() {
@@ -14673,12 +14714,21 @@ impl<'a> Machine<'a> {
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
                 self.at_width(math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?)
             }
+            Prim::AsReal if matches!(v, [Value::Octets { .. }]) => {
+                let original = v[0].representation(self.wording());
+                let Value::Octets { cell, .. } = &v[0] else { unreachable!() };
+                let bytes = cell.borrow();
+                let source = std::str::from_utf8(&bytes).ok().filter(|s| s.is_ascii())
+                    .ok_or_else(|| format!("ValueError: could not convert string to float: {original}"))?;
+                return self.prim(Prim::AsReal, name, &[Value::text(source)])
+                    .map_err(|_| format!("ValueError: could not convert string to float: {original}"));
+            }
             Prim::AsReal => {
                 n(1)?;
                 match &v[0] {
                     x @ Value::Frac(e) if e.places.is_some() => x.clone(),
                     x => {
-                        let exact = math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                        let exact = math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("TypeError: float() argument must be a string or a real number, not '{}'", x.kind_word()))?;
                         if let Value::Frac(e) = &exact {
                             if !e.above.is_zero() && crate::data::nearest_binary(&e.above, &e.beneath).is_infinite() {
                                 return Err("OverflowError: int too large to convert to float".to_string());

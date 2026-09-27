@@ -708,6 +708,9 @@ impl<'a> Machine<'a> {
             (None,Some(word))=>{
                 let initial = match self.table.prims.get(word) {
                     Some(Prim::Uniques) => Vec::new(),
+                    Some(Prim::AsReal) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => {
+                        self.open_arguments(given.clone())?.0.into_iter().take(1).collect()
+                    },
                     Some(Prim::Unchanging) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     _ => given.clone(),
                 };
@@ -1207,6 +1210,9 @@ impl<'a> Machine<'a> {
         }
         // A native kind's word read as a class: its maker, and its name.
         if let Value::Intrinsic(op,word)=&value {
+            if *op == Prim::AsReal && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
+                return Ok(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
+            }
             if Self::names_a_kind(op) {
                 if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
@@ -1238,6 +1244,12 @@ impl<'a> Machine<'a> {
                     if Self::native_beneath(b).is_none() { bits |= 4; }
                 }
                 return Ok(Value::Small(bits));
+            }
+            if (Self::native_word(b).as_deref() == Some("float") || Self::native_beneath(b).as_deref() == Some("float")) && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
+                return Ok(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
+            }
+            if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
+                return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
             }
             if key==self.detail("name"){return Ok(Value::text(&b.name));}
             if key==self.detail("qualified"){return Ok(self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name)));}

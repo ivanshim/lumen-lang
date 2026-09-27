@@ -154,7 +154,7 @@ impl Request<'_> {
             return Ok(Value::from_big(whole));
         }
         if self.operation=="as_integer_ratio"{
-            let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(_)=>return Err(self.fail("unready")),other=>(other.as_big()?,BigInt::from(1))};
+            let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(r)=>return Err(if r.above.is_zero() { String::from("ValueError: cannot convert NaN to integer ratio") } else { String::from("OverflowError: cannot convert Infinity to integer ratio") }),other=>(other.as_big()?,BigInt::from(1))};
             let mut divisor=pair.0.abs();let mut remainder=pair.1.clone();
             while !remainder.is_zero(){let next=&divisor%&remainder;divisor=remainder;remainder=next;}
             // The two whole numbers are handed back as a tuple, which
@@ -507,21 +507,16 @@ fn read_hex_real(spelling:&str)->Option<f64>{
     let lowered=spelling.trim().to_ascii_lowercase();
     let (sign,rest)=if let Some(r)=lowered.strip_prefix('-'){(-1.0,r)}else{(1.0,lowered.strip_prefix('+').unwrap_or(&lowered))};
     if rest=="inf"||rest=="infinity"{return Some(sign*f64::INFINITY);}
-    if rest=="nan"{return Some(f64::NAN);}
+    if rest=="nan"{return Some(sign*f64::NAN);}
     let rest=rest.strip_prefix("0x").unwrap_or(rest);
     let (figures,power)=match rest.split_once('p'){Some((f,p))=>(f,p.parse::<i64>().ok()?),None=>(rest,0)};
     let (before,after)=figures.split_once('.').unwrap_or((figures,""));
     if before.is_empty()&&after.is_empty(){return None;}
-    let mut worth=0f64;
-    for c in before.chars(){worth=worth*16.0+f64::from(c.to_digit(16)?);}
-    let mut place=1.0/16.0;
-    for c in after.chars(){worth+=f64::from(c.to_digit(16)?)*place;place/=16.0;}
-    let mut remaining=power;
-    // Nothing comes of doubling a worth of nothing, so it halts the
-    // climb the way a worth beyond the numbers does. Otherwise a power
-    // of eighteen figures written against a zero is counted down one
-    // step at a time to arrive back at the zero it started from.
-    while remaining>0&&worth.is_finite()&&worth!=0.0{worth*=2.0;remaining-=1;}
-    while remaining<0&&worth!=0.0{worth/=2.0;remaining+=1;}
-    Some(sign*worth)
+    if !before.chars().chain(after.chars()).all(|digit| digit.is_ascii_hexdigit()){return None;}
+    unsafe extern "C" {
+        fn strtod(source:*const std::ffi::c_char, tail:*mut *mut std::ffi::c_char)->f64;
+    }
+    let normalized=std::ffi::CString::new(format!("0x{figures}p{power}")).ok()?;
+    let binary=unsafe{strtod(normalized.as_ptr(),std::ptr::null_mut())};
+    Some(sign*binary)
 }

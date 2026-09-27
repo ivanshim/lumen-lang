@@ -1177,7 +1177,7 @@ impl Value {
             // table asks the shortest spelling, and in the library's own
             // spelling elsewhere.
             Value::Frac(e) if e.float_style && !w.brief_reals => {
-                let number = if !e.beneath.is_zero() && e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
+                let number = if e.under && e.above.is_zero() && !e.past_numbers() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
                 format!("{number:?}").to_lowercase()
             }
             Value::Frac(e) if w.brief_reals && e.places.is_some() => decimal_roundtrip(if e.under && e.above.is_zero() && !e.past_numbers() { -0.0 } else { nearest_binary(&e.above, &e.beneath) }),
@@ -1764,7 +1764,7 @@ pub fn past_the_numbers(x: f64, figures: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Frac(Rc::new(Ratio { float_style: false, above, beneath: BigInt::zero(), places: Some(figures), under: x.is_sign_negative(), pointed: false }))
+    Value::Frac(Rc::new(Ratio { float_style: false, above, beneath: BigInt::zero(), places: Some(figures), under: x.is_nan() && x.is_sign_negative(), pointed: false }))
 }
 
 /// What a binary real is worth, held as a ratio: so many halves,
@@ -1804,6 +1804,7 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize, brief: boo
     if brief {
         return match &v {
             Value::Frac(r) if r.places.is_some() => {
+                if r.past_numbers() { return v; }
                 let mut worth = rounded_binary(&r.above, &r.beneath);
                 if r.under && (worth == 0.0 || worth.is_nan()) { worth = -worth; }
                 worth_of_binary(worth, figures).keeping_point(r.pointed)
@@ -1815,6 +1816,7 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize, brief: boo
         return v;
     }
     let Value::Frac(e) = &v else { return v };
+    if e.past_numbers() { return v; }
     let rounded = nearest_binary(&e.above, &e.beneath);
     match binary_worth(rounded) {
         // A nought under nought holds its minus at any width.

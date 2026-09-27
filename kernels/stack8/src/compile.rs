@@ -9117,6 +9117,19 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+            if member && lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(named.as_str())) {
+                self.constant(Value::text(&named));
+                self.act(Action::Builtin(Builtin::ClassTool(3), Rc::from("getattr")), 2);
+                if let Some(brackets) = &call {
+                    let method = self.gensym("float_method");
+                    self.write(&method);
+                    self.take();
+                    let argc = self.arguments_of(&named, brackets)?;
+                    self.read(&method);
+                    self.act(Action::Invoke(Rc::from(named.as_str())), argc + 1);
+                }
+                continue;
+            }
             let mut beyond = self.pos;
             while lang.grouping.as_ref().map_or(false, |pair| self.tokens[beyond].is_lexeme(Shape::Sign, &pair.close)) {
                 beyond += 1;

@@ -4939,6 +4939,9 @@ impl<'a> Engine<'a> {
             }
             if self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
         }
+        if matches!(held, Value::Native(Builtin::AsReal, _)) && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
+            return Ok(Some(Value::ValueMethod(Rc::new((held.clone(), "float_from_number".to_string())))));
+        }
         if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
         if matches!(held, Value::Codepoints(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(_))) {
             return Ok(Some(Value::ValueMethod(Rc::new((held, name.to_string())))));
@@ -6863,6 +6866,11 @@ impl<'a> Engine<'a> {
         }
         if self.fuller_classes() {
             let result = match op {
+                Action::Grab(name) if self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name.as_ref()))
+                    && self.data.last().map_or(false, |value| matches!(value.contents(), Value::Class(_) | Value::Native(Builtin::AsReal, _))) => {
+                    let class = self.drop_top()?.contents();
+                    Some(self.class_get(class, name, false)?)
+                },
                 Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf, _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
@@ -8388,6 +8396,15 @@ impl<'a> Engine<'a> {
                         let args = self.call_items(args)?;
                         let filled = self.filled_template(&text, &args)?;
                         self.data.push(Value::text(&filled));
+                        return Ok(());
+                    }
+                }
+                if self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
+                    let class = subject.contents();
+                    if matches!(class, Value::Class(_) | Value::Native(Builtin::AsReal, _)) {
+                        let member = self.class_get(class, name, false)?;
+                        let answer = self.class_apply(member, args)?;
+                        self.data.push(answer);
                         return Ok(());
                     }
                 }
@@ -10313,9 +10330,12 @@ impl<'a> Engine<'a> {
             Ok(bound)
         };
         let (left, right) = (binary(&a, &x)?, binary(&b, &y)?);
-        if left == 0.0 && right < 0.0 { return Err(self.lang.power_zero[0].clone()); }
+        if left == 0.0 && right < 0.0 && right.is_finite() { return Err(self.lang.power_zero[0].clone()); }
         if left.is_finite() && left < 0.0 && right.is_finite() && right.fract() != 0.0 {
-            return Err(self.lang.power_nonreal[0].clone());
+            let radius = left.abs().powf(right);
+            if radius.is_infinite() { return Err(self.lang.power_overflow[0].clone()); }
+            let angle = std::f64::consts::PI * right;
+            return Ok(Some(crate::complex::made(self.lang, radius * angle.cos(), radius * angle.sin())));
         }
         let raised = left.powf(right);
         if raised.is_infinite() && left.is_finite() && right.is_finite() {
@@ -11781,6 +11801,40 @@ impl<'a> Engine<'a> {
                 Ok(value) => Ok(value), Err(Fault::Note(words)) => Err(words),
                 Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
             };
+        }
+        if operation == "from_number" {
+            if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            let actual = Self::worth_of(receiver).unwrap_or_else(|| receiver.contents());
+            if matches!(actual, Value::Text(_) | Value::Bytes(..) | Value::Complex(_)) {
+                return Err(format!("TypeError: float.from_number() argument must be a real number, not '{}'", receiver.core_kind()));
+            }
+            if let Some(index) = self.special_index(receiver)? {
+                return self.builtin_call(Builtin::AsReal, "float", vec![(None, index)]);
+            }
+            return self.builtin_call(Builtin::AsReal, "float", vec![(None, receiver.clone())]);
+        }
+        if operation == "float_from_number" {
+            if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let converted = self.value_method(&args[0], "from_number", Vec::new(), Vec::new())?;
+            return match receiver {
+                Value::Class(class) => self.class_make(class.clone(), vec![converted]).map_err(|fault| match fault {
+                    Fault::Note(message) => message,
+                    raised => { self.carried = Some(raised); String::new() },
+                }),
+                Value::Native(Builtin::AsReal, _) => Ok(converted),
+                _ => Err(self.lang.method_errors["arguments"].clone()),
+            };
+        }
+        if operation == "float_fromhex" {
+            if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let parsed = self.value_method(&args[0], "fromhex", Vec::new(), Vec::new())?;
+            if let Value::Class(class) = receiver {
+                return self.class_make(class.clone(), vec![parsed]).map_err(|fault| match fault {
+                    Fault::Note(message) => message,
+                    raised => { self.carried = Some(raised); String::new() },
+                });
+            }
+            return Err(self.lang.method_errors["arguments"].clone());
         }
         if operation == "integer_size" {
             if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -14505,6 +14559,14 @@ impl<'a> Engine<'a> {
                 let widened = match arith::to_real(&number, arith::DEFAULT_PLACES) { Some(w) => w, None => return Err(amiss(self, &args[0])) };
                 self.at_real_width(widened)
             }
+            Builtin::AsReal if matches!(args.as_slice(), [Value::Bytes(..)]) => {
+                let Value::Bytes(row, ..) = &args[0] else { unreachable!() };
+                let raw = row.borrow();
+                let bad = || format!("ValueError: could not convert string to float: {}", args[0].representation(&sp));
+                let source = std::str::from_utf8(&raw).ok().filter(|s| s.is_ascii()).ok_or_else(bad)?;
+                let mut forwarded = vec![Value::text(source)];
+                return self.builtin(Builtin::AsReal, name, &mut forwarded).map_err(|_| bad());
+            }
             Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
                 let Value::Flag(b) = args[0] else { unreachable!() };
                 arith::to_real(&Value::Small(i64::from(b)), arith::DEFAULT_PLACES).unwrap()
@@ -14514,7 +14576,7 @@ impl<'a> Engine<'a> {
                 match &args[0] {
                     v @ Value::Real(_) => v.clone(),
                     v => {
-                        let exact = arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                        let exact = arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("TypeError: float() argument must be a string or a real number, not '{}'", v.core_kind()))?;
                         if let Value::Real(r) = &exact {
                             if !r.p.is_zero() && crate::value::as_binary(&r.p, &r.q).is_infinite() {
                                 return Err("OverflowError: int too large to convert to float".to_string());
