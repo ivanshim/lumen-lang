@@ -7,7 +7,8 @@ for p in progs:
     for k in ("stack8", "microcode7"):
         t0 = time.time()
         try:
-            r = subprocess.run([str(binary), "--kernel", k, str(py)], capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
+            cap = 2400 if p == "reader-tail/4" else 900
+            r = subprocess.run([str(binary), "--kernel", k, str(py)], capture_output=True, text=True, timeout=cap, stdin=subprocess.DEVNULL)
             status, so, se = r.returncode, r.stdout, r.stderr
         except subprocess.TimeoutExpired:
             status, so, se = 124, "", "TIMEOUT"

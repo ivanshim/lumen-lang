@@ -5928,6 +5928,12 @@ impl<'a> Engine<'a> {
             let opened = |v: &Value| if matches!(v, Value::Collection(..) | Value::Bond(_)) { v.contents() } else { v.clone() };
             return self.special_dyad(op, &opened(a), &opened(b));
         }
+        if matches!(op, Action::Contains | Action::Lacks) {
+            if let Value::Counted(row) = b {
+                let present = self.range_scan(row, a, true)?.0.is_some();
+                return Ok(Value::Flag(present == matches!(op, Action::Contains)));
+            }
+        }
         // Two slices are alike when their bounds are, each pair asked
         // as the program would ask it; a slice is always its own equal.
         if let ((Value::Slice(x), Value::Slice(y)), true) = ((a, b), matches!(op, Action::Eq | Action::Ne)) {
@@ -9954,12 +9960,7 @@ impl<'a> Engine<'a> {
                     other => other.clone(),
                 };
                 let found = match b {
-                    Value::Counted(range) => a.as_big().ok().filter(|n| Self::member_matches(a, &Value::of_big(n.clone()))).map_or(false, |n| {
-                        let delta = &n - &range.start;
-                        let inside = if range.step > BigInt::from(0) { n >= range.start && n < range.stop }
-                            else { n <= range.start && n > range.stop };
-                        inside && delta % &range.step == BigInt::from(0)
-                    }),
+                    Value::Counted(range) => Self::range_place(range, a).is_some(),
                     Value::Array(items) | Value::Tuple(items) => items.iter().any(|v| Self::member_matches(a, v)),
                     Value::Map(items) => {
                         // A value that could be no key of a map is in no
@@ -11451,10 +11452,34 @@ impl<'a> Engine<'a> {
     /// place, or nowhere. A worth that is no whole number stands
     /// nowhere, and neither does one the stride steps over.
     fn range_place(row: &crate::value::Counted, worth: &Value) -> Option<BigInt> {
-        let whole = worth.as_big().ok().filter(|n| Self::member_matches(worth, &Value::of_big(n.clone())))?;
+        let whole = match worth {
+            Value::Small(n) => BigInt::from(*n),
+            Value::Huge(n) => (**n).clone(),
+            Value::Flag(b) => BigInt::from(i64::from(*b)),
+            _ => return None,
+        };
         let inside = if row.step > BigInt::from(0) { whole >= row.start && whole < row.stop } else { whole <= row.start && whole > row.stop };
         let away = &whole - &row.start;
         (inside && &away % &row.step == BigInt::from(0)).then(|| away / &row.step)
+    }
+
+    fn range_scan(&mut self, row: &crate::value::Counted, needle: &Value, first_only: bool) -> Res<(Option<BigInt>, BigInt)> {
+        if matches!(needle, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+            let found = Self::range_place(row, needle);
+            return Ok((found.clone(), BigInt::from(u8::from(found.is_some()))));
+        }
+        let mut offset = BigInt::from(0);
+        let mut first = None;
+        let mut matches = BigInt::from(0);
+        while let Some(item) = row.at(offset.clone()) {
+            if self.sequence_equal_item(&item, needle)? {
+                if first.is_none() { first = Some(offset.clone()); }
+                matches += 1;
+                if first_only { break; }
+            }
+            offset += 1;
+        }
+        Ok((first, matches))
     }
 
     /// Which bound a name reads, where the definition names them.
@@ -12016,8 +12041,8 @@ impl<'a> Engine<'a> {
         if let Value::Counted(row) = &contents {
             if matches!(operation, "index" | "count") {
                 if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
-                let place = Self::range_place(row, &args[0]);
-                if operation == "count" { return Ok(Value::Small(i64::from(place.is_some()))); }
+                let (place, total) = self.range_scan(row, &args[0], operation == "index")?;
+                if operation == "count" { return Ok(Value::of_big(total)); }
                 return match place {
                     Some(at) => Ok(Value::of_big(at)),
                     None => Err(self.range_fault(&self.lang.range_missing, &args[0].core_repr(false))),
@@ -14478,7 +14503,8 @@ impl<'a> Engine<'a> {
                 total
             }
             Builtin::Span if self.lang.range_value => {
-                if args.is_empty() || args.len() > 3 { return Err(self.lang.call_amiss[0].clone()); }
+                if args.is_empty() { return Err("TypeError: range expected at least 1 argument, got 0".to_string()); }
+                if args.len() > 3 { return Err(format!("TypeError: range expected at most 3 arguments, got {}", args.len())); }
                 let mut bounds = Vec::new();
                 for v in args.iter() {
                     bounds.push(match v {
@@ -14596,7 +14622,11 @@ impl<'a> Engine<'a> {
                     Value::Set(s) => Value::Small(s.borrow().held.len() as i64),
                     Value::Words(items, _) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
-                    Value::Counted(r) => Value::of_big(r.length()),
+                    Value::Counted(r) => {
+                        let length = r.length();
+                        if length > BigInt::from(i64::MAX) { return Err("OverflowError: Python int too large to convert to C ssize_t".to_string()); }
+                        Value::of_big(length)
+                    }
                     other => return Err(match self.lang.core_words.get("core.unsized").map(Vec::as_slice) {
                         Some(words @ [_, _]) => Self::named_fault(words, &other.core_kind()),
                         _ => format!("{}() requires a string or array argument", name),

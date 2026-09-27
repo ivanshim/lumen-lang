@@ -681,6 +681,9 @@ impl<'a> Engine<'a> {
     /// Making a thing of a class. A class made by a metaclass is called
     /// through that metaclass's own call, which decides what comes of it.
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
+            return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
+        }
         if let Some(maker) = Self::maker_beneath(&c) {
             if let Some(f) = self.class_value(&maker, self.class_word("call")) {
                 let mut given = vec![Value::Class(c)];

@@ -18,6 +18,7 @@ build (`RUSTFLAGS="-D warnings" cargo build`). None of them edits a test.
 Copy the binary aside (`cp target/debug/lumen-lang /tmp/bin-<sha>`) before
 a long run, and never rebuild a tree while a check runs on its binary.
 `scratch/reader-tail/4.py` (`test_set`) takes 10–40 minutes per kernel;
-run it alone with a long cap rather than inside a sweep.
+run it alone with `SUITE_JOBS=1`. The checkers give this fixture a 2,400 s cap;
+other programs keep the 900 s cap.
 
 `worker-brief.md` is the template for a worker's brief.
