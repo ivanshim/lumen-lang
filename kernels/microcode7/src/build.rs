@@ -1880,16 +1880,17 @@ impl<'a> Builder<'a> {
                     else if !self.naming.is_empty() { Some("inside functions") }
                     else if self.syntax_try_nesting != 0 { Some("inside try/except blocks") }
                     else { None };
+                let words = self.tokens[self.pos..].iter().take_while(|token|
+                    !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) && token.lexeme != ";").collect::<Vec<_>>();
+                let terminal = words.last().copied().unwrap_or(self.look());
                 if let Some(place) = disallowed {
+                    self.range_end = Some((if terminal.end_column == 0 { terminal.column + terminal.lexeme.chars().count() } else { terminal.end_column }, terminal.end_row.max(terminal.row)));
                     let kind = if from { "from ... import" } else { "import" };
                     return Err(format!("SyntaxError: lazy {kind} not allowed {place}"));
                 }
-                if from {
-                    let star = self.tokens[self.pos..].iter().take_while(|word| !matches!(word.shape, Shape::LineEnd | Shape::Close | Shape::Finish))
-                        .map(|word| word.lexeme.as_str()).collect::<Vec<_>>();
-                    if star.windows(2).any(|words| words == ["import", "*"]) {
-                        return Err("SyntaxError: lazy from ... import * is not allowed".to_owned());
-                    }
+                if from && words.windows(2).any(|pair| pair[0].lexeme == "import" && pair[1].lexeme == "*") {
+                    self.range_end = Some((if terminal.end_column == 0 { terminal.column + terminal.lexeme.chars().count() } else { terminal.end_column }, terminal.end_row.max(terminal.row)));
+                    return Err("SyntaxError: lazy from ... import * is not allowed".to_owned());
                 }
             }
             let outer = self.key("ext.stmt.global");

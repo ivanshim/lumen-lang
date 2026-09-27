@@ -1683,14 +1683,20 @@ impl<'a> Compiler<'a> {
                     else if !self.piece().outermost { Some("inside functions") }
                     else if self.syntax_try_nesting > 0 { Some("inside try/except blocks") }
                     else { None };
+                let statement = self.tokens[self.pos..].iter()
+                    .take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) && t.lexeme != ";")
+                    .collect::<Vec<_>>();
+                let last = statement.last().copied().unwrap_or(self.look());
+                let end = (last.end_row.max(last.row), if last.end_column == 0 { last.column + last.lexeme.chars().count() } else { last.end_column });
                 if let Some(place) = complaint {
+                    self.registry.stopped_end_row = end.0;
+                    self.registry.stopped_end = end.1;
                     return Err(format!("SyntaxError: lazy {} not allowed {place}", if from { "from ... import" } else { "import" }));
                 }
-                if from {
-                    let tail = self.tokens[self.pos..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish));
-                    if tail.map(|t| t.lexeme.as_str()).collect::<Vec<_>>().windows(2).any(|pair| pair == ["import", "*"]) {
-                        return Err("SyntaxError: lazy from ... import * is not allowed".into());
-                    }
+                if from && statement.windows(2).any(|pair| pair[0].lexeme == "import" && pair[1].lexeme == "*") {
+                    self.registry.stopped_end_row = end.0;
+                    self.registry.stopped_end = end.1;
+                    return Err("SyntaxError: lazy from ... import * is not allowed".into());
                 }
             }
             let global = Lang::spells(&lang.global_words, &word);
