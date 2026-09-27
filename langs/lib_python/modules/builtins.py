@@ -378,6 +378,7 @@ class _HostFile:
         if not (reading or writing or appending):
             reading = True
         if writing:
+            self._dirty = True
             if _host_file_exists(name) and _host_file_kind(name) == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
             self._buffer = ''
