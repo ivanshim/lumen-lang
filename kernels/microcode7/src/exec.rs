@@ -2526,10 +2526,13 @@ impl<'a> Machine<'a> {
         let Some(program) = self.frames_named.last() else {
             return (Vec::new(), Env::make(0, under));
         };
-        let apart = |held: &Value| match held {
-            Value::Shared(cell) => Value::Shared(Rc::new(RefCell::new(cell.borrow().clone()))),
-            other => other.clone(),
-        };
+        // A name the routine keeps in a cell is lent to the text as the
+        // same cell, not a copy: a write the text makes through one --
+        // into a row or a map the name stands for -- is one the routine
+        // sees afterwards, as the reference has it. A name the text
+        // binds anew is still the text's alone, since binding writes the
+        // frame's slot rather than anything the slot holds.
+        let apart = |held: &Value| held.clone();
         let mut names = program.idents.clone();
         let mut cells: Vec<Value> = frame.cells.borrow().iter().map(apart).collect();
         cells.resize(names.len(), Value::Unset);
