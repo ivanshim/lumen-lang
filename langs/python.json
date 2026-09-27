@@ -2338,7 +2338,7 @@
     "ZeroDivisionError: float floor division by zero"
   ],
   "ext.op.quot.zero": [
-    "ZeroDivisionError: integer division or modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"

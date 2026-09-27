@@ -2031,6 +2031,9 @@ impl<'a> Engine<'a> {
                     for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
                         if let Some(w)=words.first() { names.push(w.clone()); }
                     }
+                    for word in [self.lang.trace_fields.get(14).cloned(), self.lang.trace_fields.get(15).cloned()] {
+                        if let Some(w)=word { if !w.is_empty() { names.push(w); } }
+                    }
                     names.sort();names.dedup();
                     return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
                 }
