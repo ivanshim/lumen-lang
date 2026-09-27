@@ -6487,6 +6487,14 @@ impl<'a> Engine<'a> {
             }
         }
         if changed && !settled.iter().any(|v| (if writes { Self::holds_object(v) } else { Self::argument_holds_object(v) }) || matches!(v, Value::Walk(_))) {
+            // A thing over a real that is not a number hashes as itself,
+            // the way CPython's own hash of a NaN does, and not as the
+            // worth that stood in for it here.
+            if op == Builtin::Hash && args.len() == 1 && matches!(&args[0], Value::Object(_)) {
+                if let (Value::Object(object), Some(worth)) = (&args[0], Self::worth_of(&args[0])) {
+                    if matches!(&worth, Value::Real(r) if r.no_number()) { return Ok(Some(Value::Small(object.mark as i64))); }
+                }
+            }
             let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
             let answer = self.builtin(op, &word, &mut settled)?;
             // A walk over a thing's worth keeps the thing, as the
@@ -6523,14 +6531,32 @@ impl<'a> Engine<'a> {
                 let place = match op { Builtin::ToInt => 38, Builtin::AsReal => 39, _ => 40 };
                 match self.special_call(&args[0], place, Vec::new())? {
                     Some(answer) => {
-                        let answer = if op == Builtin::AsReal {
-                            Self::worth_of(&answer).unwrap_or(answer).contents()
-                        } else { answer };
-                        if op == Builtin::AsReal && !matches!(answer, Value::Real(_) | Value::Frac(_)) {
-                            return Err(self.special_fault());
+                        if op == Builtin::AsReal {
+                            // A __float__ handing back a float subclass rather
+                            // than a plain float is deprecated from 3.14 on.
+                            if matches!(&answer, Value::Object(_))
+                                && Self::worth_of(&answer).map_or(false, |w| matches!(w.contents(), Value::Real(_) | Value::Frac(_))) {
+                                let class_name = |v: &Value| match v { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind().to_string() };
+                                let message = format!("{}.__float__ returned non-float (type {}).  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.", class_name(&args[0]), class_name(&answer));
+                                self.say_deprecation(&message)?;
+                            }
+                            let answer = Self::worth_of(&answer).unwrap_or(answer).contents();
+                            if !matches!(answer, Value::Real(_) | Value::Frac(_)) {
+                                return Err(self.special_fault());
+                            }
+                            return Ok(Some(answer));
                         }
                         answer
                     }
+                    // Without a __float__, a thing standing for a whole
+                    // number is that number widened to a real.
+                    None if op == Builtin::AsReal => match self.special_index(&args[0])? {
+                        Some(index) => {
+                            let word = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::AsReal).map(|(w, _)| w.clone()).unwrap_or_default();
+                            return self.builtin(Builtin::AsReal, &word, &mut vec![index]).map(Some);
+                        }
+                        None => return Ok(None),
+                    },
                     None => return Ok(None),
                 }
             }
@@ -14686,6 +14712,9 @@ impl<'a> Engine<'a> {
                     Some(joined) => joined,
                     None => return Err(amiss(self, &args[0])),
                 };
+                // CPython reads the decimal figures of any script, and
+                // any whitespace, as their ASCII kin before it parses.
+                let text = ascii_numeric_text(&text);
                 let text = &text;
                 let plain = text.trim().to_ascii_lowercase();
                 let unsigned = plain.strip_prefix(['+', '-']).unwrap_or(&plain);
@@ -14713,6 +14742,12 @@ impl<'a> Engine<'a> {
             Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
                 let Value::Flag(b) = args[0] else { unreachable!() };
                 arith::to_real(&Value::Small(i64::from(b)), arith::DEFAULT_PLACES).unwrap()
+            }
+            // A text kept apart as bare code points (an unpaired surrogate,
+            // say) stands for a string that no floating point reader can
+            // take, which CPython reports as a broken string.
+            Builtin::AsReal if matches!(args.first(), Some(Value::Codepoints(_))) => {
+                return Err(format!("ValueError: could not convert string to float: {}", args[0].representation(&sp)));
             }
             Builtin::AsReal => {
                 arity(1)?;
@@ -17934,6 +17969,32 @@ impl Engine<'_> {
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
 
+    /// A deprecation warning said through the reference's warnings
+    /// module, so a filter or a recording the program put in the way
+    /// sees it. The route is the one the throw() wording already takes.
+    fn say_deprecation(&mut self, message: &str) -> Res<()> {
+        let notice = self.lang.yield_throw_warning.clone();
+        if notice.len() != 4 { return Ok(()); }
+        let module = match self.import_module(&notice[0]) {
+            Ok(module) => module,
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+        };
+        let warn = match self.import_member(&module, &notice[0], &notice[1]) {
+            Ok(warn) => warn,
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+        };
+        let Some(category) = self.native_exceptions.get(&notice[2]).cloned() else { return Ok(()); };
+        let file = Value::text(&self.source);
+        let line = Value::Small(self.line as i64);
+        match self.class_apply(warn, vec![Value::text(message), category, file, line]) {
+            Ok(_) => Ok(()),
+            Err(Fault::Note(told)) => Err(told),
+            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+        }
+    }
+
     /// A warning the reading noted about how a compiled text is
     /// written, said through the reference's warnings module, so that
     /// a filter the program set is honoured. One turning the warning
@@ -18242,6 +18303,17 @@ impl Engine<'_> {
 }
 #[path = "classes.rs"]
 mod classes;
+
+/// The same text with every decimal figure of any script written as the
+/// ASCII one, and every whitespace as a plain space, which is the shape
+/// CPython gives a string before it reads a number out of it.
+fn ascii_numeric_text(text: &str) -> String {
+    text.chars().map(|c| match unicode_decimal_digit(c) {
+        Some(digit) => char::from_digit(digit, 10).unwrap_or(c),
+        None if c.is_whitespace() => ' ',
+        None => c,
+    }).collect()
+}
 
 fn unicode_decimal_digit(character: char) -> Option<u32> {
     const ZEROES: &[u32] = &[0x30,0x660,0x6f0,0x7c0,0x966,0x9e6,0xa66,0xae6,0xb66,0xbe6,0xc66,0xce6,0xd66,0xde6,0xe50,0xed0,0xf20,0x1040,0x1090,0x17e0,0x1810,0x1946,0x19d0,0x1a80,0x1a90,0x1b50,0x1bb0,0x1c40,0x1c50,0xa620,0xa8d0,0xa900,0xa9d0,0xa9f0,0xaa50,0xabf0,0xff10,0x104a0,0x10d30,0x11066,0x110f0,0x11136,0x111d0,0x112f0,0x11450,0x114d0,0x11650,0x116c0,0x11730,0x118e0,0x11950,0x11c50,0x11d50,0x11da0,0x11f50,0x16a60,0x16ac0,0x16b50,0x1d7ce,0x1e140,0x1e2f0,0x1e4f0,0x1e950,0x1fbf0];

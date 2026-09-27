@@ -3273,6 +3273,23 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A deprecation warning said through the reference's warnings
+    /// module, so a filter or a recording the program put in the way
+    /// sees it. The route is the one the throw() wording already takes.
+    fn say_deprecation(&mut self, message: &str) -> Result<(), String> {
+        let notice = self.table.strings("ext.stmt.yield.throw.warning").to_vec();
+        if notice.len() != 4 { return Ok(()); }
+        let location = vec![Value::text(&self.written_in), Value::Small(self.row as i64)];
+        let namespace = self.load_namespace(&notice[0])?;
+        let function = self.namespace_item(&namespace, &notice[0], &notice[1])?;
+        if let Some(category) = self.fault_kinds.get(&notice[2]).cloned() {
+            let mut parameters = vec![Value::text(message), category];
+            parameters.extend(location);
+            self.apply_class_member(function, parameters).map_err(|fault| self.suspension_fault(fault))?;
+        }
+        Ok(())
+    }
+
     /// What a throw hands a walk: a kind is made into one of its own,
     /// and a kind given with a value of that kind raises the value.
     fn thrown_into(&mut self, mut values: Vec<Value>, _frame: &Rc<Env>) -> Res {
@@ -11037,6 +11054,14 @@ impl<'a> Machine<'a> {
                 }
             }
             if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
+                // A thing over a value that is not a number hashes as
+                // itself, the way CPython's own hash of a NaN does, and
+                // not as the worth that stood in for it here.
+                if operation == Prim::Hashed && operands.len() == 1 {
+                    if let (Value::Thing(t), Some(Value::Frac(r))) = (&operands[0], Self::underlying(&operands[0])) {
+                        if r.above.is_zero() && r.beneath.is_zero() { return Ok(Some(Value::Small(t.turn as i64))); }
+                    }
+                }
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
                 let outcome = self.prim(operation, &word, &settled);
                 // A walk over a thing's underlying members keeps the thing,
@@ -11102,6 +11127,13 @@ impl<'a> Machine<'a> {
                 let index = match operation { Prim::AsInt => 38, Prim::AsReal => 39, Prim::Magnitude => 40, _ => 41 };
                 match self.ask_special(subject, index, &[])? {
                     Some(answer) if index == 39 => {
+                        // A __float__ handing back a float subclass rather
+                        // than a plain float is deprecated from 3.14 on.
+                        if matches!(&answer, Value::Thing(_)) && matches!(Self::underlying(&answer), Some(Value::Frac(_))) {
+                            let named = |v: &Value| match v { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word().to_string() };
+                            let message = format!("{}.__float__ returned non-float (type {}).  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.", named(subject), named(&answer));
+                            self.say_deprecation(&message)?;
+                        }
                         let real = Self::underlying(&answer).unwrap_or(answer).settled();
                         if matches!(real, Value::Frac(_)) { real } else { return Err(self.bad_answer()); }
                     },
@@ -11109,6 +11141,12 @@ impl<'a> Machine<'a> {
                     None if index == 41 => match Self::underlying(subject) {
                         Some(number @ Value::Complex(_)) => number,
                         _ => return Ok(None),
+                    },
+                    // Without a __float__, a thing standing for a whole
+                    // number is that number widened to a real.
+                    None if index == 39 => match self.stood_for_whole(subject)? {
+                        Some(whole) => self.prim(Prim::AsReal, "", &[whole])?,
+                        None => return Ok(None),
                     },
                     None => return Ok(None),
                 }
@@ -14844,7 +14882,12 @@ impl<'a> Machine<'a> {
                 // Figures may be grouped with a separator, which has to
                 // stand between two of them; anywhere else it is a fault.
                 let regrouped = match v.first() {
-                    Some(Value::Text(chars)) => Some(Value::text(&crate::data::ungrouped_figures(chars, &self.table.letters("ext.lexical.number.separator")).ok_or_else(failure)?)),
+                    Some(Value::Text(chars)) => {
+                        // CPython reads the decimal figures of any script,
+                        // and any whitespace, as their ASCII kin first.
+                        let plain = ascii_figures(chars);
+                        Some(Value::text(&crate::data::ungrouped_figures(&plain, &self.table.letters("ext.lexical.number.separator")).ok_or_else(failure)?))
+                    }
                     _ => None,
                 };
                 let v: Vec<Value> = regrouped.into_iter().chain(v.iter().skip(1).cloned()).collect();
@@ -14877,6 +14920,12 @@ impl<'a> Machine<'a> {
                     .ok_or_else(|| format!("ValueError: could not convert string to float: {original}"))?;
                 return self.prim(Prim::AsReal, name, &[Value::text(source)])
                     .map_err(|_| format!("ValueError: could not convert string to float: {original}"));
+            }
+            // A text kept apart as bare code points (an unpaired surrogate,
+            // say) stands for a string no floating point reader can take,
+            // which CPython reports as a broken string.
+            Prim::AsReal if matches!(v, [Value::Unpaired(_)]) => {
+                return Err(format!("ValueError: could not convert string to float: {}", v[0].representation(self.wording())));
             }
             Prim::AsReal => {
                 n(1)?;
@@ -19552,6 +19601,17 @@ impl crate::formatting::Elsewhere for Machine<'_> {
 
 #[path = "classes.rs"]
 mod classes;
+
+/// The same text with every decimal figure of any script written as the
+/// ASCII one, and every whitespace as a plain space, which is the shape
+/// CPython gives a string before it reads a number out of it.
+fn ascii_figures(text: &str) -> String {
+    text.chars().map(|c| match decimal_value(c) {
+        Some(digit) => char::from_digit(digit, 10).unwrap_or(c),
+        None if c.is_whitespace() => ' ',
+        None => c,
+    }).collect()
+}
 
 fn decimal_value(c: char) -> Option<u32> {
     let n = c as u32;
