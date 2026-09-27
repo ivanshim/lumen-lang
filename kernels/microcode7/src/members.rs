@@ -38,6 +38,7 @@ const KIND_MEMBERS: &[(&str, &str)] = &[
 
 /// Whether a value of this kind answers to a member of that name.
 pub fn answers_to(value: &Value, operation: &str) -> bool {
+    if matches!(value.settled(), Value::Attributes(_)) { return operation == "clear"; }
     let kind = value.settled().kind_word();
     KIND_MEMBERS.iter().find(|(named, _)| *named == kind)
         .map_or(false, |(_, words)| words.split_whitespace().any(|word| word == operation))
