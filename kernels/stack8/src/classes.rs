@@ -1089,6 +1089,17 @@ impl<'a> Engine<'a> {
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
+                // A class standing on a builtin kind reads that kind's
+                // own class method too, bound to the class itself, so
+                // that `dictlike.fromkeys` reaches `dict.fromkeys` and
+                // hands back a dictlike.
+                if self.lang.value_methods.get(name).map(String::as_str) == Some("fromkeys") {
+                    if let Some(base) = c.lineage.iter().find(|base| Self::own_kind(base).is_some()) {
+                        if self.loose_kind_member(&Value::Class(base.clone()), name).is_some() {
+                            return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                        }
+                    }
+                }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
                 // a thing's method is bound to the thing.
@@ -1162,6 +1173,12 @@ impl<'a> Engine<'a> {
                             if let Value::Complex(z)=worth.contents() {
                                 return Ok(crate::complex::real(if op=="real" {z.real} else {z.imag}));
                             }
+                        }
+                        // `fromkeys` belongs to the class, so a thing of
+                        // a mapping kind is handed over itself and not
+                        // its worth, that its own class may make it.
+                        if op == "fromkeys" {
+                            return Ok(Value::ValueMethod(Rc::new((subject.clone(), op))));
                         }
                         return Ok(Value::ValueMethod(Rc::new((worth,op))));
                     }

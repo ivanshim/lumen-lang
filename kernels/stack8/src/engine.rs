@@ -4697,6 +4697,41 @@ impl<'a> Engine<'a> {
         Ok(Value::Map(pairs).held(false))
     }
 
+    /// Whether a value is a frozendict or stands on one, whichever
+    /// class of that family made it: such a value cannot be written
+    /// into and is copied before the class method fills it.
+    fn frozen_beneath(value: &Value) -> bool {
+        let Value::Object(o) = value else { return false };
+        o.class_now().name == "frozendict" || o.class_now().lineage.iter().any(|base| base.name == "frozendict")
+    }
+
+    /// A frozendict's rows as a fresh map that may be written.
+    fn frozen_rows(&self, value: &Value) -> Res<Value> {
+        let Value::Object(o) = value else { return Err(self.lang.method_errors["arguments"].clone()) };
+        let rows = o.fields.borrow().iter().find(|(key, _)| key == "_rows").map(|(_, held)| held.clone());
+        Ok(rows.map(|held| held.contents()).unwrap_or_else(|| Value::Map(Rc::new(Vec::new().into()))))
+    }
+
+    /// Write one key into a mapping: the class's own `__setitem__`
+    /// where it has one, and otherwise the map beneath a thing or the
+    /// map itself, grown where it lies.
+    fn mapping_write(&mut self, target: &mut Value, key: Value, value: Value) -> Res<()> {
+        match self.special_call(target, 12, vec![key.clone(), value.clone()]) {
+            Ok(Some(_)) => return Ok(()),
+            Err(words) => return Err(words),
+            Ok(None) => {}
+        }
+        // The map beneath a thing, the map a name holds, or the map
+        // itself, is grown in the cell that holds it.
+        let cell = Self::holding_cell(target)
+            .or_else(|| { let held = Self::worth_of(target).unwrap_or_else(|| target.contents()); Self::holding_cell(&held) })
+            .unwrap_or_else(|| Rc::new(RefCell::new(target.contents())));
+        if !matches!(cell.borrow().contents(), Value::Map(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
+        self.builtin(Builtin::Replace, "setitem", &mut vec![key, value, Value::Bond(cell.clone())])?;
+        if matches!(target, Value::Map(_)) { *target = cell.borrow().clone(); }
+        Ok(())
+    }
+
     /// Whether two maps hold the same rows, key for key, by the very
     /// road the subscript takes rather than `mapping_equality`'s
     /// `same_place`/`equals`, which cannot call a key's own `__eq__`:
@@ -12297,6 +12332,36 @@ impl<'a> Engine<'a> {
             if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
             let filling = args.get(1).cloned().unwrap_or(Value::Null);
             let target = args.remove(0);
+            // A kind whose values are mappings makes one of itself with
+            // no arguments, then writes each key into it, as the class
+            // method does; a value that cannot be changed is copied
+            // first and the copy is made an instance of the class at
+            // the end. A plain map makes a map of its own.
+            let maker = match receiver.contents() {
+                Value::Class(c) => Some(c),
+                Value::Object(o) => Some(o.class_now()),
+                _ => None,
+            };
+            if let Some(c) = maker.filter(|c| Self::kind_beneath(c).is_some()) {
+                let made = match self.class_apply(Value::Class(c.clone()), Vec::new()) {
+                    Ok(made) => made,
+                    Err(Fault::Note(words)) => return Err(words),
+                    Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+                };
+                let copy = Self::frozen_beneath(&made);
+                let mut working = if copy { self.frozen_rows(&made)? } else { made };
+                for key in self.comprehension_items(&target)? {
+                    self.mapping_write(&mut working, key, filling.clone())?;
+                }
+                if copy {
+                    return match self.class_apply(Value::Class(c), vec![working]) {
+                        Ok(made) => Ok(made),
+                        Err(Fault::Note(words)) => Err(words),
+                        Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+                    };
+                }
+                return Ok(working);
+            }
             return self.dict_fromkeys(&target, filling);
         }
         if matches!(receiver.contents(), Value::Map(_)) {

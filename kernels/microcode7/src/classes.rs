@@ -1308,6 +1308,17 @@ impl<'a> Machine<'a> {
             if self.table.single("ext.stmt.class.annotations")==Some(key){return self.blueprint_annotations(b);}
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
+            // A blueprint standing on a native kind reads that kind's
+            // own class method too, bound to the blueprint, so that
+            // `dictlike.fromkeys` reaches `dict.fromkeys` and hands
+            // back a dictlike.
+            if self.table.spells("ext.builtin.method.fromkeys", key) {
+                if let Some(base) = std::iter::once(b).chain(b.ancestry.iter()).find(|base| Self::native_word(base).is_some()) {
+                    if self.carried_by_kind(&Value::Blueprint(base.clone()), key).is_some() {
+                        return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+                    }
+                }
+            }
             if let Some(entry)=self.carried_by_kind(&value,key){return Ok(entry);}
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
@@ -1386,6 +1397,12 @@ impl<'a> Machine<'a> {
                         if let Value::Complex(pair)=under.settled() {
                             return Ok(crate::complex::decimal_value(if operation=="real"{pair.0}else{pair.1}));
                         }
+                    }
+                    // `fromkeys` belongs to the class, so a thing of a
+                    // mapping kind is handed over itself and not its
+                    // worth, that its own class may make it.
+                    if operation == "fromkeys" {
+                        return Ok(Value::Member(Rc::new(value.clone()),operation));
                     }
                     return Ok(Value::Member(Rc::new(under),operation));
                 }

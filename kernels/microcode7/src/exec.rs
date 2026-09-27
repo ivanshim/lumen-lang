@@ -7413,10 +7413,35 @@ impl<'a> Machine<'a> {
             // `fromkeys` belongs to the kind rather than to the value
             // it was read from, so the first argument is the iterable
             // whose members become keys and the second, where written,
-            // the value each one is given.
+            // the value each one is given. A kind whose values are
+            // mappings makes one of itself with no arguments and writes
+            // each key into it; a value that cannot be changed is copied
+            // first and the copy becomes an instance of the class. A
+            // plain map makes a map of its own.
             if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments").into()); }
             let filling = arguments.get(1).cloned().unwrap_or(Value::Nil);
             let target = arguments.remove(0);
+            let maker = match receiver.settled() {
+                Value::Blueprint(c) => Some(c),
+                Value::Thing(t) => Some(t.blueprint().clone()),
+                _ => None,
+            };
+            if let Some(c) = maker.filter(|c| Self::native_beneath(c).is_some()) {
+                let made = self.apply_class_member(Value::Blueprint(c.clone()), Vec::new())?;
+                let copy = Self::frozen_beneath(&made);
+                let mut working = if copy { self.frozen_rows(&made)? } else { made };
+                let members = match target.settled() {
+                    Value::Dict(_) | Value::Set(_) => self.set_sources(&target)?,
+                    _ => self.gathered_members(&target)?,
+                };
+                for key in members {
+                    self.dict_entry_write(&mut working, key, filling.clone())?;
+                }
+                if copy {
+                    return self.apply_class_member(Value::Blueprint(c), vec![working]);
+                }
+                return Ok(working);
+            }
             return self.dict_fromkeys(&target, filling).map_err(Escape::from);
         }
         if matches!(receiver.settled(), Value::Dict(_)) {
@@ -10192,6 +10217,36 @@ impl<'a> Machine<'a> {
             if found.is_none() { store_insert_new(&mut entries, keyed, filling.clone()); }
         }
         Ok(Value::Dict(entries).keep(false))
+    }
+
+    /// Whether a value is a frozendict or stands on one, whichever
+    /// class of that family made it: it cannot be written into and is
+    /// copied before the class method fills it.
+    fn frozen_beneath(value: &Value) -> bool {
+        let Value::Thing(t) = value else { return false };
+        t.blueprint().name == "frozendict" || t.blueprint().ancestry.iter().any(|base| base.name == "frozendict")
+    }
+
+    /// A frozendict's rows as a fresh map that may be written.
+    fn frozen_rows(&self, value: &Value) -> Res<Value> {
+        let Value::Thing(t) = value else { return Err(self.method_fault("arguments").into()) };
+        let rows = t.holds.borrow().iter().find(|(name, _)| name == "_rows").map(|(_, held)| held.settled());
+        Ok(rows.unwrap_or_else(|| Value::Dict(Rc::new(Vec::new().into()))))
+    }
+
+    /// Write one key into a mapping the way the plain subscript does:
+    /// the class's own `__setitem__` where it has one, and otherwise
+    /// the map beneath a thing or the map itself, grown where it lies.
+    fn dict_entry_write(&mut self, target: &mut Value, key: Value, value: Value) -> Res<()> {
+        let known = target.clone();
+        // The class's own writing is asked first, as the subscript is.
+        if self.appointment(&known, 12).is_some() {
+            self.ask_special(&known, 12, &[key, value])?;
+            return Ok(());
+        }
+        let changed = self.prim(Prim::Placed, "", &[known.clone(), key, value]).map_err(Escape::from)?;
+        if matches!(known.settled(), Value::Dict(_)) { *target = changed; }
+        Ok(())
     }
 
     fn appointment(&self, subject: &Value, index: usize) -> Option<Value> {
