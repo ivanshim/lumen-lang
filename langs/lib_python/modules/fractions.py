@@ -215,7 +215,8 @@ def _spec_amiss(spec, detail):
 
 class Fraction:
     def __init__(self, numerator=0, denominator=None):
-        if denominator is None and isinstance(numerator, numbers.Rational):
+        if denominator is None and (isinstance(numerator, (int, bool, Fraction)) or
+                type(numerator) not in (float, str) and isinstance(numerator, numbers.Rational)):
             self.numerator = numerator.numerator
             self.denominator = numerator.denominator
             return
