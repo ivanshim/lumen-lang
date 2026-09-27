@@ -1643,7 +1643,8 @@ impl<'a> Engine<'a> {
             }
             Value::Class(c) => {
                 if c.name == "sentinel" {
-                    return Err("TypeError: cannot set attributes of immutable type 'sentinel'".into());
+                    let action = if value.is_some() { "set" } else { "delete" };
+                    return Err(format!("TypeError: cannot {action} '{name}' attribute of immutable type 'sentinel'").into());
                 }
                 if name == self.class_word("qualified") {
                     match value.as_ref().map(Value::contents) {

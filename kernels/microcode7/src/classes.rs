@@ -1704,7 +1704,8 @@ impl<'a> Machine<'a> {
             }
             Value::Blueprint(b)=>{
                 if b.name == "sentinel" {
-                    return Err("TypeError: cannot set attributes of immutable type 'sentinel'".to_owned().into());
+                    let action = if replacement.is_some() { "set" } else { "delete" };
+                    return Err(format!("TypeError: cannot {action} '{key}' attribute of immutable type 'sentinel'").into());
                 }
                 if key == self.detail("qualified") {
                     if let Some(worth) = replacement.as_ref().map(Value::settled) {
