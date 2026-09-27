@@ -17786,7 +17786,8 @@ impl<'a> Machine<'a> {
                     let promoted = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(error))) if error.blueprint().name == names[2]);
                     if !promoted { return Err(failure); }
                     self.got_away.take();
-                    return Err(self.text_unreadable_at(0, format!("SyntaxError: {words}"), filename, row, 1, None, code));
+                    let short = words.replace("Such sequences will not work in the future. ", "");
+                    return Err(self.text_unreadable_at(0, format!("SyntaxError: {short}"), filename, row, 1, None, code));
                 }
             }
         }

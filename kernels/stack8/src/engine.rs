@@ -17885,7 +17885,8 @@ impl Engine<'_> {
             if let Err(words) = self.call_held(handler.clone(), vec![Value::text(&message), category.clone(), Value::text(file), Value::Small(line as i64)]) {
                 if matches!(&self.carried, Some(Fault::Thrown(Value::Object(error))) if error.class_now().name == route[2]) {
                     self.carried = None;
-                    return Err(self.text_syntax(0, format!("SyntaxError: {message}"), file, line, 1, None, source));
+                    let short = message.replace("Such sequences will not work in the future. ", "");
+                    return Err(self.text_syntax(0, format!("SyntaxError: {short}"), file, line, 1, None, source));
                 }
                 return Err(words);
             }

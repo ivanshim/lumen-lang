@@ -3618,7 +3618,7 @@
     "ValueError: Negative zero coercion (z) not allowed in string format specifier"
   ],
   "ext.lexical.escape.named.amiss": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"],
-  "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "invalid escape sequence '\\{}'"],
+  "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."],
   "ext.builtin.iter.stop_value": ["stop_value"],
   "ext.builtin.iter.stop_exception": ["stop_exception"]
 }
