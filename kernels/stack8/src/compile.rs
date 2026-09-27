@@ -7591,7 +7591,7 @@ impl<'a> Compiler<'a> {
                             // A name the program has bound is called as
                             // that name, in front of any builtin word
                             // spelled the same, where the language says so.
-                            let bound = lang.shadow_builtins && self.registry.program_bound.contains(tok.lexeme.as_str());
+                            let bound = lang.shadow_builtins && (self.registry.program_bound.contains(tok.lexeme.as_str()) || self.piece().parameters.contains(&tok.lexeme));
                             let native = if bound { None } else { lang.builtins.get(&tok.lexeme).copied() };
                             if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
@@ -9309,7 +9309,7 @@ impl<'a> Compiler<'a> {
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
         // A name the program has bound is called as that name, in front
         // of any builtin word spelled the same, where the language says so.
-        let bound = self.lang.shadow_builtins && self.registry.program_bound.contains(name);
+        let bound = self.lang.shadow_builtins && (self.registry.program_bound.contains(name) || self.piece().parameters.iter().any(|word| word == name));
         match self.lang.builtins.get(name).copied().filter(|b| !b.set_method() && !bound) {
             // A class body's `locals()` is CPython's own class
             // namespace, not a picture of it: a write through it

@@ -10249,14 +10249,20 @@ impl<'a> Machine<'a> {
             // Power without a modulus is the ordinary dyad; with one, the
             // modulus goes along to the power method and its reflection.
             (Prim::Powered, [_, _]) if operands.iter().any(|v| matches!(v, Value::Thing(_))) => self.prim(Prim::Power, "", operands)?,
-            (Prim::Powered, [base, exponent, modulus]) if operands[..2].iter().any(|v| matches!(v, Value::Thing(_))) => {
+            (Prim::Powered, [base, exponent, modulus]) if operands.iter().any(|v| matches!(v, Value::Thing(_))) => {
                 for (subject, place, other) in [(base, 24, exponent), (exponent, 32, base)] {
                     if let Some(answer) = self.ask_special(subject, place, &[other.clone(), modulus.clone()])? {
                         if !matches!(answer, Value::Refusal(_)) { return Ok(Some(answer)); }
                     }
                 }
-                let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
-                return Err(self.operands_refused(&format!("{word}()"), base, exponent));
+                let wording = self.table.strings("ext.builtin.core.power.integer");
+                let complaint = if wording.len() == 4 {
+                    let kinds = [base.kind_word(), exponent.kind_word(), modulus.kind_word()];
+                    wording[1].to_owned() + &kinds.join(&wording[2]) + &wording[3]
+                } else {
+                    wording.first().cloned().unwrap_or_else(|| self.bad_answer())
+                };
+                return Err(complaint);
             }
             // A thing may say what complex number it stands for, and must
             // answer with one.
@@ -10265,7 +10271,18 @@ impl<'a> Machine<'a> {
                 Some(_) => return Err(self.bad_answer()),
                 None => match Self::underlying(item) {
                     Some(number @ Value::Complex(_)) => number,
-                    _ => return Ok(None),
+                    _ => {
+                        let converted = self.ask_special(item, 39, &[])?;
+                        let scalar = if let Some(number) = converted {
+                            if !matches!(&number, Value::Frac(ratio) if ratio.places.is_some()) { return Err(self.bad_answer()); }
+                            number
+                        } else if let Some(index) = self.stood_for_whole(item)? {
+                            index
+                        } else {
+                            return Ok(None);
+                        };
+                        crate::complex::create(self.table, &[scalar])?
+                    }
                 },
             },
             // Formatting, by the builtin or by a field of a formatted
@@ -18112,7 +18129,7 @@ impl Machine<'_> {
                 if input.len() < 3 || matches!(input[2], Value::Nil) {
                     return self.prim(Prim::Power, name, &input[..2]);
                 }
-                if input.iter().any(|v| !matches!(v, Value::Flag(_) | Value::Small(_) | Value::Huge(_))) { return Err(self.core_complaint("core.power.integer", "")); }
+                if input.iter().any(|v| !matches!(v, Value::Flag(_) | Value::Small(_) | Value::Huge(_))) { return Err(self.table.single("ext.builtin.core.power.integer").unwrap_or_default().to_owned()); }
                 let modulus = whole(&input[2])?;
                 if modulus.is_zero() { return Err(self.core_complaint("core.mod.zero", "")); }
                 let m = modulus.abs();
