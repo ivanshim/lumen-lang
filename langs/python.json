@@ -2835,7 +2835,9 @@
     "__reduce__",
     "__setstate__",
     "__reduce_ex__",
-    "__getnewargs__"
+    "__getnewargs__",
+    "__aenter__",
+    "__aexit__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
