@@ -8600,7 +8600,9 @@ impl<'a> Builder<'a> {
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
         // A name the program has bound is called as that name, in front
         // of any builtin word spelled the same, where the table says so.
-        if self.table.flag("ext.syntax.names.shadow_builtins") && self.named_in_program.iter().any(|word| word == name) {
+        if self.table.flag("ext.syntax.names.shadow_builtins")
+            && (self.named_in_program.iter().any(|word| word == name)
+                || self.layers.last().map_or(false, |scope| scope.formal_slots.iter().any(|slot| scope.idents[*slot] == name))) {
             let target = self.read(name);
             return Ok(invoke(target, args));
         }
