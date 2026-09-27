@@ -190,10 +190,29 @@ class sentinel:
         if shown is not None and not isinstance(shown, str):
             raise TypeError("sentinel() argument 'repr' must be str or None, not " + type(shown).__name__)
         made = super().__new__(cls)
-        made.__name__ = given[0]
-        made.__module__ = 'builtins'
-        made._shown = shown
+        object.__setattr__(made, '__name__', given[0])
+        object.__setattr__(made, '__module__', 'builtins')
+        object.__setattr__(made, '_shown', shown)
         return made
+
+    def __getattribute__(self, name):
+        if name == '__module__':
+            missing = object()
+            value = object.__getattribute__(self, '__dict__').get(name, missing)
+            if value is missing:
+                raise AttributeError(name)
+            return value
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name, value):
+        if name != '__module__':
+            raise AttributeError(name)
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        if name != '__module__':
+            raise AttributeError(name)
+        object.__delattr__(self, name)
 
     def __init__(self, *given, **named):
         pass

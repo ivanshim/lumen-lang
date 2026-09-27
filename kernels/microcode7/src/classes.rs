@@ -246,6 +246,9 @@ impl<'a> Machine<'a> {
         if natives.len()>1 {return Err(self.table.single("ext.stmt.class.layout").unwrap_or(self.detail("unready")).to_owned().into());}
         let module=self.detail("main");
         if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(module)));}
+        if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
+            if !matches!(candidate.settled(), Value::Text(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", candidate.kind_word()).into()); }
+        }
         let shown=entries.iter().find(|(k,_)|k==self.detail("qualified")).map_or(title.clone(),|(_,v)|v.bare());
         let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:parents.first().cloned(),parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
@@ -1700,7 +1703,14 @@ impl<'a> Machine<'a> {
                 if replacement.is_some()&&!self.allowed_slot(&t.blueprint(),key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }
             Value::Blueprint(b)=>{
-                if ["name","qualified","kind","bases","mro","namespace","order"].iter().any(|part|key==self.detail(part)){return Err(self.class_unready());}
+                if b.name == "sentinel" {
+                    return Err("TypeError: cannot set attributes of immutable type 'sentinel'".to_owned().into());
+                }
+                if key == self.detail("qualified") {
+                    if let Some(worth) = replacement.as_ref().map(Value::settled) {
+                        if !matches!(worth, Value::Text(_)) { return Err(format!("TypeError: can only assign string to {}.__qualname__, not '{}'", b.name, worth.kind_word()).into()); }
+                    } else { return Err(self.class_unready()); }
+                } else if ["name","kind","bases","mro","namespace","order"].iter().any(|part|key==self.detail(part)){return Err(self.class_unready());}
                 Self::change_entry(&mut b.shared.borrow_mut(),key,replacement)
             },
             Value::Routine(_)|Value::Bound(..)=>{
@@ -2069,6 +2079,14 @@ impl<'a> Machine<'a> {
         if op==5 {return Err(self.wrong_count(&self.class_tool_word(5),2,values.len()));}
         if op==7&&values.len()==1{let key=self.detail("namespace").to_owned();return self.read_class_member(values[0].clone(),&key,true);}
         if op==8&&values.len()==1{
+            if let Value::Thing(object) = &values[0] {
+                let blueprint = object.blueprint();
+                if blueprint.ancestry.iter().any(|parent| parent.name == "ModuleType") {
+                    if let Some(dict) = Self::own_entry(&blueprint, self.detail("namespace")) {
+                        if !matches!(dict.settled(), Value::Dict(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".to_owned().into()); }
+                    }
+                }
+            }
             // A thing with a directory method of its own answers with it,
             // and the names it gives are set in order.
             if matches!(&values[0],Value::Thing(_)){
@@ -2118,6 +2136,9 @@ impl<'a> Machine<'a> {
             let class=match &values[0]{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.blueprint())},Value::Blueprint(b)=>Some(b),_=>None};
             if let Some(b)=class{for c in std::iter::once(b).chain(b.ancestry.iter()){names.extend(c.shared.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));}}
             else{names.extend(self.routine_holding_names(&values[0]));}
+            if matches!(&values[0], Value::Thing(_)) && !names.iter().any(|entry| entry == self.detail("kind")) {
+                names.extend(self.table.strings("ext.stmt.class.detail.root.members").iter().cloned());
+            }
             names.sort_unstable();names.dedup();return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
         }
         if op==8 {return Err(self.wrong_count(&self.class_tool_word(8),1,values.len()));}

@@ -252,6 +252,9 @@ impl<'a> Engine<'a> {
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
             members.push((self.class_word("module").to_string(), Value::text(&module)));
         }
+        if let Some((_, held)) = members.iter().find(|(n, _)| n == self.class_word("qualified")) {
+            if !matches!(held.contents(), Value::Text(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", held.core_kind()).into()); }
+        }
         let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
@@ -1639,7 +1642,16 @@ impl<'a> Engine<'a> {
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
-                if ["name","qualified","kind","bases","mro","namespace","order"].iter().any(|key|name==self.class_word(key)){return Err(self.class_refusal());}
+                if c.name == "sentinel" {
+                    return Err("TypeError: cannot set attributes of immutable type 'sentinel'".into());
+                }
+                if name == self.class_word("qualified") {
+                    match value.as_ref().map(Value::contents) {
+                        Some(Value::Text(_)) => {},
+                        Some(other) => return Err(format!("TypeError: can only assign string to {}.__qualname__, not '{}'", c.name, other.core_kind()).into()),
+                        None => return Err(self.class_refusal()),
+                    }
+                } else if ["name","kind","bases","mro","namespace","order"].iter().any(|key|name==self.class_word(key)){return Err(self.class_refusal());}
                 Self::write_members(&mut c.shared.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
             Value::Routine(_) => {
@@ -2001,6 +2013,14 @@ impl<'a> Engine<'a> {
             4|5=>Err(self.arity_told(&self.class_tool_word(which),if which==4{3}else{2},args.len())),
             7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
             8 if args.len()==1=>{
+                if let Value::Object(thing) = &one {
+                    let class = thing.class_now();
+                    if class.lineage.iter().any(|base| base.name == "ModuleType") {
+                        if let Some(value) = Self::own_class_value(&class, self.class_word("namespace")) {
+                            if !matches!(value.contents(), Value::Map(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".into()); }
+                        }
+                    }
+                }
                 // A thing with a directory method of its own answers with
                 // it, and the names it gives are put in order.
                 if matches!(&one,Value::Object(_)) {
@@ -2045,6 +2065,9 @@ impl<'a> Engine<'a> {
                 let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
                 if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));}}
                 else {names.extend(self.routine_member_names(&one));}
+                if matches!(&one, Value::Object(_)) && !names.iter().any(|n| n == self.class_word("kind")) {
+                    names.extend(self.lang.class_details.get("root.members").into_iter().flatten().cloned());
+                }
                 names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
             }
             8=>Err(self.arity_told(&self.class_tool_word(8),1,args.len())),
