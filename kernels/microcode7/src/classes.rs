@@ -573,6 +573,21 @@ impl<'a> Machine<'a> {
                                 return self.prim(*op, spelling, &values).map_err(Escape::from);
                             }
                         }
+                        if self.table.prims.get(&word) == Some(&Prim::Truthful) {
+                            return match &target {
+                                Value::Intrinsic(Prim::Truthful, spelling) if spelling.as_ref() == word => {
+                                    if values.len() > 1 {
+                                        Err(format!("TypeError: bool expected at most 1 argument, got {}", values.len()).into())
+                                    } else { self.prim(Prim::Truthful, spelling, &values).map_err(Escape::from) }
+                                }
+                                Value::Intrinsic(_, spelling) => Err(format!("TypeError: bool.__new__({spelling}): {spelling} is not a subtype of bool").into()),
+                                Value::Blueprint(class) => Err(format!("TypeError: bool.__new__({0}): {0} is not a subtype of bool", class.name).into()),
+                                other => Err(format!("TypeError: bool.__new__(X): X is not a type object ({})", other.kind_word()).into()),
+                            };
+                        }
+                        if matches!(&target, Value::Intrinsic(Prim::Truthful, _)) && self.table.prims.get(&word) == Some(&Prim::AsInt) {
+                            return Err("TypeError: int.__new__(bool) is not safe, use bool.__new__()".to_owned().into());
+                        }
                         let Value::Blueprint(c)=target else{return Err(self.class_unready());};
                         if self.table.prims.get(&word) == Some(&Prim::Uniques) { values.clear(); }
                         self.thing_over_native(c,&word,values)
@@ -1120,11 +1135,16 @@ impl<'a> Machine<'a> {
         }
     }
     pub(super) fn integer_attribute(&self, value: &Value, key: &str) -> Option<Value> {
+        if let Value::Intrinsic(Prim::Truthful, title) = value {
+            if key == self.detail("allocate") {
+                return Some(Self::wrap(14, vec![Value::text(title)]));
+            }
+        }
         let words = self.table.strings("ext.stmt.class.detail.integer.layout");
         if words.len() < 7 { return None; }
         let mut derived = false;
         let is_type = match value {
-            Value::Intrinsic(Prim::AsInt, _) => true,
+            Value::Intrinsic(Prim::AsInt | Prim::Truthful, _) => true,
             Value::Blueprint(b) => {
                 let primitive = Self::native_beneath(b)?;
                 if self.table.prims.get(&primitive) != Some(&Prim::AsInt) { return None; }

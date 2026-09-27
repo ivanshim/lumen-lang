@@ -5498,6 +5498,28 @@ impl<'a> Engine<'a> {
         Ok(format!("{class}({})", self.special_text(&bare, true)?))
     }
 
+    fn bool_invert_warning(&mut self) -> Res<()> {
+        if self.lang.bool_result.is_none() { return Ok(()); }
+        let Some(category) = self.native_exceptions.get("DeprecationWarning").cloned() else { return Ok(()); };
+        let module = match self.import_module("warnings") {
+            Ok(value) => value,
+            Err(Fault::Note(message)) => return Err(message),
+            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+        };
+        let callback = match self.class_get(module, "warn_explicit", false) {
+            Ok(value) => value.contents(),
+            Err(Fault::Note(message)) => return Err(message),
+            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+        };
+        let arguments = vec![Value::text("~ on an instance of bool is deprecated"), category,
+            Value::text("<string>"), Value::Small(1), Value::text("__main__")];
+        match self.class_apply(callback, arguments) {
+            Ok(_) => Ok(()),
+            Err(Fault::Note(message)) => Err(message),
+            Err(raised) => { self.carried = Some(raised); Err(String::new()) }
+        }
+    }
+
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
         if let Value::Fields(o) = value { return Ok(o.fields.borrow().iter().any(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0'))); }
         if matches!(value, Value::Declined(_)) { return Err(self.lang.special_unready.first().cloned().unwrap_or_default()); }
@@ -5511,6 +5533,7 @@ impl<'a> Engine<'a> {
             return match answer {
                 Value::Small(n) if n >= 0 => Ok(n != 0),
                 Value::Huge(n) if *n >= BigInt::from(0) => Ok(*n != BigInt::from(0)),
+                Value::Small(_) | Value::Huge(_) if self.lang.bool_result.is_some() => Err("ValueError: __len__() should return >= 0".into()),
                 _ => Err(self.special_fault()),
             };
         }
@@ -6436,6 +6459,7 @@ impl<'a> Engine<'a> {
                 match answer {
                     Value::Small(n) if n >= 0 => Value::Small(n),
                     Value::Huge(ref n) if **n >= BigInt::from(0) => answer,
+                    Value::Small(_) | Value::Huge(_) if self.lang.bool_result.is_some() => return Err("ValueError: __len__() should return >= 0".into()),
                     _ => return Err(self.special_fault()),
                 }
             }
@@ -6750,7 +6774,7 @@ impl<'a> Engine<'a> {
         }
         if self.fuller_classes() {
             let result = match op {
-                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf, _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
+                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
@@ -7137,12 +7161,14 @@ impl<'a> Engine<'a> {
             }
             Action::BitTurn if self.lang.bits_unbounded && !self.lang.whole_bits => {
                 let v = self.drop_top()?;
+                if matches!(v, Value::Flag(_)) { self.bool_invert_warning()?; }
                 if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
                 let v = self.worth_free_of(&v, &[44]).unwrap_or(v);
                 Value::of_big(!self.whole_bits(&v)?)
             }
             Action::BitTurn => {
                 let v = self.drop_top()?;
+                if matches!(v, Value::Flag(_)) { self.bool_invert_warning()?; }
                 if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
                 let v = self.worth_free_of(&v, &[44]).unwrap_or(v);
                 match &v {
@@ -8275,7 +8301,7 @@ impl<'a> Engine<'a> {
                         return Ok(());
                     }
                 }
-                if self.fuller_classes() && (matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(&subject, Value::Native(Builtin::SortOf, _)) || matches!(&subject, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
+                if self.fuller_classes() && (matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(&subject, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(&subject, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -11683,6 +11709,9 @@ impl<'a> Engine<'a> {
             items.extend(args.into_iter().map(|v| (None, v)));
             items.extend(named.into_iter().map(|(n, v)| (Some(n), v)));
             let result = self.builtin_call(Builtin::Bytes(if operation == "integer_bytes" { 14 } else { 15 }), "", items)?;
+            if matches!(receiver, Value::Native(Builtin::Bool, _)) && operation == "integer_from_bytes" {
+                return Ok(Value::Flag(self.truth(&result)));
+            }
             if let Value::Class(class) = receiver {
                 return match self.class_make(class.clone(), vec![result]) {
                     Ok(v) => Ok(v),
