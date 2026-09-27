@@ -69,7 +69,7 @@ class _FloatInfo:
     rounds = 1
 
 class _IntInfo:
-    bits_per_digit = 32
+    bits_per_digit = 30
     sizeof_digit = 4
     default_max_str_digits = 4300
     str_digits_check_threshold = 640
@@ -249,3 +249,17 @@ def unraisablehook(unraisable):
     print(unraisable.exc_type.__name__ + ': ' + str(unraisable.exc_value), file=stderr)
 
 __unraisablehook__ = unraisablehook
+
+
+def excepthook(exc_type, exc_value, exc_traceback):
+    import traceback
+    traceback.print_exception(exc_type, exc_value, exc_traceback, file=stderr)
+
+
+__excepthook__ = excepthook
+
+
+def _getframe(depth=0):
+    if not isinstance(depth, int):
+        raise TypeError('an integer is required')
+    return __program_namespace(max(depth, 0) + 1)

@@ -850,10 +850,12 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.loop.else`: a switch; the `stmt.else` block after a for or
   while loop runs when its test ends the loop, including an empty walk.
   A break leaves that block behind; a continue does not.
-- `ext.stmt.async` and `ext.op.await`: the former is read before a
-  function, for loop or with block and dropped. The latter hands back
-  the value of its operand. Neither schedules nor suspends a run in
-  this stage; an await may stand outside a function too.
+- `ext.stmt.async` before a function or method keeps its body suspended
+  until asked to run. Before a for loop or with block it is read and
+  dropped. `ext.op.await` runs a supported suspended body to completion,
+  hands back its return value and propagates its exceptions. An operand
+  already holding a value is returned as it stands. These forms do not
+  schedule concurrent tasks; an await may stand outside a function too.
 - `ext.stmt.yield.suspends`: a switch; calling a routine containing a
   yield keeps its words and bindings unrun. Each asking runs to the next
   yield, and the next asking begins where that one left off. A delegated
@@ -1979,12 +1981,17 @@ only. The extension labels so far, all from PHP:
   array unless `ext.stmt.yield.suspends` is set, when they keep a lazy
   walk, including when they stand as the sole argument of a call.
   A spread mark may lead the gathered expression too.
-  `ext.op.comprehension.async` marks an asynchronous walk, read in full
-  but refused when reached in the words of
-  `ext.op.comprehension.async.unavailable`; no asynchronous walk is
-  yet provided. Indexed targets likewise read, but stop the run with
-  `ext.op.comprehension.target.unavailable` until their binding rules
-  are provided.
+  `ext.op.comprehension.async` marks an asynchronous walk. In Python an
+  eager asynchronous comprehension must be inside an asynchronous
+  function; otherwise reading raises `SyntaxError`. Asynchronous
+  generator expressions are separate from synchronous iterables and
+  may be consumed by another asynchronous comprehension. Walk targets
+  use assignment semantics, including attributes, indices, slices,
+  nested unpacking and starred targets. Their local names are reserved
+  before the inner sources, filters and target expressions are read;
+  the outermost source is still evaluated in the enclosing scope.
+  The `async.unavailable` and `target.unavailable` entries remain
+  accepted compatibility wording.
   `ext.op.comprehension.unpack.amiss` says that an item has the wrong
   number of parts for its target.
 - `ext.syntax.set`: a switch; braces without pairs gather a set, each
@@ -2274,7 +2281,11 @@ only. The extension labels so far, all from PHP:
   own for what it found keeps them in front of the place. A reading the
   kernels cannot yet
   honour — a closure handed over, a setting of optimisation beyond the
-  ordinary — with `ext.builtin.source.unready`. `ext.builtin.import`
+  ordinary — with `ext.builtin.source.unready`. Seeding a dictionary of
+  a program's own with the builtins, where it names none of its own and
+  has no way to be written into, is refused instead with
+  `ext.builtin.source.builtins_immutable`, its one piece the name of the
+  kind that refused the write. `ext.builtin.import`
   fetches a module by its name as the import statement would.
   `ext.system.module.doc` names what a program keeps its opening
   documentation under, text standing alone as its first statement, and
@@ -3269,8 +3280,10 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.exceptions.traceback`: the name of the kind of the trace
   handed to a context's leaving, which the kind builtin answers for one.
   `.traceback.member` is the member holding an exception's own traceback,
-  which stands as nothing in this account, and `.traceback.with` the
-  method that would set one and answers with the same exception.
+  and `.traceback.with` sets it and returns the same exception. The roster
+  also names frame line/code/back/locals/globals fields and generator
+  frame/code members. Suspended generators detach their caller link;
+  completed generators expose no frame.
 - `ext.builtin.exceptions.note` and `.notes`: the method adding a text
   note to an exception and the list the notes stand in, which is absent
   until the first note is added; `.note.invalid` refuses a note that is
@@ -3438,7 +3451,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.program.namespace`: a builtin handing out a map of the
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
-  program has declared without teaching the kernel a test runner.
+  program has declared without teaching the kernel a test runner. With an
+  integer depth it instead returns a running frame for the system library.
 - `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
   and writing a member by its name, the owner given first. The reader
   may be given a third value for an absent member; the writer takes the
@@ -4328,7 +4342,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `MemoryError` `BufferError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4348,7 +4362,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` `: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
@@ -4584,6 +4598,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.slice.step` | - | - | `step` | - | - | - | - | - | - | - |
 | `ext.builtin.slice.stop` | - | - | `stop` | - | - | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
+| `ext.builtin.source.builtins_immutable` | - | - | `TypeError: cannot assign __builtins__ to ` ` globals` | - | - | - | - | - | - | - |
 | `ext.builtin.source.syntax` | - | - | `SyntaxError: invalid syntax` | - | - | - | - | - | - | - |
 | `ext.builtin.source.syntax.place` | - | - | ` (` `, line ` `)` | - | - | - | - | - | - | - |
 | `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
@@ -4718,8 +4733,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.controls` | - | - | `a` `b` `f` `v` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.deferred` | - | - | `u` `U` `N` `x` `0` `1` `2` `3` `4` `5` `6` `7` `r` `a` `b` `f` `v` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.named` | - | - | `N` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.named.amiss` | - | - | `SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \N character escape` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.warning` | - | - | `warnings` `warn_explicit` `SyntaxWarning` `invalid escape sequence '\{}'` | - | - | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
@@ -4757,7 +4774,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.bytes.mixed` | - | - | `SyntaxError: cannot mix bytes and nonbytes literals` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
-| `ext.lexical.string.format.errors` | - | - | `SyntaxError: f-string: expecting '}'` `SyntaxError: f-string: single '}' is not allowed` `SyntaxError: f-string: valid expression required before '{}'` `SyntaxError: f-string: expecting a valid expression after '{'` `SyntaxError: f-string: lambda expressions are not allowed without parentheses` `SyntaxError: f-string: missing conversion character` `SyntaxError: f-string: invalid conversion character` `SyntaxError: f-string: conversion type must come right after the exclamation mark` `SyntaxError: f-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: f-string: expecting '!', or ':', or '}'` `SyntaxError: f-string: expecting ':' or '}'` `SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: f-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: f-string: newlines are not allowed in format specifiers` | - | - | - | - | - | - | - |
+| `ext.lexical.string.format.errors` | - | - | `SyntaxError: f-string: expecting '}'` `SyntaxError: f-string: single '}' is not allowed` `SyntaxError: f-string: valid expression required before '{}'` `SyntaxError: f-string: expecting a valid expression after '{'` `SyntaxError: f-string: lambda expressions are not allowed without parentheses` `SyntaxError: f-string: missing conversion character` `SyntaxError: f-string: invalid conversion character` `SyntaxError: f-string: conversion type must come right after the exclamation mark` `SyntaxError: f-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: f-string: expecting '!', or ':', or '}'` `SyntaxError: f-string: expecting ':' or '}'` `SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: f-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: f-string: newlines are not allowed in format specifiers` `SyntaxError: f-string: expressions nested too deeply` | - | - | - | - | - | - | - |
 | `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
@@ -4991,6 +5008,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.getitem` | - | - | `__class_getitem__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.globals` | - | - | `__globals__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.integer.layout` | - | - | `__basicsize__` `__itemsize__` `__sizeof__` `24` `4` `30` `32` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.keywords` | - | - | `__kwdefaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.keywords.amiss` | - | - | `TypeError: __kwdefaults__ must be set to a dict object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.kind` | - | - | `__class__` | - | - | - | - | - | - | - |
@@ -5342,3 +5360,16 @@ Frames are allocated on demand when an exception first records its location.
 `ext.stmt.class.detail.prepare` names the metaclass namespace preparation method.
 
 `ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.
+
+`ext.lexical.escape.named.amiss` supplies the malformed named-character escape
+complaint, with two `{}` slots for its first and last byte positions. The
+format-error roster also names excessive format-field nesting.
+
+`ext.lexical.escape.warning` names the warning module, its explicit-warning
+function, the warning category, and a message with an escape-letter slot.
+Source compilation reports unrecognized escapes through that module.
+
+`ext.stmt.class.detail.integer.layout` gives the integer basic-size,
+item-size and size-method names, followed by decimal values for the base
+size, digit size, digit bit width and subclass base size. The full kernels
+use these to report integer storage sizes, including inherited attributes.

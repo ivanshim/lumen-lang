@@ -362,6 +362,9 @@ pub enum Prim {
     /// thing that is its own walk is wound back and answers with itself;
     /// anything else answers with itself.
     Walked,
+    AwaitResult,
+    AsyncGathered,
+    AsyncWalked,
     /// Whether a walk has more to hand out, what is at hand, what it is
     /// named, and the step onward. A thing that is its own walk is
     /// asked; anything else is counted through, as an array is.
@@ -569,6 +572,7 @@ pub enum Form {
     /// A statement together with the line of the source it was written
     /// on, so that a complaint can say where it happened.
     OnLine(u32, Box<Form>),
+    Located((u32, u32, u32, u32), Box<Form>),
     /// The binding's own cell, made shareable if it is not already, so
     /// another name can be tied to it.
     Share(Address),
