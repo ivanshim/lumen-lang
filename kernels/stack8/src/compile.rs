@@ -5088,13 +5088,15 @@ impl<'a> Compiler<'a> {
                 // still be one `locals()[k] = v` bound there while
                 // the body ran: `del` of it is a `del` through the
                 // body's own namespace all the same, once that
-                // namespace exists. With none at all this walk has
-                // no place to follow the name to, and the class is
-                // refused as it always was.
+                // namespace exists. With none at all the name is no
+                // member to take out, and the language this follows
+                // raises NameError rather than reaching past the
+                // class into the scope around it.
                 let Some(book) = self.gathering().book.clone() else {
-                    self.gathering().unready = true;
-                    self.pos = end;
-                    return Ok(());
+                    let made = self.gensym("delete");
+                    let blank = self.registry.slot(&made);
+                    self.put(Instr::Read(Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: blank, moving: false }));
+                    continue;
                 };
                 self.read(&book);
                 self.constant(Value::text(&name));
