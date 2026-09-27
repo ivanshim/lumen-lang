@@ -79,28 +79,15 @@ def _ratio(value):
             raise 'ValueError: cannot convert NaN to integer ratio'
         if value == inf or value == -inf:
             raise 'OverflowError: cannot convert Infinity to integer ratio'
-        # A float's own as_integer_ratio() reads its bits directly, so
-        # it costs the same whether the exponent is tiny or huge. The
-        # doubling loop below is kept only for the duck-typed numerics
-        # that reach this point without a float type of their own,
-        # where a subnormal exponent would otherwise double a bignum
-        # denominator on the order of a thousand times over.
+        # Read the float's exact binary ratio directly, including subnormals.
         return value.as_integer_ratio()
     # Anything else offering its own exact ratio is asked for it
     # directly, the way a value out of decimal is; doubling towards a
     # whole number is no working at all where a fifth stands in the
     # denominator to begin with, and never comes out even that way.
-    if hasattr(value, 'as_integer_ratio'):
+    if not isinstance(value, type) and hasattr(value, 'as_integer_ratio'):
         return value.as_integer_ratio()
-    if value != value:
-        raise 'ValueError: cannot convert NaN to integer ratio'
-    if value == inf or value == -inf:
-        raise 'OverflowError: cannot convert Infinity to integer ratio'
-    denominator = 1
-    while value != int(value):
-        value *= 2
-        denominator *= 2
-    return int(value), denominator
+    raise TypeError('argument should be a string or a Rational instance or have the as_integer_ratio() method')
 
 def _floor_quotient(numerator, denominator):
     magnitude = abs(numerator) // abs(denominator)
@@ -110,7 +97,7 @@ def _floor_quotient(numerator, denominator):
 
 def _number(value):
     if not isinstance(value, Fraction) and not isinstance(value, int) and not isinstance(value, float) and not isinstance(value, bool):
-        raise 'TypeError: unsupported operand type for Fraction'
+        return NotImplemented
     return Fraction(value)
 
 _DIGITS = '0123456789'
@@ -228,6 +215,10 @@ def _spec_amiss(spec, detail):
 
 class Fraction:
     def __init__(self, numerator=0, denominator=None):
+        if denominator is None and isinstance(numerator, numbers.Rational):
+            self.numerator = numerator.numerator
+            self.denominator = numerator.denominator
+            return
         n, d = _ratio(numerator)
         if denominator is not None:
             if not (isinstance(numerator, int) or isinstance(numerator, bool) or isinstance(numerator, Fraction)) or not (isinstance(denominator, int) or isinstance(denominator, bool) or isinstance(denominator, Fraction)):
@@ -235,7 +226,7 @@ class Fraction:
             p, q = _ratio(denominator)
             n, d = n * q, d * p
         if d == 0:
-            raise 'ZeroDivisionError: Fraction denominator is zero'
+            raise ZeroDivisionError('Fraction(%s, 0)' % n)
         if d < 0:
             n, d = -n, -d
         common = _gcd(n, d)
@@ -272,7 +263,7 @@ class Fraction:
         return self.denominator
 
     def __bool__(self):
-        return self.numerator != 0
+        return bool(self.numerator)
 
     def __hash__(self):
         from sys import hash_info
@@ -303,6 +294,9 @@ class Fraction:
             raise 'OverflowError: integer division result too large for a float'
         return value
 
+    def __complex__(self):
+        return complex(float(self))
+
     def __trunc__(self):
         return int(self)
 
@@ -320,8 +314,8 @@ class Fraction:
 
     def __int__(self):
         if self.numerator < 0:
-            return -((-self.numerator) // self.denominator)
-        return self.numerator // self.denominator
+            return int(-((-self.numerator) // self.denominator))
+        return int(self.numerator // self.denominator)
 
     def __neg__(self):
         return Fraction(-self.numerator, self.denominator)
@@ -337,87 +331,152 @@ class Fraction:
     def __add__(self, other):
         if isinstance(other, float):
             return _as_float(self.__float__() + _as_float(other))
+        if isinstance(other, complex):
+            return float(self) + other
         right = _number(other)
+        if right is NotImplemented:
+            return NotImplemented
         return Fraction(self.numerator * right.denominator + right.numerator * self.denominator, self.denominator * right.denominator)
 
     def __radd__(self, other):
-        return self.__add__(other)
+        if isinstance(other, numbers.Rational):
+            return Fraction(other).__add__(self)
+        if isinstance(other, numbers.Real):
+            return float(other) + float(self)
+        if isinstance(other, numbers.Complex):
+            return complex(other) + complex(float(self))
+        return NotImplemented
 
     def __sub__(self, other):
         if isinstance(other, float):
             return _as_float(self.__float__() - _as_float(other))
+        if isinstance(other, complex):
+            return float(self) - other
         right = _number(other)
+        if right is NotImplemented:
+            return NotImplemented
         return Fraction(self.numerator * right.denominator - right.numerator * self.denominator, self.denominator * right.denominator)
 
     def __rsub__(self, other):
-        if isinstance(other, float):
-            return _as_float(_as_float(other) - self.__float__())
-        return _number(other).__sub__(self)
+        if isinstance(other, numbers.Rational):
+            return Fraction(other).__sub__(self)
+        if isinstance(other, numbers.Real):
+            return float(other) - float(self)
+        if isinstance(other, numbers.Complex):
+            return complex(other) - complex(float(self))
+        return NotImplemented
 
     def __mul__(self, other):
         if isinstance(other, float):
             return _as_float(self.__float__() * _as_float(other))
+        if isinstance(other, complex):
+            return float(self) * other
         right = _number(other)
+        if right is NotImplemented:
+            return NotImplemented
         return Fraction(self.numerator * right.numerator, self.denominator * right.denominator)
 
     def __rmul__(self, other):
-        return self.__mul__(other)
+        if isinstance(other, numbers.Rational):
+            return Fraction(other).__mul__(self)
+        if isinstance(other, numbers.Real):
+            return float(other) * float(self)
+        if isinstance(other, numbers.Complex):
+            return complex(other) * complex(float(self))
+        return NotImplemented
 
     def __truediv__(self, other):
         if isinstance(other, float):
             return _as_float(self.__float__() / _as_float(other))
+        if isinstance(other, complex):
+            return float(self) / other
         right = _number(other)
+        if right is NotImplemented:
+            return NotImplemented
         return Fraction(self.numerator * right.denominator, self.denominator * right.numerator)
 
     def __rtruediv__(self, other):
-        if isinstance(other, float):
-            return _as_float(_as_float(other) / self.__float__())
-        return _number(other).__truediv__(self)
+        if isinstance(other, numbers.Rational):
+            return Fraction(other).__truediv__(self)
+        if isinstance(other, numbers.Real):
+            return float(other) / float(self)
+        if isinstance(other, numbers.Complex):
+            return complex(other) / complex(float(self))
+        return NotImplemented
 
     def __floordiv__(self, other):
         if isinstance(other, float):
             return _as_float(self.__float__() // _as_float(other))
         right = _number(other)
+        if right is NotImplemented:
+            return NotImplemented
         return _floor_quotient(self.numerator * right.denominator, self.denominator * right.numerator)
 
     def __rfloordiv__(self, other):
-        if isinstance(other, float):
-            return _as_float(_as_float(other) // self.__float__())
-        return _number(other).__floordiv__(self)
+        if isinstance(other, numbers.Rational):
+            return Fraction(other).__floordiv__(self)
+        if isinstance(other, numbers.Real):
+            return float(other) // float(self)
+        return NotImplemented
 
     def __divmod__(self, other):
         quotient = self.__floordiv__(other)
+        if quotient is NotImplemented:
+            return NotImplemented
         return (quotient, self - quotient * other)
 
     def __rdivmod__(self, other):
-        return _number(other).__divmod__(self)
+        if isinstance(other, numbers.Rational):
+            return Fraction(other).__divmod__(self)
+        if isinstance(other, numbers.Real):
+            return divmod(float(other), float(self))
+        return NotImplemented
 
     def __mod__(self, other):
         if isinstance(other, float):
             return _as_float(self.__float__() % _as_float(other))
-        return self - self.__floordiv__(other) * _number(other)
+        right = _number(other)
+        if right is NotImplemented:
+            return NotImplemented
+        return self - self.__floordiv__(right) * right
 
     def __rmod__(self, other):
-        if isinstance(other, float):
-            return _as_float(_as_float(other) % self.__float__())
-        return _number(other).__mod__(self)
+        if isinstance(other, numbers.Rational):
+            return Fraction(other).__mod__(self)
+        if isinstance(other, numbers.Real):
+            return float(other) % float(self)
+        return NotImplemented
 
-    def __pow__(self, other):
-        if isinstance(other, float):
-            return _as_float(self.__float__() ** _as_float(other))
-        if other != int(other):
-            raise 'NotImplementedError: non-integral Fraction powers are not supported'
-        exponent = int(other)
-        if exponent < 0:
-            return Fraction(self.denominator ** (-exponent), self.numerator ** (-exponent))
-        return Fraction(self.numerator ** exponent, self.denominator ** exponent)
+    def __pow__(self, other, modulus=None):
+        if modulus is not None:
+            return NotImplemented
+        if isinstance(other, numbers.Rational):
+            if other.denominator == 1:
+                exponent = other.numerator
+                if exponent < 0:
+                    return Fraction(self.denominator ** (-exponent), self.numerator ** (-exponent))
+                return Fraction(self.numerator ** exponent, self.denominator ** exponent)
+            if self.numerator < 0:
+                return complex(float(self)) ** float(other)
+            return float(self) ** float(other)
+        if isinstance(other, (float, complex)):
+            if isinstance(other, float) and self.numerator < 0 and -inf < other < inf and other != int(other):
+                return complex(float(self)) ** other
+            return float(self) ** other
+        return NotImplemented
 
-    def __rpow__(self, other):
-        if self.denominator != 1:
-            raise 'NotImplementedError: non-integral Fraction powers are not supported'
-        if isinstance(other, float):
-            return _as_float(_as_float(other) ** self.numerator)
-        return other ** self.numerator
+    def __rpow__(self, other, modulus=None):
+        if modulus is not None:
+            return NotImplemented
+        if self.denominator == 1 and self.numerator >= 0:
+            return other ** self.numerator
+        if isinstance(other, numbers.Rational):
+            return Fraction(other) ** self
+        if self.denominator == 1:
+            return other ** self.numerator
+        if isinstance(other, float) and -inf < other < 0:
+            return Fraction(other) ** self
+        return other ** float(self)
 
     def __eq__(self, other):
         if isinstance(other, float):

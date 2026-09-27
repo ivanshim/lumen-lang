@@ -156,9 +156,7 @@ class TestCase:
             raise 'TypeError: specify delta or places not both'
         if places is None:
             places = 7
-        difference = a - b
-        if difference < 0:
-            difference = -difference
+        difference = abs(a - b)
         if delta is not None:
             close = difference <= delta
         else:
@@ -235,9 +233,7 @@ class TestCase:
             raise 'TypeError: specify delta or places not both'
         if places is None:
             places = 7
-        difference = a - b
-        if difference < 0:
-            difference = -difference
+        difference = abs(a - b)
         if delta is not None:
             close = difference <= delta
         else:
