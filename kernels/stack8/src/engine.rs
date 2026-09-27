@@ -5536,6 +5536,29 @@ impl<'a> Engine<'a> {
         match value { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() }
     }
 
+    /// The name a formatting complaint gives a value: the qualified name
+    /// of a thing's class, and the core kind of anything else.
+    fn format_kind(&self, value: &Value) -> String {
+        match value {
+            Value::Object(o) => {
+                let class = o.class_now();
+                let qualified = self.class_value(&class, self.class_word("qualified")).and_then(|v| match v {
+                    Value::Text(name) if !name.is_empty() => Some(name.to_string()),
+                    _ => None,
+                }).unwrap_or_else(|| class.name.clone());
+                let module = self.class_value(&class, self.class_word("module")).and_then(|v| match v {
+                    Value::Text(name) if !name.is_empty() => Some(name.to_string()),
+                    _ => None,
+                });
+                match module {
+                    Some(module) => format!("{module}.{qualified}"),
+                    None => qualified,
+                }
+            }
+            other => other.core_kind(),
+        }
+    }
+
     /// The sign the language writes a dyadic action with. Under a
     /// compound write the sign named is the compound one the program
     /// wrote, and not the plain working it falls back to.
@@ -8946,6 +8969,7 @@ impl<'a> Engine<'a> {
                 out.push(quote);
                 out
             }
+            Value::Codepoints(row) => Value::codepoints_repr(row),
             Value::Array(items) | Value::Tuple(items) => {
                 let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
                 format!("[{}]", parts.join(", "))
@@ -9065,19 +9089,45 @@ impl<'a> Engine<'a> {
     fn rem_filled(&mut self, template: &str, arguments: &Value) -> Res<String> {
         if self.lang.format_builtin.is_empty() { return self.rem_text(template, arguments); }
         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-        let mut offered = |value: &Value, code: char| -> Res<Option<String>> {
+        let mut asked = |value: &Value, code: char, numbering: bool| -> Res<crate::formatting::Answer> {
+            use crate::formatting::Answer;
             let thing = value.contents();
-            if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
-            self.special_text(&thing, code != 's').map(Some)
+            if self.lang.class_special.is_empty() || !Self::holds_object(&thing) {
+                return Ok(if numbering { Answer::Missing(String::new()) } else { Answer::Unsaid });
+            }
+            if !numbering { return self.special_text(&thing, code != 's').map(Answer::Said); }
+            let worth = || Self::worth_of(&thing).map(|w| w.contents()).filter(|w| match code {
+                'd' | 'i' | 'u' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => matches!(w, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)),
+                _ => matches!(w, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
+            });
+            if matches!(code, 'd' | 'i' | 'u') {
+                match self.special_call(&thing, 38, Vec::new())? {
+                    None => {}
+                    Some(Value::Flag(flag)) => return Ok(Answer::Whole(Value::Small(i64::from(flag)))),
+                    Some(whole @ (Value::Small(_) | Value::Huge(_))) => return Ok(Answer::Whole(whole)),
+                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value))),
+                }
+                if let Some(index) = self.special_index(&thing)? { return Ok(Answer::Whole(index)); }
+            } else if matches!(code, 'e' | 'E' | 'f' | 'F' | 'g' | 'G') {
+                match self.special_call(&thing, 39, Vec::new())? {
+                    None => {}
+                    Some(real @ (Value::Real(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => return Ok(Answer::Whole(real)),
+                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value))),
+                }
+                if let Some(index) = self.special_index(&thing)? { return Ok(Answer::Whole(index)); }
+            } else if let Some(index) = self.special_index(&thing)? {
+                return Ok(Answer::Whole(index));
+            }
+            Ok(if let Some(worth) = worth() { Answer::Whole(worth) } else { Answer::Missing(self.format_kind(value)) })
         };
-        writer.percent(template, arguments, &mut offered, false)
+        writer.percent(template, arguments, &mut asked, false)
     }
 
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
         if !self.lang.format_builtin.is_empty() {
-            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _| Ok(None), false);
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _, numbering| Ok(if numbering { crate::formatting::Answer::Missing(String::new()) } else { crate::formatting::Answer::Unsaid }), false);
         }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
@@ -11991,7 +12041,13 @@ impl<'a> Engine<'a> {
             Some(_) => return Err(self.lang.call_amiss[0].clone()),
         };
         if base != 0 && !(2..=36).contains(&base) { return Err(self.lang.to_int_base_amiss[0].clone()); }
+        let invalid = || {
+            if self.lang.integer_text_detail.len() == 2 {
+                format!("{}{}{}{}", self.lang.integer_text_detail[0], base, self.lang.integer_text_detail[1], self.rem_repr(value).unwrap_or_default())
+            } else { self.lang.to_int_text_amiss[0].clone() }
+        };
         let Value::Text(text) = value else {
+            if let Value::Codepoints(_) = value { return Err(invalid()); }
             if args.len() == 2 { return Err(self.lang.to_int_text_required[0].clone()); }
             if let Value::Flag(b) = value { return Ok(Value::Small(i64::from(*b))); }
             // A real past the numbers has no whole number in it, and the
@@ -12003,11 +12059,6 @@ impl<'a> Engine<'a> {
                 }
             }
             return arith::whole_of(value).map(Value::of_big).ok_or_else(|| self.lang.call_amiss[0].clone());
-        };
-        let invalid = || {
-            if self.lang.integer_text_detail.len() == 2 {
-                format!("{}{}{}{}", self.lang.integer_text_detail[0], base, self.lang.integer_text_detail[1], self.rem_repr(value).unwrap_or_default())
-            } else { self.lang.to_int_text_amiss[0].clone() }
         };
         let text = text.trim();
         let (minus, digits) = if let Some(tail) = text.strip_prefix('-') { (true, tail) }
@@ -12518,18 +12569,19 @@ impl<'a> Engine<'a> {
     /// bits can stand in the answer.
     fn byte_filled(&self, template: &str, arguments: &Value) -> Res<Vec<u8>> {
         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-        let mut offered = |value: &Value, code: char| -> Res<Option<String>> {
+        let mut asked = |value: &Value, code: char, numbering: bool| -> Res<crate::formatting::Answer> {
+            if numbering { return Ok(crate::formatting::Answer::Missing(String::new())); }
             let held = value.contents();
             if matches!(code, 'a' | 'r') {
                 let inner = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-                return inner.representation(&held, true).map(Some);
+                return inner.representation(&held, true).map(crate::formatting::Answer::Said);
             }
             match &held {
-                Value::Bytes(row, ..) => Ok(Some(row.borrow().iter().copied().map(char::from).collect())),
+                Value::Bytes(row, ..) => Ok(crate::formatting::Answer::Said(row.borrow().iter().copied().map(char::from).collect())),
                 other => Err(Self::named_fault(&self.lang.fmt_op_rem_format_byte, &other.core_kind())),
             }
         };
-        let filled = writer.percent(template, arguments, &mut offered, true)?;
+        let filled = writer.percent(template, arguments, &mut asked, true)?;
         filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.byte_fault("unready"))).collect()
     }
 
@@ -14324,9 +14376,8 @@ impl<'a> Engine<'a> {
                 Value::of_big(whole)
             }
             Builtin::AsReal if self.lang.to_real_text && args.is_empty() => arith::to_real(&Value::Small(0), arith::DEFAULT_PLACES).unwrap(),
-            Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_))) => {
+            Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_))) => {
                 arity(1)?;
-                let Value::Text(text) = &args[0] else { unreachable!() };
                 // A separator may stand between two figures and nowhere else.
                 // The message names the very string handed over, in
                 // its own repr, the way CPython's own float() does.
@@ -14334,6 +14385,10 @@ impl<'a> Engine<'a> {
                     let prefix = slf.lang.to_real_text_amiss[0].clone();
                     match slf.special_text(of, true) { Ok(shown) => format!("{prefix}: {shown}"), Err(_) => prefix }
                 };
+                if let Value::Codepoints(_) = &args[0] {
+                    return Err(amiss(self, &args[0]));
+                }
+                let Value::Text(text) = &args[0] else { unreachable!() };
                 let text = match self.lang.number_separator_between_digits(text) {
                     Some(joined) => joined,
                     None => return Err(amiss(self, &args[0])),

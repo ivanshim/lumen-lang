@@ -17,9 +17,20 @@ pub trait Elsewhere {
     fn field_member(&mut self, _item: &Value, _key: &Value, _bracket: bool) -> Result<Option<Value>, String> { Ok(None) }
     fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<String>, String>;
     fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String>;
+    fn value_numbered(&mut self, _item: &Value, _code: char) -> Result<NumberAnswer, String> { Ok(NumberAnswer::Missing(String::new())) }
 }
 
 type Answer = Result<String, String>;
+
+/// What a numeric `%`-mark asks an object to stand for. `Whole` carries
+/// the number it answered with; `Missing` and `BadMethod` carry the
+/// name a complaint should give the value, and mark a method that was
+/// absent or answered with the wrong kind.
+pub enum NumberAnswer {
+    Whole(Value),
+    Missing(String),
+    BadMethod(String),
+}
 
 impl Layout<'_> {
     pub fn complain(&self, label: &str, inserts: &[&str]) -> String {
@@ -539,15 +550,23 @@ impl Layout<'_> {
                         Value::Text(text) if !of_bytes && text.chars().count() == 1 => text.to_string(),
                         Value::Huge(_) | Value::Small(_) | Value::Flag(_) => self.character(item, of_bytes)
                             .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
-                        _ => {
-                            let expected = if of_bytes { "an integer in range(256) or a single byte" }
-                                else { "an integer or a unicode character" };
-                            let given = match item {
-                                Value::Text(text) if !of_bytes => format!("a string of length {}", text.chars().count()),
-                                Value::Octets { cell, changeable, .. } if of_bytes => format!("a {} object of length {}", if *changeable { "bytearray" } else { "bytes" }, cell.borrow().len()),
-                                _ => self.typename(item).to_owned(),
-                            };
-                            return Err(self.complain("ext.op.rem.format.character", &[&location, expected, &given]));
+                        _ => match asked.value_numbered(item, conversion)? {
+                            NumberAnswer::Whole(whole) => self.character(&whole, of_bytes)
+                                .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
+                            NumberAnswer::Missing(name) | NumberAnswer::BadMethod(name) => {
+                                let expected = if of_bytes { "an integer in range(256) or a single byte" }
+                                    else { "an integer or a unicode character" };
+                                let given = if !name.is_empty() {
+                                    name
+                                } else {
+                                    match item {
+                                        Value::Text(text) if !of_bytes => format!("a string of length {}", text.chars().count()),
+                                        Value::Octets { cell, changeable, .. } if of_bytes => format!("a {} object of length {}", if *changeable { "bytearray" } else { "bytes" }, cell.borrow().len()),
+                                        _ => item.kind_word(),
+                                    }
+                                };
+                                return Err(self.complain("ext.op.rem.format.character", &[&location, expected, &given]));
+                            },
                         },
                     };
                     (String::new(), c)
@@ -560,11 +579,37 @@ impl Layout<'_> {
                             return Err(self.complain(fault, &[]));
                         }
                     }
-                    if !matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) &&
-                        !(accepts_real && matches!(item, Value::Frac(r) if r.places.is_some() && !r.past_numbers())) {
-                        return Err(self.complain(if accepts_real { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" }, &[&location, &conversion.to_string(), self.typename(item)]));
+                    let mut held: Option<Value> = None;
+                    let mut accepted = matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_))
+                        || (accepts_real && matches!(item, Value::Frac(r) if r.places.is_some() && !r.past_numbers()));
+                    if !accepted {
+                        let key = if accepts_real { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
+                        match asked.value_numbered(item, conversion)? {
+                            NumberAnswer::Whole(whole) => {
+                                accepted = matches!(whole, Value::Small(_) | Value::Huge(_) | Value::Flag(_))
+                                    || (accepts_real && matches!(&whole, Value::Frac(r) if r.places.is_some() && !r.past_numbers()));
+                                held = Some(whole);
+                            }
+                            NumberAnswer::Missing(name) | NumberAnswer::BadMethod(name) => {
+                                let named = if name.is_empty() { item.kind_word() } else { name };
+                                return Err(self.complain(key, &[&location, &conversion.to_string(), &named]));
+                            }
+                        }
                     }
-                    let number = item.as_big()?;
+                    if accepts_real {
+                        if let Some(Value::Frac(r)) = &held {
+                            if r.past_numbers() {
+                                let fault = match r.answers_none() { true => "ext.op.rem.format.nan", false => "ext.op.rem.format.infinity" };
+                                return Err(self.complain(fault, &[]));
+                            }
+                        }
+                    }
+                    if !accepted {
+                        let key = if accepts_real { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
+                        let named = item.kind_word();
+                        return Err(self.complain(key, &[&location, &conversion.to_string(), &named]));
+                    }
+                    let number = match &held { Some(whole) => whole.as_big()?, None => item.as_big()? };
                     let radix = match conversion { 'x' | 'X' => 16, 'o' => 8, _ => 10 };
                     let mut digits = number.abs().to_str_radix(radix);
                     if conversion == 'X' { digits = digits.to_uppercase(); }
@@ -574,7 +619,20 @@ impl Layout<'_> {
                     (lead, digits)
                 }
                 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => {
-                    let number = self.binary(item).map_err(|_| self.complain("ext.op.rem.format.real", &[&location, &conversion.to_string(), self.typename(item)]))?;
+                    let mut held: Option<Value> = None;
+                    let ready = matches!(item, Value::Frac(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
+                    if !ready {
+                        match asked.value_numbered(item, conversion)? {
+                            NumberAnswer::Whole(whole) if matches!(&whole, Value::Frac(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => held = Some(whole),
+                            NumberAnswer::Missing(name) | NumberAnswer::BadMethod(name) => {
+                                let named = if name.is_empty() { item.kind_word() } else { name };
+                                return Err(self.complain("ext.op.rem.format.real", &[&location, &conversion.to_string(), &named]));
+                            },
+                            _ => unreachable!(),
+                        }
+                    }
+                    let chosen = held.as_ref().unwrap_or(item);
+                    let number = self.binary(chosen).map_err(|_| self.complain("ext.op.rem.format.real", &[&location, &conversion.to_string(), &item.kind_word()]))?;
                     (shape.front(number.is_sign_negative() && !number.is_nan()), shape.real_digits(number.abs()))
                 }
                 _ => {
