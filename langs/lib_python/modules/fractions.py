@@ -22,6 +22,11 @@ def _trim(text):
 def _digits(text):
     if len(text) == 0:
         raise 'ValueError: Invalid literal for Fraction'
+    import sys
+    limit = sys.get_int_max_str_digits()
+    count = len(text.replace('_', '').lstrip('+-'))
+    if limit and count > limit:
+        raise ValueError('Exceeds the limit (' + str(limit) + ' digits) for integer string conversion: value has ' + str(count) + ' digits; use sys.set_int_max_str_digits() to increase the limit')
     return int(text)
 
 def _parse(text):
@@ -32,6 +37,9 @@ def _parse(text):
             if len(denominator) == 0 or denominator[0] in '+-':
                 raise 'ValueError: Invalid literal for Fraction'
             return _digits(_trim(text[:at])), _digits(denominator)
+    for char in text:
+        if char in ' \t\n\r\v\f':
+            raise ValueError('Invalid literal for Fraction')
     exponent = 0
     for at in range(len(text)):
         if text[at] in 'eE':
@@ -43,6 +51,8 @@ def _parse(text):
     point = False
     for at in range(len(text)):
         char = text[at]
+        if at and char in '+-':
+            raise ValueError('Invalid literal for Fraction')
         if char == '_':
             if at == 0 or at + 1 == len(text):
                 raise 'ValueError: Invalid literal for Fraction'
@@ -56,7 +66,16 @@ def _parse(text):
             digits += char
             if point and char != '_':
                 places += 1
-    n = _digits(digits)
+    if point and '.' in text and text[0] not in '.':
+        whole, fraction = text.split('.', 1)
+        if fraction:
+            part = _digits(fraction)
+            initial = 0 if whole in ('+', '-') else _digits(whole)
+            n = initial * 10 ** places + (-part if whole[0] == '-' else part)
+        else:
+            n = _digits(whole)
+    else:
+        n = _digits(digits)
     scale = places - exponent
     if scale < 0:
         return n * 10 ** (-scale), 1
@@ -72,7 +91,12 @@ def _ratio(value):
     if n is not None:
         return n, value.denominator
     if isinstance(value, str):
-        return _parse(value)
+        try:
+            return _parse(value)
+        except ValueError as error:
+            if str(error).startswith('Exceeds the limit'):
+                raise
+            raise ValueError('Invalid literal for Fraction: ' + repr(value))
     if isinstance(value, float):
         value = _as_float(value)
         if value != value:
@@ -214,7 +238,20 @@ def _spec_amiss(spec, detail):
     raise 'ValueError: Invalid format specifier ' + repr(spec) + " for object of type 'Fraction'" + detail
 
 class Fraction:
+    def __setattr__(self, name, value):
+        if name == '_numerator' or name == '_denominator':
+            actual = name[1:]
+            object.__setattr__(self, actual, value)
+            return
+        if name in ('numerator', 'denominator') and hasattr(self, name):
+            raise AttributeError("property '" + name + "' of 'Fraction' object has no setter")
+        if name not in ('numerator', 'denominator'):
+            raise AttributeError("'Fraction' object has no attribute '" + name + "'")
+        object.__setattr__(self, name, value)
+
     def __init__(self, numerator=0, denominator=None):
+        if hasattr(self, 'numerator'):
+            return
         if denominator is None and (isinstance(numerator, (int, bool, Fraction)) or
                 type(numerator) not in (float, str) and isinstance(numerator, numbers.Rational)):
             self.numerator = numerator.numerator
@@ -262,6 +299,15 @@ class Fraction:
     @property
     def _denominator(self):
         return self.denominator
+
+    def __reduce__(self):
+        return (type(self), (self.numerator, self.denominator))
+
+    def __copy__(self):
+        return self if type(self) is Fraction else type(self)(self.numerator, self.denominator)
+
+    def __deepcopy__(self, memo):
+        return self.__copy__()
 
     def __bool__(self):
         return bool(self.numerator)
@@ -421,6 +467,11 @@ class Fraction:
         return NotImplemented
 
     def __divmod__(self, other):
+        if isinstance(other, float) and (other == inf or other == -inf):
+            value = self.__float__()
+            if value and (value > 0) != (other > 0):
+                return (-1.0, other)
+            return (0.0, value)
         quotient = self.__floordiv__(other)
         if quotient is NotImplemented:
             return NotImplemented
@@ -435,6 +486,11 @@ class Fraction:
 
     def __mod__(self, other):
         if isinstance(other, float):
+            if other == inf or other == -inf:
+                value = self.__float__()
+                if (other > 0) != (value > 0) and value != 0:
+                    return other
+                return value
             return _as_float(self.__float__() % _as_float(other))
         right = _number(other)
         if right is NotImplemented:

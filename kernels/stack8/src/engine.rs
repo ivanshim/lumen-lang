@@ -16531,6 +16531,21 @@ impl Engine<'_> {
                     Value::Tuple(Rc::new(vec![Value::of_big(q),Value::of_big(r)]))
                 } else {
                     let (p,q) = arith::parts(&a).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    if let Value::Real(real) = &z {
+                        if real.q.is_zero() {
+                            let x = crate::value::as_binary(&p, &q);
+                            let y = crate::value::as_binary(&real.p, &real.q);
+                            if y.is_infinite() && x.is_finite() {
+                                let opposite = x != 0.0 && x.is_sign_negative() != y.is_sign_negative();
+                                let quotient = if opposite { -1.0 } else { 0.0 };
+                                let remainder = if opposite { y } else { x };
+                                return Ok(Value::Tuple(Rc::new(vec![
+                                    crate::value::real_of(quotient, arith::DEFAULT_PLACES),
+                                    crate::value::real_of(remainder, arith::DEFAULT_PLACES),
+                                ])));
+                            }
+                        }
+                    }
                     let (r,s) = arith::parts(&z).ok_or_else(|| self.core_fault("core.unready", name))?;
                     let (x,y) = (crate::value::as_binary(&p,&q),crate::value::as_binary(&r,&s));
                     if y == 0.0 { return Err(self.core_fault("core.zero", "")); }
