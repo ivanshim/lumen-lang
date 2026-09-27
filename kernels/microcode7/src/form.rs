@@ -590,6 +590,7 @@ pub enum Form {
     /// A statement together with the line of the source it was written
     /// on, so that a complaint can say where it happened.
     OnLine(u32, Box<Form>),
+    Located((u32, u32, u32, u32), Box<Form>),
     /// The binding's own cell, made shareable if it is not already, so
     /// another name can be tied to it.
     Share(Address),
