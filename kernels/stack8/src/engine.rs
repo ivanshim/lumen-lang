@@ -4769,6 +4769,14 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// The module a builtin word belongs to: the definition's own
+    /// module for a plain builtin, nothing for one spelled under a kind,
+    /// and that same module for the bytes table-maker, whose own home
+    /// the reference gives back for it.
+    fn callable_home(&self, op: &Builtin, word: &str) -> Value {
+        if !word.contains('.') { return Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)); }
+        match op { Builtin::Bytes(40) => Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)), _ => Value::Null }
+    }
     /// The members a value of a builtin kind answers to by name: the
     /// special names its family answers, and the methods of its kind,
     /// each spelled as the definition spells it. A spelling that names
@@ -4797,6 +4805,10 @@ impl<'a> Engine<'a> {
         // A counted row keeps its bounds beside the places it answers
         // through the methods above.
         if matches!(family, Kindred::Counted) { names.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
+        // A whole number answers besides for the member that writes it
+        // into a row of bytes, which belongs to the kind and not to a
+        // value of it, so it is reached through the kind's own word.
+        if matches!(family, Kindred::Whole) { names.extend(self.lang.byte_words["ext.builtin.bytes.from_int"].iter().cloned()); }
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
@@ -4946,6 +4958,17 @@ impl<'a> Engine<'a> {
             }
         }
         if let Some(size) = self.integer_member(&held, name) { return Ok(Some(size)); }
+        if let Value::Native(op, word) = &held {
+            if !Self::kind_builtin(op) {
+                if name == self.class_word("qualified") { return Ok(Some(Value::text(word))); }
+                if name == self.class_word("module") { return Ok(Some(self.callable_home(op, word))); }
+                if name == self.class_word("receiver") {
+                    if let Some((kind, _)) = word.split_once('.') {
+                        if let Some(owner) = self.spelled_kind(kind) { return Ok(Some(owner)); }
+                    }
+                }
+            }
+        }
         if matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_))
             && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) {
             return Ok(Some(Value::ValueMethod(Rc::new((held, "integer_bytes".to_string())))));
@@ -8132,6 +8155,19 @@ impl<'a> Engine<'a> {
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
+                // A builtin word answers besides for the members that say
+                // where it was written and what it is called, and a kind
+                // for those very ones, the maker of floats for the reader
+                // of its own format among them.
+                let kind_stamp = match &held {
+                    Value::Native(op, word) if !Self::kind_builtin(op) => name.as_ref() == self.class_word("module")
+                        || name.as_ref() == self.class_word("qualified")
+                        || (name.as_ref() == self.class_word("receiver") && word.contains('.')),
+                    Value::Native(op, _) if Self::kind_builtin(op) => name.as_ref() == self.class_word("module")
+                        || name.as_ref() == self.class_word("qualified")
+                        || (name.as_ref() == "__getformat__" && *op == Builtin::AsReal),
+                    _ => false,
+                };
                 // A builtin kind also carries the members its own values answer to.
                 let kind_carries = self.loose_kind_member(&held, name).is_some();
                 // A walk over a routine's own body answers whether it is
@@ -8139,7 +8175,7 @@ impl<'a> Engine<'a> {
                 let generator_running = matches!(&held, Value::Generator(_)) && (self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref())
                     || name.as_ref() == self.class_word("name") || name.as_ref() == self.class_word("qualified")
                     || [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)));
-                Value::Flag(matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || kind_named || kind_maker || kind_doc || kind_namespace || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -8171,6 +8207,8 @@ impl<'a> Engine<'a> {
                     else if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], name) { crate::complex::real(z.imag) }
                     else { return Err(crate::complex::fault(self.lang, "unready").into()); }
                 }
+                Value::ValueMethod(bound) if name.as_ref() == self.class_word("qualified") => Value::text(&format!("{}.{}", bound.0.core_kind(), bound.1)),
+                Value::ValueMethod(bound) if name.as_ref() == self.class_word("name") => Value::text(&bound.1),
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 // An exception answers its own few methods itself.
                 Value::Object(o) if self.exception_class(&o.class_now()) && (self.exception_method_named(name) || ((self.stands_on(&o.class_now(), 36) || self.stands_on(&o.class_now(), 19)) && self.lang.constructor.as_deref() == Some(name))) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),

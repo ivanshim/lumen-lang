@@ -6178,6 +6178,10 @@ impl<'a> Machine<'a> {
         // A count of a row keeps its bounds beside the places it answers
         // through the methods above.
         if mark == 'p' { gathered.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
+        // A whole number answers besides for the member that writes it
+        // into a row of bytes, which belongs to the kind itself and is
+        // reached through the kind's own word rather than a value's.
+        if mark == 'n' { gathered.extend(self.table.strings("ext.builtin.bytes.from_int").iter().cloned()); }
         gathered.sort();
         gathered.dedup();
         gathered
@@ -6581,7 +6585,39 @@ impl<'a> Machine<'a> {
         Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)])))
     }
 
+    /// The word the definition gives the module the builtin names live in.
+    pub(super) fn builtin_module(&self) -> &str {
+        self.table.strings("ext.system.names.module").first().map_or("builtins", String::as_str)
+    }
+    /// A builtin kind read by the word that spells it, where that word
+    /// names a kind: the value `int`, not the blueprint standing for it.
+    pub(super) fn kind_by_word(&self, word: &str) -> Option<Value> {
+        self.table.prims.get(word).copied().filter(|op| Self::names_a_kind(op)).map(|op| Value::Intrinsic(op, Rc::from(word)))
+    }
+    /// The module a builtin word belongs to: the definition's own module
+    /// for a plain builtin, nothing for one spelled under a kind, and
+    /// that same module for the bytes table-maker, whose own home the
+    /// reference hands back for it.
+    fn intrinsic_home(&self, op: &Prim, word: &str) -> Value {
+        if !word.contains('.') { return Value::text(self.builtin_module()); }
+        match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
+    }
     pub(super) fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+        if let Value::Intrinsic(op, word) = value {
+            if !Self::names_a_kind(op) {
+                if name == self.detail("qualified") { return Some(Value::text(word)); }
+                if name == self.detail("module") { return Some(self.intrinsic_home(op, word)); }
+                if name == self.detail("receiver") {
+                    if let Some((kind, _)) = word.split_once('.') {
+                        if let Some(owner) = self.kind_by_word(kind) { return Some(owner); }
+                    }
+                }
+            }
+        }
+        if let Value::Member(receiver, operation) = value {
+            if name == self.detail("qualified") { return Some(Value::text(&format!("{}.{}", receiver.kind_word(), operation))); }
+            if name == self.detail("name") { return Some(Value::text(operation)); }
+        }
         if matches!(value.settled(), Value::Attributes(_)) {
             if let Some(operation) = self.value_method_named(name) {
                 let empty = Value::Dict(Rc::new(Vec::new().into()));
@@ -12968,6 +13004,10 @@ impl<'a> Machine<'a> {
                     if let Some(bound) = self.attribute(&v[0], &called) { return Ok(bound); }
                 }
                 if matches!(v[0], Value::Member(..)) {
+                    // A method bound to a value of a builtin kind still
+                    // answers for the few members naming it, before the
+                    // form that cannot be reached is told of.
+                    if let Some(bound) = self.attribute(&v[0], &called) { return Ok(bound); }
                     return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
                 }
                 // The member that lays a template out is given back

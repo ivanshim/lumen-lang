@@ -1028,6 +1028,11 @@ impl<'a> Engine<'a> {
                 if *op == Builtin::AsReal && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
                 }
+                if *op == Builtin::AsReal && name == "__getformat__" {
+                    return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
+                }
+                if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
+                if name==self.class_word("qualified") { return Ok(Value::text(word)); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
@@ -1057,6 +1062,13 @@ impl<'a> Engine<'a> {
                 if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
             }
             Value::Class(c) => {
+                if let Some(word) = Self::own_kind(c) {
+                    if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
+                    if name==self.class_word("qualified") { return Ok(Value::text(&word)); }
+                    if name == "__getformat__" && word == "float" {
+                        return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
+                    }
+                }
                 if name == self.class_word("flags") {
                     let dictionary = self.slots_allow(c, self.class_word("namespace"));
                     let inline = dictionary && Self::kind_beneath(c).is_none();
@@ -1208,7 +1220,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("name") {return Ok(self.routine_held(&subject,name,Value::text(&f.ident)));}
                 if name==self.class_word("qualified") {return Ok(self.routine_held(&subject,name,Value::text(&f.qualified)));}
                 if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
-                if name==self.class_word("module") {let place=self.class_word("main").to_string();return Ok(self.routine_held(&subject,name,Value::text(&place)));}
+                if name==self.class_word("module") {let place=self.routine_home(f);return Ok(self.routine_held(&subject,name,Value::text(&place)));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
                     if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
@@ -1288,6 +1300,13 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
                 return Self::cell_held(w).ok_or_else(||self.class_word("cell.empty").to_string().into());
             }
+            Value::Adapter(w) if w.0==29 => {
+                if name==self.class_word("qualified") { return Ok(Value::text(&format!("{}.{}", w.1[0].plain(), w.1[1].plain()))); }
+                if name==self.class_word("name") { return Ok(w.1[1].clone()); }
+                if name=="__objclass__" {
+                    if let Some(kind)=self.spelled_kind(&w.1[0].plain()) { return Ok(kind); }
+                }
+            }
             Value::Adapter(w) if w.0==3 => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
@@ -1304,6 +1323,23 @@ impl<'a> Engine<'a> {
     }
     /// A routine as it now stands, its spare arguments or code written
     /// over by the program or not.
+    /// The name of the module a routine was written in: the module the
+    /// file it came from was read as, or the run's own name where the
+    /// routine is the program itself.
+    fn routine_home(&self, f: &Routine) -> String {
+        f.written_in.as_ref()
+            .and_then(|place| self.module_slots.get(place))
+            .map_or_else(|| self.class_word("main").to_string(), |(_, path)| path.clone())
+    }
+    /// The word the definition gives the module the builtin names live in.
+    pub(super) fn home_module_word(&self) -> &str {
+        self.lang.names_module.first().map_or("builtins", String::as_str)
+    }
+    /// A builtin kind read by the word that spells it, where that word
+    /// names a kind: the value `int`, not the class standing for it.
+    pub(super) fn spelled_kind(&self, word: &str) -> Option<Value> {
+        self.lang.builtins.get(word).copied().filter(|op| Self::kind_builtin(op)).map(|op| Value::Native(op, Rc::from(word)))
+    }
     fn routine_now(f: &Rc<Routine>) -> Rc<Routine> {
         f.revised.borrow().clone().unwrap_or_else(|| f.clone())
     }

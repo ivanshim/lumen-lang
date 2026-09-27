@@ -1094,6 +1094,13 @@ impl<'a> Machine<'a> {
     /// object on every asking -- its name, full name and module -- put
     /// where the program's own writes to them go, so the next read
     /// finds it and a later write writes over it.
+    /// The name of the module a routine was written in: the module the
+    /// file it came from was read as, or the run's own name where the
+    /// routine is the program itself.
+    fn routine_home(&self, code: &Routine) -> String {
+        code.written_in.as_ref().and_then(|place| self.loaded_spaces.get(place)).cloned()
+            .unwrap_or_else(|| self.detail("main").to_owned())
+    }
     fn routine_kept(&mut self, value: &Value, key: &str, fresh: Value) -> Value {
         let at=self.routine_storage(value);
         let apart=format!("{key}\0");
@@ -1207,6 +1214,15 @@ impl<'a> Machine<'a> {
         self.apply_class_member(bound,vec![Value::text(key)])
     }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if let Value::Wrapped(60, parts) = &value {
+            if let [Value::Text(kind), Value::Text(word)] = parts.as_slice() {
+                if key==self.detail("qualified") { return Ok(Value::text(&format!("{}.{}", kind, word))); }
+                if key==self.detail("name") { return Ok(Value::text(word)); }
+                if key=="__objclass__" {
+                    if let Some(owner)=self.kind_by_word(kind) { return Ok(owner); }
+                }
+            }
+        }
         if let Some(member) = self.activation_member(&value, key) { return Ok(member); }
         if let Value::Backtrace(link) = &value {
             let names = self.table.strings("ext.builtin.exceptions.traceback");
@@ -1257,6 +1273,11 @@ impl<'a> Machine<'a> {
             }
             if Self::names_a_kind(op) {
                 if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
+                if key==self.detail("module") { return Ok(Value::text(self.builtin_module())); }
+                if key==self.detail("qualified") { return Ok(Value::text(word)); }
+                if key=="__getformat__" && word.as_ref()=="float" {
+                    return Ok(Value::Intrinsic(Prim::ValueMethod, Rc::from("float.__getformat__")));
+                }
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
                 if key==self.detail("doc") {
@@ -1301,6 +1322,13 @@ impl<'a> Machine<'a> {
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
+            }
+            if let Some(word)=Self::native_word(b) {
+                if key==self.detail("module") { return Ok(Value::text(self.builtin_module())); }
+                if key==self.detail("qualified") { return Ok(Value::text(&word)); }
+                if key=="__getformat__" && word=="float" {
+                    return Ok(Value::Intrinsic(Prim::ValueMethod, Rc::from("float.__getformat__")));
+                }
             }
             if key==self.detail("name"){return Ok(Value::text(&b.name));}
             if key==self.detail("qualified"){return Ok(self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name)));}
@@ -1454,7 +1482,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("name"){return Ok(self.routine_kept(&value,key,Value::text(&code.ident)));}
             if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(self.routine_kept(&value,key,Value::text(&qualified)));}
             if key==self.detail("doc"){return Ok(code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));}
-            if key==self.detail("module"){let place=self.detail("main").to_owned();return Ok(self.routine_kept(&value,key,Value::text(&place)));}
+            if key==self.detail("module"){let place=self.routine_home(&code);return Ok(self.routine_kept(&value,key,Value::text(&place)));}
             if key==self.detail("code"){let ran=self.code_run_by(&value);return Ok(self.code_handle(&ran));}
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
