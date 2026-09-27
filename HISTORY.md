@@ -1979,3 +1979,32 @@ test_iter 53 to 59, test_generators 34 to 39, test_builtin 64 to 70.
 
 Merged, the fifty files count 2262 on stack8 and 2260 on microcode7, up
 from 2130 and 2142, with no passing test lost.
+
+### 1ah. Batch 20f merged as #513; batch 20g: collection, floats, builtins, syntax, and the first integration by a lighter model
+
+Pull request #513 merged into main. Batch 20g integrates eleven branches;
+the nine subject branches were merged in one pass by an integrating
+worker running a lighter model (GPT-6 Sol), which the workflow now uses for
+all jobs after it matched the larger model's verified gains at a similar
+or lower token cost.
+
+fix/gc-weakref: weak references, `__del__` finalisers and collection of
+unreachable cycles, including the exception, traceback and frame cycle
+that kept iterators alive (test_exceptions, test_set 633 to 643).
+fix/unraisable-hook: exceptions raised in finalisers and weakref
+callbacks now go to sys.unraisablehook as in CPython; printed directly,
+they had split unittest's progress line in test_dict, test_exceptions and
+test_generators, which the count then skipped silently (the count now
+reports such a line as broken instead). fix/float-rest (test_float 28 to
+41), fix/builtin-leftovers and fix/builtin-compile (compile() flags and
+top-level await; test_builtin 70 to 83), fix/syntax-compile (test_syntax
+72 to 86), fix/range-rest (test_range 22 to 28), fix/list-leftovers
+(test_list 60 to 66), fix/dict-rest (test_dict to 115),
+fix/unpack-tuple (test_unpack complete), and fix/unittest-methods
+(`LUMEN_UNITTEST_ONLY` accepts `Class.method`, so an oversized test class
+can be run in parts) complete it.
+
+Merged, the fifty files count 2350 on stack8 and 2349 on microcode7, up
+from 2262 and 2260, with no passing test lost; microcode7's test_math and
+test_str, whose largest classes exceed Lambda's fifteen minutes, were run
+whole on the build machine.
