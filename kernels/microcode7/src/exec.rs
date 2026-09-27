@@ -17865,6 +17865,100 @@ impl<'a> Machine<'a> {
         // The names set aside are only for a reading handed no
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
+        if !weighing {
+            if let Some(Value::Wrapped(7, parts)) = v.first().map(Value::settled) {
+                if v.len() > 4 { return Err(self.core_complaint("core.arity", name)); }
+                if let Some(Value::Routine(program) | Value::Bound(program, _)) = parts.first() {
+                    let count = program.reaching.len();
+                    let requested = v.get(3).map(Value::settled);
+                    if count == 0 {
+                        if !matches!(requested, None | Some(Value::Nil)) {
+                            return Err("TypeError: cannot use a closure with this code object".to_owned());
+                        }
+                        return self.invoke(program.clone(), self.outermost.clone(), Vec::new())
+                            .map(|_| Value::Nil).map_err(|escape| self.suspension_fault(escape));
+                    }
+                    let Some(Value::Tuple(cells)) = requested else {
+                        return Err(format!("TypeError: code object requires a closure of exactly length {count}"));
+                    };
+                    if cells.len() != count { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); }
+                    let mut indices: Vec<usize> = (0..count).collect();
+                    indices.sort_by(|a, b| program.reaching[*a].ident.cmp(&program.reaching[*b].ident));
+                    let original_room = cells.iter().find_map(|cell| match cell.settled() {
+                        Value::Wrapped(35, parts) => match parts.first() {
+                            Some(Value::Bound(_, room)) => Some(room.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    });
+                    if let Some(room) = original_room {
+                        let mut restored = Vec::new();
+                        for (position, cell) in cells.iter().enumerate() {
+                            let address = &program.reaching[indices[position]];
+                            if address.up == 0 { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); }
+                            let target = ascend(&room, address.up - 1).clone();
+                            let worth = match cell.settled() {
+                                Value::Wrapped(35, parts) => self.cell_place(&parts).and_then(|(source, at)| {
+                                    if Rc::ptr_eq(&source, &target) && at == address.at { return Some(None); }
+                                    let held = source.cells.borrow().get(at).cloned()?;
+                                    Some(Some(match held {
+                                        Value::Shared(_) => held,
+                                        other => Value::Shared(Rc::new(RefCell::new(other))),
+                                    }))
+                                }),
+                                thing @ Value::Thing(_) => self.read_class_member(thing, "cell_contents", false).ok()
+                                    .map(|content| Some(Value::Shared(Rc::new(RefCell::new(content))))),
+                                _ => None,
+                            };
+                            let Some(worth) = worth else { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); };
+                            if let Some(worth) = worth {
+                                let mut slots = target.cells.borrow_mut();
+                                if address.at >= slots.len() { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); }
+                                let former = std::mem::replace(&mut slots[address.at], worth);
+                                restored.push((target.clone(), address.at, former));
+                            }
+                        }
+                        let completed = self.invoke(program.clone(), room, Vec::new());
+                        for (place, at, former) in restored { place.cells.borrow_mut()[at] = former; }
+                        return completed.map(|_| Value::Nil).map_err(|escape| self.suspension_fault(escape));
+                    }
+                    let highest = program.reaching.iter().map(|address| address.up).max().unwrap_or(1);
+                    if highest == 0 { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); }
+                    let mut outer = self.outermost.clone();
+                    let mut levels = vec![outer.clone(); highest + 1];
+                    for depth in (1..=highest).rev() {
+                        let size = program.reaching.iter().filter(|address| address.up == depth)
+                            .map(|address| address.at + 1).max().unwrap_or(0);
+                        let room = Env::make(size, Some(outer));
+                        levels[depth] = room.clone();
+                        outer = room;
+                    }
+                    for (position, value) in cells.iter().enumerate() {
+                        let linked = match value.settled() {
+                            Value::Wrapped(35, items) => self.cell_place(&items).and_then(|(room, at)| {
+                                let held = room.cells.borrow().get(at).cloned()?;
+                                match held {
+                                    Value::Shared(cell) => Some(cell),
+                                    other => {
+                                        let cell = Rc::new(RefCell::new(other));
+                                        room.cells.borrow_mut()[at] = Value::Shared(cell.clone());
+                                        Some(cell)
+                                    }
+                                }
+                            }),
+                            thing @ Value::Thing(_) => self.read_class_member(thing, "cell_contents", false).ok()
+                                .map(|content| Rc::new(RefCell::new(content))),
+                            _ => None,
+                        };
+                        let Some(linked) = linked else { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); };
+                        let slot = &program.reaching[indices[position]];
+                        levels[slot.up].cells.borrow_mut()[slot.at] = Value::Shared(linked);
+                    }
+                    return self.invoke(program.clone(), outer, Vec::new())
+                        .map(|_| Value::Nil).map_err(|escape| self.suspension_fault(escape));
+                }
+            }
+        }
         let Some(first) = v.first().map(Value::settled) else { return Err(self.core_complaint("core.arity", name)) };
         let (source, file, mode, top_await) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
@@ -17878,7 +17972,9 @@ impl<'a> Machine<'a> {
             _ => return Err(self.core_complaint("core.arity", name)),
         };
         if v.len() > 4 || (weighing && v.len() > 3) { return Err(self.core_complaint("core.arity", name)); }
-        if v.len() == 4 && !matches!(v[3], Value::Nil) { return Err("TypeError: closure can only be used when source is a code object".into()); }
+        if v.len() == 4 && !matches!(v[3], Value::Nil) {
+            return Err(if file.is_some() { "TypeError: cannot use a closure with this code object" } else { "TypeError: closure can only be used when source is a code object" }.to_owned());
+        }
         if file.is_none() { self.report_escape_notices(&source, "<string>")?; }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };

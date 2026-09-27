@@ -3859,7 +3859,7 @@ impl<'a> Engine<'a> {
             let mut body = (**program).clone();
             body.held.clear();
             body.enclosed.clear();
-            Self::adapter(7, vec![Value::Routine(Rc::new(body))])
+            Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())])
         }).clone()
     }
 
@@ -17978,6 +17978,47 @@ impl Engine<'_> {
         // The names about the call are only for a reading handed no
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
+        if !weighing {
+            if let Some(Value::Adapter(code)) = args.first().map(Value::contents) {
+                if code.0 == 7 {
+                    if args.len() > 4 { return Err(self.core_fault("core.arity", name)); }
+                    if let Some(Value::Routine(original)) = code.1.get(1) {
+                        let mut ordered: Vec<usize> = (0..original.enclosed.len()).collect();
+                        ordered.sort_by(|a, b| {
+                            let left = original.idents.get(original.enclosed[*a].0).map(String::as_str).unwrap_or("");
+                            let right = original.idents.get(original.enclosed[*b].0).map(String::as_str).unwrap_or("");
+                            left.cmp(right)
+                        });
+                        let supplied = args.get(3).map(Value::contents);
+                        if ordered.is_empty() {
+                            if !matches!(supplied, None | Some(Value::Null)) {
+                                return Err("TypeError: cannot use a closure with this code object".into());
+                            }
+                        } else {
+                            let Some(Value::Tuple(cells)) = supplied else {
+                                return Err(format!("TypeError: code object requires a closure of exactly length {}", ordered.len()));
+                            };
+                            if cells.len() != ordered.len() { return Err(format!("TypeError: code object requires a closure of exactly length {}", ordered.len())); }
+                            let mut working = (**original).clone();
+                            for (position, item) in cells.iter().enumerate() {
+                                let cell = match item.contents() {
+                                    Value::Adapter(wrapper) if wrapper.0 == 31 => wrapper.1.first().cloned(),
+                                    value @ Value::Object(_) => self.class_get(value, "cell_contents", false).ok()
+                                        .map(|held| Value::Binding(Rc::new(RefCell::new(held)))),
+                                    _ => None,
+                                };
+                                let Some(cell) = cell else { return Err(format!("TypeError: code object requires a closure of exactly length {}", ordered.len())); };
+                                working.enclosed[ordered[position]].1 = cell;
+                            }
+                            self.call_held(Value::Routine(Rc::new(working)), Vec::new())?;
+                            return Ok(Value::Null);
+                        }
+                        self.call_held(Value::Routine(original.clone()), Vec::new())?;
+                        return Ok(Value::Null);
+                    }
+                }
+            }
+        }
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
         let (source, file, mode, top_await) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
@@ -17991,7 +18032,9 @@ impl Engine<'_> {
             _ => return Err(self.core_fault("core.arity", name)),
         };
         if args.len() > 4 || (weighing && args.len() > 3) { return Err(self.core_fault("core.arity", name)); }
-        if args.len() == 4 && !matches!(args[3], Value::Null) { return Err("TypeError: closure can only be used when source is a code object".into()); }
+        if args.len() == 4 && !matches!(args[3], Value::Null) {
+            return Err(if file.is_some() { "TypeError: cannot use a closure with this code object" } else { "TypeError: closure can only be used when source is a code object" }.into());
+        }
         if file.is_none() { self.source_escape_warnings(&source, "<string>")?; }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_string() } else { source };

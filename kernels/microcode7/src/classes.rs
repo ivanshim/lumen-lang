@@ -971,7 +971,7 @@ impl<'a> Machine<'a> {
     }
     /// The frame a cell stands in and its place there: the name a
     /// routine reaches, found from where its calls stand.
-    fn cell_place(&self,items:&[Value])->Option<(Rc<Env>,usize)> {
+    pub(super) fn cell_place(&self,items:&[Value])->Option<(Rc<Env>,usize)> {
         let [Value::Bound(code,room),Value::Small(which)]=items else{return None};
         let address=code.reaching.get(usize::try_from(*which).ok()?)?;
         let mut frame=self.standing_under(code,room);
