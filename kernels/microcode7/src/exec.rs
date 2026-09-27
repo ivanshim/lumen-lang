@@ -686,10 +686,21 @@ impl<'a> Machine<'a> {
     /// between them, or the plain wrong-answer complaint where the table
     /// gives no such words.
     fn no_manager(&self, kind: &str) -> String {
-        match self.table.strings("ext.stmt.with.invalid") {
-            [before, after] => format!("\0{before}{kind}{after}"),
-            _ => self.bad_answer(),
-        }
+        self.manager_declined(kind, false, "__exit__", false)
+    }
+
+    /// The words for a value that is no context manager: the protocol,
+    /// the method missed, and -- where the other protocol is whole --
+    /// which statement was meant.
+    fn manager_declined(&self, kind: &str, asynchronous: bool, missed: &str, other_protocol: bool) -> String {
+        let [before, after] = self.table.strings("ext.stmt.with.invalid") else { return self.bad_answer() };
+        let protocol = if asynchronous { after.replacen("the context manager", "the asynchronous context manager", 1) } else { after.to_owned() };
+        let hint = match (other_protocol, asynchronous) {
+            (false, _) => String::new(),
+            (true, true) => " but it supports the context manager protocol. Did you mean to use 'with'?".to_owned(),
+            (true, false) => " but it supports the asynchronous context manager protocol. Did you mean to use 'async with'?".to_owned(),
+        };
+        format!("\0{before}{kind}{protocol} (missed {missed} method){hint}")
     }
 
     fn fault_descends(kind: &Rc<Blueprint>, ancestor: &Rc<Blueprint>) -> bool {
@@ -1302,6 +1313,8 @@ impl<'a> Machine<'a> {
             // be walked for it. Either way a walk begins here.
             Prim::Walked => {
                 n(1)?;
+                // A marked asynchronous walk is taken up as it stands.
+                if matches!(&v[0], Value::Wrapped(61, _)) { return Ok(Value::Traversal(Rc::new(v[0].clone()), Rc::new(RefCell::new(None)))); }
                 if let Value::Blueprint(kind) = &v[0] {
                     // What the class hands over is walked as any walk begins,
                     // here, where the walking is done.
@@ -3622,11 +3635,25 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The watched place holds the manager, whose leaving word is asked,
+    /// or -- for an asynchronous block -- the leaving method itself,
+    /// already bound, which is called as it stands.
+    fn ask_leaving(&mut self, watched: &Value, arguments: &[Value]) -> Result<Option<Value>, String> {
+        match watched {
+            Value::Bound(..) | Value::Method(..) | Value::Routine(_) => match self.apply_class_member(watched.clone(), arguments.to_vec()).and_then(|value| self.await_completion(value)) {
+                Ok(value) => Ok(Some(value)),
+                Err(Escape::Error(message)) => Err(message),
+                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+            },
+            _ => self.ask_special(watched, 34, arguments),
+        }
+    }
+
     /// The manager of a watched body is told the body is done with. It
     /// answers whether a value raised there is to be let go.
     fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
-        if !matches!(&manager, Value::Thing(_)) { return Ok(false); }
+        if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
         let unready = self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned();
         let arguments = match raised {
             None => vec![Value::Nil; 3],
@@ -3639,7 +3666,7 @@ impl<'a> Machine<'a> {
         // mistaken for what this one raises: only a fault this very
         // call sets belongs to it.
         self.got_away = None;
-        let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
+        let asked = self.ask_leaving(&manager, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
         let asked = self.raised_if_error(asked);
         self.holding_fault.truncate(preceding);
         let answer = asked?.ok_or_else(|| self.bad_answer())?;
@@ -4369,9 +4396,13 @@ impl<'a> Machine<'a> {
                 let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
                 Ok(Value::Flag(empty))
             }
-            Form::Fits { value, test, slots, tuple } => {
+            Form::Fits { value, test, slots, tuple, kinds } => {
                 let subject = self.value_of(value, frame)?;
-                let result = fit_case(test, &subject, *tuple).map_err(|()| self.table.single("ext.stmt.match.unready").unwrap_or_default().to_owned())?;
+                // Classes and dotted names the pattern spells are worked
+                // out here, ahead of the fitting, in the order written.
+                let mut given = Vec::new();
+                for kind in kinds { given.push(self.value_of(kind, frame)?); }
+                let result = self.fit_case(test, &subject, *tuple, &given)?;
                 if let Some(captures) = result {
                     for (name, address) in slots {
                         self.store(address, frame, captures.get(name).expect("a captured name").clone())?;
@@ -4432,7 +4463,7 @@ impl<'a> Machine<'a> {
                 let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
-                    if !matches!(&manager, Value::Thing(_)) { return body_result; }
+                    if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return body_result; }
                     if matches!(&body_result, Err(Escape::Error(_))) || matches!(&body_result, Err(Escape::Thrown(value)) if !matches!(value, Value::Thing(_))) {
                         return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned().into());
                     }
@@ -4456,7 +4487,7 @@ impl<'a> Machine<'a> {
                         self.extent = context_extent;
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(self.row as i64); }
                     }
-                    let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
+                    let asked = self.ask_leaving(&manager, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
                     if asked.is_ok() && self.table.has_any("ext.builtin.exceptions.traceback") {
                         self.row = body_line;
                         self.extent = body_extent;
@@ -4780,13 +4811,9 @@ impl<'a> Machine<'a> {
                     let (p, env) = self.pick(args, frame)?;
                     self.invoke(p, env, Vec::new())
                 }
-                Prim::AwaitResult => match self.value_of(&args[0], frame)?.settled() {
-                    Value::Generator(state) => loop {
-                        if self.resume(&state, Value::Nil)?.is_none() {
-                            break Ok(state.borrow().result.clone());
-                        }
-                    },
-                    complete => Ok(complete),
+                Prim::AwaitResult => {
+                    let value = self.value_of(&args[0], frame)?;
+                    self.await_completion(value)
                 },
                 Prim::AsyncGathered => {
                     let value = self.value_of(&args[0], frame)?;
@@ -4800,6 +4827,10 @@ impl<'a> Machine<'a> {
                 Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                     let v = self.value_list(args, frame)?;
                     self.walking(op, name, &v)
+                }
+                Prim::AsyncWalk => {
+                    let v = self.value_list(args, frame)?;
+                    self.async_walk(&v)
                 }
                 // Text read while the run goes is read where it stands:
                 // inside a routine it knows that routine's names, as the
@@ -9941,6 +9972,7 @@ impl<'a> Machine<'a> {
         if matches!(source, Value::Iterator(_) | Value::Generator(_)) { return self.next_value(source); }
         match source {
             Value::Cursor(c) => Ok(c.borrow_mut().pop_front()),
+            Value::Wrapped(61, parts) => self.awaited_step(&parts[0]),
             _ => {
                 let (routine, scope) = self.appointed_within(source, 16).ok_or_else(|| self.bad_answer())?;
                 // A walk the method itself steps on through another
@@ -9962,6 +9994,227 @@ impl<'a> Machine<'a> {
                     Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
                 }
             }
+        }
+    }
+
+    /// Whether the value passes the test, and what the test binds where
+    /// it does. The values worked out ahead of the fitting -- classes and
+    /// dotted names -- stand in `given` by their place. A tuple subject
+    /// may be taken apart but never kept whole, the kernel having no
+    /// tuple value to hand over for it.
+    fn fit_case(&mut self, test: &crate::form::CaseTest, value: &Value, tuple: bool, given: &[Value]) -> Result<Option<HashMap<String, Value>>, String> {
+        use crate::form::CaseTest;
+        let unready = self.table.single("ext.stmt.match.unready").unwrap_or_default().to_owned();
+        let mut gathered = HashMap::new();
+        if tuple && matches!(test, CaseTest::Keep(_) | CaseTest::Also { .. }) { return Err(unready); }
+        match test {
+            CaseTest::Ignore => {}
+            CaseTest::Keep(name) => { gathered.insert(name.clone(), value.clone()); }
+            CaseTest::Equal(wanted) => {
+                let equal = match (wanted, value) {
+                    (Value::Nil | Value::Flag(_), _) => wanted.selfsame(value),
+                    (_, Value::Flag(flag)) => wanted.equals(&Value::Small(if *flag { 1 } else { 0 })),
+                    _ => wanted.equals(value),
+                };
+                if !equal { return Ok(None); }
+            }
+            CaseTest::Worth(place) => { if !given[*place].equals(value) { return Ok(None); } }
+            CaseTest::AnyOf(choices) => {
+                for next in choices {
+                    let answer = self.fit_case(next, value, tuple, given)?;
+                    if answer.is_some() { return Ok(answer); }
+                }
+                return Ok(None);
+            }
+            CaseTest::Also { test: within, name } => {
+                let Some(found) = self.fit_case(within, value, tuple, given)? else { return Ok(None); };
+                gathered = found;
+                gathered.insert(name.clone(), value.clone());
+            }
+            CaseTest::Series { members, spread } => {
+                if let Value::Shared(cell) = value {
+                    let inner = cell.borrow().clone();
+                    return self.fit_case(test, &inner, tuple, given);
+                }
+                let Value::Vector(values) = value else { return Ok(None); };
+                let values = values.clone();
+                let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
+                if values.len() < minimum { return Ok(None); }
+                if spread.is_none() && minimum != values.len() { return Ok(None); }
+                let mut position = 0;
+                for (ordinal, member) in members.iter().enumerate() {
+                    let next = match spread {
+                        Some(star) if ordinal == *star => {
+                            let end = values.len() - (members.len() - ordinal - 1);
+                            let portion = Value::Vector(Rc::new(values[position..end].to_vec()));
+                            position = end;
+                            portion
+                        }
+                        _ => {
+                            let portion = values[position].clone();
+                            position += 1;
+                            portion
+                        }
+                    };
+                    match self.fit_case(member, &next, false, given)? {
+                        None => return Ok(None),
+                        Some(found) => gathered.extend(found),
+                    }
+                }
+            }
+            CaseTest::Table { pairs, rest } => {
+                if let Value::Shared(cell) = value {
+                    let inner = cell.borrow().clone();
+                    return self.fit_case(test, &inner, tuple, given);
+                }
+                let Value::Dict(entries) = value else { return Ok(None); };
+                let entries = entries.clone();
+                let mut taken = Vec::new();
+                for (key, member) in pairs {
+                    let wanted = match key {
+                        CaseTest::Equal(literal) => literal.clone(),
+                        CaseTest::Worth(place) => given[*place].clone(),
+                        _ => return Err(unready),
+                    };
+                    let Some(at) = self.dict_place(&entries, &wanted)? else { return Ok(None); };
+                    let held = entries[at].1.clone();
+                    match self.fit_case(member, &held, false, given)? {
+                        None => return Ok(None),
+                        Some(found) => gathered.extend(found),
+                    }
+                    taken.push(at);
+                }
+                if let Some(name) = rest {
+                    let left: Vec<(Value, Value)> = entries.iter().enumerate().filter(|(at, _)| !taken.contains(at)).map(|(_, pair)| pair.clone()).collect();
+                    gathered.insert(name.clone(), Value::Dict(Rc::new(left.into())));
+                }
+            }
+            CaseTest::Shape { kind, positional, named } => {
+                let class = given[*kind].clone();
+                if !self.core_belongs(value, &class)? { return Ok(None); }
+                // A native kind arrives as the intrinsic or as the plain
+                // reading of its word; either stands for the whole subject
+                // with one positional test.
+                let native_kind = matches!(class, Value::Intrinsic(..) | Value::Wrapped(8, _));
+                let title = match &class {
+                    Value::Blueprint(b) => b.name.clone(),
+                    Value::Intrinsic(_, word) => word.to_string(),
+                    Value::Wrapped(8, parts) => match &parts[0] { Value::Text(word) => word.to_string(), other => other.kind_word() },
+                    other => other.kind_word(),
+                };
+                if !positional.is_empty() {
+                    // The class lists the members its positional tests stand
+                    // for, in order; a builtin kind stands for the whole
+                    // subject with a single one.
+                    let listed = match &class {
+                        Value::Blueprint(b) => self.table.strings("ext.stmt.class.special").get(87).and_then(|word| self.inherited_entry(b, word)),
+                        _ => None,
+                    };
+                    match listed {
+                        Some(Value::Tuple(words)) | Some(Value::Vector(words)) => {
+                            if positional.len() > words.len() {
+                                let plural = if words.len() == 1 { "" } else { "s" };
+                                return Err(format!("TypeError: {title}() accepts {} positional sub-pattern{plural} ({} given)", words.len(), positional.len()));
+                            }
+                            for (member, word) in positional.iter().zip(words.iter()) {
+                                let Value::Text(word) = word else { return Err("TypeError: __match_args__ elements must be strings".to_owned()) };
+                                let Some(held) = self.member_for_case(value, word)? else { return Ok(None); };
+                                match self.fit_case(member, &held, false, given)? {
+                                    None => return Ok(None),
+                                    Some(found) => gathered.extend(found),
+                                }
+                            }
+                        }
+                        None if positional.len() == 1 && native_kind => {
+                            match self.fit_case(&positional[0], value, false, given)? {
+                                None => return Ok(None),
+                                Some(found) => gathered.extend(found),
+                            }
+                        }
+                        None => return Err(format!("TypeError: {title}() accepts 0 positional sub-patterns ({} given)", positional.len())),
+                        Some(_) => return Err(format!("TypeError: {title}.__match_args__ must be a tuple")),
+                    }
+                }
+                for (word, member) in named {
+                    let Some(held) = self.member_for_case(value, word)? else { return Ok(None); };
+                    match self.fit_case(member, &held, false, given)? {
+                        None => return Ok(None),
+                        Some(found) => gathered.extend(found),
+                    }
+                }
+            }
+        }
+        Ok(Some(gathered))
+    }
+
+    /// A member of a class pattern's subject: nothing where the subject
+    /// lacks it, which fails the pattern and not the run.
+    fn member_for_case(&mut self, subject: &Value, word: &str) -> Result<Option<Value>, String> {
+        match self.read_class_member(subject.clone(), word, false) {
+            Ok(found) => Ok(Some(found)),
+            Err(escape) if self.missing_member_escape(&escape) => Ok(None),
+            Err(Escape::Error(message)) => Err(message),
+            Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+        }
+    }
+
+    /// Where a key stands among a map's pairs: through the store's own
+    /// place where that can say, else by a walk comparing the keys.
+    fn dict_place(&mut self, entries: &crate::data::MapStore, key: &Value) -> Result<Option<usize>, String> {
+        if let Some(words) = self.cannot_key(key) { return Err(words); }
+        let key = self.hash_key(key)?;
+        if let Ok(address) = key.hash_address() {
+            match entries.locate(&address) {
+                Found::Found(at) => return Ok(Some(at)),
+                Found::Absent => return Ok(None),
+                Found::Unknown => {}
+            }
+        }
+        for (at, (stored, _)) in entries.iter().enumerate() {
+            if self.keys_agree(stored, &key)? { return Ok(Some(at)); }
+        }
+        Ok(None)
+    }
+
+    /// The thing is asked for its asynchronous walk, and what it hands
+    /// over is marked, so that each step asks that walk's own word for
+    /// the next member rather than the ordinary one.
+    fn async_walk(&mut self, v: &[Value]) -> Result<Value, Escape> {
+        let [subject] = v else { return Err(Escape::Error(format!("an asynchronous walk expects 1 argument, got {}", v.len()))) };
+        let subject = subject.settled();
+        let asked = self.ask_special(&subject, 83, &[]).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)))?;
+        let Some(walker) = asked else {
+            let kind = match &subject { Value::Thing(t) => t.of.name.clone(), other => other.kind_word() };
+            return Err(Escape::Error(format!("TypeError: 'async for' requires an object with __aiter__ method, got {kind}")));
+        };
+        Ok(Value::Wrapped(61, Rc::new(vec![walker])))
+    }
+
+    /// One step of an asynchronous walk: the walk's own word for the next
+    /// member is asked, and the fault that ends such a walk ends it.
+    fn await_completion(&mut self, value: Value) -> Res<Value> {
+        match value.settled() {
+            Value::Generator(state) => loop {
+                if self.resume(&state, Value::Nil)?.is_none() {
+                    return Ok(state.borrow().result.clone());
+                }
+            },
+            complete => Ok(complete),
+        }
+    }
+
+    fn awaited_step(&mut self, walker: &Value) -> Result<Option<Value>, String> {
+        let (routine, scope) = self.appointed_within(walker, 84).ok_or_else(|| self.bad_answer())?;
+        let result = self.invoke(routine, scope, vec![walker.clone()]).and_then(|value| self.await_completion(value));
+        let stepped = match result {
+            Err(Escape::Error(_)) if self.got_away.is_some() => Err(self.got_away.take().expect("what got away")),
+            other => other,
+        };
+        match stepped {
+            Ok(v) => Ok(Some(v)),
+            Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.async.stop").iter().any(|name| t.of.goes_by(name, false)) => Ok(None),
+            Err(Escape::Error(s)) => Err(s),
+            Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
         }
     }
 
@@ -10361,10 +10614,42 @@ impl<'a> Machine<'a> {
                 };
                 Value::text(&shown)
             }
+            (Prim::AsyncContext(leaving), [manager]) => {
+                let plain = manager.settled();
+                let Value::Thing(thing) = &plain else {
+                    if self.table.strings("ext.stmt.with.invalid").len() != 2 { return Err(self.bad_answer()); }
+                    return Err(self.manager_declined(&plain.kind_word(), true, "__aexit__", false));
+                };
+                // The leaving word is sought first, as the reference seeks
+                // it; a thing keeping the plain protocol is told what was meant.
+                let plain_protocol = self.appointment(&plain, 33).is_some() && self.appointment(&plain, 34).is_some();
+                if self.appointment(&plain, 86).is_none() { return Err(self.manager_declined(&thing.of.name, true, "__aexit__", plain_protocol)); }
+                if self.appointment(&plain, 85).is_none() { return Err(self.manager_declined(&thing.of.name, true, "__aenter__", plain_protocol)); }
+                if leaving {
+                    let word = self.table.strings("ext.stmt.class.special")[86].clone();
+                    match self.read_class_member(plain.clone(), &word, true) {
+                        Ok(bound) => bound,
+                        Err(Escape::Error(told)) => return Err(told),
+                        Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                    }
+                } else {
+                    let value = self.ask_special(&plain, 85, &[])?.ok_or_else(|| self.bad_answer())?;
+                    match self.await_completion(value) {
+                        Ok(answer) => answer,
+                        Err(Escape::Error(told)) => return Err(told),
+                        Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                    }
+                }
+            }
             (Prim::StartContext, [manager]) => {
                 let plain = manager.settled();
                 if let Value::Thing(thing) = &plain {
-                    if self.appointment(&plain, 34).is_none() { return Err(self.no_manager(&thing.of.name)); }
+                    // The leaving word is sought before the entering one, as
+                    // the reference seeks; a thing keeping the asynchronous
+                    // protocol is told which statement was meant.
+                    let asynchronous = self.appointment(&plain, 85).is_some() && self.appointment(&plain, 86).is_some();
+                    if self.appointment(&plain, 34).is_none() { return Err(self.manager_declined(&thing.of.name, false, "__exit__", asynchronous)); }
+                    if self.appointment(&plain, 33).is_none() { return Err(self.manager_declined(&thing.of.name, false, "__enter__", asynchronous)); }
                     self.ask_special(&plain, 33, &[])?.ok_or_else(|| self.no_manager(&thing.of.name))?
                 } else if self.table.strings("ext.stmt.with.invalid").len() == 2 {
                     // What is no thing has no such methods at all, and a
@@ -10586,7 +10871,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Vector(Rc::new(ordered)).keep(true)
             }
-            (Prim::Iterated, [one @ Value::Thing(_)]) => one.clone(),
+            (Prim::Iterated, [one @ (Value::Thing(_) | Value::Wrapped(61, _))]) => one.clone(),
             (Prim::Listed, [one]) => {
                 let result = Value::Vector(Rc::new(self.object_members(one)?));
                 // Members an iterator hands out are kept quoted, as a window's are.
@@ -11490,7 +11775,7 @@ impl<'a> Machine<'a> {
             }
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
-            Prim::StartContext | Prim::DistinctObjects => return Err(self.bad_answer()),
+            Prim::StartContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
                 if work == crate::text::Work::MAKETRANS && values.len() == 1 {
@@ -11799,7 +12084,7 @@ impl<'a> Machine<'a> {
             }
             // The steps of a walk that a thing may answer for itself are
             // worked out where a call can be made, not here.
-            Prim::AwaitResult | Prim::AsyncGathered | Prim::AsyncWalked | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
+            Prim::AsyncWalk | Prim::AwaitResult | Prim::AsyncGathered | Prim::AsyncWalked | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                 return Err(format!("{}() is worked out where a call can be made", name))
             }
             Prim::Kept => {
@@ -15911,66 +16196,7 @@ fn collection_read(held: &Value) -> Value {
 }
 
 /// Try a case without touching any cell until all its parts have agreed.
-fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<Option<HashMap<String, Value>>, ()> {
-    use crate::form::CaseTest;
-    let mut gathered = HashMap::new();
-    if tuple && matches!(test, CaseTest::Keep(_) | CaseTest::Also { .. }) { return Err(()); }
-    match test {
-        CaseTest::Ignore => {}
-        CaseTest::Keep(name) => { gathered.insert(name.clone(), value.clone()); }
-        CaseTest::Equal(wanted) => {
-            let equal = match (wanted, value) {
-                (Value::Nil | Value::Flag(_), _) => wanted.selfsame(value),
-                (_, Value::Flag(flag)) => wanted.equals(&Value::Small(if *flag { 1 } else { 0 })),
-                _ => wanted.equals(value),
-            };
-            if !equal { return Ok(None); }
-        }
-        CaseTest::Pending(_) => return Err(()),
-        CaseTest::AnyOf(choices) => {
-            for next in choices {
-                let answer = fit_case(next, value, tuple)?;
-                if answer.is_some() { return Ok(answer); }
-            }
-            return Ok(None);
-        }
-        CaseTest::Also { test: within, name } => {
-            let Some(found) = fit_case(within, value, tuple)? else { return Ok(None); };
-            gathered = found;
-            gathered.insert(name.clone(), value.clone());
-        }
-        CaseTest::Series { members, spread } => {
-            if let Value::Shared(cell) = value {
-                return fit_case(test, &cell.borrow(), tuple);
-            }
-            let Value::Vector(values) = value else { return Ok(None); };
-            let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
-            if values.len() < minimum { return Ok(None); }
-            if spread.is_none() && minimum != values.len() { return Ok(None); }
-            let mut position = 0;
-            for (ordinal, member) in members.iter().enumerate() {
-                let next = match spread {
-                    Some(star) if ordinal == *star => {
-                        let end = values.len() - (members.len() - ordinal - 1);
-                        let portion = Value::Vector(Rc::new(values[position..end].to_vec()));
-                        position = end;
-                        portion
-                    }
-                    _ => {
-                        let portion = values[position].clone();
-                        position += 1;
-                        portion
-                    }
-                };
-                match fit_case(member, &next, false)? {
-                    None => return Ok(None),
-                    Some(found) => gathered.extend(found),
-                }
-            }
-        }
-    }
-    Ok(Some(gathered))
-}
+
 
 
 /// A container's comparison keeps a shared nonreflexive item findable.
@@ -16869,7 +17095,10 @@ impl<'a> Machine<'a> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        self.text_built(&source, &tokens, &[], &file, mode, &[])?;
+        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[])?;
+        for (message, row, column) in &built.warnings {
+            self.syntax_warning(mode, message, &file, *row, *column, &source)?;
+        }
         let kind = self.code_blueprint();
         // `co_flags` names its bits the reference does; nothing here
         // ever sets the coroutine bit, since top-level `await` is not
@@ -16878,6 +17107,33 @@ impl<'a> Machine<'a> {
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64)), ("co_flags".to_owned(), Value::Small(0))];
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing { of: kind, holds: RefCell::new(holds), turn: self.made })))
+    }
+
+    /// A warning the reading noted about a compiled text, told through
+    /// the reference's warnings module so a filter the program set
+    /// holds; one making it an error makes it the syntax fault the
+    /// reference raises, placed at the line the reading noted.
+    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: u32, column: usize, source: &str) -> Result<(), String> {
+        let words = self.table.strings("ext.system.syntax_warnings");
+        let (Some(module_name), Some(teller_name)) = (words.first().cloned(), words.get(1).cloned()) else { return Ok(()) };
+        let Some(kind_name) = self.table.strings("ext.builtin.exceptions").get(27).cloned() else { return Ok(()) };
+        let Some(category) = self.fault_kinds.get(&kind_name).cloned() else { return Ok(()) };
+        let module = self.load_namespace(&module_name)?;
+        // The module keeps its names in cells; the function is the cell's content.
+        let teller = match self.read_class_member(module, &teller_name, true) {
+            Ok(teller) => teller.settled(),
+            Err(Escape::Error(told)) => return Err(told),
+            Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+        };
+        let handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
+        match self.apply_class_member(teller, handed) {
+            Ok(_) => Ok(()),
+            Err(Escape::Thrown(Value::Thing(raised))) if raised.of.goes_by(&kind_name, false) => {
+                Err(self.text_unreadable_at(mode, format!("SyntaxError: {message}"), file, row, column, None, source))
+            }
+            Err(Escape::Error(told)) => Err(told),
+            Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+        }
     }
 
     /// Text or a code value run: as one expression where it is to be

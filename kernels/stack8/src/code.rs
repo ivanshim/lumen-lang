@@ -80,7 +80,16 @@ pub enum Pattern {
     Sequence(Vec<Pattern>, Option<usize>),
     Alternatives(Vec<Pattern>),
     Bound(Box<Pattern>, String),
-    Unready(Vec<Pattern>),
+    /// A value read ahead of the match (a dotted name), by its place
+    /// among the values so read; the subject must equal it.
+    Value(usize),
+    /// A mapping pattern: each key -- a literal, or a value read ahead
+    /// -- with the pattern its entry must fit, and a name for the pairs
+    /// left over.
+    Mapping(Vec<(Pattern, Pattern)>, Option<String>),
+    /// A class pattern: the class by its place among the values read
+    /// ahead, then the positional sub-patterns and the named ones.
+    Class(usize, Vec<Pattern>, Vec<(String, Pattern)>),
 }
 
 impl Pattern {
@@ -92,8 +101,16 @@ impl Pattern {
                 names = inner.bindings()?;
                 names.push(name.clone());
             }
-            Self::Sequence(parts, _) | Self::Unready(parts) => {
+            Self::Sequence(parts, _) => {
                 for part in parts { names.extend(part.bindings()?); }
+            }
+            Self::Mapping(pairs, rest) => {
+                for (_, part) in pairs { names.extend(part.bindings()?); }
+                if let Some(name) = rest { names.push(name.clone()); }
+            }
+            Self::Class(_, positional, keyed) => {
+                for part in positional { names.extend(part.bindings()?); }
+                for (_, part) in keyed { names.extend(part.bindings()?); }
             }
             Self::Alternatives(choices) => {
                 let mut wanted = None;
@@ -105,7 +122,7 @@ impl Pattern {
                 }
                 names = wanted.unwrap_or_default();
             }
-            Self::Any | Self::Literal(_) => {}
+            Self::Any | Self::Literal(_) | Self::Value(_) => {}
         }
         let mut distinct = names.clone();
         distinct.sort();
@@ -114,51 +131,22 @@ impl Pattern {
         Ok(names)
     }
 
-    pub fn fit(&self, subject: &Value, bound: &mut Vec<(String, Value)>, tuple: bool) -> Result<bool, ()> {
-        match self {
-            Self::Any => Ok(true),
-            Self::Literal(value) => Ok(match value {
-                Value::Null | Value::Flag(_) => value.identical(subject),
-                _ => match subject {
-                    Value::Flag(flag) => value.equals(&Value::Small(i64::from(*flag))),
-                    _ => value.equals(subject),
-                },
-            }),
-            Self::Capture(_) | Self::Bound(_, _) if tuple => Err(()),
-            Self::Capture(name) => { bound.push((name.clone(), subject.clone())); Ok(true) }
-            Self::Bound(inner, name) => {
-                if !inner.fit(subject, bound, tuple)? { return Ok(false); }
-                bound.push((name.clone(), subject.clone()));
-                Ok(true)
-            }
-            Self::Unready(_) => Err(()),
-            Self::Alternatives(choices) => {
-                for choice in choices {
-                    let mut attempt = Vec::new();
-                    if choice.fit(subject, &mut attempt, tuple)? { bound.extend(attempt); return Ok(true); }
-                }
-                Ok(false)
-            }
-            Self::Sequence(parts, star) => {
-                if let Value::Bond(cell) = subject { return self.fit(&cell.borrow(), bound, tuple); }
-                let Value::Array(items) = subject else { return Ok(false); };
-                let fixed = parts.len() - usize::from(star.is_some());
-                if items.len() < fixed || (star.is_none() && items.len() != fixed) { return Ok(false); }
-                let extra = items.len() - fixed;
-                for (i, part) in parts.iter().enumerate() {
-                    let held = if *star == Some(i) {
-                        Value::Array(Rc::new(items[i..i + extra].to_vec()))
-                    } else {
-                        let at = if star.map_or(false, |s| i > s) { i + extra - 1 } else { i };
-                        items[at].clone()
-                    };
-                    if !part.fit(&held, bound, false)? { return Ok(false); }
-                }
-                Ok(true)
-            }
+    /// Whether a literal pattern's value is the subject: `None` and the
+    /// flags by identity, a flag subject as the number it stands for.
+    pub fn literal_fits(value: &Value, subject: &Value) -> bool {
+        match value {
+            Value::Null | Value::Flag(_) => value.identical(subject),
+            _ => match subject {
+                Value::Flag(flag) => value.equals(&Value::Small(i64::from(*flag))),
+                _ => value.equals(subject),
+            },
         }
     }
 }
+
+/// The hidden entry a class keeps its annotations' routines under until
+/// they are asked for; a name no program can spell.
+pub const ANNOTATE_WORD: &str = "\0annotate";
 
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
@@ -167,6 +155,12 @@ pub enum Action {
     /// A pattern and its binding order; the flag marks a tuple subject,
     /// whose members may be taken but whose whole has no value here.
     Match(Rc<Pattern>, Vec<String>, bool),
+    /// Ask a thing for its asynchronous walk, marked so that each step
+    /// asks that walk's own word for the next member.
+    WalkAsync,
+    /// An asynchronous context manager's leaving method, bound (true),
+    /// or the value its entering method answers (false).
+    AsyncContext(bool),
     /// Keep a real's point after a compound write.
     KeepPoint,
     Suspend,

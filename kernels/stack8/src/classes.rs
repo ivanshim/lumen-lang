@@ -467,7 +467,7 @@ impl<'a> Engine<'a> {
         self.descriptor_hook(member, "descriptor.set").is_some() || self.descriptor_hook(member, "descriptor.delete").is_some()
     }
     /// Whether a fault is a missing member's, however it was raised.
-    fn attribute_fault(&self, fault: &Fault) -> bool {
+    pub(super) fn attribute_fault(&self, fault: &Fault) -> bool {
         let kind = self.class_word("attribute.amiss").split(':').next().unwrap_or_default();
         if kind.is_empty() { return false; }
         match fault {
@@ -988,6 +988,7 @@ impl<'a> Engine<'a> {
                     let tuple=Value::Tuple(Rc::new(order));
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
+                if self.lang.class_annotations.first().map_or(false,|word|word==name) { return self.class_annotations(c); }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
@@ -1308,7 +1309,28 @@ impl<'a> Engine<'a> {
         self.function_members.push((function.clone(), fields));
         self.function_members.len() - 1
     }
-    fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().map(|(n,v)|(Value::text(n),v.clone())).collect()))}
+    fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,v)|(Value::text(n),v.clone())).collect()))}
+    /// The annotations a class carries: its own, worked out the first
+    /// time they are asked for from the routines its body kept and held
+    /// from then on. A class whose body annotated nothing has an empty
+    /// map of its own; a parent's annotations are never handed down.
+    pub(super) fn class_annotations(&mut self,c:&Rc<Class>) -> Flow<Value> {
+        let word=self.lang.class_annotations[0].clone();
+        if let Some((_,held))=c.shared.borrow().iter().find(|(n,_)|*n==word) { return Ok(held.clone()); }
+        // The entry stands in a cell, as a class's members do.
+        let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents());
+        let mut pairs=Vec::new();
+        if let Some(Value::Array(row))=kept {
+            for pair in row.chunks(2) {
+                let [key,routine]=pair else {break};
+                let value=match routine {Value::Routine(_)|Value::Method(..)=>self.class_apply(routine.clone(),Vec::new())?,other=>other.clone()};
+                pairs.push((key.clone(),value));
+            }
+        }
+        let made=Value::Map(Rc::new(pairs.into()));
+        c.shared.borrow_mut().push((word,made.clone()));
+        Ok(made)
+    }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
         if self.lang.traceback_member.as_deref() == Some(name) && matches!(&subject, Value::Object(o) if self.exception_class(&o.class)) {
             match &value {
@@ -1803,7 +1825,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
                 }
                 let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));Some(&o.class)},_=>None};
-                if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().map(|(n,_)|n.clone()));}}
+                if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));}}
                 else {names.extend(self.routine_member_names(&one));}
                 names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
             }

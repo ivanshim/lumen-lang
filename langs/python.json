@@ -813,7 +813,8 @@
     "IndentationError",
     "TabError",
     "MemoryError",
-    "BufferError"
+    "BufferError",
+    "StopAsyncIteration"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -2425,6 +2426,9 @@
   "ext.stmt.async.unrun": [
     "NotImplementedError: asynchronous functions cannot be run"
   ],
+  "ext.stmt.async.stop": [
+    "StopAsyncIteration"
+  ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
   ],
@@ -2836,7 +2840,12 @@
     "__reduce__",
     "__setstate__",
     "__reduce_ex__",
-    "__getnewargs__"
+    "__getnewargs__",
+    "__aiter__",
+    "__anext__",
+    "__aenter__",
+    "__aexit__",
+    "__match_args__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
@@ -2935,6 +2944,9 @@
   "ext.stmt.import.from": [
     "from"
   ],
+  "ext.stmt.import.lazy": [
+    "lazy"
+  ],
   "ext.stmt.import.member.missing": [
     "ImportError: cannot import name '",
     "' from '",
@@ -2949,6 +2961,10 @@
   ],
   "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
+  "ext.stmt.legacy_call": [
+    "print",
+    "exec"
+  ],
   "ext.stmt.match": [
     "match"
   ],
@@ -3386,6 +3402,10 @@
   ],
   "ext.system.names.module": [
     "builtins"
+  ],
+  "ext.system.syntax_warnings": [
+    "warnings",
+    "warn_explicit"
   ],
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"

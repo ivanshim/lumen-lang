@@ -381,7 +381,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -577,10 +577,21 @@ impl<'a> Engine<'a> {
     /// named between them; the plain protocol complaint where the
     /// language gives no such words.
     fn unmanaged(&self, kind: &str) -> String {
-        match self.lang.with_invalid.as_slice() {
-            [before, after] => format!("\0{}{}{}", before, kind, after),
-            _ => self.special_fault(),
+        self.manager_refused(kind, false, "__exit__", false)
+    }
+
+    /// Why a value cannot be a context manager: which protocol, the
+    /// method it lacks, and -- where it keeps the other protocol whole
+    /// -- which statement was meant instead.
+    fn manager_refused(&self, kind: &str, asynchronous: bool, missed: &str, other_protocol: bool) -> String {
+        let [before, after] = self.lang.with_invalid.as_slice() else { return self.special_fault() };
+        let protocol = if asynchronous { after.replace("the context manager", "the asynchronous context manager") } else { after.clone() };
+        let mut told = format!("\0{before}{kind}{protocol} (missed {missed} method)");
+        if other_protocol {
+            let (other, meant) = if asynchronous { ("the context manager", "with") } else { ("the asynchronous context manager", "async with") };
+            told.push_str(&format!(" but it supports {other} protocol. Did you mean to use '{meant}'?"));
         }
+        told
     }
 
     fn exception_class(&self, class: &Class) -> bool {
@@ -2141,33 +2152,41 @@ impl<'a> Engine<'a> {
         if let Some(kept) = self.book_of(slot.far) {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) { return found; }
         }
-        if let Value::Bond(shared) = &self.world[slot.far] {
+        // A module's cell that holds nothing -- a name never bound, or
+        // one deleted -- is no value to read in a language whose unbound
+        // names are looked for in a module: it is read as an unbound
+        // name, answered by the same fallbacks and refused the same way.
+        let empty_cell = !self.lang.names_module.is_empty()
+            && matches!(&self.world[slot.far], Value::Bond(shared) if matches!(&*shared.borrow(), Value::Blank));
+        if let (Value::Bond(shared), false) = (&self.world[slot.far], empty_cell) {
             return Ok(match () {
                 _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
                 _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
                 _ => shared.borrow().clone(),
             });
         }
+        let unbound = empty_cell || matches!(self.world[slot.far], Value::Blank);
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
         // is concerned, and nothing is said about it.
-        if slot.moving && self.lang.makes_places && matches!(self.world[slot.far], Value::Blank | Value::Null) {
+        if slot.moving && self.lang.makes_places && (unbound || matches!(self.world[slot.far], Value::Null)) {
             return Ok(Value::Array(std::rc::Rc::new(Vec::new())));
         }
         // A language that has a word for a warning does not stop for a
         // binding never written: it says so and reads nothing there.
-        if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
+        if unbound && self.warns_about(&slot.ident) {
             let told = format!("Undefined variable {}", slot.ident);
             self.complain(Complaint::Warning, &told);
             return Ok(Value::Null);
         }
-        if matches!(self.world[slot.far], Value::Blank) && self.fuller_classes() {
+        if unbound && self.fuller_classes() {
             if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
             if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::Adapter(Rc::new((8,vec![Value::text(&slot.ident)])))); }
         }
-        if matches!(self.world[slot.far], Value::Blank) {
+        if unbound {
             if let Some(held) = self.kept_by_module(&slot.ident) { return Ok(held); }
         }
+        if empty_cell { return Err(format!("Undefined variable: {}", slot.ident)); }
         let g = &mut self.world[slot.far];
         match g {
             Value::Blank if slot.moving => Err(format!("Undefined variable '{}'", slot.ident)),
@@ -2295,6 +2314,9 @@ impl<'a> Engine<'a> {
         }
         match &self.world[slot.far] {
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
+            // A module's cell holding nothing is an unbound name too, for a
+            // language whose unbound names are looked for in a module.
+            Value::Bond(shared) if !self.lang.names_module.is_empty() && matches!(&*shared.borrow(), Value::Blank) => Err(format!("Undefined variable: {}", slot.ident)),
             v => Ok(v),
         }
     }
@@ -2344,6 +2366,7 @@ impl<'a> Engine<'a> {
         }
         match &self.world[slot.far] {
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
+            Value::Bond(shared) if !self.lang.names_module.is_empty() && matches!(&*shared.borrow(), Value::Blank) => Err(format!("Undefined variable: {}", slot.ident)),
             _ => Ok(&mut self.world[slot.far]),
         }
     }
@@ -3011,7 +3034,10 @@ impl<'a> Engine<'a> {
                 };
         if let Some(cell) = &plan.context {
             let object = self.load_cell(cell, frame)?;
-            if !matches!(object, Value::Object(_)) {
+            // The watched place holds the manager or, for an asynchronous
+            // block, its leaving method already bound to it.
+            let leaving_bound = matches!(object, Value::Method(..));
+            if !matches!(object, Value::Object(_)) && !leaving_bound {
                 return ending.map(|end| match end { Passage::Along(at) if at == plan.body.1 => Passage::Along(plan.after), other => other });
             }
             if matches!(&ending, Err(Fault::Note(_))) || matches!(&ending, Err(Fault::Thrown(value)) if !matches!(value, Value::Object(_))) {
@@ -3021,9 +3047,12 @@ impl<'a> Engine<'a> {
                 Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class.clone()), value.clone(), self.trace_of(value)],
                 _ => vec![Value::Null, Value::Null, Value::Null],
             };
-            let method = self.special_method(&object, 34).ok_or_else(|| self.special_fault())?;
+            let (method, receiver) = match &object {
+                Value::Method(o, p) => (p.clone(), Value::Object(o.clone())),
+                _ => (self.special_method(&object, 34).ok_or_else(|| self.special_fault())?, object.clone()),
+            };
             let kept = self.data.len();
-            let mut given = vec![object];
+            let mut given = vec![receiver];
             given.extend(args);
             // The raised value is held while the manager lets the body
             // go, so that whatever the leaving raises keeps it as context.
@@ -3035,7 +3064,14 @@ impl<'a> Engine<'a> {
                 self.location = context_location;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
-            let left = self.invoke(&method, given);
+            let left = self.invoke(&method, given).and_then(|()| {
+                if leaving_bound {
+                    let value = self.drop_top()?;
+                    let answer = self.await_value(value)?;
+                    self.data.push(answer);
+                }
+                Ok(())
+            });
             let left = self.raised_of_note(left);
             if left.is_ok() && !self.lang.trace_fields.is_empty() {
                 self.line = body_line;
@@ -6354,6 +6390,7 @@ impl<'a> Engine<'a> {
 
     fn special_step(&mut self, value: &Value) -> Res<Option<Value>> {
         if matches!(value, Value::Cursor(_) | Value::Generator(_)) { return self.core_step(value); }
+        if let Value::Adapter(w) = value { if w.0 == 30 { return self.async_step(&w.1[0]); } }
         if let Value::Walk(walk) = value {
             let mut walk = walk.borrow_mut();
             let next = walk.0.get(walk.1).cloned();
@@ -6374,6 +6411,30 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// One step of an asynchronous walk: the walk's own word for the
+    /// next member is asked, and the fault that ends such a walk ends it.
+    fn await_value(&mut self, value: Value) -> Flow<Value> {
+        if let Value::Generator(held) = &value {
+            while self.resume_generator(held, Value::Null)?.is_some() {}
+            return Ok(held.borrow().returned.clone());
+        }
+        Ok(value)
+    }
+
+    fn async_step(&mut self, walker: &Value) -> Res<Option<Value>> {
+        let method = self.special_method(walker, 84).ok_or_else(|| self.special_fault())?;
+        let stepped = self.invoke(&method, vec![walker.clone()]).and_then(|()| {
+            let value = self.drop_top()?;
+            self.await_value(value)
+        });
+        match stepped {
+            Ok(value) => Ok(Some(value)),
+            Err(Fault::Thrown(Value::Object(o))) if self.lang.async_stop.iter().any(|n| o.class.named(n, false)) => Ok(None),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+        }
+    }
+
     /// The members a walk hands over for taking apart: no more than the
     /// places call for, and one beyond them so that too many may be told
     /// from enough, except where a starred place takes all that is left.
@@ -6388,6 +6449,132 @@ impl<'a> Engine<'a> {
             found.push(value);
         }
         Ok(found)
+    }
+
+    /// Whether the subject fits the pattern, gathering what the pattern
+    /// binds. The values read ahead of the match -- classes and dotted
+    /// names -- stand in `given` by their place. A tuple subject may be
+    /// taken apart but not kept whole: the kernel has no tuple value to
+    /// hand over in its stead.
+    fn fit_pattern(&mut self, pattern: &crate::code::Pattern, subject: &Value, bound: &mut Vec<(String, Value)>, tuple: bool, given: &[Value]) -> Flow<bool> {
+        use crate::code::Pattern;
+        let unready = self.lang.match_unready.first().cloned().unwrap_or_default();
+        match pattern {
+            Pattern::Any => Ok(true),
+            Pattern::Literal(value) => Ok(Pattern::literal_fits(value, subject)),
+            Pattern::Capture(_) | Pattern::Bound(..) if tuple => Err(unready.into()),
+            Pattern::Capture(name) => { bound.push((name.clone(), subject.clone())); Ok(true) }
+            Pattern::Bound(inner, name) => {
+                if !self.fit_pattern(inner, subject, bound, tuple, given)? { return Ok(false); }
+                bound.push((name.clone(), subject.clone()));
+                Ok(true)
+            }
+            Pattern::Value(at) => Ok(given[*at].equals(subject)),
+            Pattern::Alternatives(choices) => {
+                for choice in choices {
+                    let mut attempt = Vec::new();
+                    if self.fit_pattern(choice, subject, &mut attempt, tuple, given)? { bound.extend(attempt); return Ok(true); }
+                }
+                Ok(false)
+            }
+            Pattern::Sequence(parts, star) => {
+                if let Value::Bond(cell) = subject { let inner = cell.borrow().clone(); return self.fit_pattern(pattern, &inner, bound, tuple, given); }
+                let Value::Array(items) = subject else { return Ok(false); };
+                let items = items.clone();
+                let fixed = parts.len() - usize::from(star.is_some());
+                if items.len() < fixed || (star.is_none() && items.len() != fixed) { return Ok(false); }
+                let extra = items.len() - fixed;
+                for (i, part) in parts.iter().enumerate() {
+                    let held = if *star == Some(i) {
+                        Value::Array(Rc::new(items[i..i + extra].to_vec()))
+                    } else {
+                        let at = if star.map_or(false, |s| i > s) { i + extra - 1 } else { i };
+                        items[at].clone()
+                    };
+                    if !self.fit_pattern(part, &held, bound, false, given)? { return Ok(false); }
+                }
+                Ok(true)
+            }
+            Pattern::Mapping(pairs, rest) => {
+                if let Value::Bond(cell) = subject { let inner = cell.borrow().clone(); return self.fit_pattern(pattern, &inner, bound, tuple, given); }
+                let Value::Map(store) = subject else { return Ok(false) };
+                let store = store.clone();
+                let mut taken = Vec::new();
+                for (key, part) in pairs {
+                    let wanted = match key {
+                        Pattern::Literal(value) => value.clone(),
+                        Pattern::Value(at) => given[*at].clone(),
+                        _ => return Err(unready.into()),
+                    };
+                    let (found, _) = self.map_locate(&store, Some(&store), &wanted)?;
+                    let Some(at) = found else { return Ok(false) };
+                    let entry = store[at].1.clone();
+                    if !self.fit_pattern(part, &entry, bound, false, given)? { return Ok(false); }
+                    taken.push(at);
+                }
+                if let Some(name) = rest {
+                    let left: Vec<(Value, Value)> = store.iter().enumerate().filter(|(at, _)| !taken.contains(at)).map(|(_, pair)| pair.clone()).collect();
+                    bound.push((name.clone(), Value::Map(Rc::new(left.into()))));
+                }
+                Ok(true)
+            }
+            Pattern::Class(at, positional, keyed) => {
+                let kind = given[*at].clone();
+                if !self.core_isinstance(subject, &kind)? { return Ok(false); }
+                // A builtin kind comes as the native value or as the plain
+                // reading of its word; either stands for the whole subject
+                // with a single positional sub-pattern.
+                let builtin_kind = matches!(&kind, Value::Native(..)) || matches!(&kind, Value::Adapter(w) if w.0 == 8)
+                    || matches!(&kind, Value::Class(c) if Self::kind_beneath(c).is_some());
+                let title = match &kind {
+                    Value::Class(c) => c.name.clone(),
+                    Value::Native(_, word) => word.to_string(),
+                    Value::Adapter(w) if w.0 == 8 => match &w.1[0] { Value::Text(word) => word.to_string(), other => other.core_kind() },
+                    other => other.core_kind(),
+                };
+                if !positional.is_empty() {
+                    // The class lists, in order, the members its positional
+                    // sub-patterns stand for; a builtin kind stands for
+                    // the whole subject with one.
+                    let listed = match &kind {
+                        Value::Class(c) => self.lang.class_special.get(87).and_then(|word| self.class_value(c, word)),
+                        _ => None,
+                    };
+                    match listed {
+                        Some(Value::Tuple(names)) | Some(Value::Array(names)) => {
+                            if positional.len() > names.len() {
+                                return Err(format!("TypeError: {title}() accepts {} positional sub-pattern{} ({} given)", names.len(), if names.len() == 1 { "" } else { "s" }, positional.len()).into());
+                            }
+                            for (part, name) in positional.iter().zip(names.iter()) {
+                                let Value::Text(word) = name else { return Err("TypeError: __match_args__ elements must be strings".into()) };
+                                let Some(member) = self.member_for_pattern(subject, word)? else { return Ok(false) };
+                                if !self.fit_pattern(part, &member, bound, false, given)? { return Ok(false); }
+                            }
+                        }
+                        None if positional.len() == 1 && builtin_kind => {
+                            if !self.fit_pattern(&positional[0], subject, bound, false, given)? { return Ok(false); }
+                        }
+                        None => return Err(format!("TypeError: {title}() accepts 0 positional sub-patterns ({} given)", positional.len()).into()),
+                        Some(_) => return Err(format!("TypeError: {title}.__match_args__ must be a tuple").into()),
+                    }
+                }
+                for (word, part) in keyed {
+                    let Some(member) = self.member_for_pattern(subject, word)? else { return Ok(false) };
+                    if !self.fit_pattern(part, &member, bound, false, given)? { return Ok(false); }
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    /// A member of a class pattern's subject: nothing where the subject
+    /// has no such member, which fails the pattern rather than the run.
+    fn member_for_pattern(&mut self, subject: &Value, word: &str) -> Flow<Option<Value>> {
+        match self.class_get(subject.clone(), word, false) {
+            Ok(member) => Ok(Some(member)),
+            Err(fault) if self.attribute_fault(&fault) => Ok(None),
+            Err(fault) => Err(fault),
+        }
     }
 
     fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
@@ -6411,12 +6598,8 @@ impl<'a> Engine<'a> {
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         if matches!(op, Action::Awaited) {
-            let mut answer = self.drop_top()?;
-            if let Value::Generator(held) = &answer {
-                while self.resume_generator(held, Value::Null)?.is_some() {}
-                let returned = held.borrow().returned.clone();
-                answer = returned;
-            }
+            let value = self.drop_top()?;
+            let answer = self.await_value(value)?;
             self.data.push(answer);
             return Ok(());
         }
@@ -6463,14 +6646,29 @@ impl<'a> Engine<'a> {
         let result = match op {
             Action::Match(pattern, names, tuple) => {
                 let subject = self.drop_top()?;
+                // The values the pattern read ahead -- classes and dotted
+                // names -- stand under the subject, in the order read.
+                let given = self.drop_many(argc - 1)?;
                 let mut bindings = Vec::new();
-                match pattern.fit(&subject, &mut bindings, *tuple) {
-                    Err(()) => return Err(self.lang.match_unready.first().cloned().unwrap_or_default().into()),
-                    Ok(false) => Value::Null,
-                    Ok(true) => Value::Array(Rc::new(names.iter().map(|name| {
+                match self.fit_pattern(pattern, &subject, &mut bindings, *tuple, &given)? {
+                    false => Value::Null,
+                    true => Value::Array(Rc::new(names.iter().map(|name| {
                         bindings.iter().find(|(n, _)| n == name).expect("a pattern binding").1.clone()
                     }).collect())),
                 }
+            }
+            Action::WalkAsync => {
+                // The thing is asked for its asynchronous walk, and what
+                // it hands over is marked, so that each step asks that
+                // walk's own word for the next member.
+                let subject = self.drop_top()?.contents();
+                let told = self.special_call(&subject, 83, Vec::new());
+                if let Some(fled) = self.carried.take() { return Err(fled); }
+                let Some(walker) = told? else {
+                    let kind = match &subject { Value::Object(o) => o.class.name.clone(), other => other.core_kind() };
+                    return Err(format!("TypeError: 'async for' requires an object with __aiter__ method, got {kind}").into());
+                };
+                Value::Adapter(Rc::new((30, vec![walker])))
             }
             Action::ByteAssign(repeat) => {
                 let operands = self.drop_many(2)?;
@@ -8187,11 +8385,39 @@ impl<'a> Engine<'a> {
             }
             // A thing may be its own walk, or may hand another over to
             // be walked in its stead. Either way the walk begins here.
+            Action::AsyncContext(leaving) => {
+                let object = self.drop_top()?;
+                let held = object.contents();
+                let Value::Object(o) = &held else {
+                    if self.lang.with_invalid.len() != 2 { return Err(self.special_fault().into()); }
+                    return Err(self.manager_refused(&held.core_kind(), true, "__aexit__", false).into());
+                };
+                // The leaving method is looked for first, as the reference
+                // looks; a manager keeping the plain protocol is told which
+                // statement was meant.
+                let plain = self.special_value(&held, 33).is_some() && self.special_value(&held, 34).is_some();
+                if self.special_value(&held, 86).is_none() { return Err(self.manager_refused(&o.class.name, true, "__aexit__", plain).into()); }
+                if self.special_value(&held, 85).is_none() { return Err(self.manager_refused(&o.class.name, true, "__aenter__", plain).into()); }
+                if *leaving {
+                    let word = self.lang.class_special[86].clone();
+                    self.class_get(held.clone(), &word, false)?
+                } else {
+                    let told = self.special_call(&held, 85, Vec::new());
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    let value = told?.ok_or_else(|| self.special_fault())?;
+                    self.await_value(value)?
+                }
+            }
             Action::ContextEnter => {
                 let object = self.drop_top()?;
                 let held = object.contents();
                 if let Value::Object(o) = &held {
-                    if self.special_value(&held, 34).is_none() { return Err(self.unmanaged(&o.class.name).into()); }
+                    // The leaving method is looked for before the entering
+                    // one, as the reference looks; a manager keeping the
+                    // asynchronous protocol is told which statement was meant.
+                    let asynchronous = self.special_value(&held, 85).is_some() && self.special_value(&held, 86).is_some();
+                    if self.special_value(&held, 34).is_none() { return Err(self.manager_refused(&o.class.name, false, "__exit__", asynchronous).into()); }
+                    if self.special_value(&held, 33).is_none() { return Err(self.manager_refused(&o.class.name, false, "__enter__", asynchronous).into()); }
                     // What the opening method raised is raised on, so that
                     // it reaches the arms standing round the whole block,
                     // and not the words that stand in for a method giving
@@ -8227,6 +8453,12 @@ impl<'a> Engine<'a> {
             Action::Awaited | Action::AsyncGenerator | Action::AsyncWalk => unreachable!("asynchronous walks were handled before dispatch"),
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                // An asynchronous walk, already asked of its thing, is
+                // stepped by that thing's own word for the next member.
+                if matches!(&handed, Value::Adapter(w) if w.0 == 30) {
+                    self.data.push(Value::Walking(Rc::new(RefCell::new((handed, None)))));
+                    return Ok(());
+                }
                 if let Value::Class(class) = &handed {
                     if let Some(yielded) = self.class_walked(&class.clone())? { handed = yielded; }
                 }
@@ -17085,6 +17317,9 @@ impl Engine<'_> {
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
         }
+        for (message, row, column) in std::mem::take(&mut trial.warnings) {
+            self.syntax_warning(mode, &message, &file, row, column, &source)?;
+        }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
         // `co_flags` names its bits the reference does; nothing here
@@ -17094,6 +17329,37 @@ impl Engine<'_> {
         let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64)), ("co_flags".to_string(), Value::Small(0))];
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
+    }
+
+    /// A warning the reading noted about how a compiled text is
+    /// written, said through the reference's warnings module, so that
+    /// a filter the program set is honoured. One turning the warning
+    /// into an error makes it the syntax fault the reference raises.
+    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: usize, column: usize, source: &str) -> Res<()> {
+        let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
+        let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
+        let Some(kind_name) = self.lang.exceptions.get(27).cloned() else { return Ok(()) };
+        let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
+        let module = match self.import_module(&module_name) {
+            Ok(module) => module,
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        // A module carries its names in cells; the function is what the cell holds.
+        let teller = match self.class_get(module, &teller_name, false) {
+            Ok(teller) => teller.contents(),
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        let handed = vec![Value::text(message), category, Value::text(file), Value::Small(row as i64)];
+        match self.class_apply(teller, handed) {
+            Ok(_) => Ok(()),
+            Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if o.class.named(&kind_name, false)) => {
+                Err(self.text_syntax(mode, format!("SyntaxError: {message}"), file, row, column, None, source))
+            }
+            Err(Fault::Note(told)) => Err(told),
+            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+        }
     }
 
     /// Text, or a code value, run: as one expression where it was asked
