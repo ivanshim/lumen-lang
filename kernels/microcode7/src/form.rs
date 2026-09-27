@@ -195,6 +195,12 @@ pub enum Prim {
     DirEntries,
     DirFresh,
     DirWhole,
+    /// A single directory raised at the place named, no others
+    /// raised on the way there (ext.builtin.dir.make_one).
+    DirOne,
+    /// The folder a run takes itself over to, short paths opening
+    /// from there ever after (ext.builtin.dir.change).
+    DirStep,
     /// The fault in hand, as the name of its kind and its words.
     FaultHeld,
     /// The value the innermost clause holds as raised, whole, or nil

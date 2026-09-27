@@ -78,6 +78,12 @@
   "ext.builtin.dir.make": [
     "__make_dir"
   ],
+  "ext.builtin.dir.make_one": [
+    "__make_dir_one"
+  ],
+  "ext.builtin.dir.change": [
+    "__change_dir"
+  ],
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
