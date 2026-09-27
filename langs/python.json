@@ -822,7 +822,9 @@
     "UnicodeTranslateError",
     "IndentationError",
     "TabError",
-    "ReferenceError"
+    "ReferenceError",
+    "MemoryError",
+    "BufferError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -886,7 +888,7 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>"
+    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -2052,7 +2054,8 @@
     "SyntaxError: '{' was never closed",
     "SyntaxError: invalid non-printable character U+00A0",
     "SyntaxError: can't use starred expression here",
-    "SyntaxError: f-string: newlines are not allowed in format specifiers"
+    "SyntaxError: f-string: newlines are not allowed in format specifiers",
+    "SyntaxError: f-string: expressions nested too deeply"
   ],
   "ext.lexical.string.format.unavailable": [
     "this formatted value is not supported"
@@ -2713,6 +2716,9 @@
   "ext.stmt.class.detail.arguments.new": [
     "TypeError: ",
     ".__new__() takes exactly one argument (the type to instantiate)"
+  ],
+  "ext.stmt.class.detail.integer.layout": [
+    "__basicsize__", "__itemsize__", "__sizeof__", "24", "4", "30", "32"
   ],
   "ext.stmt.class.detail.root.members": [
     "__eq__",
@@ -3496,5 +3502,7 @@
   ],
   "ext.text.format.zero.string": [
     "ValueError: Negative zero coercion (z) not allowed in string format specifier"
-  ]
+  ],
+  "ext.lexical.escape.named.amiss": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"],
+  "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "invalid escape sequence '\\{}'"]
 }

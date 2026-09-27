@@ -1347,8 +1347,14 @@ impl<'a> Compiler<'a> {
 
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
         let source = self.pos;
-        let first_body = self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).next();
-        let doc = first_body.filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.clone());
+        let mut leading = self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).peekable();
+        let mut literal = String::new();
+        let mut quoted = false;
+        while leading.peek().map_or(false, |t| t.shape == Shape::Quote) {
+            quoted = true;
+            literal.push_str(&leading.next().unwrap().lexeme);
+        }
+        let doc = (quoted && !leading.peek().map_or(false, |t| t.shape == Shape::StringBegin)).then_some(literal);
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
@@ -1901,7 +1907,16 @@ impl<'a> Compiler<'a> {
         if bracketed { self.take(); }
         let mut watchers = Vec::new();
         loop {
+            let begin = self.pos;
+            let start = self.mark();
             self.expr(0)?;
+            if !lang.trace_fields.is_empty() {
+                let position = self.expression_location(begin);
+                let code: Vec<Instr> = self.piece().instrs.drain(start..).collect();
+                self.put(position.clone());
+                for op in relocated(code, 1) { self.put(op); }
+                self.put(position);
+            }
             if lang.class_special.get(33).is_some() {
                 let manager = self.gensym("context");
                 self.write(&manager);
@@ -3554,6 +3569,13 @@ impl<'a> Compiler<'a> {
     }
 
     /// `for v in a..b block`: a counted loop with the bound in a hidden slot.
+    fn expression_location(&self, start: usize) -> Instr {
+        let first = &self.tokens[start];
+        let last = &self.tokens[self.pos.saturating_sub(1).max(start)];
+        Instr::Location((first.row as u32).saturating_sub(self.before), first.column.saturating_sub(1) as u32,
+            (last.end_row as u32).saturating_sub(self.before), last.end_column.saturating_sub(1) as u32)
+    }
+
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
@@ -3601,6 +3623,7 @@ impl<'a> Compiler<'a> {
             self.want_sign(&call.close, "after the range")?;
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
+            let source_at = self.pos;
             let from = self.mark();
             if self.on_any(&lang.array_spread) { self.scope_value()?; }
             else { self.expr(tier + 1)?; self.scope_tail(from)?; }
@@ -3610,10 +3633,13 @@ impl<'a> Compiler<'a> {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 let bag = self.gensym("bag");
+                let position = self.expression_location(source_at);
                 let source: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                if !lang.trace_fields.is_empty() { self.put(position.clone()); }
                 for w in relocated(source, -(from as i64) + self.mark() as i64) {
                     self.put(w);
                 }
+                if !lang.trace_fields.is_empty() { self.put(position); }
                 if !lang.comprehension_for.is_empty() {
                     self.act(Action::ComprehensionItems, 1);
                 }
@@ -3757,6 +3783,9 @@ impl<'a> Compiler<'a> {
     /// A colon body may stand on the same line as its head. This small
     /// reading belongs to the watched statement and each of its arms.
     fn attempt_body(&mut self) -> Res<(usize, usize)> {
+        if !self.lang.syntax_members.is_empty() && !self.on_any(&self.lang.block_intros) {
+            return Err("SyntaxError: expected ':'".into());
+        }
         let start = self.mark();
         // In a class body the arm names members, and is read as the
         // body around it is read.
@@ -3839,7 +3868,17 @@ impl<'a> Compiler<'a> {
             }
             let held = if self.on_keyword(&lang.catch_as) {
                 self.take();
+                let binding_at = self.pos;
                 let name = self.want_name("after the caught value's binding word")?;
+                if !lang.syntax_members.is_empty() && (self.at_symbol(".") || self.at_symbol("[")) {
+                    let kind = if self.at_symbol(".") { "attribute" } else { "subscript" };
+                    while !self.on_any(&lang.block_intros) && !self.on_sep() && !self.exhausted() { self.take(); }
+                    let last = &self.tokens[self.pos - 1];
+                    self.registry.stopped_end = last.column + last.lexeme.chars().count();
+                    self.registry.stopped_end_row = last.row;
+                    self.pos = binding_at;
+                    return Err(format!("SyntaxError: cannot use except{} statement with {kind}", if grouped { "*" } else { "" }));
+                }
                 self.claim(&name);
                 Some(self.cell_to_write(&name))
             } else { None };
@@ -6730,6 +6769,9 @@ impl<'a> Compiler<'a> {
                 self.rewritten(&name);
                 Ok(())
             }
+            _ if !self.lang.syntax_members.is_empty() => Err(if matches!(target.last(), Some(Instr::Act(Action::Invoke(_), _))) {
+                "SyntaxError: cannot assign to function call here. Maybe you meant '==' instead of '='?".into()
+            } else { "SyntaxError: cannot assign to expression here. Maybe you meant '==' instead of '='?".into() }),
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
         };
         // The value worked out ahead of the keys is let go once written.
@@ -6809,6 +6851,15 @@ impl<'a> Compiler<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            if !lang.syntax_members.is_empty() && matches!(text.as_str(), "&" | "|")
+                && self.look_ahead(1).lexeme == text && self.look_ahead(1).row == t.row
+                && self.look_ahead(1).column == t.column + 1 {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                let word = if text == "&" { "and" } else { "or" };
+                return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{word}' or '{text}' instead of '{text}{text}'?"));
+            }
             if floor == 0 && lang.if_else_words.first() == Some(&text) {
                 self.take();
                 let yes: Vec<Instr> = self.piece().instrs.drain(from..).collect();
@@ -7747,12 +7798,24 @@ impl<'a> Compiler<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", call.close));
             }
+            if targets && !self.lang.syntax_members.is_empty() {
+                let word = self.look().lexeme.as_str();
+                let kind = if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("literal") }
+                    else if ["None", "True", "False"].contains(&word) { Some(word) }
+                    else if word == "*" { Some("starred") }
+                    else if ["+", "-", "~", "not"].contains(&word) { Some("expression") } else { None };
+                if let Some(kind) = kind { return Err(format!("SyntaxError: cannot delete {kind}")); }
+            }
             if targets && !self.grouped_holder() {
                 let pair = self.lang.grouping.clone().filter(|p| self.at_symbol(&p.open))
                     .or_else(|| self.lang.array_brackets.clone().filter(|p| self.at_symbol(&p.open)));
                 if let Some(mut pair) = pair {
                     pair.between = call.between.clone();
                     self.take();
+                    if !self.lang.syntax_members.is_empty() && pair.open == "(" && self.at_symbol("*")
+                        && !self.tokens[self.pos..].iter().take_while(|t| t.lexeme != pair.close).any(|t| t.lexeme == ",") {
+                        return Err("SyntaxError: cannot use starred expression here".into());
+                    }
                     self.forget_targets(&pair, true, true)?;
                     self.discard();
                     if call.between.as_ref().map_or(false, |s| self.at_symbol(s)) { self.take(); }
@@ -7761,7 +7824,15 @@ impl<'a> Compiler<'a> {
             }
             let from = self.mark();
             self.awkward_place = false;
-            if targets { self.block_place()?; } else { self.expr(0)?; }
+            if targets { self.block_place()?; self.called_on_value()?; } else { self.expr(0)?; }
+            if targets && !self.lang.syntax_members.is_empty() {
+                if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) { return Err("SyntaxError: cannot delete function call".into()); }
+                let next = self.look().lexeme.as_str();
+                let kind = if next == "if" { Some("conditional expression") }
+                    else if next == ":=" { Some("named expression") }
+                    else if self.lang.dyadic.contains_key(next) { Some("expression") } else { None };
+                if let Some(kind) = kind { return Err(format!("SyntaxError: cannot delete {kind}")); }
+            }
             let named: Vec<Instr> = self.piece().instrs.drain(from..).collect();
             if self.awkward_place {
                 self.constant(Value::text(&self.lang.del_unrun));
@@ -8508,6 +8579,8 @@ impl<'a> Compiler<'a> {
                     // its refusal.
                     else if lang.member_amiss.is_some() { self.act(Action::Grab(Rc::from(named.as_str())), 1); }
                     else { self.scope_fault(&lang.set_words["ext.builtin.set.method.unavailable"]); }
+                } else if matches!(native, Some(Builtin::Bytes(14))) && call.is_none() {
+                    self.act(Action::Grab(Rc::from(named.as_str())), 1);
                 } else if matches!(native, Some(Builtin::Bytes(_))) && call.is_none() {
                     self.discard();
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
@@ -8748,7 +8821,15 @@ impl<'a> Compiler<'a> {
             self.pos = clause;
             self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or("Expected a comprehension source")? + 1;
             let source_at = self.pos;
+            let start = self.mark();
             self.expr(1)?;
+            if !self.lang.trace_fields.is_empty() {
+                let position = self.expression_location(source_at);
+                let code: Vec<Instr> = self.piece().instrs.drain(start..).collect();
+                self.put(position.clone());
+                for op in relocated(code, 1) { self.put(op); }
+                self.put(position);
+            }
             let source_end = self.pos;
             let asynchronous = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
             self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
@@ -8892,6 +8973,8 @@ impl<'a> Compiler<'a> {
             let target_end = *joins.first().ok_or("Expected the comprehension's collection word")?;
             self.comprehension_locals(target_start, target_end, 0)?;
             self.pos = target_end + 1;
+            let expression_start = self.pos;
+            let instruction_start = self.mark();
             if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
                 self.read(&seed);
                 self.pos = end;
@@ -8899,12 +8982,19 @@ impl<'a> Compiler<'a> {
                 self.expr(1)?;
                 self.act(if asynchronous { Action::AsyncWalk } else if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             }
+            let position = self.expression_location(expression_start);
+            if !self.lang.trace_fields.is_empty() {
+                let code: Vec<Instr> = self.piece().instrs.drain(instruction_start..).collect();
+                self.put(position.clone());
+                for op in relocated(code, 1) { self.put(op); }
+            }
             let bag = self.gensym("comprehension_source");
             self.write(&bag);
             let at = self.gensym("comprehension_place");
             self.constant(Value::Small(0));
             self.write(&at);
             let test = self.mark();
+            if !self.lang.trace_fields.is_empty() { self.put(position); }
             if self.lang.yield_suspends {
                 self.read(&bag);
                 self.read(&at);
@@ -9055,6 +9145,10 @@ impl<'a> Compiler<'a> {
             if !matches!(t.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = t.lexeme.as_str();
             if depth == 0 && word == "=" && (i != start + 1 || self.tokens[start].shape != Shape::Instr) {
+                if i > start + 1 && self.tokens[start..i - 1].iter().all(|part| part.shape == Shape::Quote) {
+                    self.pos = i - 2;
+                    return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
+                }
                 self.registry.stopped_end = t.column + 1;
                 self.registry.stopped_end_row = t.row;
                 self.pos = start;
@@ -9705,7 +9799,7 @@ fn word_alone(w: &Instr) -> bool {
     };
     match w {
         Instr::Const(_) | Instr::Read(_) | Instr::Glance(_) | Instr::Write(_) | Instr::Skip(_)
-        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Forget(_)
+        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Location(..) | Instr::Forget(_)
         | Instr::Emptied(_) | Instr::Shed | Instr::Nothing | Instr::Ready(_) | Instr::Bump { .. } => true,
         Instr::Act(op, _) => quiet(op),
         Instr::Dyad { op, .. } | Instr::SkipCmp { op, .. } => quiet(op),

@@ -175,6 +175,15 @@ fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
                     return Err((format!("IndentationError: expected an indented block after '{word}' statement on line {line}"), t.row, input.get(i + 1).map_or(1, |next| next.column)));
                 }
             } else if rising {
+                if let Some((word, row)) = &line_start {
+                    if matches!(word.as_str(), "try" | "else" | "finally") {
+                        if let Some(previous) = input[..i].iter().rev().find(|part| !matches!(part.shape, Shape::Lead | Shape::LineEnd)) {
+                            if previous.lexeme == *word && previous.row == *row {
+                                return Err((String::from("SyntaxError: expected ':'"), *row, previous.column + word.len()));
+                            }
+                        }
+                    }
+                }
                 return Err(("IndentationError: unexpected indent".to_owned(), t.row, t.column));
             }
             if rising {

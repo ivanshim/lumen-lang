@@ -555,6 +555,9 @@ pub enum Form {
     /// nothing else can see that place, and cloning what it held would
     /// cost a copy of everything gathered so far on every step.
     Take(Address),
+    /// Read a compiler-owned temporary and discard its slot, even when
+    /// the result is a shared value which must itself remain unchanged.
+    Release(Address),
     /// The same, read as it stands and with nothing said about it: a
     /// binding that holds nothing at all reads as nothing at all, so
     /// that writing it elsewhere leaves that place unwritten too.
@@ -582,6 +585,7 @@ pub enum Form {
     /// A statement together with the line of the source it was written
     /// on, so that a complaint can say where it happened.
     OnLine(u32, Box<Form>),
+    Located((u32, u32, u32, u32), Box<Form>),
     /// The binding's own cell, made shareable if it is not already, so
     /// another name can be tied to it.
     Share(Address),

@@ -62,9 +62,12 @@ def choices(population, weights=None, *, cum_weights=None, k=1):
     return result
 
 def shuffle(sequence):
-    # Ordinary arrays are copied on writes through a function argument;
-    # returning a shuffled copy would conceal a missing in-place change.
-    raise 'NotImplementedError: shuffle needs shared mutable sequence storage'
+    for i in range(len(sequence) - 1, 0, -1):
+        j = randrange(i + 1)
+        saved = sequence[i]
+        sequence[i] = sequence[j]
+        sequence[j] = saved
+
 
 def getrandbits(k):
     if k < 0:
