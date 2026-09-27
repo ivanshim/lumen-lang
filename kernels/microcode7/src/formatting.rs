@@ -147,7 +147,13 @@ impl Layout<'_> {
         Ok(Some(total as usize))
     }
 
-    fn description(&self, pattern: &str) -> Result<Presentation, String> {
+    fn group_error(&self, left: char, right: char) -> String {
+        let detail = if left == right { format!("'{left}' with '{right}'") }
+            else { "both ',' and '_'".to_owned() };
+        self.complain("ext.text.format.group.conflict", &[&detail])
+    }
+
+    fn description(&self, pattern: &str, item: &Value) -> Result<Presentation, String> {
         let mut marks = pattern.chars().peekable();
         let mut shape = Presentation::new();
         let first = marks.peek().copied();
@@ -165,14 +171,20 @@ impl Layout<'_> {
         }
         shape.extent = self.read_count(&mut marks, "ext.text.format.width.big", true)?.unwrap_or_default();
         if marks.peek().map_or(false, |c| matches!(c, ',' | '_')) { shape.separator = marks.next(); }
+        if matches!(marks.peek(), Some(',' | '_')) {
+            return Err(self.group_error(shape.separator.unwrap(), *marks.peek().unwrap()));
+        }
         if marks.peek() == Some(&'.') {
             marks.next();
             shape.digits = self.read_count(&mut marks, "ext.text.format.precision.big", true)?;
             if marks.peek().map_or(false, |c| matches!(c, ',' | '_')) { shape.fraction_separator = marks.next(); }
             else if shape.digits.is_none() { return Err(self.complain("ext.text.format.precision.missing", &[])); }
         }
+        if matches!(marks.peek(), Some(',' | '_')) && shape.fraction_separator.is_some() {
+            return Err(self.group_error(shape.separator.unwrap_or(shape.fraction_separator.unwrap()), *marks.peek().unwrap()));
+        }
         shape.letter = marks.next();
-        if marks.next().is_some() { return Err(self.invalid()); }
+        if marks.next().is_some() { return Err(self.complain("ext.text.format.invalid.detail", &[pattern, self.typename(item)])); }
         Ok(shape)
     }
 
@@ -188,7 +200,7 @@ impl Layout<'_> {
         if pattern.is_empty() && !matches!(item, Value::Frac(_)) {
             return self.plain(item);
         }
-        let mut shape = self.description(pattern)?;
+        let mut shape = self.description(pattern, item)?;
         // The locale presentation writes the figures the plain ones
         // write, this run keeping a single locale: a whole number
         // stays with the tens and everything else takes the general
@@ -429,18 +441,21 @@ impl Layout<'_> {
         while let Some(mark) = input.next() {
             if mark != '%' { output.push(mark); continue; }
             if input.peek() == Some(&'%') { input.next(); output.push('%'); continue; }
+            let mark_position = pattern.chars().count() - input.clone().count() - 1;
+            let mut named_key = None;
             let named = if input.peek() == Some(&'(') {
                 input.next();
                 let mut key = String::new();
                 let mut balance = 1usize;
                 loop {
-                    let c = input.next().ok_or_else(|| self.complain("ext.op.rem.format.incomplete", &[]))?;
+                    let c = input.next().ok_or_else(|| self.complain("ext.op.rem.format.key.incomplete", &[&mark_position.to_string()]))?;
                     if c == '(' { balance += 1; }
                     if c == ')' { balance -= 1; }
                     if balance == 0 { break; }
                     key.push(c);
                 }
-                let Value::Dict(pairs) = supplied else { return Err(self.complain("ext.op.rem.format.mapping", &[])); };
+                named_key = Some(key.clone());
+                let Value::Dict(pairs) = supplied else { return Err(self.complain("ext.op.rem.format.mapping", &[self.typename(supplied)])); };
                 named_seen = true;
                 used = positional.len();
                 let spelt = |k: &Value| match k {
@@ -451,6 +466,7 @@ impl Layout<'_> {
                 Some(pairs.iter().find(|(k, _)| spelt(k)).map(|(_, v)| v)
                     .ok_or_else(|| self.name_absent(&key))?)
             } else { None };
+            if named_seen && named.is_none() { return Err(self.complain("ext.op.rem.format.mapping.key", &[&mark_position.to_string()])); }
             let mut shape = Presentation::new();
             loop {
                 match input.peek() {
@@ -464,33 +480,41 @@ impl Layout<'_> {
                 input.next();
             }
             if input.peek() == Some(&'*') {
-                if named.is_some() { return Err(self.refused()); }
+                if named.is_some() { return Err(self.complain("ext.op.rem.format.mapping.star", &[&mark_position.to_string()])); }
                 input.next();
-                let width = self.dynamic(positional, &mut used)?;
+                let width = self.dynamic(positional, &mut used, "width")?;
                 shape.extent = width.unsigned_abs() as usize;
                 if width < 0 { shape.justify = Some('<'); }
-            } else { shape.extent = self.read_count(&mut input, "ext.text.format.width.big", false)?.unwrap_or(0); }
+            } else { shape.extent = self.read_count(&mut input, "ext.text.format.width.big", false)
+                .map_err(|_| self.complain("ext.op.rem.format.width.big", &[&mark_position.to_string()]))?.unwrap_or(0); }
             if input.peek() == Some(&'.') {
                 input.next();
                 shape.digits = Some(if input.peek() == Some(&'*') {
-                    if named.is_some() { return Err(self.refused()); }
+                    if named.is_some() { return Err(self.complain("ext.op.rem.format.mapping.star", &[&mark_position.to_string()])); }
                     input.next();
-                    let precision = self.dynamic(positional, &mut used)?;
+                    let precision = self.dynamic(positional, &mut used, "precision")?;
                     if precision < i32::MIN as i64 || precision > i32::MAX as i64 {
-                        return Err(String::from("OverflowError: Python int too large to convert to C int"));
+                        return Err(self.complain("ext.op.rem.format.star.big", &[&used.to_string(), "precision"]));
                     }
                     precision.max(0) as usize
-                } else { self.read_count(&mut input, "ext.text.format.precision.big", false)?.unwrap_or(0) });
+                } else { self.read_count(&mut input, "ext.text.format.precision.big", false)
+                    .map_err(|_| self.complain("ext.op.rem.format.precision.big", &[&mark_position.to_string()]))?.unwrap_or(0) });
             }
             if input.peek().map_or(false, |c| matches!(c, 'h' | 'l' | 'L')) { input.next(); }
-            let conversion = input.next().ok_or_else(|| self.complain("ext.op.rem.format.incomplete", &[]))?;
+            let conversion = input.next().ok_or_else(|| self.complain("ext.op.rem.format.incomplete", &[&mark_position.to_string()]))?;
             shape.letter = Some(conversion);
             let item = match named {
                 Some(item) => item,
                 None => {
                     used += 1;
-                    positional.get(used - 1).ok_or_else(|| self.complain("ext.op.rem.format.few", &[]))?
+                    positional.get(used - 1).ok_or_else(|| self.complain("ext.op.rem.format.few", &[&positional.len().to_string()]))?
                 }
+            };
+            let location = match named_key {
+                Some(key) if of_bytes => format!(" b'{key}'"),
+                Some(key) => format!(" '{key}'"),
+                None if matches!(supplied, Value::Tuple(_) | Value::Row(_) | Value::Arguments(_)) => format!(" {used}"),
+                None => String::new(),
             };
             if shape.zero && shape.justify != Some('<') {
                 shape.padding = '0'; shape.justify = Some('=');
@@ -513,8 +537,18 @@ impl Layout<'_> {
                     let c = match item {
                         Value::Octets { cell, .. } if of_bytes && cell.borrow().len() == 1 => char::from(cell.borrow()[0]).to_string(),
                         Value::Text(text) if !of_bytes && text.chars().count() == 1 => text.to_string(),
-                        Value::Huge(_) | Value::Small(_) | Value::Flag(_) => self.character(item, of_bytes)?,
-                        _ => return Err(self.complain("ext.op.rem.format.character", &[])),
+                        Value::Huge(_) | Value::Small(_) | Value::Flag(_) => self.character(item, of_bytes)
+                            .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
+                        _ => {
+                            let expected = if of_bytes { "an integer in range(256) or a single byte" }
+                                else { "an integer or a unicode character" };
+                            let given = match item {
+                                Value::Text(text) if !of_bytes => format!("a string of length {}", text.chars().count()),
+                                Value::Octets { cell, changeable, .. } if of_bytes => format!("a {} object of length {}", if *changeable { "bytearray" } else { "bytes" }, cell.borrow().len()),
+                                _ => self.typename(item).to_owned(),
+                            };
+                            return Err(self.complain("ext.op.rem.format.character", &[&location, expected, &given]));
+                        },
                     };
                     (String::new(), c)
                 }
@@ -528,7 +562,7 @@ impl Layout<'_> {
                     }
                     if !matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) &&
                         !(accepts_real && matches!(item, Value::Frac(r) if r.places.is_some() && !r.past_numbers())) {
-                        return Err(self.complain(if accepts_real { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" }, &[&conversion.to_string(), self.typename(item)]));
+                        return Err(self.complain(if accepts_real { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" }, &[&location, &conversion.to_string(), self.typename(item)]));
                     }
                     let number = item.as_big()?;
                     let radix = match conversion { 'x' | 'X' => 16, 'o' => 8, _ => 10 };
@@ -540,29 +574,42 @@ impl Layout<'_> {
                     (lead, digits)
                 }
                 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => {
-                    let number = self.binary(item)?;
+                    let number = self.binary(item).map_err(|_| self.complain("ext.op.rem.format.real", &[&location, &conversion.to_string(), self.typename(item)]))?;
                     (shape.front(number.is_sign_negative() && !number.is_nan()), shape.real_digits(number.abs()))
                 }
                 _ => {
-                    let index = pattern.chars().count() - input.count() - 1;
-                    return Err(self.complain("ext.op.rem.format.code", &[&conversion.to_string(), &format!("{:x}", u32::from(conversion)), &index.to_string()]));
+                    return Err(self.unsupported(conversion, mark_position, pattern.chars().count() - input.clone().count() - 1, of_bytes));
                 }
             };
             output.push_str(&shape.padded(head, body, '>'));
         }
         if !named_seen && used < positional.len() && !matches!(supplied, Value::Dict(_)) {
-            return Err(self.complain("ext.op.rem.format.many", &[]));
+            return Err(self.complain("ext.op.rem.format.many", &[if of_bytes { "bytes" } else { "string" }, &used.to_string(), &positional.len().to_string()]));
         }
         Ok(output)
     }
 
-    fn dynamic(&self, supplied: &[Value], used: &mut usize) -> Result<i64, String> {
-        let value = supplied.get(*used).ok_or_else(|| self.complain("ext.op.rem.format.few", &[]))?;
+    fn unsupported(&self, letter: char, start: usize, at: usize, is_bytes: bool) -> String {
+        if letter.is_ascii_alphanumeric() {
+            return self.complain("ext.op.rem.format.code", &[&letter.to_string(), &start.to_string()]);
+        }
+        let described = if letter == '\'' { "\"'\"".to_owned() }
+            else if is_bytes && !letter.is_ascii_graphic() && letter != ' ' { format!("with code 0x{:02x}", u32::from(letter)) }
+            else if !is_bytes && (letter.is_control() || letter == '\u{7f}' || letter == '\u{80}') { format!("U+{:04X}", u32::from(letter)) }
+            else if !letter.is_ascii() && !is_bytes { format!("'{letter}' (U+{:04X})", u32::from(letter)) }
+            else { format!("'{letter}'") };
+        self.complain("ext.op.rem.format.unexpected", &[&start.to_string(), &described, &at.to_string()])
+    }
+
+    fn dynamic(&self, supplied: &[Value], used: &mut usize, measure: &str) -> Result<i64, String> {
+        if *used + 1 >= supplied.len() { return Err(self.complain("ext.op.rem.format.few", &[&supplied.len().to_string()])); }
+        let value = &supplied[*used];
         *used += 1;
         match value {
             Value::Flag(_) | Value::Small(_) | Value::Huge(_) => value.as_big()?.to_i64()
-                .ok_or_else(|| String::from("OverflowError: Python int too large to convert to C ssize_t")),
-            _ => Err(self.complain("ext.op.rem.format.star", &[])),
+                .filter(|n| measure != "width" || (-1_000_000..=1_000_000).contains(n))
+                .ok_or_else(|| self.complain("ext.op.rem.format.star.big", &[&used.to_string(), measure])),
+            _ => Err(self.complain("ext.op.rem.format.star", &[&used.to_string(), self.typename(value)])),
         }
     }
 }
@@ -734,7 +781,7 @@ fn side(number: f64, form: &Presentation, polarity: Option<char>) -> String {
 }
 
 pub fn is_complaint(table: &Table, message: &str) -> bool {
-    let labels = "ext.text.format.complex.zero ext.text.format.complex.align ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.digits ext.text.format.width.big ext.text.format.precision.big ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
+    let labels = "ext.text.format.complex.zero ext.text.format.complex.align ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.invalid.detail ext.text.format.group.conflict ext.text.format.unknown ext.text.format.unready ext.text.format.digits ext.text.format.width.big ext.text.format.precision.big ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.mapping.key ext.op.rem.format.mapping.star ext.op.rem.format.width.big ext.op.rem.format.precision.big ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.character.range ext.op.rem.format.star ext.op.rem.format.star.big ext.op.rem.format.incomplete ext.op.rem.format.key.incomplete ext.op.rem.format.unexpected ext.op.rem.format.code";
     labels.split_whitespace().filter_map(|label| table.single(label))
         .any(|opening| !opening.is_empty() && message.starts_with(opening))
 }

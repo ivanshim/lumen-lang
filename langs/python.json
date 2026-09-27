@@ -2314,44 +2314,83 @@
     "'"
   ],
   "ext.op.rem.format.character": [
-    "TypeError: %c requires int or char"
+    "TypeError: format argument",
+    ": %c requires ",
+    ", not "
+  ],
+  "ext.op.rem.format.character.range": [
+    "OverflowError: format argument",
+    ": %c argument not in range(",
+    ")"
   ],
   "ext.op.rem.format.code": [
-    "ValueError: unsupported format character '",
-    "' (0x",
-    ") at index "
+    "ValueError: unsupported format %",
+    " at position "
   ],
   "ext.op.rem.format.few": [
-    "TypeError: not enough arguments for format string"
+    "TypeError: not enough arguments for format string (got ",
+    ")"
   ],
   "ext.op.rem.format.incomplete": [
-    "ValueError: incomplete format"
+    "ValueError: stray % at position "
+  ],
+  "ext.op.rem.format.key.incomplete": [
+    "ValueError: stray % or incomplete format key at position "
+  ],
+  "ext.op.rem.format.unexpected": [
+    "ValueError: stray % at position ",
+    " or unexpected format character ",
+    " at position "
   ],
   "ext.op.rem.format.infinity": [
     "OverflowError: cannot convert float infinity to integer"
   ],
   "ext.op.rem.format.integer": [
-    "TypeError: %",
-    " format: an integer is required, not "
+    "TypeError: format argument",
+    ": %",
+    " requires an integer, not "
   ],
   "ext.op.rem.format.many": [
-    "TypeError: not all arguments converted during string formatting"
+    "TypeError: not all arguments converted during ",
+    " formatting (required ",
+    ", got ",
+    ")"
   ],
   "ext.op.rem.format.mapping": [
-    "TypeError: format requires a mapping"
+    "TypeError: format requires a mapping, not "
+  ],
+  "ext.op.rem.format.mapping.key": [
+    "ValueError: format requires a parenthesised mapping key at position "
+  ],
+  "ext.op.rem.format.mapping.star": [
+    "ValueError: * cannot be used with a parenthesised mapping key at position "
+  ],
+  "ext.op.rem.format.width.big": [
+    "ValueError: width too big at position "
+  ],
+  "ext.op.rem.format.precision.big": [
+    "ValueError: precision too big at position "
   ],
   "ext.op.rem.format.nan": [
     "ValueError: cannot convert float NaN to integer"
   ],
   "ext.op.rem.format.number": [
-    "TypeError: %",
-    " format: a real number is required, not "
+    "TypeError: format argument",
+    ": %",
+    " requires a real number, not "
   ],
   "ext.op.rem.format.real": [
-    "TypeError: must be real number, not "
+    "TypeError: format argument",
+    ": %",
+    " requires a real number, not "
   ],
   "ext.op.rem.format.star": [
-    "TypeError: * wants int"
+    "TypeError: format argument ",
+    ": * requires int, not "
+  ],
+  "ext.op.rem.format.star.big": [
+    "OverflowError: format argument ",
+    ": too big for "
   ],
   "ext.op.rem.format.unsupported": [
     "Unsupported string format"
@@ -3450,6 +3489,15 @@
   ],
   "ext.text.format.invalid": [
     "ValueError: Invalid format specifier"
+  ],
+  "ext.text.format.invalid.detail": [
+    "ValueError: Invalid format specifier '",
+    "' for object of type '",
+    "'"
+  ],
+  "ext.text.format.group.conflict": [
+    "ValueError: Cannot specify ",
+    "."
   ],
   "ext.text.format.key": [
     "KeyError: '",

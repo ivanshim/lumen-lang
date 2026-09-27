@@ -3705,6 +3705,8 @@ only. The extension labels so far, all from PHP:
   and paths through properties and indexed places are taken in order.
   The labels here and below are lists of words, not signs to be scanned.
 - `ext.text.format.invalid`: the complaint for an ill-formed specification.
+- `ext.text.format.invalid.detail`: the invalid specification and value type.
+- `ext.text.format.group.conflict`: the incompatible grouping marks.
   `ext.text.format.unknown` holds the words before a presentation letter,
   between that letter and the value's kind, and after the kind.
   `ext.text.format.kinds` names whole, real, text, flag, list, map, nothing,
@@ -3746,17 +3748,30 @@ only. The extension labels so far, all from PHP:
   precedes an unknown conversion letter. `ext.text.format.recursion` says
   that nested specifications have gone deeper than two levels.
 - `ext.op.rem.format.few`, `.many` and `.mapping`: complaints for too few
-  or too many positional arguments, or a keyed mark given no map.
+  or too many positional arguments, or a keyed mark given no map. The first
+  two report supplied and consumed argument counts.
+  `ext.op.rem.format.mapping.key` and `.star` report the percent mark
+  position when a mapping directive lacks a key or uses a starred count.
+  `ext.op.rem.format.width.big` and `.precision.big` report that position
+  for a literal count that exceeds the accepted range.
   `ext.op.rem.format.number` and `.integer` each hold two pieces, before
   the conversion letter and between it and the kind that cannot supply it.
-  `ext.op.rem.format.real` precedes the kind of a nonnumeric real argument.
+  `ext.op.rem.format.real` gives the location, directive, and kind of a
+  nonnumeric real argument.
 - `ext.op.rem.format.nan` and `.infinity`: complaints for a decimal
   integer conversion whose real argument is no number or is infinite.
 - `ext.op.rem.format.character`, `.star` and `.incomplete`: complaints for
   a character mark without a character or whole number, a starred count
   without a whole number, and an unfinished percent mark.
-  `ext.op.rem.format.code` has three pieces preceding an unknown letter,
-  its hexadecimal ordinal, and its place within the format string.
+  `ext.op.rem.format.character.range` gives the offending argument and
+  the permitted character range.
+  `ext.op.rem.format.key.incomplete` gives the position of an unfinished
+  parenthesised key. `ext.op.rem.format.unexpected` names an unexpected
+  character and both its and the percent mark positions.
+  `ext.op.rem.format.star.big` gives the argument number and whether its
+  starred count was a width or precision.
+  `ext.op.rem.format.code` has two pieces around the unknown letter and
+  before the position of its percent mark within the format string.
 - `ext.op.rem.format.byte`: the two pieces enclosing the kind of a value
   handed to a mark which shows a row of bytes. A row of bytes on the left
   of the remainder sign fills its marks byte for byte: the marks that
@@ -4957,19 +4972,27 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.byte` | - | - | `TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '` `'` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.character` | - | - | `TypeError: %c requires int or char` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.incomplete` | - | - | `ValueError: incomplete format` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.character` | - | - | `TypeError: format argument` `: %c requires ` `, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.character.range` | - | - | `OverflowError: format argument` `: %c argument not in range(` `)` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format %` ` at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string (got ` `)` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.incomplete` | - | - | `ValueError: stray % at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.integer` | - | - | `TypeError: %` ` format: an integer is required, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.many` | - | - | `TypeError: not all arguments converted during string formatting` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.mapping` | - | - | `TypeError: format requires a mapping` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.integer` | - | - | `TypeError: format argument` `: %` ` requires an integer, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.key.incomplete` | - | - | `ValueError: stray % or incomplete format key at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.many` | - | - | `TypeError: not all arguments converted during ` ` formatting (required ` `, got ` `)` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.mapping` | - | - | `TypeError: format requires a mapping, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.mapping.key` | - | - | `ValueError: format requires a parenthesised mapping key at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.mapping.star` | - | - | `ValueError: * cannot be used with a parenthesised mapping key at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.number` | - | - | `TypeError: %` ` format: a real number is required, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.real` | - | - | `TypeError: must be real number, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.star` | - | - | `TypeError: * wants int` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.number` | - | - | `TypeError: format argument` `: %` ` requires a real number, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.precision.big` | - | - | `ValueError: precision too big at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.real` | - | - | `TypeError: format argument` `: %` ` requires a real number, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.star` | - | - | `TypeError: format argument ` `: * requires int, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.star.big` | - | - | `OverflowError: format argument ` `: too big for ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.unexpected` | - | - | `ValueError: stray % at position ` ` or unexpected format character ` ` at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.unsupported` | - | - | `Unsupported string format` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.width.big` | - | - | `ValueError: width too big at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.formats_text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.rem.real_zero` | - | - | `ZeroDivisionError: float modulo` | - | - | - | - | - | - | - |
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
@@ -5385,8 +5408,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.complex.zero` | - | - | `ValueError: Zero padding is not allowed in complex format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.digits` | - | - | `ValueError: Too many decimal digits in format string` | - | - | - | - | - | - | - |
+| `ext.text.format.group.conflict` | - | - | `ValueError: Cannot specify ` `.` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid` | - | - | `ValueError: Invalid format specifier` | - | - | - | - | - | - | - |
+| `ext.text.format.invalid.detail` | - | - | `ValueError: Invalid format specifier '` `' for object of type '` `'` | - | - | - | - | - | - | - |
 | `ext.text.format.key` | - | - | `KeyError: '` `'` | - | - | - | - | - | - | - |
 | `ext.text.format.kinds` | - | - | `int` `float` `str` `bool` `list` `dict` `NoneType` `object` `complex` `tuple` `set` `range` `bytes` `bytearray` `type` | - | - | - | - | - | - | - |
 | `ext.text.format.numbered.auto` | - | - | `ValueError: cannot switch from manual field specification to automatic field numbering` | - | - | - | - | - | - | - |
