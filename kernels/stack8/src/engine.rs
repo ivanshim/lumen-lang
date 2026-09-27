@@ -4216,9 +4216,14 @@ impl<'a> Engine<'a> {
     fn dict_key_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>) -> Res<Value> {
         if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
         if matches!(args[0].contents(), Value::Array(_) | Value::Map(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
-        let Value::Map(store) = receiver.contents() else { return Err(self.lang.method_errors["unready"].clone()); };
+        let key = self.special_key(&args[0])?;
+        let (store, found, keyed) = loop {
+            let Value::Map(store) = receiver.contents() else { return Err(self.lang.method_errors["unready"].clone()); };
+            let (found, keyed) = self.map_locate(&store, Some(store.as_ref()), &key)?;
+            if Self::map_cell(receiver).is_some_and(|cell| Self::map_size(&cell).1 != store.revision) { continue; }
+            break (store, found, keyed);
+        };
         let pairs = store.to_vec();
-        let (found, keyed) = self.map_locate(&pairs, Some(store.as_ref()), &args[0])?;
         if let Some(index) = found {
             let value = pairs[index].1.clone();
             if operation == "pop" {
@@ -4261,12 +4266,43 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
-                other => {
-                    for item in crate::methods::members(&other, &|k| self.lang.method_errors[k].clone())? {
-                        let pair = crate::methods::members(&item, &|k| self.lang.method_errors[k].clone())?;
-                        if pair.len() != 2 { amiss = Some(self.lang.method_errors["arguments"].clone()); break; }
-                        self.map_enter(&mut pairs, pair[0].clone(), pair[1].clone())?;
+                Value::Fields(owner) => {
+                    let fields = owner.fields.borrow().clone();
+                    for (key, value) in fields {
+                        if !key.starts_with('\0') && !matches!(value, Value::Blank) {
+                            self.map_enter(&mut pairs, Value::text(&key), value)?;
+                        }
                     }
+                }
+                other => {
+                    let outcome = (|| -> Res<()> {
+                        if let Some(keys) = self.member_of(other.clone(), "keys")? {
+                            let supplied = self.call_held(keys, Vec::new())?;
+                            let cursor = self.core_iterator(&supplied)?;
+                            let mut keys = Vec::new();
+                            while let Some(key) = self.core_step(&cursor)? { keys.push(key); }
+                            for key in keys {
+                                let value = self.special_dyad(&Action::At, &other, &key)?;
+                                self.map_enter(&mut pairs, key, value)?;
+                                self.replace_map(receiver, pairs.clone())?;
+                            }
+                        } else {
+                            let walk = self.core_iterator(&other)?;
+                            let mut at = 0;
+                            while let Some(item) = self.core_step(&walk)? {
+                                let pair = self.core_members(&item)?;
+                                if pair.len() != 2 {
+                                    let w = &self.lang.core_words["core.dict.pair"];
+                                    return Err(format!("{}{}{}{}{}", w[0], at, w[1], pair.len(), w[2]));
+                                }
+                                self.map_enter(&mut pairs, pair[0].clone(), pair[1].clone())?;
+                                self.replace_map(receiver, pairs.clone())?;
+                                at += 1;
+                            }
+                        }
+                        Ok(())
+                    })();
+                    amiss = outcome.err();
                 }
             }
         }
@@ -6421,7 +6457,7 @@ impl<'a> Engine<'a> {
             Action::ForgetWithin => {
                 let named = self.drop_top()?;
                 let holder = self.data.last().cloned().ok_or_else(|| self.special_fault())?;
-                let target = match &holder { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                let target = holder.contents();
                 if let Value::Fields(o) = &target {
                     let Value::Text(key) = named else { return Err(self.special_fault().into()) };
                     let mut fields = o.fields.borrow_mut();
@@ -6433,7 +6469,8 @@ impl<'a> Engine<'a> {
                 }
                 if matches!(&target, Value::Map(pairs) if pairs.iter().any(|(k, _)| matches!(k, Value::Hashed(_)))) {
                     let left = self.special_builtin(Builtin::Erase, &[target, named])?.ok_or_else(|| self.special_fault())?;
-                    let Value::Bond(cell) = self.drop_top()? else { return Err(self.special_fault().into()) };
+                    self.drop_top()?;
+                    let cell = Self::map_cell(&holder).ok_or_else(|| self.special_fault())?;
                     *cell.borrow_mut() = left;
                     self.data.push(Value::Null);
                     return Ok(());
@@ -11003,6 +11040,13 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if let Value::Fields(owner) = receiver.contents() {
+            if operation == "clear" {
+                if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                owner.fields.borrow_mut().retain(|(key, _)| key.starts_with('\0'));
+                return Ok(Value::Null);
+            }
+        }
         if operation == "integer_size" {
             if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             let unbound = matches!(receiver, Value::Native(..) | Value::Class(_));
@@ -12457,6 +12501,24 @@ impl<'a> Engine<'a> {
                             Placement::Uncertain => {}
                         }
                     }
+                }
+            }
+        }
+        if builtin == Builtin::Replace && args.len() == 3 {
+            if let Some(cell) = Self::map_cell(&args[2]) {
+                if let Some(told) = self.unkeyable(&args[0]) { return Err(told); }
+                let key = self.special_key(&args[0])?;
+                loop {
+                    let Value::Map(before) = cell.borrow().clone() else { return Err(self.special_fault()); };
+                    let (found, keyed) = self.map_locate(&before, Some(&before), &key)?;
+                    if Self::map_size(&cell).1 != before.revision { continue; }
+                    let mut next = before.clone();
+                    match found {
+                        Some(at) => Rc::make_mut(&mut next).overwrite_row(at, args[1].clone()),
+                        None => store_insert_new(&mut next, keyed, args[1].clone()),
+                    }
+                    *cell.borrow_mut() = Value::Map(next);
+                    return Ok(args[2].clone());
                 }
             }
         }
@@ -15380,10 +15442,18 @@ impl Engine<'_> {
                     Some(Value::Map(p)) => p.to_vec(),
                     Some(v) => {
                         let mut pairs = Vec::new();
+                        if let Some(keys_method) = self.member_of(v.clone(), "keys")? {
+                            let keys = self.call_held(keys_method, Vec::new())?;
+                            for key in self.core_members(&keys)? {
+                                let item = self.special_dyad(&Action::At, v, &key)?;
+                                pairs.push((key, item));
+                            }
+                        } else {
                         for (at,item) in self.core_members(v)?.into_iter().enumerate() {
                             let row = self.core_members(&item).map_err(|_| self.core_fault("core.dict.sequence", &at.to_string()))?;
                             if row.len() != 2 { let w = &self.lang.core_words["core.dict.pair"]; return Err(format!("{}{}{}{}{}", w[0],at,w[1],row.len(),w[2])); }
                             pairs.push((row[0].clone(), row[1].clone()));
+                        }
                         }
                         pairs
                     }
@@ -15426,6 +15496,12 @@ impl Engine<'_> {
             }
             Builtin::Reversed => {
                 arity(1, 1)?;
+                if let Value::Fields(owner) = &args[0] {
+                    let keys = owner.fields.borrow().iter().rev()
+                        .filter(|(key, value)| !key.starts_with('\0') && !matches!(value, Value::Blank))
+                        .map(|(key, _)| Value::text(key)).collect();
+                    return Ok(Self::core_cursor_walked(CursorSource::Items(Rc::new(keys), 0), Some(Rc::from("dict_reversekeyiterator"))));
+                }
                 // A map is walked backwards from the last key written to
                 // the first, under the same watch as a walk forwards.
                 if Self::map_cell(&args[0]).is_some() {
