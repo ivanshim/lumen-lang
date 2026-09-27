@@ -209,6 +209,8 @@ pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     imported: HashMap<String, Value>,
+    wildcard_names: Vec<(Rc<str>, String, usize)>,
+    loaded_spaces: HashMap<Rc<str>, String>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
     /// `builtins` asks for itself this way -- is handed the instance
@@ -1081,6 +1083,8 @@ impl<'a> Machine<'a> {
             library_directory: None,
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
+            wildcard_names: Vec::new(),
+            loaded_spaces: HashMap::new(),
             within_spare: false,
             world_book: None,
             readings: Vec::new(),
@@ -3958,6 +3962,10 @@ impl<'a> Machine<'a> {
         }
         match node {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
+            Form::Const(Value::OctetKind { changeable, .. }) if !self.wildcard_names.is_empty() => {
+                let held = self.spread_value(self.octet_kind_word(*changeable));
+                match held { Some(value) => Ok(value), None => match node { Form::Const(value) => Ok(value.clone()), _ => unreachable!() } }
+            }
             Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
             Form::Take(slot) => Ok(self.take(slot, frame)?),
@@ -4466,7 +4474,11 @@ impl<'a> Machine<'a> {
             }
             Form::Missing(slot) => {
                 let f = ascend(frame, slot.up);
-                let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
+                let values = f.cells.borrow();
+                let empty = match &values[slot.at] {
+                    Value::Shared(link) if self.table.flag("ext.stmt.function.closes_over") => matches!(*link.borrow(), Value::Unset),
+                    other => matches!(other, Value::Unset),
+                };
                 Ok(Value::Flag(empty))
             }
             Form::Fits { value, test, slots, tuple, kinds } => {
@@ -4851,12 +4863,23 @@ impl<'a> Machine<'a> {
                     }
                 }
                 let callable = stands.clone();
-                let (p, env) = self.routine_of(stands, target)?;
+                let (p, env) = match self.routine_of(stands, target) {
+                    Ok(callable) => callable,
+                    Err(fault) => {
+                        self.value_list(args, frame)?;
+                        return Err(fault);
+                    }
+                };
                 let callee = self.env_for(&p, env, args, frame)?;
                 if p.generator && self.table.flag("ext.stmt.yield.suspends") {
                     return self.named_generator(callable, &p, callee);
                 }
                 self.drive(p, callee)
+            }
+            Form::Apply(Callee::Prim(op, name), args) if !self.wildcard_names.is_empty()
+                && self.spread_override(name, *op).is_some() => {
+                let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
+                self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
             }
             Form::Apply(Callee::Prim(op, name), args) => match op {
                 Prim::BindValueMethod => {
@@ -5781,7 +5804,8 @@ impl<'a> Machine<'a> {
     fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
         let octet_name;
         let word = match stands {
-            Value::Text(word) | Value::Intrinsic(_, word) => word,
+            Value::Intrinsic(_, word) => word,
+            Value::Text(word) if self.table.strings("ext.builtin.core.uncallable").is_empty() => word,
             Value::OctetKind { changeable, .. } => {
                 octet_name = Rc::from(self.octet_kind_word(*changeable));
                 &octet_name
@@ -5814,6 +5838,8 @@ impl<'a> Machine<'a> {
         match stands {
             Value::Bound(p, env) => Ok(self.as_now_written(p, env)),
             Value::Unset => Err("Unknown function".to_string().into()),
+            other if !self.table.strings("ext.builtin.core.uncallable").is_empty() =>
+                Err(self.core_complaint("core.uncallable", &other.kind_word()).into()),
             _ => match node {
                 Form::Read(slot) => Err(format!("'{}' is not a function", slot.ident).into()),
                 _ => Err("eval needs a program".to_string().into()),
@@ -6542,7 +6568,13 @@ impl<'a> Machine<'a> {
                     return Ok(Next::Value(self.make_instance(class.clone(), given)?));
                 }
                 let callable = stands.clone();
-                let (p, env) = self.routine_of(stands, target)?;
+                let (p, env) = match self.routine_of(stands, target) {
+                    Ok(callable) => callable,
+                    Err(fault) => {
+                        self.value_list(args, frame)?;
+                        return Err(fault);
+                    }
+                };
                 let callee = self.env_for(&p, env, args, frame)?;
                 if p.generator && self.table.flag("ext.stmt.yield.suspends") {
                     return self.named_generator(callable, &p, callee).map(Next::Value);
@@ -12279,13 +12311,35 @@ impl<'a> Machine<'a> {
                         if name.starts_with('_') || !self.table.name_like(&name) { continue; }
                         let worth = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry };
                         if matches!(worth, Value::Unset) { continue; }
-                        let slot = match self.idents.iter().position(|word| word == &name) {
-                            Some(at) => at,
-                            None => { self.idents.push(name); self.idents.len() - 1 }
+                        let owner = self.loaded_spaces.get(&self.written_in).and_then(|path| self.imported.get(path)).cloned();
+                        let key = match &owner {
+                            Some(Value::Thing(module)) => format!("\0import/{}/{name}", module.of.name),
+                            _ => name.clone(),
                         };
-                        let mut cells = self.outermost.cells.borrow_mut();
-                        cells.resize(self.idents.len(), Value::Unset);
-                        cells[slot] = worth;
+                        let slot = if let Some(index) = self.idents.iter().position(|word| word == &key) { index }
+                            else { self.idents.push(key); self.idents.len() - 1 };
+                        self.booked_write(slot, &name, Some(worth.clone()));
+                        let saved = {
+                            let mut cells = self.outermost.cells.borrow_mut();
+                            cells.resize(self.idents.len(), Value::Unset);
+                            if let Value::Shared(place) = &cells[slot] { *place.borrow_mut() = worth; }
+                            else if owner.is_some() { cells[slot] = Value::Shared(Rc::new(RefCell::new(worth))); }
+                            else { cells[slot] = worth; }
+                            cells[slot].clone()
+                        };
+                        if let Some(Value::Thing(module)) = owner {
+                            let mut entries = module.holds.borrow_mut();
+                            match entries.iter_mut().find(|(word, _)| word == &name) {
+                                Some((_, value)) => *value = saved,
+                                None => entries.push((name.clone(), saved)),
+                            }
+                        }
+                        if self.table.flag("ext.syntax.names.shadow_builtins") {
+                            match self.wildcard_names.iter_mut().find(|(file, word, _)| file == &self.written_in && word == &name) {
+                                Some((_, _, address)) => *address = slot,
+                                None => self.wildcard_names.push((self.written_in.clone(), name, slot)),
+                            }
+                        }
                     }
                 }
                 Value::Nil
@@ -16396,6 +16450,28 @@ fn suspension_within(form: &Form) -> bool {
 }
 
 impl Machine<'_> {
+    fn spread_value(&self, word: &str) -> Option<Value> {
+        // Library helpers keep their own native operations even when
+        // the calling module has imported a replacement for that word.
+        if self.calls.last().is_some_and(|call| call.of_library && !self.stands_for_the_run(&call.named)) { return None; }
+        let (_, _, slot) = self.wildcard_names.iter().rev().find(|(file, name, _)| file == &self.written_in && name == word)?;
+        let cells = self.outermost.cells.borrow();
+        match cells.get(*slot)? {
+            Value::Shared(place) => Some(place.borrow().clone()).filter(|value| !matches!(value, Value::Unset)),
+            Value::Unset => None,
+            value => Some(value.clone()),
+        }
+    }
+
+    fn spread_override(&self, word: &str, operation: Prim) -> Option<Value> {
+        let value = self.spread_value(word)?;
+        match (&value, operation) {
+            (Value::Intrinsic(found, _), _) if *found == operation => None,
+            (Value::OctetKind { changeable, .. }, Prim::Octets(tag @ 0..=1)) if *changeable == (tag != 0) => None,
+            _ => Some(value),
+        }
+    }
+
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
@@ -16461,6 +16537,9 @@ impl Machine<'_> {
                 let is_module_name = module_names.contains(name);
                 let initial = if is_module_name { Value::text(path) }
                     else if file_word == Some(name.as_str()) { own_file.as_deref().map_or(Value::Nil, Value::text) }
+                    else if self.table.flag("ext.stmt.class.this.explicit") && self.table.spells("ext.stmt.class.parent", name) {
+                        Value::Wrapped(9, Rc::new(Vec::new()))
+                    }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
@@ -16487,6 +16566,7 @@ impl Machine<'_> {
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing { of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
         self.imported.insert(path.into(), value.clone());
+        self.loaded_spaces.insert(Rc::from(filename), path.to_owned());
         self.importing.insert(path.into());
         let scope = self.outermost.clone();
         let caller_location = (self.written_in.clone(), self.row);

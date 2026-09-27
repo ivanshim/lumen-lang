@@ -56,6 +56,7 @@ pub struct Registry {
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
     pub program_bound: std::collections::HashSet<String>,
+    builtin_exports: HashSet<String>,
     /// The names a write has actually bound at the outermost scope,
     /// whether by a plain assignment standing outside every function
     /// and block or by a `global`/`static` declaration reaching back
@@ -122,6 +123,7 @@ struct Cycle {
 /// `uncertain` keeps the names of those, whose places are read at the
 /// end without complaint.
 struct ClassBody {
+    bindings: HashSet<String>,
     class_cell: String,
     methods: Vec<(String, Rc<Routine>)>,
     shared: Vec<(String, String)>,
@@ -373,6 +375,8 @@ pub fn compile_within(
             table.stopped_fatally = survey.stopped_fatally;
             return Err(said);
         }
+        table.builtin_exports.extend(survey.builtin_exports);
+        table.program_bound.extend(survey.program_bound);
     }
     compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false, wants_value)
 }
@@ -556,8 +560,20 @@ fn compile_pass(
         let mut opening = true;
         while !a.exhausted() {
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
-            let from = a.mark();
             let own_line = a.look().row as u32 > before;
+            if opening && own_line && before > 0 && alone && !read_in && !discovering && lang.shadow_builtins {
+                // A deferred global write must fall back to the native
+                // value, not to the helper prepended by the library.
+                let names: Vec<String> = a.registry.program_bound.iter().cloned().collect();
+                for name in names {
+                    if let Some(native) = lang.builtins.get(&name).copied() {
+                        a.constant(Value::Native(native, Rc::from(name.as_str())));
+                        let slot = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: a.registry.slot(&name), moving: false };
+                        a.put(Instr::Write(slot));
+                    }
+                }
+            }
+            let from = a.mark();
             // Where the reading stops, the line it had reached is kept,
             // so that a language with a word for such a stopping may
             // name the line as it names any other.
@@ -921,6 +937,10 @@ impl<'a> Compiler<'a> {
             }
         }
         if let Some(cell) = self.global_cell(name) {
+            if self.in_program {
+                self.registry.builtin_exports.remove(name);
+                self.registry.program_bound.insert(name.to_string());
+            }
             self.registry.globals.insert(name.to_string());
             return cell;
         }
@@ -932,6 +952,7 @@ impl<'a> Compiler<'a> {
         let unit = self.pieces.last_mut().expect("a unit");
         if unit.outermost && unit.scopes.is_empty() {
             if in_program {
+                self.registry.builtin_exports.remove(name);
                 self.registry.program_bound.insert(name.to_string());
             }
             self.registry.globals.insert(name.to_string());
@@ -969,7 +990,21 @@ impl<'a> Compiler<'a> {
         let alias = self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned();
         if let Some(alias) = alias {
             let slot = self.cell_to_read(&alias, false);
-            self.put(Instr::Read(slot));
+            if self.lang.shadow_builtins && self.lang.builtins.contains_key(name)
+                && self.gathering().uncertain.iter().any(|word| word == name) {
+                match slot.near.first() {
+                    Some(at) => { self.put(Instr::Missing(*at)); }
+                    None => { self.put(Instr::Unwritten(slot.far)); }
+                }
+                let present = self.skip();
+                self.read_fallback(name);
+                let done = self.leap();
+                self.land(present);
+                self.put(Instr::Read(slot));
+                self.land(done);
+            } else {
+                self.put(Instr::Read(slot));
+            }
             return;
         }
         // A name the class body has never bound at compile time may
@@ -1032,6 +1067,18 @@ impl<'a> Compiler<'a> {
         ] {
             if binding.as_deref() == Some(name) {
                 self.constant(Value::text(&said));
+                return;
+            }
+        }
+        if self.in_class_body() && self.lang.shadow_builtins {
+            if let Some(native) = self.lang.builtins.get(name).copied() {
+                let class_local = self.gathering().bindings.contains(name) && !self.declared_outside_class(name);
+                let slot = if class_local {
+                    Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false }
+                } else { self.cell_to_read(name, false) };
+                if slot.near.is_empty() && !self.registry.program_bound.contains(name) {
+                    self.constant(Value::Native(native, Rc::from(name)));
+                } else { self.put(Instr::Read(slot)); }
                 return;
             }
         }
@@ -1285,7 +1332,7 @@ impl<'a> Compiler<'a> {
     /// result after the function, a call of the function's own name inside
     /// it is the global program, not the result being built.
     fn read_callee(&mut self, name: &str) {
-        if self.class_names.last().map_or(false, |(depth, names)| *depth == self.pieces.len() && names.contains_key(name)) {
+        if self.in_class_body() {
             self.read(name);
             return;
         }
@@ -2573,6 +2620,7 @@ impl<'a> Compiler<'a> {
     /// A store into the global of the name, from anywhere.
     fn write_global(&mut self, name: &str) {
         if self.in_program {
+            self.registry.builtin_exports.remove(name);
             self.registry.program_bound.insert(name.to_string());
         }
         let slot = Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
@@ -4596,6 +4644,7 @@ impl<'a> Compiler<'a> {
     /// conditional writes where the rest of the body reads; a name met
     /// for the first time is given a place of its own.
     fn member_place(&mut self, named: &str, purpose: &str) -> String {
+        self.gathering().bindings.insert(named.to_string());
         match self.class_names.last().and_then(|(_, names)| names.get(named)).cloned() {
             Some(place) => place,
             None => self.gensym(purpose),
@@ -4810,6 +4859,7 @@ impl<'a> Compiler<'a> {
             // and is no member being annotated.
             let named = self.take().lexeme;
             self.take();
+            self.gathering().bindings.insert(named.clone());
             // The annotation is kept as a routine answering its value,
             // worked out only when the class's annotations are asked
             // for: a name the body has not bound yet -- the class itself
@@ -5122,11 +5172,13 @@ impl<'a> Compiler<'a> {
             shared.push((word.clone(), slot.clone()));
             documentation = Some(slot);
         }
+        let class_source = self.pos;
+        let bindings = self.plans.get(&class_source).map(|plan| plan.names.iter().cloned().collect()).unwrap_or_default();
         let body_at = self.mark();
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { class_cell, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { bindings, class_cell, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
         // given its own namespace before its first statement runs, so
@@ -5147,6 +5199,10 @@ impl<'a> Compiler<'a> {
         if !inline {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.take();
+        }
+        if self.discovering {
+            let names = self.gathering().bindings.iter().cloned().collect();
+            self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
         }
         let ClassBody { class_cell, methods, mut shared, mut order, annotated, uncertain, unready, book, book_tracked, .. } = self.gathered.pop().expect("the class body just read");
         self.class_names.pop();
@@ -6392,6 +6448,21 @@ impl<'a> Compiler<'a> {
 
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
+        // Exporting a builtin under its own name keeps the direct call
+        // valid. A later write of any other value cancels this fact.
+        let name = self.look().lexeme.clone();
+        let identity = self.lang.shadow_builtins && self.piece().outermost && !self.in_class_body()
+            && (self.lang.builtins.contains_key(&name) || Lang::spells(&self.lang.parent_words, &name))
+            && self.look_ahead(1).shape == Shape::Sign && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)
+            && self.look_ahead(2).shape == Shape::Instr && self.look_ahead(2).lexeme == name
+            && matches!(self.look_ahead(3).shape, Shape::LineEnd | Shape::Finish)
+            && (!self.registry.program_bound.contains(&name) || self.registry.builtin_exports.contains(&name));
+        let result = self.assignment_expression();
+        if identity && result.is_ok() { self.registry.builtin_exports.insert(name); }
+        result
+    }
+
+    fn assignment_expression(&mut self) -> Res<()> {
         if !self.lang.syntax_members.is_empty() {
             if let Some(colon) = self.statement_annotation() {
                 if !self.outer_marks(self.pos, colon, &self.lang.tuple_marks).0.is_empty() {
@@ -7825,6 +7896,16 @@ impl<'a> Compiler<'a> {
                 };
                 self.act(Action::Make, argc + 1);
             }
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme)
+                && self.builtin_shadowed(&tok.lexeme) => {
+                self.take();
+                if let Some(call) = lang.calling.clone().filter(|call| self.at_symbol(&call.open)) {
+                    self.take();
+                    let count = self.arguments_of(&tok.lexeme, &call)?;
+                    self.read(&tok.lexeme);
+                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), count + 1);
+                } else { self.read(&tok.lexeme); }
+            }
             // Outside any class the parent word the program has bound,
             // unless it opens a call, is a name like another: it may be
             // read, listed or passed. Unbound, it stands for the parent
@@ -7905,6 +7986,7 @@ impl<'a> Compiler<'a> {
                 } else if !self.writing_place && Lang::spells(&lang.print_file_output, &tok.lexeme) {
                     self.constant(Value::Stream(false));
                 } else if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::Bytes(0 | 1)))
+                    && !self.writing_place && !self.builtin_shadowed(&tok.lexeme)
                     && !lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)) {
                     let mutable = lang.builtins.get(&tok.lexeme) == Some(&Builtin::Bytes(1));
                     let words = &lang.byte_words["ext.system.bytes.type"];
@@ -7939,7 +8021,7 @@ impl<'a> Compiler<'a> {
                             // A name the program has bound is called as
                             // that name, in front of any builtin word
                             // spelled the same, where the language says so.
-                            let bound = lang.shadow_builtins && (self.registry.program_bound.contains(tok.lexeme.as_str()) || self.piece().parameters.contains(&tok.lexeme));
+                            let bound = self.builtin_shadowed(&tok.lexeme);
                             let native = if bound { None } else { lang.builtins.get(&tok.lexeme).copied() };
                             if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
@@ -9652,12 +9734,32 @@ impl<'a> Compiler<'a> {
         Ok(count)
     }
 
+    /// Decide builtin lowering from the lexical owner, including names
+    /// found by the binding pass after this call's source position.
+    fn builtin_shadowed(&self, name: &str) -> bool {
+        if !self.lang.shadow_builtins { return false; }
+        if self.in_class_body() {
+            let body = self.gathered.last().expect("a class body");
+            if body.bindings.contains(name) || (body.book.is_some()
+                && !matches!(self.lang.builtins.get(name), Some(Builtin::NearNames | Builtin::Vars))) { return true; }
+        }
+        if self.member_of(name).is_some() { return true; }
+        if self.comprehension_names.iter().any(|(word, _)| word == name) { return true; }
+        if self.class_globals.last().map_or(false, |(depth, names)| *depth == self.pieces.len() && names.iter().any(|word| word == name)) { return true; }
+        for unit in self.pieces.iter().rev().filter(|unit| !unit.outermost) {
+            if unit.globals.iter().any(|(word, _)| word == name) { return true; }
+            if unit.nonlocals.iter().any(|word| word == name) || Self::unblocked(unit, name).is_some() { return true; }
+            if !self.lang.closes_over { break; }
+        }
+        self.registry.program_bound.contains(name) && !self.registry.builtin_exports.contains(name)
+    }
+
     /// A call by name, the arguments already on the stack: a builtin of
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
         // A name the program has bound is called as that name, in front
         // of any builtin word spelled the same, where the language says so.
-        let bound = self.lang.shadow_builtins && (self.registry.program_bound.contains(name) || self.piece().parameters.iter().any(|word| word == name));
+        let bound = self.builtin_shadowed(name);
         match self.lang.builtins.get(name).copied().filter(|b| !b.set_method() && !bound) {
             // A class body's `locals()` is CPython's own class
             // namespace, not a picture of it: a write through it
