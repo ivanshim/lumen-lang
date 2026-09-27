@@ -342,7 +342,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 else {divided.push(remaining[at+size..].to_owned());remaining=&remaining[..at];}
             }
             if work==RSPLIT {divided.reverse();}
-            Value::TextRow(Rc::new(divided),false)
+            Value::Vector(Rc::new(divided.into_iter().map(|word| Value::text(&word)).collect())).keep(true)
         }
         CENTER|LJUST|RJUST|ZFILL=>{
             let width=g.whole(0,0)?.max(0) as usize;

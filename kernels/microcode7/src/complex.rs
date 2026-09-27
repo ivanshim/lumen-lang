@@ -213,6 +213,10 @@ fn from_chars(chars: &str) -> Option<(f64,f64)> {
 }
 
 pub fn create(t: &Table, input: &[Value]) -> Result<Value,String> {
+    let refused = |v: &Value| match v {
+        Value::Huge(_) => number_error(t, v),
+        _ => complaint(t, "arguments"),
+    };
     match input {
         [] => Ok(pair(t, 0.0,0.0)),
         [Value::Text(s)] => {
@@ -220,10 +224,10 @@ pub fn create(t: &Table, input: &[Value]) -> Result<Value,String> {
             Ok(pair(t, parsed.0,parsed.1))
         }
         [value @ Value::Complex(_)] => Ok(value.clone()),
-        [one] => coordinates(one).map(|p| pair(t, p.0,p.1)).ok_or_else(|| complaint(t,"arguments")),
+        [one] => coordinates(one).map(|p| pair(t, p.0,p.1)).ok_or_else(|| refused(one)),
         [one,two] => {
-            let left = coordinates(one).ok_or_else(|| complaint(t,"arguments"))?;
-            let right = coordinates(two).ok_or_else(|| complaint(t,"arguments"))?;
+            let left = coordinates(one).ok_or_else(|| refused(one))?;
+            let right = coordinates(two).ok_or_else(|| refused(two))?;
             let horizontal = if matches!(two, Value::Complex(_)) { left.0-right.1 } else { left.0 };
             let vertical = if matches!(one, Value::Complex(_)) { left.1+right.0 } else { right.0 };
             Ok(pair(t, horizontal,vertical))
