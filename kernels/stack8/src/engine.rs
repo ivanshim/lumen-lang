@@ -1505,36 +1505,50 @@ impl<'a> Engine<'a> {
             let (words, walks, gone) = crate::faint::settle();
             if words.is_empty() && walks.is_empty() && gone.is_empty() { return; }
             for (object, routine) in words {
-                self.speak_ignoring(routine, vec![Value::Object(object)]);
+                self.speak_ignoring(routine, vec![Value::Object(object)], "deallocator");
             }
             for walk in walks {
                 if let Err(fault) = self.close_generator(&walk) {
-                    self.ignore_fault(fault, &Value::Generator(walk.clone()));
+                    self.ignore_fault(fault, &Value::Generator(walk.clone()), "generator");
                 }
             }
             for (told, bearer) in gone {
-                self.speak_ignoring(told, vec![bearer]);
+                self.speak_ignoring(told, vec![bearer], "callback");
             }
         }
     }
 
     /// A call made on the run's behalf, whose raised value nobody can
     /// take: it is told and let go.
-    fn speak_ignoring(&mut self, callee: Value, args: Vec<Value>) {
+    fn speak_ignoring(&mut self, callee: Value, args: Vec<Value>, kind: &str) {
         let shown = callee.clone();
         if let Err(words) = self.call_held(callee, args) {
             let fault = self.carried.take().unwrap_or(Fault::Note(words));
-            self.ignore_fault(fault, &shown);
+            self.ignore_fault(fault, &shown, kind);
         }
     }
 
-    fn ignore_fault(&mut self, fault: Fault, about: &Value) {
-        if matches!(fault, Fault::Finished) { return; }
-        let sp = self.wording();
-        let told = fault.told(&sp);
-        let told = told.trim_start_matches('\0');
-        eprintln!("Exception ignored in: {}", about.representation(&sp));
-        eprintln!("{told}");
+    fn ignore_fault(&mut self, fault: Fault, about: &Value, kind: &str) {
+        let raised = match fault {
+            Fault::Thrown(value) => value,
+            Fault::Note(words) | Fault::Stopped(words) => match self.as_fault(&words) {
+                Some(value) => value,
+                None => { eprintln!("{words}"); return; }
+            },
+            Fault::Finished => return,
+        };
+        let trace = self.trace_of(&raised);
+        let sys = match self.modules.get("sys").cloned() {
+            Some(module) => module,
+            None => match self.import_module("sys") {
+                Ok(module) => module,
+                Err(_) => return,
+            },
+        };
+        if let Ok(Some(report)) = self.member_of(sys, "_report_unraisable") {
+            let _ = self.call_held(report, vec![raised, trace, about.clone(), Value::text(kind)]);
+            self.carried.take();
+        }
     }
 
     /// The program asked for the rounds nothing reaches to be found and
@@ -1553,13 +1567,13 @@ impl<'a> Engine<'a> {
                         let Some(words) = crate::faint::last_word_of(&o.class) else { continue };
                         if crate::faint::first_words(o) {
                             spoke = true;
-                            self.speak_ignoring(words, vec![Value::Object(o.clone())]);
+                            self.speak_ignoring(words, vec![Value::Object(o.clone())], "deallocator");
                         }
                     }
                     Value::Generator(g) if crate::faint::asleep(g) => {
                         spoke = true;
                         if let Err(fault) = self.close_generator(g) {
-                            self.ignore_fault(fault, value);
+                            self.ignore_fault(fault, value, "generator");
                         }
                     }
                     _ => {}

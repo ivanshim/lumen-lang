@@ -700,15 +700,19 @@ class TextTestRunner:
         if self.verbosity > 1:
             self._write(description + '\n')
         elif self.verbosity == 1:
-            self._write(mark)
+            # Reports written during a test must not split the result marks.
+            self._progress += mark
 
     def run(self, test):
+        self._progress = ""
         result = TestResult()
         if self.resultclass is not None:
             result = self.resultclass()
         started = _host_clock()
         self._run(test, result)
         elapsed = _host_clock() - started
+        if self.verbosity == 1:
+            self._write(self._progress)
         if self.verbosity > 0:
             self._write('\n')
         for error in result.errors:

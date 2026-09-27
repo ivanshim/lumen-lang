@@ -241,21 +241,42 @@ def getsizeof(value, default=None):
         return 24
     return 16
 
-# The public hook can also be called by libraries reporting a failure
-# which cannot propagate to their caller. Finalization must invoke it
-# with the same five fields.
+class UnraisableHookArgs:
+    def __init__(self, exc_type, exc_value, exc_traceback, err_msg, object):
+        self.exc_type = exc_type
+        self.exc_value = exc_value
+        self.exc_traceback = exc_traceback
+        self.err_msg = err_msg
+        self.object = object
+
+
 def unraisablehook(unraisable):
     if unraisable.err_msg is None:
-        heading = 'Exception ignored in'
+        print('Exception ignored in: ' + repr(unraisable.object), file=stderr)
     else:
-        heading = unraisable.err_msg
-    if unraisable.object is not None:
-        print(heading + ': ' + repr(unraisable.object), file=stderr)
-    else:
-        print(heading + ':', file=stderr)
-    print(unraisable.exc_type.__name__ + ': ' + str(unraisable.exc_value), file=stderr)
+        print(unraisable.err_msg, file=stderr)
+    import traceback
+    traceback.print_exception(unraisable.exc_type, unraisable.exc_value,
+                              unraisable.exc_traceback, file=stderr)
+
 
 __unraisablehook__ = unraisablehook
+
+
+def _report_unraisable(exc_value, exc_traceback, about, kind):
+    if exc_traceback is None:
+        try:
+            raise exc_value
+        except BaseException as raised:
+            exc_traceback = raised.__traceback__
+    if kind == 'deallocator':
+        message = 'Exception ignored while calling deallocator ' + repr(about)
+    elif kind == 'generator':
+        message = 'Exception ignored while closing generator ' + repr(about)
+    else:
+        message = None
+    unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
+                                     exc_traceback, message, about))
 
 
 def excepthook(exc_type, exc_value, exc_traceback):
