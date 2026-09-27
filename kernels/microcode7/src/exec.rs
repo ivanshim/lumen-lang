@@ -7707,8 +7707,10 @@ impl<'a> Machine<'a> {
         if self.reads_manners() && matches!(op, Prim::Prepare | Prim::Perform | Prim::Weigh | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
             let formals = table.strings("ext.builtin.compile.parameters");
             for (key, worth) in keywords {
-                let place = formals.iter().position(|word| word == &key).filter(|_| op == Prim::Prepare)
-                    .ok_or_else(|| self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)))?;
+                let place = if op == Prim::Prepare { formals.iter().position(|word| word == &key) }
+                    else if matches!(op, Prim::Perform | Prim::Weigh) {
+                        match key.as_str() { "source" => Some(0), "globals" => Some(1), "locals" => Some(2), "closure" if op == Prim::Perform => Some(3), _ => None }
+                    } else { None }.ok_or_else(|| self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)))?;
                 if positional.get(place).map_or(false, |held| !matches!(held, Value::Unset)) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into()); }
                 if positional.len() <= place { positional.resize(place + 1, Value::Unset); }
                 positional[place] = worth;
@@ -17875,7 +17877,8 @@ impl<'a> Machine<'a> {
             }
             _ => return Err(self.core_complaint("core.arity", name)),
         };
-        if v.len() > 3 { return Err(self.core_complaint("core.arity", name)); }
+        if v.len() > 4 || (weighing && v.len() > 3) { return Err(self.core_complaint("core.arity", name)); }
+        if v.len() == 4 && !matches!(v[3], Value::Nil) { return Err("TypeError: closure can only be used when source is a code object".into()); }
         if file.is_none() { self.report_escape_notices(&source, "<string>")?; }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };
@@ -17912,6 +17915,12 @@ impl<'a> Machine<'a> {
                 Ok(v) => v,
                 Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
             };
+            if let Some(value) = &already {
+                let kept = value.settled();
+                if !matches!(kept, Value::Dict(_) | Value::Thing(_)) {
+                    return Err(format!("TypeError: '{}' object is not subscriptable", kept.kind_word()));
+                }
+            }
             if already.is_none() {
                 let natives = self.natives_kept();
                 if self.booked_put(&outer, &word, Some(Value::Shared(natives))).is_err() {
@@ -19075,6 +19084,9 @@ impl Machine<'_> {
                     if !callable { return Err("TypeError: iter(v, stop_exception=...) requires a callable".into()); }
                 }
                 if input.len() == 2 || iter_stop_exception.is_some() {
+                    if input.len() == 2 && !matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..) | Value::Thing(_)) {
+                        return Err("TypeError: iter(v, w): v must be callable".to_owned());
+                    }
                     let sentinel = input.get(1).cloned().unwrap_or(Value::Nil);
                     return Ok(Self::cursor_value(IteratorKind::Summoned { work: input[0].clone(), stop: sentinel, stop_exception: iter_stop_exception.clone() }));
                 }
