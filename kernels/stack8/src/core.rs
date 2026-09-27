@@ -71,6 +71,7 @@ impl Value {
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
             Value::Adapter(w) if w.0 == 31 => "cell",
+            Value::Adapter(w) if w.0 == 7 => "code",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => return o.class.name.clone(),
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => return c.borrow().core_kind(),

@@ -776,6 +776,8 @@ impl<'a> Machine<'a> {
     fn routine_holding(&self,value:&Value,key:&str)->Option<Value> {
         let (_,members)=self.routine_members.iter().find(|(f,_)|f.equals(value))?;
         let holds=members.holds.borrow();
+        let annotation_key = format!("\0{key}\0");
+        if let Some((_, value)) = holds.iter().find(|(word, _)| *word == annotation_key) { return Some(value.clone()); }
         let apart=format!("{key}\0");
         if let Some((_,v))=holds.iter().find(|(k,_)|*k==apart){return Some(v.clone());}
         let Some((_,book))=holds.iter().find(|(k,_)|k==Self::HANDED) else{return holds.iter().find(|(k,_)|k==key).map(|(_,v)|v.clone())};
@@ -888,6 +890,7 @@ impl<'a> Machine<'a> {
             }
             runs=self.code_run_by(source);
             let mut taken=(*source_code).clone();
+            taken.annotator=code.annotator.clone();
             taken.ident=code.ident.clone();
             taken.qualification=code.qualification.clone();
             taken.doc=code.doc.clone();
@@ -1289,6 +1292,23 @@ impl<'a> Machine<'a> {
         }else if let Value::Routine(_)|Value::Bound(..)=&value {
             let (code,room)=self.routine_standing(&value);
             if let Some(held)=self.routine_holding(&value,key){return Ok(held);}
+            // Annotation expressions stand outside the function's own
+            // frame, including any frame that carries default values.
+            let annotation_room = if code.carried.is_empty() { room.clone() }
+                else { room.outer.clone().unwrap_or_else(|| self.outermost.clone()) };
+            let annotations = self.table.strings("ext.stmt.class.annotations");
+            if annotations.first().map_or(false, |word| word == key) {
+                let contents = if let Some(a) = &code.annotator {
+                    self.apply_class_member(Value::Bound(a.clone(), annotation_room.clone()), vec![Value::Small(1)])?
+                } else { self.collection_cell(Value::Dict(Rc::new(Vec::new().into()))) };
+                let index = self.routine_storage(&value);
+                self.routine_members[index].1.holds.borrow_mut().push((format!("\0{key}\0"), contents.clone()));
+                return Ok(contents);
+            }
+            let fields = self.table.strings("ext.stmt.class.detail.code.fields");
+            if fields.get(10).map_or(false, |word| word == key) {
+                return Ok(code.annotator.clone().map_or(Value::Nil, |a| Value::Bound(a, annotation_room.clone())));
+            }
             if key==self.detail("globals")&&code.written_in.is_none(){return Ok(Value::Shared(self.book_about(true)));}
             if key==self.detail("keywords"){
                 let named=self.spare_worths(&code,&room,'n');
@@ -1343,12 +1363,32 @@ impl<'a> Machine<'a> {
             }
             if *tag==7 {
                 if let Value::Routine(p)|Value::Bound(p,_)=&items[0] {
+                    let fields = self.table.strings("ext.stmt.class.detail.code.fields");
+                    if let Some(index) = fields.iter().position(|word| word == key) {
+                        let result = match index {
+                            0 => Value::text(if p.ident == "<generator>" { "<genexpr>" } else if p.ident == "<program>" { self.table.strings("ext.builtin.exceptions.traceback").get(10).map_or("<module>", String::as_str) } else { &p.ident }),
+                            1 => Value::text(&p.qualification),
+                            2 | 3 => Value::Small(p.taking.as_ref().map_or(0, |rules| rules.iter().filter(|r| **r == if index == 2 { 'p' } else { 'n' }).count()) as i64),
+                            4 => Value::Small(p.locals.len() as i64),
+                            5 => Value::Tuple(Rc::new(p.referenced.iter().map(|n| Value::text(n)).collect())),
+                            6 => {
+                                let mut members = Vec::new();
+                                for v in &p.literals { members.push(match v { Value::Routine(r) => self.code_handle(r), _ => v.clone() }); }
+                                Value::Tuple(Rc::new(members))
+                            }
+                            7 => Value::Small(p.flags),
+                            8 => Value::Text(p.written_in.clone().unwrap_or_else(|| self.entry_file.clone())),
+                            9 => Value::Small(i64::from(p.declared_on.max(1))),
+                            _ => return Err(self.absent_attribute(&value, key)),
+                        };
+                        return Ok(result);
+                    }
                     let words = self.table.strings("ext.builtin.exceptions.traceback");
                     if words.get(6).map_or(false, |word| word == key) { return Ok(Value::text(if p.ident == "<program>" { &words[10] } else { &p.ident })); }
                     if words.get(7).map_or(false, |word| word == key) { return Ok(Value::Text(p.written_in.clone().unwrap_or_else(|| self.entry_file.clone()))); }
                     if words.get(8).map_or(false, |word| word == key) { return Ok(Value::Small(p.declared_on.max(1) as i64)); }
                     if key==self.detail("argcount"){return Ok(Value::Small(p.taking.as_ref().map_or(p.formals.len(),|rules|rules.iter().filter(|r|matches!(r,'b'|'p')).count()) as i64));}
-                    if key==self.detail("varnames"){return Ok(Value::Tuple(Rc::new(p.idents.iter().filter(|s|!s.starts_with('#')).map(|s|Value::text(s)).collect())));}
+                    if key==self.detail("varnames"){return Ok(Value::Tuple(Rc::new(p.locals.iter().map(|s|Value::text(s)).collect())));}
                 }
             }
         }
@@ -1545,6 +1585,16 @@ impl<'a> Machine<'a> {
                     self.write_routine_over(&subject,key,replacement)?;
                     return Ok(Value::Nil);
                 }
+                if self.table.strings("ext.stmt.class.annotations").first().map_or(false, |s| s == key) {
+                    let item = match replacement.as_ref().map(Value::settled) {
+                        Some(Value::Dict(_)) => replacement.unwrap(),
+                        None | Some(Value::Nil) => self.collection_cell(Value::Dict(Rc::new(Vec::new().into()))),
+                        _ => return Err(format!("TypeError: {key} must be set to a dict object").into()),
+                    };
+                    let index = self.routine_storage(&subject);
+                    Self::change_entry(&mut self.routine_members[index].1.holds.borrow_mut(), &format!("\0{key}\0"), Some(item));
+                    return Ok(Value::Nil);
+                }
                 // The name and the full name take text and nothing else;
                 // they and the account of the routine stand apart from its
                 // namespace, and the account taken away is none.
@@ -1611,7 +1661,7 @@ impl<'a> Machine<'a> {
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         // A method or a data member read off a native kind's own word
         // is of the descriptor kind CPython gives it.
-        if let [Value::Wrapped(35|60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(7|35|60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind

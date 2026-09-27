@@ -477,6 +477,7 @@ fn words_of(table: &Table) -> Names<'_> {
 }
 
 impl<'a> Machine<'a> {
+
     fn given_faults(table: &Table) -> HashMap<String, Value> {
         let mut chain: Vec<Rc<Blueprint>> = Vec::new();
         for (number, word) in table.strings("ext.builtin.exceptions").iter().enumerate() {

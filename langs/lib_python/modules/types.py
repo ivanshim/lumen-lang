@@ -1,11 +1,8 @@
 # Names for the kinds of thing a program builds, and the few small
 # kinds that can be built here in Python.
 #
-# Stub: the reader hands out no handle on a function, a bound method, a
-# code body, a frame or a generator -- type() of one refuses -- so the
-# names for those kinds below stand alone. They can be asked after and
-# told apart from one another, but type(x) never answers with one, and
-# isinstance against one is false.
+# Some callable and frame constructors below remain placeholders. Code
+# and generator kinds are obtained from values made by the runtime.
 
 NoneType = type(None)
 
@@ -17,8 +14,7 @@ class FunctionType:
 LambdaType = FunctionType
 
 
-class CodeType:
-    pass
+CodeType = type((lambda: None).__code__)
 
 
 class BuiltinFunctionType:

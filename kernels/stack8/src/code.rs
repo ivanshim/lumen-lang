@@ -834,6 +834,11 @@ impl Builtin {
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {
+    pub annotation: Option<Rc<Routine>>,
+    pub code_constants: Vec<Value>,
+    pub code_names: Vec<String>,
+    pub local_names: Vec<String>,
+    pub code_flags: i64,
     pub generator: bool,
     pub doc: Option<String>,
     pub qualified: String,
