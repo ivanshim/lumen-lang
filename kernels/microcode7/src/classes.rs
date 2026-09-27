@@ -929,6 +929,19 @@ impl<'a> Machine<'a> {
             let Some(Value::Wrapped(7,parts))=replacement.as_ref().map(Value::settled) else{return Err(refused(self,"code.amiss"))};
             let Some(source@(Value::Routine(_)|Value::Bound(..)))=parts.first() else{return Err(refused(self,"code.amiss"))};
             let (source_code,source_room)=self.routine_standing(source);
+            // Writing a routine's own program back leaves it as it was
+            // made: the shadow the earlier write put there is taken away
+            // rather than layered over once more.
+            let own=match subject {Value::Bound(c,_)=>c.clone(),Value::Routine(c)|Value::Method(c,_)=>c.clone(),_=>return Err(self.class_unready())};
+            let source_program=match source {Value::Routine(p)|Value::Bound(p,_)=>p.clone(),_=>return Err(self.class_unready())};
+            if Rc::ptr_eq(&source_program,&own) {
+                self.written_over.remove(&Self::written_key(subject,&self.outermost));
+                return Ok(());
+            }
+            if source_code.flags!=code.flags {
+                let told=self.table.strings("ext.stmt.class.detail.code.mismatch").first().cloned().unwrap_or_default();
+                self.warn_like(26,&told)?;
+            }
             if source_code.reaching.len()!=code.reaching.len() {
                 let words=self.table.strings("ext.stmt.class.detail.code.free");
                 if words.len()!=3{return Err(self.class_unready());}

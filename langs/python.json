@@ -2760,6 +2760,9 @@
   "ext.stmt.class.detail.code.amiss": [
     "TypeError: __code__ must be set to a code object"
   ],
+  "ext.stmt.class.detail.code.mismatch": [
+    "code object of non-matching type"
+  ],
   "ext.stmt.class.detail.code.free": [
     "ValueError: ",
     "() requires a code object with ",

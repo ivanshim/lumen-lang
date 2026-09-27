@@ -17973,6 +17973,36 @@ impl Engine<'_> {
         }
     }
 
+    /// Say a warning of the kind the language's roster names at that
+    /// place, through the reference's warnings module, so that a filter
+    /// the program set is honoured and what the program hears is the
+    /// message written here.
+    fn warn_like(&mut self, category_at: usize, message: &str) -> Res<()> {
+        let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
+        let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
+        let Some(kind_name) = self.lang.exceptions.get(category_at).cloned() else { return Ok(()) };
+        let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
+        let module = match self.import_module(&module_name) {
+            Ok(module) => module,
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        // A module carries its names in cells; the function is what the cell holds.
+        let teller = match self.class_get(module, &teller_name, false) {
+            Ok(teller) => teller.contents(),
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        let file = Value::text(&self.source);
+        let line = Value::Small(self.line as i64);
+        let handed = vec![Value::text(message), category, file, line];
+        match self.class_apply(teller, handed) {
+            Ok(_) => Ok(()),
+            Err(Fault::Note(told)) => Err(told),
+            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+        }
+    }
+
     /// Text, or a code value, run: as one expression where it was asked
     /// to be weighed, else as statements; in the dictionaries handed
     /// over, else where the call stands.

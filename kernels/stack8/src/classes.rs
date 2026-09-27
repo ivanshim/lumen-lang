@@ -1345,6 +1345,14 @@ impl<'a> Engine<'a> {
         made.parameter_rules = Some(rules);
         made
     }
+    /// Whether a code object written over a routine's own was made of
+    /// another kind of program: the flags the two carry differ, which
+    /// CPython now says is going away.
+    fn code_kind_differs(f: &Rc<Routine>, value: Option<&Value>) -> bool {
+        let Some(Value::Adapter(code)) = value.map(Value::contents) else { return false };
+        let (7, Some(Value::Routine(source))) = (code.0, code.1.first()) else { return false };
+        Self::routine_now(source).code_flags != Self::routine_now(f).code_flags
+    }
     /// The routine as it stands once the program writes its spare
     /// arguments, its keyword-only spare arguments or its code over, or
     /// takes them away; a value of the wrong kind is refused with
@@ -1672,6 +1680,10 @@ impl<'a> Engine<'a> {
                 if ["globals","closure"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_word("property.readonly").to_string().into());}
                 if name==self.class_word("defaults") || name==self.class_word("keywords") || name==self.class_word("code") {
                     let Value::Routine(f)=&subject else {return Err(self.class_refusal())};
+                    if name==self.class_word("code") && Self::code_kind_differs(f, value.as_ref()) {
+                        let told=self.lang.class_details.get("code.mismatch").and_then(|w| w.first()).cloned().unwrap_or_default();
+                        self.warn_like(26,&told)?;
+                    }
                     let now=self.routine_rewritten(f,name,value)?;
                     *f.revised.borrow_mut()=Some(Rc::new(now));
                     return Ok(Value::Null);

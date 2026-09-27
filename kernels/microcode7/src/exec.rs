@@ -17856,6 +17856,24 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Say a warning of the kind the language's roster names at that
+    /// place, through the reference's warnings module, so a filter the
+    /// program set holds and what the program hears is the message
+    /// written here.
+    fn warn_like(&mut self, category_at: usize, message: &str) -> Res<()> {
+        let words = self.table.strings("ext.system.syntax_warnings");
+        let (Some(module_name), Some(teller_name)) = (words.first().cloned(), words.get(1).cloned()) else { return Ok(()) };
+        let Some(kind_name) = self.table.strings("ext.builtin.exceptions").get(category_at).cloned() else { return Ok(()) };
+        let Some(category) = self.fault_kinds.get(&kind_name).cloned() else { return Ok(()) };
+        let namespace = self.load_namespace(&module_name)?;
+        let function = self.namespace_item(&namespace, &module_name, &teller_name)?;
+        let location = vec![Value::text(&self.written_in), Value::Small(self.row as i64)];
+        let mut parameters = vec![Value::text(message), category];
+        parameters.extend(location);
+        self.apply_class_member(function, parameters)?;
+        Ok(())
+    }
+
     /// Text or a code value run: as one expression where it is to be
     /// weighed, else as statements; in the dictionaries handed over,
     /// else where the call stands.
