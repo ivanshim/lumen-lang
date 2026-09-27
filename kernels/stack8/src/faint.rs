@@ -295,6 +295,7 @@ fn place_of(value: &Value) -> Option<usize> {
         Value::Routine(r) => Rc::as_ptr(r) as *const () as usize,
         Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => Rc::as_ptr(c) as *const () as usize,
         Value::Array(a) | Value::Tuple(a) => Rc::as_ptr(a) as *const () as usize,
+        Value::Slice(parts) => Rc::as_ptr(parts) as *const () as usize,
         Value::Map(m) => Rc::as_ptr(m) as *const () as usize,
         Value::Hashed(p) | Value::Tie(p) => Rc::as_ptr(p) as *const () as usize,
         Value::ValueMethod(p) | Value::View(p) => Rc::as_ptr(p) as *const () as usize,
@@ -318,6 +319,7 @@ fn holds_on(value: &Value) -> usize {
         Value::Routine(r) => Rc::strong_count(r),
         Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => Rc::strong_count(c),
         Value::Array(a) | Value::Tuple(a) => Rc::strong_count(a),
+        Value::Slice(parts) => Rc::strong_count(parts),
         Value::Map(m) => Rc::strong_count(m),
         Value::Hashed(p) | Value::Tie(p) => Rc::strong_count(p),
         Value::ValueMethod(p) | Value::View(p) => Rc::strong_count(p),
@@ -392,6 +394,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             }
         }
         Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().cloned()),
+        Value::Slice(parts) => out.extend(parts.iter().cloned()),
         Value::Map(m) => {
             for (k, v) in m.iter() {
                 out.push(k.clone());
