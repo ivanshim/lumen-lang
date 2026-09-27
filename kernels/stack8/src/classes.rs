@@ -718,7 +718,7 @@ impl<'a> Engine<'a> {
                 Some(Builtin::List) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
                 }
-                Some(Builtin::Frozen) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                Some(Builtin::Frozen | Builtin::Tuple) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
                 }
                 _ => (),

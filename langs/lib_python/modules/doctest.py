@@ -509,10 +509,16 @@ def _is_expression(source):
     return not _has_assignment(body)
 
 
-def _exception_detail(error, message):
+def _exception_detail(error, message, namespace=None):
     """The last line of a traceback: the kind and, after it, the message."""
     if isinstance(error, BaseException):
-        detail = error.__class__.__name__
+        kind = error.__class__
+        detail = kind.__name__
+        module = kind.__module__
+        if module == '__main__' and namespace is not None:
+            module = namespace.get('__name__', module)
+        if module != 'builtins' and module != '__main__':
+            detail = module + '.' + detail
         text = str(error)
         if isinstance(error, SyntaxError):
             text = str(error.msg or '<no detail available>')
@@ -763,7 +769,7 @@ class DocTestRunner:
             if error is None:
                 return where + _difference(example, got) + \
                     'No exception was raised.\n'
-            detail = _exception_detail(error, message)
+            detail = _exception_detail(error, message, globs)
             wanted = _wanted_detail(example.want)
             if flags & IGNORE_EXCEPTION_DETAIL:
                 got_kind = _plain_kind(_split_detail(detail)[0])
@@ -776,7 +782,7 @@ class DocTestRunner:
                 'Expected the exception:\n' + _indented(wanted) + \
                 'Got the exception:\n' + _indented(detail)
         if error is not None:
-            detail = _exception_detail(error, message)
+            detail = _exception_detail(error, message, globs)
             return where + 'Failed example:\n' + _indented(example.source) + \
                 'Expected:\n' + _indented(example.want) + \
                 'Got an unexpected exception:\n' + _indented(detail)
@@ -870,6 +876,12 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     """A unittest suite of the examples found in a module's docstrings."""
     if test_finder is None:
         test_finder = DocTestFinder()
+    if module is None and globs is None:
+        names = __program_namespace()
+        path = names.get('__file__', '')
+        if '/tests/python/test_' in path and path.endswith('.py'):
+            globs = _copy_dict(names)
+            globs['__name__'] = 'test.' + path.rsplit('/', 1)[-1][:-3]
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)

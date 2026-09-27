@@ -712,7 +712,7 @@ impl<'a> Machine<'a> {
                         self.open_arguments(given.clone())?.0.into_iter().take(1).collect()
                     },
                     Some(Prim::Listed) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
-                    Some(Prim::Unchanging) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
+                    Some(Prim::Unchanging | Prim::Tupling) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     _ => given.clone(),
                 };
                 self.thing_over_native(class.clone(),word,initial)?
