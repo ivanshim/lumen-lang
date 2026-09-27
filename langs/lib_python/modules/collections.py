@@ -1,17 +1,16 @@
 # The small containers below keep their contents in ordinary arrays and
 # maps. Where the object protocol is wanting, no silent stand-in is used.
-def OrderedDict(items=None, **keywords):
-    result = {}
-    if items is not None:
-        if type(items) == type({}):
-            for key in list(items):
-                result[key] = items[key]
+class OrderedDict(dict):
+    def move_to_end(self, key, last=True):
+        value = self.pop(key)
+        if last:
+            self[key] = value
         else:
-            for key, value in items:
-                result[key] = value
-    for key in list(keywords):
-        result[key] = keywords[key]
-    return result
+            remaining = list(self.items())
+            self.clear()
+            self[key] = value
+            self.update(remaining)
+
 
 def namedtuple(typename, field_names, rename=False, defaults=None, module=None):
     if rename or defaults is not None:
