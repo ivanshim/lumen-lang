@@ -5880,6 +5880,15 @@ impl<'a> Engine<'a> {
         })
     }
 
+    fn int_subclass_warning(&mut self) -> Res<()> {
+        let Some(warnings) = self.modules.get("warnings").cloned() else { return Ok(()); };
+        let Some(category) = self.lookup("DeprecationWarning").cloned() else { return Ok(()); };
+        if let Some(warn) = self.member_of(warnings, "warn")? {
+            self.call_held(warn, vec![Value::text("__int__ returned an int subclass"), category])?;
+        }
+        Ok(())
+    }
+
     /// A thing written to a format specification: by its own method,
     /// by the worth it keeps, or as its text where nothing was asked.
     fn special_format(&mut self, value: &Value, spec: &str) -> Res<String> {
@@ -6577,14 +6586,28 @@ impl<'a> Engine<'a> {
                 let place = match op { Builtin::ToInt => 38, Builtin::AsReal => 39, _ => 40 };
                 match self.special_call(&args[0], place, Vec::new())? {
                     Some(answer) => {
-                        let answer = if op == Builtin::AsReal {
-                            Self::worth_of(&answer).unwrap_or(answer).contents()
-                        } else { answer };
-                        if op == Builtin::AsReal && !matches!(answer, Value::Real(_) | Value::Frac(_)) {
-                            return Err(self.special_fault());
+                        if op == Builtin::ToInt {
+                            match answer.contents() {
+                                Value::Small(_) | Value::Huge(_) => answer.contents(),
+                                Value::Flag(flag) => { self.int_subclass_warning()?; Value::Small(i64::from(flag)) },
+                                other => return Err(format!("TypeError: __int__ returned non-int (type {})", other.core_kind())),
+                            }
+                        } else {
+                            let answer = if op == Builtin::AsReal {
+                                Self::worth_of(&answer).unwrap_or(answer).contents()
+                            } else { answer };
+                            if op == Builtin::AsReal && !matches!(answer, Value::Real(_) | Value::Frac(_)) {
+                                return Err(self.special_fault());
+                            }
+                            answer
                         }
-                        answer
                     }
+                    None if op == Builtin::ToInt => match self.special_call(&args[0], 43, Vec::new())? {
+                        Some(Value::Flag(flag)) => { self.int_subclass_warning()?; Value::Small(i64::from(flag)) },
+                        Some(answer @ (Value::Small(_) | Value::Huge(_))) => answer,
+                        Some(other) => return Err(format!("TypeError: __index__ returned non-int (type {})", other.core_kind())),
+                        None => return Ok(None),
+                    },
                     None => return Ok(None),
                 }
             }
@@ -6742,7 +6765,13 @@ impl<'a> Engine<'a> {
             },
             Builtin::Iter if args.len() == 1 => {
                 if matches!(&args[0], Value::Walk(_)) { return Ok(Some(args[0].clone())); }
-                if let Some(answer) = self.special_call(&args[0], 15, Vec::new())? { answer }
+                if let Some(answer) = self.special_call(&args[0], 15, Vec::new())? {
+                    if !matches!(answer, Value::Cursor(_) | Value::Generator(_) | Value::Walk(_))
+                        && self.special_method(&answer, 16).is_none() {
+                        return Err(format!("TypeError: iter() returned non-iterator of type '{}'", answer.core_kind()));
+                    }
+                    answer
+                }
                 else if let Some(places) = self.indexed_walk(&args[0]) { places }
                 else { Value::Walk(Rc::new(RefCell::new((self.comprehension_items(&args[0])?, 0)))) }
             }
@@ -7454,6 +7483,7 @@ impl<'a> Engine<'a> {
                     self.data.push(answer);
                     return Ok(());
                 }
+                let v = Self::worth_of(&v).filter(|worth| matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_))).unwrap_or(v);
                 let v = if self.lang.arithmetic_flags { match v { Value::Flag(b) => Value::Small(i64::from(b)), other => other } } else { v };
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
@@ -12351,7 +12381,7 @@ impl<'a> Engine<'a> {
         Ok(ranked.into_iter().map(|(_, item)| item).collect())
     }
 
-    fn integer_call(&self, args: &[Value]) -> Res<Value> {
+    fn integer_call(&mut self, args: &[Value]) -> Res<Value> {
         if args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
         let Some(value) = args.first() else { return Ok(Value::Small(0)) };
         if matches!(value, Value::Complex(_)) { return Err(crate::complex::fault(self.lang, "integer")); }
@@ -12359,10 +12389,20 @@ impl<'a> Engine<'a> {
             None => 10,
             Some(Value::Small(n)) => *n,
             Some(Value::Huge(_)) => return Err(self.lang.to_int_base_amiss[0].clone()),
+            Some(other @ Value::Object(_)) => match self.special_index(other)? {
+                Some(number) => number.as_big()?.to_i64().ok_or_else(|| self.lang.to_int_base_amiss[0].clone())?,
+                None => return Err(self.lang.call_amiss[0].clone()),
+            },
             Some(_) => return Err(self.lang.call_amiss[0].clone()),
         };
         if base != 0 && !(2..=36).contains(&base) { return Err(self.lang.to_int_base_amiss[0].clone()); }
-        let Value::Text(text) = value else {
+        let source = match value {
+            Value::Text(text) => Some(text.to_string()),
+            Value::Codepoints(_) => Some(String::new()),
+            Value::Bytes(row, ..) => Some(row.borrow().iter().map(|byte| char::from(*byte)).collect()),
+            _ => None,
+        };
+        let Some(text) = source else {
             if args.len() == 2 { return Err(self.lang.to_int_text_required[0].clone()); }
             if let Value::Flag(b) = value { return Ok(Value::Small(i64::from(*b))); }
             // A real past the numbers has no whole number in it, and the
@@ -12377,7 +12417,7 @@ impl<'a> Engine<'a> {
         };
         let invalid = || {
             if self.lang.integer_text_detail.len() == 2 {
-                format!("{}{}{}{}", self.lang.integer_text_detail[0], base, self.lang.integer_text_detail[1], self.rem_repr(value).unwrap_or_default())
+                format!("{}{}{}{}", self.lang.integer_text_detail[0], base, self.lang.integer_text_detail[1], if matches!(value, Value::Bytes(..) | Value::Codepoints(_)) { value.plain() } else { self.rem_repr(value).unwrap_or_default() })
             } else { self.lang.to_int_text_amiss[0].clone() }
         };
         let text = text.trim();
@@ -15951,7 +15991,14 @@ impl Engine<'_> {
             }
             CursorSource::Indexed(thing, at) => (iter, vec![thing.clone()], Some(Value::of_big(at.clone()))),
             CursorSource::IndexedBack(thing, at) => (native(Builtin::Reversed), vec![thing.clone()], Some(Value::of_big(at.clone()))),
-            CursorSource::Called(work, stop, types) => (iter, vec![work.clone(), stop.clone()], types.clone()),
+            CursorSource::Called(work, stop, types) => {
+                let customary = types.as_ref().map_or(true, |value| !matches!(stop, Value::Null) && matches!(value, Value::Class(class) if class.name == "StopIteration"));
+                if customary { (iter, vec![work.clone(), stop.clone()], None) }
+                else {
+                    let option = if matches!(stop, Value::Null) { pack(Vec::new()) } else { pack(vec![stop.clone()]) };
+                    (iter, vec![work.clone(), Value::Null], Some(pack(vec![option, types.as_ref().unwrap().clone()])))
+                }
+            },
             CursorSource::Numbered(walk, n) => (native(Builtin::Enumerate), vec![walk.clone(), Value::of_big(n.clone())], None),
             CursorSource::Combined(walks, work, exact) => {
                 let mut inputs = Vec::new();
@@ -15975,9 +16022,15 @@ impl Engine<'_> {
     fn pickle_position(&mut self, receiver: &Value, position: &Value) -> Res<Value> {
         let Value::Cursor(cell) = receiver else { return Err("TypeError: expected iterator".into()) };
         let mut held = cell.borrow_mut();
-        if let CursorSource::Called(_, _, types) = &mut held.source {
-            if !Self::valid_stop_types(position) { return Err("TypeError: stop_exception must be an exception class or tuple of exception classes".into()); }
-            *types = Some(position.clone());
+        if let CursorSource::Called(_, stop, types) = &mut held.source {
+            let Value::Tuple(parts) = position else { return Err("TypeError: invalid callable iterator state".into()); };
+            if parts.len() != 2 { return Err("TypeError: invalid callable iterator state".into()); }
+            let Value::Tuple(sentinel) = &parts[0] else { return Err("TypeError: invalid callable iterator state".into()); };
+            if sentinel.len() > 1 || !Self::valid_stop_types(&parts[1]) {
+                return Err("TypeError: invalid callable iterator state".into());
+            }
+            *stop = sentinel.first().cloned().unwrap_or(Value::Null);
+            *types = Some(parts[1].clone());
             return Ok(Value::Null);
         }
         if let CursorSource::Combined(_, _, exact) = &mut held.source {
@@ -16166,7 +16219,20 @@ impl Engine<'_> {
             }
             let answered = match self.core_apply(&work, Vec::new()) {
                 Ok(value) => value,
-                Err(words) => { if self.stop_raised() || types.as_ref().map_or(false, |types| self.selected_stop_raised(types)) { cell.borrow_mut().finished = true; return Ok(None); } return Err(words); }
+                Err(words) => {
+                    let stopped = if let Some(selected) = &types { self.selected_stop_raised(selected) } else { self.stop_raised() };
+                    if stopped { cell.borrow_mut().finished = true; return Ok(None); }
+                    let stopped_cause = match &self.carried {
+                        Some(Fault::Thrown(Value::Object(object))) if self.lang.special_stop.iter().any(|name| object.class_now().named(name, false)) => Some(Value::Object(object.clone())),
+                        _ => None,
+                    };
+                    if let (Some(cause), Some(runtime)) = (stopped_cause, self.furnished(13)) {
+                        let raised = self.exception_instance(runtime, vec![Value::text("callable raised StopIteration")], cause);
+                        self.carried = Some(Fault::Thrown(raised));
+                        return Err("RuntimeError: callable raised StopIteration".into());
+                    }
+                    return Err(words);
+                }
             };
             let mut state = cell.borrow_mut();
             if state.finished { return Ok(None); }

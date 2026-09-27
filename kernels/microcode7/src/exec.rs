@@ -7906,22 +7906,34 @@ impl<'a> Machine<'a> {
         Ok(None)
     }
 
-    fn whole_from_call(&self, values: &[Value]) -> Result<Value, String> {
-        let complaint = |ending: &str| self.argument_fault(&format!("ext.builtin.to_int.{}", ending), None);
+    fn whole_from_call(&mut self, values: &[Value]) -> Result<Value, String> {
         if values.len() > 2 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
         if values.is_empty() { return Ok(Value::Small(0)); }
-        let radix = match values.get(1) {
-            Some(Value::Small(base)) if *base == 0 || (2..37).contains(base) => *base as u32,
-            Some(Value::Small(_) | Value::Huge(_)) => return Err(complaint("base.amiss")),
+        let chosen = match values.get(1) {
+            Some(Value::Small(base)) => *base,
+            Some(Value::Huge(_)) => return Err(self.argument_fault("ext.builtin.to_int.base.amiss", None)),
+            Some(thing @ Value::Thing(_)) => match self.stood_for_whole(thing)? {
+                Some(number) => number.as_big()?.to_i64().ok_or_else(|| self.argument_fault("ext.builtin.to_int.base.amiss", None))?,
+                None => return Err(self.argument_fault("ext.syntax.call.amiss", None)),
+            },
             Some(_) => return Err(self.argument_fault("ext.syntax.call.amiss", None)),
             None => 10,
         };
+        if chosen != 0 && !(2..=36).contains(&chosen) { return Err(self.argument_fault("ext.builtin.to_int.base.amiss", None)); }
+        let radix = chosen as u32;
+        let complaint = |ending: &str| self.argument_fault(&format!("ext.builtin.to_int.{}", ending), None);
         let invalid_text = || {
             if let Some((head, middle)) = self.table.around("ext.builtin.to_int.text.detail") {
-                format!("{head}{radix}{middle}{}", self.quoted_remainder(&values[0]).unwrap_or_default())
+                format!("{head}{radix}{middle}{}", if matches!(values[0], Value::Octets { .. } | Value::Unpaired(_)) { values[0].bare() } else { self.quoted_remainder(&values[0]).unwrap_or_default() })
             } else { complaint("text.amiss") }
         };
-        if let Value::Text(text) = &values[0] {
+        let source_text = match &values[0] {
+            Value::Text(text) => Some(text.to_string()),
+            Value::Unpaired(_) => Some(String::new()),
+            Value::Octets { cell, .. } => Some(cell.borrow().iter().map(|byte| char::from(*byte)).collect()),
+            _ => None,
+        };
+        if let Some(text) = source_text {
             let mut source = text.trim();
             let negative = source.starts_with('-');
             if source.starts_with(['+', '-']) { source = &source[1..]; }
@@ -10898,6 +10910,15 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn signal_int_subclass(&mut self) -> Result<(), String> {
+        let Some(module) = self.imported.get("warnings").cloned() else { return Ok(()); };
+        let Some(category) = self.spare_name("DeprecationWarning") else { return Ok(()); };
+        if let Some(method) = self.attribute(&module, "warn") {
+            self.apply_within(method, vec![Value::text("__int__ returned an int subclass"), category])?;
+        }
+        Ok(())
+    }
+
     /// The complaint for a working neither operand's methods would
     /// take: its sign and the two kinds set among the four pieces the
     /// table gives.
@@ -11159,7 +11180,18 @@ impl<'a> Machine<'a> {
                         let real = Self::underlying(&answer).unwrap_or(answer).settled();
                         if matches!(real, Value::Frac(_)) { real } else { return Err(self.bad_answer()); }
                     },
+                    Some(answer) if index == 38 => match answer.settled() {
+                        Value::Small(_) | Value::Huge(_) => answer.settled(),
+                        Value::Flag(value) => { self.signal_int_subclass()?; Value::Small(i64::from(value)) },
+                        other => return Err(format!("TypeError: __int__ returned non-int (type {})", other.kind_word())),
+                    },
                     Some(answer) => answer,
+                    None if index == 38 => match self.ask_special(subject, 43, &[])? {
+                        Some(Value::Flag(value)) => { self.signal_int_subclass()?; Value::Small(i64::from(value)) },
+                        Some(whole @ (Value::Small(_) | Value::Huge(_))) => whole,
+                        Some(other) => return Err(format!("TypeError: __index__ returned non-int (type {})", other.kind_word())),
+                        None => return Ok(None),
+                    },
                     None if index == 41 => match Self::underlying(subject) {
                         Some(number @ Value::Complex(_)) => number,
                         _ => return Ok(None),
@@ -11550,7 +11582,13 @@ impl<'a> Machine<'a> {
             },
             (Prim::Iterator, [one @ Value::Cursor(_)]) => one.clone(),
             (Prim::Iterator, [one]) => match self.ask_special(one, 15, &[])? {
-                Some(iterator) => iterator,
+                Some(iterator) => {
+                    if !matches!(iterator, Value::Iterator(_) | Value::Generator(_) | Value::Cursor(_))
+                        && self.appointed(&iterator, 16).is_none() {
+                        return Err(format!("TypeError: iter() returned non-iterator of type '{}'", iterator.kind_word()));
+                    }
+                    iterator
+                },
                 None => match self.placed_walk(one) {
                     Some(places) => places,
                     None => Value::Cursor(Rc::new(RefCell::new(self.gathered_members(one)?.into_iter().collect()))),
@@ -14109,12 +14147,13 @@ impl<'a> Machine<'a> {
                 return self.prim(Prim::Times, name, &pair);
             }
             Prim::Negate => {
-                let turned = match math::compute(Calc::Minus, &Value::Small(0), &v[0]) {
+                let source = Self::underlying(&v[0]).filter(|worth| matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Frac(_))).unwrap_or_else(|| v[0].clone());
+                let turned = match math::compute(Calc::Minus, &Value::Small(0), &source) {
                     Some(r) => r?,
                     None => return Err("Cannot negate non-numeric value".to_string()),
                 };
                 // A nought turned about is the other nought.
-                match (&v[0], &turned) {
+                match (&source, &turned) {
                     (Value::Frac(was), Value::Frac(now)) if num_traits::Zero::is_zero(&now.above) => {
                         math::made_number(now.above.clone(), now.beneath.clone(), now.places, !was.under).keeping_point(was.pointed)
                     }
@@ -18254,8 +18293,13 @@ impl Machine<'_> {
                 vec![source.clone()]
             }
             IteratorKind::Summoned { work, stop, stop_exception } => {
-                state = stop_exception.clone();
-                vec![work.clone(), stop.clone()]
+                let ordinary = stop_exception.as_ref().map_or(true, |value| !matches!(stop, Value::Nil) && matches!(value, Value::Blueprint(kind) if kind.name == "StopIteration"));
+                if ordinary { vec![work.clone(), stop.clone()] }
+                else {
+                    let sentinel = if matches!(stop, Value::Nil) { tuple(Vec::new()) } else { tuple(vec![stop.clone()]) };
+                    state = Some(tuple(vec![sentinel, stop_exception.as_ref().unwrap().clone()]));
+                    vec![work.clone(), Value::Nil]
+                }
             },
             IteratorKind::Count(source, offset) => {
                 constructor = builtin(Prim::Numbered);
@@ -18287,9 +18331,14 @@ impl Machine<'_> {
     fn restore_iterator(&mut self, subject: &Value, state: &Value) -> Result<Value, String> {
         let Value::Iterator(handle) = subject else { return Err("TypeError: expected iterator".to_owned()); };
         let mut current = handle.borrow_mut();
-        if let IteratorKind::Summoned { stop_exception, .. } = &mut current.kind {
-            if !Self::valid_stop_types(state) { return Err("TypeError: stop_exception must be an exception class or tuple of exception classes".to_owned()); }
-            *stop_exception = Some(state.clone());
+        if let IteratorKind::Summoned { stop, stop_exception, .. } = &mut current.kind {
+            let Value::Tuple(parts) = state else { return Err("TypeError: invalid callable iterator state".to_owned()); };
+            let [Value::Tuple(sentinel), exceptions] = parts.as_slice() else { return Err("TypeError: invalid callable iterator state".to_owned()); };
+            if sentinel.len() > 1 || !Self::valid_stop_types(exceptions) {
+                return Err("TypeError: invalid callable iterator state".to_owned());
+            }
+            *stop = sentinel.first().cloned().unwrap_or(Value::Nil);
+            *stop_exception = Some(exceptions.clone());
         } else if let IteratorKind::Parallel { exact, .. } = &mut current.kind {
             *exact = state.is_true();
         } else {
@@ -18485,7 +18534,20 @@ impl Machine<'_> {
             }
             let answer = match self.core_run(&work, Vec::new()) {
                 Ok(value) => value,
-                Err(complaint) => return if self.walk_halted() || stop_exception.as_ref().map_or(false, |types| self.selected_walk_halted(types)) { cell.borrow_mut().done = true; Ok(None) } else { Err(complaint) },
+                Err(complaint) => {
+                    let halted = match &stop_exception { Some(chosen) => self.selected_walk_halted(chosen), None => self.walk_halted() };
+                    if halted { cell.borrow_mut().done = true; return Ok(None); }
+                    let cause = match &self.got_away {
+                        Some(Escape::Thrown(Value::Thing(thing))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| thing.blueprint().goes_by(name, false)) => Some(Value::Thing(thing.clone())),
+                        _ => None,
+                    };
+                    if let (Some(cause), Some(runtime)) = (cause, self.furnished_kind(13)) {
+                        let fault = self.make_fault(runtime, vec![Value::text("callable raised StopIteration")], cause);
+                        self.got_away = Some(Escape::Thrown(fault));
+                        return Err("RuntimeError: callable raised StopIteration".to_owned());
+                    }
+                    return Err(complaint);
+                },
             };
             let mut held = cell.borrow_mut();
             if held.done { return Ok(None); }
