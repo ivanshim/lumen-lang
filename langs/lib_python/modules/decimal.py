@@ -455,6 +455,10 @@ class Decimal:
         return -1 if a < b else (1 if a > b else 0)
 
     def __eq__(self, other):
+        if isinstance(other, complex):
+            if other.imag != 0:
+                return False
+            other = other.real
         if not isinstance(other, (Decimal, int, float)) and not isinstance(other, bool):
             return NotImplemented
         return self._cmp(other) == 0
@@ -466,25 +470,39 @@ class Decimal:
         return not result
 
     def __lt__(self, other):
-        c = self._cmp(other)
+        try:
+            c = self._cmp(other)
+        except TypeError:
+            # Fraction and other Rational-like types know how to compare
+            # with Decimal via the reflected comparison operator.
+            return NotImplemented
         if c is None:
             return False
         return c < 0
 
     def __le__(self, other):
-        c = self._cmp(other)
+        try:
+            c = self._cmp(other)
+        except TypeError:
+            return NotImplemented
         if c is None:
             return False
         return c <= 0
 
     def __gt__(self, other):
-        c = self._cmp(other)
+        try:
+            c = self._cmp(other)
+        except TypeError:
+            return NotImplemented
         if c is None:
             return False
         return c > 0
 
     def __ge__(self, other):
-        c = self._cmp(other)
+        try:
+            c = self._cmp(other)
+        except TypeError:
+            return NotImplemented
         if c is None:
             return False
         return c >= 0
