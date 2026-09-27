@@ -1,3 +1,7 @@
+# Host primitives used by class bodies need non-private module bindings.
+_host_file_exists = __file_exists
+_host_file_kind = __file_kind
+
 # The path rules below are POSIX rules. Host facts are read afresh.
 name = 'posix'
 sep = '/'
@@ -89,13 +93,13 @@ class _Path:
         return (path, '')
 
     def exists(self, path):
-        return __file_exists(path)
+        return _host_file_exists(path)
 
     def isfile(self, path):
-        return __file_kind(path) == 1
+        return _host_file_kind(path) == 1
 
     def isdir(self, path):
-        return __file_kind(path) == 2
+        return _host_file_kind(path) == 2
 
     def abspath(self, path):
         if path[:1] != '/':

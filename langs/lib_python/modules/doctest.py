@@ -13,6 +13,9 @@ become one unittest test, so a test file can hand them to a suite:
         tests.addTest(doctest.DocTestSuite())
         return tests
 """
+# Host primitives used by class bodies need non-private module bindings.
+_host_call_outcome = __call_outcome
+
 
 import sys
 import unittest
@@ -803,7 +806,7 @@ class _NamedCase(unittest.TestCase):
             result = unittest.TestResult()
         self._result = result
         result.testsRun += 1
-        outcome = __call_outcome(self.runTest)
+        outcome = _host_call_outcome(self.runTest)
         self.doCleanups()
         if outcome[0]:
             return result

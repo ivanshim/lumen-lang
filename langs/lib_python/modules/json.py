@@ -1,3 +1,6 @@
+# Host primitives used by class bodies need non-private module bindings.
+_host_math = __math
+
 # Text is read as JSON, never as executable source.
 class JSONDecodeError(ValueError):
     def __init__(self, msg, doc, pos):
@@ -247,8 +250,8 @@ class _Reader:
             if self.text[self.at:self.at + len(special)] == special:
                 self.at += len(special)
                 if special == 'NaN':
-                    return __math('fdiv', 0.0, 0.0)
-                return __math('fdiv', -1.0 if special == '-Infinity' else 1.0, 0.0)
+                    return _host_math('fdiv', 0.0, 0.0)
+                return _host_math('fdiv', -1.0 if special == '-Infinity' else 1.0, 0.0)
         for word, answer in [('null', None), ('true', True), ('false', False)]:
             if self.text[self.at:self.at + len(word)] == word:
                 self.at += len(word)
@@ -287,9 +290,9 @@ class _Reader:
         if not real:
             return int(text)
         # The floating primitive rounds the parsed real to binary64.
-        number = __math('fdiv', float(text), 1.0)
+        number = _host_math('fdiv', float(text), 1.0)
         if number == 0 and text[:1] == '-':
-            return __math('fdiv', -0.0, 1.0)
+            return _host_math('fdiv', -0.0, 1.0)
         return number
 
 

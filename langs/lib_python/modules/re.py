@@ -1,3 +1,6 @@
+# Host primitives used by class bodies need non-private module bindings.
+_host_copy_value = __copy_value
+
 # A backtracking reader over text. Backreferences, inline flags, bytes and
 # locale rules are not carried by this small engine. Unsupported escapes
 # and group forms raise a complaint when compiled.
@@ -411,7 +414,7 @@ class Match:
     def __init__(self, pattern, text, start, state):
         self.re = pattern
         self.string = text
-        captures = __copy_value(state[1], False)
+        captures = _host_copy_value(state[1], False)
         captures[0] = [start, state[0]]
         self.captures = captures
 

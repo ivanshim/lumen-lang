@@ -1,3 +1,9 @@
+# Host primitives used by class bodies need non-private module bindings.
+_host_file_exists = __file_exists
+_host_file_kind = __file_kind
+_host_file_read = __file_read
+_host_file_write = __file_write
+
 # The names a program reaches without naming a module at all.
 #
 # A name a program writes without having bound it is looked for here
@@ -372,25 +378,25 @@ class _HostFile:
         if not (reading or writing or appending):
             reading = True
         if writing:
-            if __file_exists(name) and __file_kind(name) == 2:
+            if _host_file_exists(name) and _host_file_kind(name) == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
             self._buffer = ''
         elif appending:
-            if __file_exists(name):
-                if __file_kind(name) == 2:
+            if _host_file_exists(name):
+                if _host_file_kind(name) == 2:
                     raise IsADirectoryError(21, 'Is a directory', name)
-                brought = __file_read(name)
+                brought = _host_file_read(name)
                 self._buffer = brought if brought is not False else ''
             else:
                 self._buffer = ''
             self._pos = len(self._buffer)
         else:
-            kind = __file_kind(name)
+            kind = _host_file_kind(name)
             if kind == 0:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = __file_read(name)
+            brought = _host_file_read(name)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
@@ -497,7 +503,7 @@ class _HostFile:
     def flush(self):
         self._open()
         if self._dirty:
-            wrote = __file_write(self.name, self._buffer)
+            wrote = _host_file_write(self.name, self._buffer)
             if wrote is False:
                 raise FileNotFoundError(2, 'No such file or directory', self.name)
             self._dirty = False
