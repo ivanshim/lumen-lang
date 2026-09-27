@@ -400,7 +400,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 }
                 if backward {parts.reverse();}
             }
-            Value::Words(Rc::new(parts),false)
+            Value::array(parts.iter().map(|part| Value::text(part)).collect()).held(true)
         }
         Center | Ljust | Rjust | Zfill => {
             let width=number(0,0)?.max(0) as usize;

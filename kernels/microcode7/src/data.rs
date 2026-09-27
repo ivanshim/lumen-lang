@@ -193,6 +193,7 @@ pub enum IteratorKind {
 
 #[derive(Debug)]
 pub struct TraceLink {
+    pub extent: Option<(u32, u32, u32, u32)>,
     pub location: u32,
     pub activation: Rc<Thing>,
     pub following: Value,
@@ -661,6 +662,7 @@ impl Value {
             Value::Text(word) => Ok(format!("text:{word}")),
             Value::Octets { changeable: true, .. } => Err("bytearray"),
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
+            Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
             Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
@@ -1828,6 +1830,7 @@ impl Among {
             Value::Dict(pairs) => (Rc::as_ptr(pairs) as usize, "{...}"),
             Value::Tuple(parts) | Value::Row(parts) | Value::Arguments(parts) => (Rc::as_ptr(parts) as usize, "(...)"),
             Value::Vector(items) => (Rc::as_ptr(items) as usize, "[...]"),
+            Value::Set(store) => (Rc::as_ptr(store) as usize, "(...)"),
             _ => return Among { left: None, instead: None },
         };
         AMONG.with(|notes| {
