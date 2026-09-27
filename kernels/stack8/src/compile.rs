@@ -2380,7 +2380,21 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let held = self.gensym("with");
                 self.write(&held);
-                self.bind_block_target(&held)?;
+                let begin = self.pos;
+                let mut end = begin;
+                let mut depth = 0usize;
+                while end < self.tokens.len() {
+                    let word = &self.tokens[end];
+                    if depth == 0 && (Lang::spells(&lang.block_intros, &word.lexeme)
+                        || Lang::spells(&lang.tuple_marks, &word.lexeme) || word.lexeme == group.close) { break; }
+                    if word.shape == Shape::Sign {
+                        if ["(", "[", "{"].contains(&word.lexeme.as_str()) { depth += 1; }
+                        else if [")", "]", "}"].contains(&word.lexeme.as_str()) { depth = depth.saturating_sub(1); }
+                    }
+                    end += 1;
+                }
+                self.give_places(begin, end, &held)?;
+                self.pos = end;
             } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
             self.take();
@@ -5158,6 +5172,24 @@ impl<'a> Compiler<'a> {
             self.want_sign(&open, "before the bases")?;
             let close = lang.bases_close.clone().ok_or("Class bases need a closing mark")?;
             let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+            let mut depth = 0usize;
+            let mut expanded = false;
+            for token in &self.tokens[self.pos..] {
+                if depth == 0 && token.lexeme == close { break; }
+                if depth == 0 && (Lang::spells(&lang.call_spread, &token.lexeme) || Lang::spells(&lang.call_spread_pairs, &token.lexeme)) { expanded = true; }
+                match token.lexeme.as_str() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {}
+                }
+            }
+            if expanded {
+                let pair = lang.calling.clone().expect("class call marks");
+                let count = self.arguments(&pair)?;
+                self.act(Action::MakeTuple, count);
+                let slot = self.gensym("class_header");
+                self.write(&slot);
+                carried_words.push(("\0header".to_string(), slot));
+            } else {
             let mut count = 0;
             while !self.at_symbol(&close) {
                 let spread = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
@@ -5196,6 +5228,7 @@ impl<'a> Compiler<'a> {
                 if apart.as_ref().map_or(false, |s| self.at_symbol(s)) { self.take(); } else { break; }
             }
             self.want_sign(&close, "after the bases")?;
+            }
         }
         let qualification = self.qualified(&original_name);
         let outer = self.within.replace((original_name.clone(), base.clone()));
@@ -6984,7 +7017,7 @@ impl<'a> Compiler<'a> {
                 // to the footing below that restores `self.waiting` and
                 // any hush/mute marks, rather than returning out of the
                 // whole statement with those left disturbed.
-                if names_handed {
+                if names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
                     Ok(())
                 } else {
                     // What it stood on is written back into, read again

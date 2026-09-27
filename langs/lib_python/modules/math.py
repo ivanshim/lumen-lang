@@ -259,7 +259,8 @@ def fsum(values):
     neg_inf = False
     saw_nan = False
     for x in values:
-        _check_real(x)
+        if type(x) != type(1.0):
+            _check_real(x)
         x = float(x)
         if isnan(x):
             saw_nan = True
@@ -272,7 +273,9 @@ def fsum(values):
             continue
         kept = []
         for y in partials:
-            if fabs(x) < fabs(y):
+            # These operands are already binary reals. Compare their
+            # magnitudes without re-entering the conversion protocol.
+            if (-x if x < 0 else x) < (-y if y < 0 else y):
                 x, y = y, x
             high = x + y
             low = y - (high - x)
@@ -371,14 +374,23 @@ def isqrt(n):
 
 def hypot(*coordinates):
     values = []
+    for coordinate in coordinates:
+        if type(coordinate) != type(1.0):
+            _check_real(coordinate)
+        values.append(float(coordinate))
+    return _hypot_values(values)
+
+
+def _hypot_values(values):
+    # Both callers have already converted every coordinate. Keep that
+    # ordering even when an early coordinate is infinite or NaN: a later
+    # conversion can still raise. Inspecting these base floats directly
+    # avoids repeating the public conversion protocol for each distance.
     saw_inf = False
     saw_nan = False
-    for coordinate in coordinates:
-        _check_real(coordinate)
-        value = float(coordinate)
-        saw_inf = saw_inf or isinf(value)
-        saw_nan = saw_nan or isnan(value)
-        values.append(value)
+    for value in values:
+        saw_inf = saw_inf or value == inf or value == -inf
+        saw_nan = saw_nan or value != value
     if saw_inf:
         return inf
     if saw_nan:
@@ -401,6 +413,13 @@ def hypot(*coordinates):
 
 
 def _point_items(point):
+    # An exact tuple already is an immutable snapshot. Subclasses still
+    # take the iterator path so that their iteration overrides are heard.
+    kind = type(point)
+    if kind == type(()):
+        return point
+    if kind == type([]):
+        return list(point)
     items = []
     if type(point).__name__ in ('generator', 'list_iterator', 'tuple_iterator'):
         iterator = point
@@ -419,10 +438,12 @@ def dist(p, q, /):
         raise 'ValueError: both points must have the same number of dimensions'
     differences = []
     for i in range(len(p)):
-        _check_real(p[i])
-        _check_real(q[i])
+        if type(p[i]) != type(1.0):
+            _check_real(p[i])
+        if type(q[i]) != type(1.0):
+            _check_real(q[i])
         differences.append(float(p[i]) - float(q[i]))
-    return hypot(*differences)
+    return _hypot_values(differences)
 
 def log2(x):
     return _log_value(x, 'log2', 1.0)

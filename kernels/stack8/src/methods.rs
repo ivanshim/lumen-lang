@@ -105,8 +105,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
     let names: &[&str] = match value.contents() {
         Value::Text(_) | Value::Codepoints(_) => TEXT,
         Value::Array(_) => ROW,
-        Value::Map(_) => PAIRS,
-        Value::Fields(_) => &["clear"],
+        Value::Map(_) | Value::Fields(_) => PAIRS,
         Value::Tuple(_) | Value::Counted(_) => PLACES,
         Value::Small(_) | Value::Huge(_) | Value::Flag(_) => WHOLE,
         Value::Real(_) | Value::Frac(_) => FRACTION,

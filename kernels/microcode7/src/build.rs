@@ -2823,7 +2823,22 @@ impl<'a> Builder<'a> {
                 let place = self.gensym("with");
                 let name = place.ident.to_string();
                 steps.push(Form::Write(place, Box::new(value)));
-                steps.extend(self.with_target(&name)?);
+                let start = self.pos;
+                let mut boundary = start;
+                let mut closing = Vec::new();
+                for token in &self.tokens[start..] {
+                    let spelling = token.lexeme.as_str();
+                    if closing.is_empty() && (["block.intro", "syntax.call.separator", "syntax.group.close"].iter()
+                        .any(|label| table.spells(label, spelling))) { break; }
+                    match spelling {
+                        "(" => closing.push(")"), "[" => closing.push("]"), "{" => closing.push("}"),
+                        _ if closing.last().copied() == Some(spelling) => { closing.pop(); }
+                        _ => {}
+                    }
+                    boundary += 1;
+                }
+                steps.push(self.distribute(start..boundary, &name)?);
+                self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
@@ -4082,6 +4097,23 @@ impl<'a> Builder<'a> {
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
             let end = table.single("ext.stmt.class.bases.close").ok_or("The bases need a closing mark")?;
+            let mut levels = Vec::new();
+            let mut spreading = false;
+            for token in &self.tokens[self.pos..] {
+                let word = token.lexeme.as_str();
+                if levels.is_empty() && word == end { break; }
+                if levels.is_empty() && (table.spells("op.mul", word) || table.spells("op.pow", word)) { spreading = true; }
+                match word {
+                    "(" => levels.push(")"), "[" => levels.push("]"), "{" => levels.push("}"),
+                    _ if levels.last().copied() == Some(word) => { levels.pop(); }, _ => {}
+                }
+            }
+            if spreading {
+                let arguments = self.args("syntax.call.close", "syntax.call.separator")?;
+                let kept = self.gensym("header_arguments");
+                setup.push(Form::Write(kept.clone(), Box::new(prim_call(Prim::MakeTuple, arguments))));
+                handed_words.push(("\0header".to_owned(), Form::Read(kept)));
+            } else {
             let mut first = true;
             while !self.sign(end) {
                 let expanded = table.spells("op.mul", &self.look().lexeme) || table.spells("op.pow", &self.look().lexeme);
@@ -4123,6 +4155,7 @@ impl<'a> Builder<'a> {
                 }
             }
             self.need_sign(end, "after the bases")?;
+            }
         }
         let full_name = self.full_name_of(&class_title);
         let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
@@ -6812,7 +6845,15 @@ impl<'a> Builder<'a> {
                 // What the chain stands on is taken as a cell, so that
                 // rewriting the arrays within it lands where it lives
                 // and nothing need be written back afterwards.
-                let start = self.cell_of(stands_on)?;
+                let start = match stands_on {
+                    place @ Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), _) => self.cell_of(place)?,
+                    call @ Form::Apply(..) if self.table.flag("ext.syntax.call.bind_names") => {
+                        let saved = self.gensym("target_result");
+                        steps.push(Form::Write(saved.clone(), Box::new(call)));
+                        self.cell_of(Form::Read(saved))?
+                    }
+                    other => self.cell_of(other)?,
+                };
                 // Tied, not written: a plain write of a cell writes what
                 // it holds, and here the cell itself is wanted.
                 let tied = self.address_to_write(&root);

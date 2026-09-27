@@ -720,7 +720,7 @@ impl Value {
             Value::Thing(thing) => match self.arguments_held() {
                 Some(row) => {
                     let mut shown: Vec<String> = row.iter().map(|x| x.representation(words)).collect();
-                    if thing.of.every_field().iter().any(|(k, _)| k == "\0import-fault") {
+                    if thing.blueprint().every_field().iter().any(|(k, _)| k == "\0import-fault") {
                         for key in ["name", "path", "name_from"] {
                             let value = thing.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
                             match value {
@@ -729,7 +729,7 @@ impl Value {
                             }
                         }
                     }
-                    format!("{}({})", thing.of.name, shown.join(", "))
+                    format!("{}({})", thing.blueprint().name, shown.join(", "))
                 },
                 None => self.render(words),
             },
@@ -751,7 +751,7 @@ impl Value {
 
     fn arguments_held(&self) -> Option<Vec<Value>> {
         if let Value::Thing(thing) = self {
-            if thing.of.every_field().iter().any(|(key, _)| key == "\0fault-kind") {
+            if thing.blueprint().every_field().iter().any(|(key, _)| key == "\0fault-kind") {
                 let holds = thing.holds.borrow();
                 return Some(match holds.iter().find(|(key, _)| key == "\0raised-values") {
                     Some((_, Value::Arguments(row))) => row.to_vec(),
@@ -778,7 +778,7 @@ impl Value {
     /// their wording belong to Python alone, and are reached only
     /// through the markers Python's own roster puts on its kinds.
     fn unicode_fault_text(thing: &Rc<Thing>, words: Names) -> Option<String> {
-        let marker = thing.of.every_field().iter().find_map(|(k, _)| match k.as_str() {
+        let marker = thing.blueprint().every_field().iter().find_map(|(k, _)| match k.as_str() {
             "\0unicode-encode" => Some(0u8), "\0unicode-decode" => Some(1u8),
             "\0unicode-translate" => Some(2u8), _ => None,
         })?;
@@ -834,7 +834,7 @@ impl Value {
         if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }
         Some(if row.is_empty() { String::new() }
             else if row.len() > 1 { Self::argument_text(&row, words) }
-            else if thing.of.every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
+            else if thing.blueprint().every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
             else { row[0].render(words) })
     }
 
@@ -1357,7 +1357,7 @@ impl Value {
             Value::Adorned(_) => String::from("<descriptor>"),
             Value::Backtrace(_) => String::from("<traceback object>"),
             Value::Keyed(value, _) => value.bare(),
-            Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
+            Value::Attributes(t) => format!("<attributes of {}>", t.blueprint().name),
             Value::Refusal(word) => word.to_string(),
             Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
             Value::Routine(p) | Value::Bound(p, _) => {
@@ -1385,7 +1385,7 @@ impl Value {
                 let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
-            Value::Thing(t) => format!("<object {}>", t.of.name),
+            Value::Thing(t) => format!("<object {}>", t.blueprint().name),
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(|bound| bound.quoted(false)).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
@@ -1626,8 +1626,15 @@ pub fn holder_of(filed: &str) -> (&str, Option<&str>) {
 /// One thing: the class it was made from and what it holds. Naming a
 /// thing twice names one thing, so a write through either name shows in
 /// both.
+impl Thing {
+    pub fn blueprint(&self) -> Rc<Blueprint> {
+        self.reclassified.borrow().clone().unwrap_or_else(|| self.of.clone())
+    }
+}
+
 #[derive(Debug)]
 pub struct Thing {
+    pub reclassified: RefCell<Option<Rc<Blueprint>>>,
     pub of: Rc<Blueprint>,
     pub holds: RefCell<Vec<(String, Value)>>,
     /// Which thing this is by the turn it was made in, counting from

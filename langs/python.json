@@ -2629,6 +2629,9 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
+  "ext.builtin.inline_values": ["_has_inline_values"],
+  "ext.stmt.class.detail.flags": ["__flags__"],
+  "ext.stmt.class.detail.prepare": ["__prepare__"],
   "ext.stmt.class.detail.unready": [
     "NotImplementedError: this class operation is not supported"
   ],
