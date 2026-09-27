@@ -5856,6 +5856,9 @@ impl<'a> Engine<'a> {
             return Err(refused);
         }
         if let Some((real, imag)) = crate::complex::parts(value) { return Ok((real, imag, false)); }
+        // A whole number too wide for any real of the width is refused
+        // as the overflow the reference names, not as a wrong kind.
+        if matches!(value, Value::Huge(_)) { return Err(crate::complex::fault(self.lang, "integer.overflow")); }
         Err(refused)
     }
 
@@ -10622,7 +10625,14 @@ impl<'a> Engine<'a> {
             let (x, y) = (self.bits_said(a)?, self.bits_said(b)?);
             return self.dyadic_numbers(op, &Value::Small(x), &Value::Small(y));
         }
-        if self.lang.real_bits.is_some() && (real_here(a) || real_here(b)) {
+        // A whole number asked whether it stands in order beside a
+        // real is answered exactly, not carried to the width first:
+        // a whole too great for any real of the width still stands
+        // in order, and is not refused as one that cannot be carried.
+        // Only the working of two numbers carries a whole to the
+        // width, as float() itself does.
+        if self.lang.real_bits.is_some() && (real_here(a) || real_here(b))
+            && !matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
             let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
             // A value not already real is carried to the width here,
             // the same carrying `float()` itself does, and is stopped

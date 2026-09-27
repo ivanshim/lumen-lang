@@ -10915,6 +10915,9 @@ impl<'a> Machine<'a> {
             return Err(turned_down);
         }
         if let Some((real, imag)) = crate::complex::coordinates(value) { return Ok((real, imag, false)); }
+        // A whole number past every real of the width is turned away as
+        // the overflow the reference words it, not as a kind it is not.
+        if matches!(value, Value::Huge(_)) { return Err(crate::complex::complaint(self.table, "integer.overflow")); }
         Err(turned_down)
     }
 
@@ -14674,12 +14677,12 @@ impl<'a> Machine<'a> {
                 self.at_width(worked)
             }
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
-                // Two numbers are set against each other at the width
-                // the language holds them in, as they are worked at it.
-                let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
-                    true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
-                    false => (v[0].clone(), v[1].clone()),
-                };
+                // A whole number asked whether it stands in order
+                // beside a real is answered exactly, not carried to
+                // the width first: a whole too great for any real of
+                // the width still stands in order, and is not refused
+                // as one that cannot be carried.
+                let (left, right) = (v[0].clone(), v[1].clone());
                 let below = |a: &Value, b: &Value| -> Result<bool, String> {
                     match math::below(a, b) {
                         Some(r) => Ok(r),
