@@ -1779,7 +1779,10 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.async_words, &w) {
                 self.take();
                 if self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words) {
-                    if !self.piece().asynchronous || self.in_class_body() { return Err("SyntaxError: asynchronous statement outside of an asynchronous function".into()); }
+                    if !self.piece().asynchronous || self.in_class_body() {
+                        let keyword = if self.on_keyword(&lang.for_words) { "async for" } else { "async with" };
+                        return Err(format!("SyntaxError: '{keyword}' outside async function"));
+                    }
                     if self.pieces.len() == 1 { self.piece().generator = true; }
                 }
                 if !(self.on_keyword(&lang.function_words) || self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words)) {
@@ -7299,7 +7302,10 @@ impl<'a> Compiler<'a> {
         }
         if self.on_keyword(&lang.await_words) {
             let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
-            if self.forbids_await || !self.piece().asynchronous || class_expression { return Err("SyntaxError: 'await' outside function".into()); }
+            if self.forbids_await || !self.piece().asynchronous || class_expression {
+                let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
+                return Err(format!("SyntaxError: 'await' {phrase}"));
+            }
             if self.piece().comprehension_kind.is_some() { self.piece().asynchronous_walk = true; }
             if self.pieces.first().map_or(false, |outer| outer.asynchronous)
                 && self.pieces.iter().skip(1).all(|inner| inner.comprehension_kind.is_some()) {

@@ -1958,7 +1958,10 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.async") {
                 let word = self.advance().lexeme;
                 if self.key("stmt.for") || self.key("ext.stmt.with") {
-                    if !self.layers.last().unwrap().permits_async || self.in_class_body() { return Err("SyntaxError: asynchronous statement outside of an asynchronous function".into()); }
+                    if !self.layers.last().unwrap().permits_async || self.in_class_body() {
+                        let head = if self.key("stmt.for") { "async for" } else { "async with" };
+                        return Err(format!("SyntaxError: '{head}' outside async function"));
+                    }
                     if self.layers.len() == 1 { self.top_coroutine = true; }
                 }
                 if !self.key("stmt.function") && !self.key("stmt.for") && !self.key("ext.stmt.with") {
@@ -6959,7 +6962,10 @@ impl<'a> Builder<'a> {
         }
         if self.key("ext.op.await") {
             let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1));
-            if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression { return Err("SyntaxError: 'await' outside function".into()); }
+            if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression {
+                let scope = if self.layers.len() == 1 || class_expression { "outside function" } else { "outside async function" };
+                return Err(format!("SyntaxError: 'await' {scope}"));
+            }
             if self.layers[0].permits_async && self.layers.iter().skip(1).all(|layer| layer.gathering_kind.is_some()) { self.top_coroutine = true; }
             let scope = self.layers.last_mut().unwrap();
             if scope.gathering_kind.is_some() { scope.async_walk_seen = true; }
