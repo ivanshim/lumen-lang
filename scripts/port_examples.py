@@ -567,7 +567,22 @@ def port_library(emitter, lib, constants):
         if name in reasons:
             continue
         try:
-            ported[name] = emitter.library_function(fn)
+            lines = emitter.library_function(fn)
+            if emitter.name == "python" and name == "round":
+                assert lines[0] == "def round(x, decimals):"
+                lines[0] = "def round(x, decimals=None):"
+                lines[1:1] = [
+                    "    if decimals is None:",
+                    "        if isinstance(x, float):",
+                    "            if x != x:",
+                    "                raise ValueError('cannot convert float NaN to integer')",
+                    "            if x == float('inf') or x == -float('inf'):",
+                    "                raise OverflowError('cannot convert float infinity to integer')",
+                    "        decimals = 0",
+                    "    if not isinstance(decimals, int):",
+                    "        raise TypeError('ndigits must be an integer')",
+                ]
+            ported[name] = lines
         except Skip as why:
             reasons[name] = str(why)
     # A function that calls an unwritable one is unwritable too.
