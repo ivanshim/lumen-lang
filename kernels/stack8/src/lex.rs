@@ -17,6 +17,7 @@ pub enum Shape {
     StringEnd,
     StringField,
     StringFault,
+    EscapeWarning,
     Sign,
     LineEnd,
     /// The indentation of a line that has something on it.
@@ -288,7 +289,7 @@ impl<'a> Cursor<'a> {
             j += 1;
         }
         let end = self.text[j..].iter().position(|c| *c == '\n').map_or(self.text.len(), |p| j + p);
-        if self.text[j..end].iter().all(|c| c.is_whitespace())
+        if self.text[j..end].iter().all(|c| c.is_ascii_whitespace() || self.lang.syntax_members.is_empty() && c.is_whitespace())
             || self.lang.line_comments.iter().any(|mark| at_word(&self.text, j, mark)) {
             while self.at < end {
                 self.step();
@@ -571,10 +572,12 @@ impl<'a> Cursor<'a> {
     /// generic word instead of naming text unterminated that a fault
     /// far short of its end may be the truer complaint about.
     fn rich_string(&mut self, prefix: usize, mark: &str, raw: bool, format: bool, depth: u32) -> Result<(), String> {
+        if format && depth >= 150 { return Err(self.lang.source_syntax.clone().unwrap_or_else(|| self.string_words())); }
         let (line, col) = (self.row, self.column);
         let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
         for _ in 0..prefix + mark.chars().count() { self.step(); }
         if format { self.push(Shape::StringBegin, String::new(), 0, line, col); }
+        let mut warned = false;
         let (mut text, mut fault) = (String::new(), false);
         loop {
             if at_word(&self.text, self.at, mark) {
@@ -606,13 +609,14 @@ impl<'a> Cursor<'a> {
             }
             if format && (c == '{' || c == '}') {
                 if self.look(1) == Some(c) {
-                    self.step(); self.step(); text.push(c);
+                    self.step(); self.step(); text.push(c); warned = false;
                 } else if c == '{' {
                     self.string_text(&mut text, &mut fault, line, col);
-                    self.string_field(raw, depth, mark)?;
+                    self.string_field(raw, depth, mark, 0)?;
+                    warned = false;
                 } else { return Err(self.field_error(1)); }
             } else if c == '\\' {
-                self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
+                self.rich_escape(raw, format, bytes, &mut text, &mut fault, &mut warned)?;
             } else { text.push(self.step()); }
         }
         if bytes { self.push(Shape::Bytes, text, 0, line, col); }
@@ -621,7 +625,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool) -> Result<(), String> {
+    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool, warned: &mut bool) -> Result<(), String> {
         let Some(next) = self.look(1) else { return Err(self.string_words()); };
         if raw {
             text.push(self.step());
@@ -629,6 +633,13 @@ impl<'a> Cursor<'a> {
             return Ok(());
         }
         let lang = self.lang;
+        if !*warned && lang.escape_warning.len() == 4 && !matches!(next, '\\' | '\n' | '\r')
+            && !lang.quotes.contains(&next) && !lang.escape_letters.contains(&next)
+            && !lang.control_escapes.contains(&next) && !next.is_digit(8)
+            && ![lang.named_letter, lang.codepoint_letter, lang.wide_letter, lang.byte_letter].contains(&Some(next)) {
+            *warned = true;
+            self.push(Shape::EscapeWarning, lang.escape_warning[3].replace("{}", &next.to_string()), 0, self.row, self.column);
+        }
         if bytes && [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next)) {
             text.push(self.step()); text.push(self.step());
             return Ok(());
@@ -644,19 +655,28 @@ impl<'a> Cursor<'a> {
             text.push(char::from((number & 255) as u8));
             return Ok(());
         }
-        if Some(next) == lang.named_letter && self.look(2) == Some('{') {
-            self.step(); self.step(); self.step();
-            let start = self.at;
-            while self.look(0).map_or(false, |c| c != '}') { self.step(); }
-            if self.look(0).is_none() { return Err(self.string_words()); }
-            let name: String = self.text[start..self.at].iter().collect();
-            self.step();
-            match name.as_str() {
-                "EM SPACE" => text.push('\u{2003}'),
-                "EN SPACE" => text.push('\u{2002}'),
-                _ => *fault = true,
+        if Some(next) == lang.named_letter {
+            let begin = self.at;
+            let position = text.len();
+            self.step(); self.step();
+            if self.look(0) == Some('{') {
+                self.step();
+                while self.look(0).map_or(false, |c| c != '}' && !lang.quotes.contains(&c) && c != '\n') { self.step(); }
+                if self.look(0) == Some('}') && self.at > begin + 3 {
+                    let name: String = self.text[begin + 3..self.at].iter().collect();
+                    self.step();
+                    match name.as_str() {
+                        "EM SPACE" => text.push('\u{2003}'),
+                        "EN SPACE" => text.push('\u{2002}'),
+                        _ => *fault = true,
+                    }
+                    return Ok(());
+                }
             }
-            return Ok(());
+            let length: usize = self.text[begin..self.at].iter().map(|c| c.len_utf8()).sum();
+            return Err(lang.named_amiss.clone().unwrap_or_else(|| self.string_words())
+                .replacen("{}", &position.to_string(), 1)
+                .replacen("{}", &(position + length - 1).to_string(), 1));
         }
         let digits = if Some(next) == lang.codepoint_letter { lang.codepoint_digits }
             else if Some(next) == lang.wide_letter { lang.wide_digits } else { None };
@@ -707,7 +727,8 @@ impl<'a> Cursor<'a> {
         self.lang.field_errors.get(number).cloned().unwrap_or_else(|| self.string_words())
     }
 
-    fn string_field(&mut self, raw: bool, depth: u32, outer: &str) -> Result<(), String> {
+    fn string_field(&mut self, raw: bool, depth: u32, outer: &str, spec_depth: u32) -> Result<(), String> {
+        if spec_depth > 2 { return Err(self.field_error(18)); }
         let (line, col) = (self.row, self.column);
         self.step();
         let mut expression = String::new();
@@ -818,6 +839,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::Sign, group.close.clone(), 0, line, col);
         self.push(Shape::StringBegin, String::new(), 0, line, col);
         let (mut text, mut fault) = (String::new(), false);
+        let mut warned = false;
         if self.look(0) == Some(':') {
             self.step();
             loop {
@@ -825,8 +847,8 @@ impl<'a> Cursor<'a> {
                 match self.look(0) {
                     Some('}') => break,
                     Some('\n' | '\r') if outer.len() == 1 => return Err(self.field_error(17)),
-                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth, outer)?; }
-                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault)?,
+                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth, outer, spec_depth + 1)?; warned = false; }
+                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault, &mut warned)?,
                     Some(_) => text.push(self.step()),
                     None => return Err(self.field_error(0)),
                 }
@@ -1221,7 +1243,7 @@ impl<'a> Cursor<'a> {
         let window: String = self.text[self.at..].iter().take(8).collect();
         let Some(sym) = self.lang.symbols.iter().find(|s| window.starts_with(s.as_str())).cloned() else {
             let c = self.text[self.at];
-            if !self.lang.syntax_members.is_empty() && c.is_control() { return Err(format!("SyntaxError: invalid non-printable character U+{:04X}", c as u32)); }
+            if !self.lang.syntax_members.is_empty() && (c.is_control() || c == '\u{a0}') { return Err(format!("SyntaxError: invalid non-printable character U+{:04X}", c as u32)); }
             if !self.lang.syntax_members.is_empty() && !c.is_ascii() { return Err(format!("SyntaxError: invalid character '{c}' (U+{:04X})", c as u32)); }
             return Err(self.lang.stopped_at_character(c, line, col));
         };
@@ -1348,6 +1370,18 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
 }
 
 pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
+    let mut tokens = lex_notices(source, lang)?;
+    tokens.retain(|t| t.shape != Shape::EscapeWarning);
+    Ok(tokens)
+}
+
+pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
+    if lang.escape_warning.is_empty() || !source.contains('\\') { return Vec::new(); }
+    lex_notices(source, lang).unwrap_or_default().into_iter()
+        .filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
+}
+
+fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
     let final_crlf = source.ends_with("\r\n");
     let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
         .then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
