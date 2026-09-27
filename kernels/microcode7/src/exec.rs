@@ -3015,7 +3015,7 @@ impl<'a> Machine<'a> {
         Ok(taken)
     }
 
-    fn make_iterator(&mut self, source: Value) -> Res {
+    pub(super) fn make_iterator(&mut self, source: Value) -> Res {
         if let Value::Generator(_) = source { return Ok(source); }
         let members = self.gathered_members(&source)?;
         Ok(self.walk_over(&source, members))
@@ -3383,10 +3383,13 @@ impl<'a> Machine<'a> {
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown at them is raised on the spot.
     fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
-        let previous = self.reading_now;
+        let previous_reading = self.reading_now;
         if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) { self.reading_now = Some(book); }
+        let chosen = generator.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| self.constructor_world(body)));
+        let previous_world = chosen.map(|book| self.world_book.replace(book));
         let result = self.step_into_body(generator, sent, hurled, given);
-        self.reading_now = previous;
+        if let Some(previous) = previous_world { self.world_book = previous; }
+        self.reading_now = previous_reading;
         result
     }
 
@@ -4051,9 +4054,13 @@ impl<'a> Machine<'a> {
         let words = self.table.strings("ext.builtin.exceptions.traceback");
         let index = words.iter().position(|word| word == key)?;
         match value {
-            Value::Generator(cell) if index == 14 || index == 15 => {
+            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24) => {
+                if index == 23 { return Some(Value::Flag(cell.try_borrow().is_err())); }
+                if index == 24 && cell.try_borrow().is_err() { return Some(Value::Nil); }
                 let state = cell.try_borrow().ok()?;
-                if index == 14 {
+                if index == 24 { return Some(state.inner.clone().unwrap_or(Value::Nil)); }
+                if matches!(index, 21 | 22) { return Some(Value::Flag(state.begun && !state.ended)); }
+                if matches!(index, 14 | 19 | 20) {
                     if let Some(item) = &state.trace_state {
                         let missing = matches!(item.holds.borrow()[3].1, Value::Nil);
                         if missing { self.update_activation_locals(item); }
@@ -5088,10 +5095,13 @@ impl<'a> Machine<'a> {
                     }
                 };
                 let callee = self.env_for(&p, env, args, frame)?;
-                if p.generator && self.table.flag("ext.stmt.yield.suspends") {
-                    return self.named_generator(callable, &p, callee);
-                }
-                self.drive(p, callee)
+                let chosen = self.constructor_world(&p);
+                let earlier = chosen.map(|book| self.world_book.replace(book));
+                let outcome = if p.generator && self.table.flag("ext.stmt.yield.suspends") {
+                    self.named_generator(callable, &p, callee)
+                } else { self.drive(p, callee) };
+                if let Some(previous) = earlier { self.world_book = previous; }
+                outcome
             }
             Form::Apply(Callee::Prim(op, name), args) if !self.wildcard_names.is_empty()
                 && self.spread_override(name, *op).is_some() => {
@@ -5823,7 +5833,7 @@ impl<'a> Machine<'a> {
                         if grown && values.len() == 2 {
                             let item = values.pop().expect("literal item");
                             let source = values.pop().expect("growing literal");
-                            let extra = if expanded { Some(self.gathered_members(&item)?) } else { None };
+                            let extra = if expanded { Some(self.literal_members(&item)?) } else { None };
                             match source {
                                 Value::Vector(mut prior) => {
                                     match extra { Some(more) => Rc::make_mut(&mut prior).extend(more), None => Rc::make_mut(&mut prior).push(item) }
@@ -7707,7 +7717,9 @@ impl<'a> Machine<'a> {
         if self.reads_manners() && matches!(op, Prim::Prepare | Prim::Perform | Prim::Weigh | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
             let formals = table.strings("ext.builtin.compile.parameters");
             for (key, worth) in keywords {
-                let place = formals.iter().position(|word| word == &key).filter(|_| op == Prim::Prepare)
+                let place = if op == Prim::Prepare { formals.iter().position(|word| word == &key) }
+                    else if matches!(op, Prim::Perform | Prim::Weigh) { ["source", "globals", "locals"].iter().position(|word| *word == key) }
+                    else { None }
                     .ok_or_else(|| self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)))?;
                 if positional.get(place).map_or(false, |held| !matches!(held, Value::Unset)) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into()); }
                 if positional.len() <= place { positional.resize(place + 1, Value::Unset); }
@@ -8531,7 +8543,26 @@ impl<'a> Machine<'a> {
         Ok(Value::Generator(Rc::new(RefCell::new(state))))
     }
 
+    fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
+            Value::Bound(code, _) | Value::Routine(code) => Rc::ptr_eq(code, body),
+            _ => false,
+        })?;
+        let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = worth { Some(cell) }
+        else if matches!(worth, Value::Dict(_)) { Some(Rc::new(RefCell::new(worth))) }
+        else { None }
+    }
+
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
+        let Some(book) = self.constructor_world(&program) else { return self.invoke_body(program, env, args); };
+        let old = self.world_book.replace(book);
+        let result = self.invoke_body(program, env, args);
+        self.world_book = old;
+        result
+    }
+
+    fn invoke_body(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
         let callable = Value::Bound(program.clone(), env.clone());
         let (program, env) = self.as_now_written(program, env);
         let titles = if program.generator {
@@ -12591,14 +12622,14 @@ impl<'a> Machine<'a> {
             }
             Prim::ExtendLiteral(dictionary, expanded) => {
                 if let Value::Set(kept) = &v[0] {
-                    let additions = if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] };
+                    let additions = if expanded { self.literal_members(&v[1])? } else { vec![v[1].clone()] };
                     let held = kept.clone();
                     for addition in additions { self.set_include(&held, addition)?; }
                     v[0].clone()
                 } else if !dictionary {
                     let Value::Vector(prior) = &v[0] else { unreachable!() };
                     let mut next = prior.to_vec();
-                    next.extend(if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] });
+                    next.extend(if expanded { self.literal_members(&v[1])? } else { vec![v[1].clone()] });
                     Value::Vector(Rc::new(next))
                 } else {
                     // The fast pre-check above the general dispatch takes
@@ -14143,7 +14174,7 @@ impl<'a> Machine<'a> {
                 let present = if let (Value::Text(needle), Value::Text(text)) = (&v[0], &v[1]) {
                     text.contains(needle.as_ref())
                 } else if matches!(&v[1], Value::Text(_)) {
-                    return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Membership needs an iterable").to_string());
+                    return Err(format!("TypeError: 'in <string>' requires string as left operand, not {}", v[0].kind_word()));
                 } else {
                     self.gathered_members(&v[1])?.iter().any(|item| self.equal_contents(&v[0], item))
                 };
@@ -14639,7 +14670,7 @@ impl<'a> Machine<'a> {
             Prim::MakeTuple => Value::Tuple(Rc::new(v.to_vec())),
             Prim::Following => {
                 if !(1..=2).contains(&v.len()) { return Err(self.generator_words("unsupported")); }
-                let Value::Generator(state) = &v[0] else { return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or_default().into()); };
+                let Value::Generator(state) = &v[0] else { return Err(format!("TypeError: '{}' object is not iterable", v[0].kind_word())); };
                 // What the body raised, and what it returned, are parked
                 // while words stand in for them on the way out, so a
                 // clause round the walk sees the value itself.
@@ -16110,6 +16141,15 @@ impl<'a> Machine<'a> {
         self.apply_within(handing, vec![Value::Blueprint(kind.clone())]).map(Some)
     }
 
+    fn literal_members(&mut self, offered: &Value) -> Result<Vec<Value>, String> {
+        let named = offered.kind_word();
+        let regular = format!("TypeError: '{named}' object is not iterable");
+        self.gathered_members(offered).map_err(|fault| match fault == regular {
+            true => format!("TypeError: Value after * must be an iterable, not {named}"),
+            false => fault,
+        })
+    }
+
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         if let Value::Unpaired(numbers) = source { return Ok(numbers.iter().map(|&n| Value::characters(vec![n])).collect()); }
         if let Some(under) = self.underlying_unless(source, &[15]) { return self.gathered_members(&under); }
@@ -16148,7 +16188,7 @@ impl<'a> Machine<'a> {
                 values
             }
             Value::Shared(held) => return self.gathered_members(&held.borrow()),
-            _ => return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Cannot gather members from this value").to_string()),
+            _ => return Err(format!("TypeError: '{}' object is not iterable", source.kind_word())),
         })
     }
 

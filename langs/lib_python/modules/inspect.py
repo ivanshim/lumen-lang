@@ -1,19 +1,12 @@
 # What a program can find out about the things it is made of.
 #
-# Most of CPython's inspect reads a code object: the flags a function
-# was compiled with, the names of its arguments, the line it starts on,
-# the frame a generator is stopped in. The reader here hands out no such
-# thing. A function answers to __code__ with a wrapper that carries none
-# of those, a generator keeps no frame a program can reach, and there is
-# no list of the calls in progress. So the part of this module that
-# reads a function's insides is not here; what stands below is the part
-# that needs only what a class or a docstring already tells, plus the
-# numbers and words CPython fixes by name.
+# Functions expose code objects and generators expose their suspended
+# frames and running state. The interpreter does not keep a Python-level
+# list of all active calls, so stack() and currentframe() remain unavailable.
+# The helpers below use the available code and frame details.
 
-# The flags CPython sets on a compiled body. They are fixed numbers, and
-# a program that only compares or combines them reads the right ones
-# here. Nothing in this runtime hands out a co_flags to compare them
-# against, so a test that reaches for one fails on that instead.
+# The flags CPython sets on a compiled body. Code objects expose co_flags
+# so a program can compare these values with a function's compiled flags.
 CO_OPTIMIZED = 1
 CO_NEWLOCALS = 2
 CO_VARARGS = 4
@@ -99,15 +92,23 @@ def currentframe():
 
 
 def getgeneratorstate(generator):
-    # The four states are told apart by reading gi_frame and gi_running
-    # off the generator. A generator here answers to neither, and the
-    # difference between stopped at a yield and never started cannot be
-    # seen from outside, so guessing one of the four would be a guess.
-    raise 'NotImplementedError: inspect.getgeneratorstate needs a generator to carry its frame, which this runtime does not arrange'
+    if generator.gi_running:
+        return GEN_RUNNING
+    if generator.gi_suspended:
+        return GEN_SUSPENDED
+    if generator.gi_frame is None:
+        return GEN_CLOSED
+    return GEN_CREATED
 
 
 def getcoroutinestate(coroutine):
-    raise 'NotImplementedError: inspect.getcoroutinestate needs a coroutine to carry its frame, which this runtime does not arrange'
+    if coroutine.cr_running:
+        return CORO_RUNNING
+    if coroutine.cr_suspended:
+        return CORO_SUSPENDED
+    if coroutine.cr_frame is None:
+        return CORO_CLOSED
+    return CORO_CREATED
 
 
 def __getattr__(name):

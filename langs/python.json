@@ -912,7 +912,7 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno"
+    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -3311,7 +3311,7 @@
     "TypeError: argument after ** must be a mapping with string keys"
   ],
   "ext.syntax.collection.unwalkable": [
-    "TypeError: value is not iterable"
+    "TypeError: 'object' object is not iterable"
   ],
   "ext.syntax.map.spread": [
     "**"
