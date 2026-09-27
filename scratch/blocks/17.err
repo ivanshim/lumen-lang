@@ -1,1 +1,1 @@
-TypeError: 'list' object does not support the context manager protocol
+TypeError: 'list' object does not support the context manager protocol (missed __exit__ method)

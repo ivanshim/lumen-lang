@@ -71,8 +71,9 @@ impl Value {
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
             Value::Adapter(w) if w.0 == 31 => "cell",
+            Value::Adapter(w) if w.0 == 7 => "code",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
-            Value::Object(o) => return o.class.name.clone(),
+            Value::Object(o) => return o.class_now().name.clone(),
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => return c.borrow().core_kind(),
             _ => "object",
         }.to_string()
@@ -110,7 +111,7 @@ impl Value {
             Value::Flag(b) => if *b { "True" } else { "False" }.into(),
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => c.borrow().core_repr(shortest),
             Value::Real(r) => {
-                if r.below && r.p == BigInt::from(0) { return "-0.0".into(); }
+                if r.below && r.p == BigInt::from(0) && r.q != BigInt::from(0) { return "-0.0".into(); }
                 let number = crate::value::as_binary(&r.p, &r.q);
                 if shortest { return crate::value::real_roundtrip(number); }
                 if number.is_nan() { "nan".into() } else if number == f64::INFINITY { "inf".into() }

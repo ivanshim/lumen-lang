@@ -286,6 +286,8 @@ class DocTestParser:
                 want_lines.append(lines[index][indent:])
                 index += 1
             source = '\n'.join(source_lines)
+            if all(line.strip() == '' or line.lstrip().startswith('#') for line in source_lines):
+                continue
             want = ''
             if len(want_lines) > 0:
                 want = '\n'.join(want_lines) + '\n'
@@ -500,7 +502,7 @@ def _is_expression(source):
     body = source.strip()
     if body == '':
         return False
-    if body[0] == '@':
+    if body[0] in ['@', '#']:
         return False
     if _first_word(body) in _STATEMENT_WORDS:
         return False
@@ -561,6 +563,8 @@ def _run_example(source, globs):
     if outcome[0]:
         if attempt.value is not None:
             got = got + repr(attempt.value) + '\n'
+        if got and not got.endswith('\n'):
+            got += '\n'
         return (got, None, None)
     return (got, outcome[1], outcome[2])
 
@@ -582,7 +586,7 @@ def _wanted_detail(want):
     index = 0
     while index < len(rest):
         line = rest[index]
-        if line.strip() == '' or line[:1] == ' ' or line[:1] == '\t':
+        if line.strip() in ['', '...'] or line[:1] == ' ' or line[:1] == '\t':
             index += 1
             continue
         break

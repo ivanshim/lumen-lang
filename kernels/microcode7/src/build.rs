@@ -37,6 +37,7 @@ thread_local! {
 /// `uncertain` holds those names, whose places are glanced at when the
 /// class is built rather than read outright.
 struct ClassParts {
+    lexical_members: Vec<String>,
     completed_class: Address,
     methods: Vec<(String, Rc<Routine>)>,
     attributes: Vec<String>,
@@ -45,7 +46,8 @@ struct ClassParts {
     /// body bound it first and the methods among the rest. This alone
     /// settles what the namespace of the finished class shows.
     ranking: Vec<String>,
-    annotated_names: Vec<(Value, Value)>,
+    /// Each annotated member's key with the routine answering its annotation.
+    annotated_names: Vec<(Form, Form)>,
     uncertain: Vec<String>,
     arms: usize,
     cannot: bool,
@@ -140,6 +142,18 @@ pub struct Builder<'a> {
     /// Whether the reading stopped over a thing the language calls a
     /// fault of the run rather than a program it could not read.
     stopped_fatally: bool,
+    /// Whether the statement under way was marked asynchronous.
+    asynchronous: bool,
+    /// Whether the routine under way is a coroutine, and whether the
+    /// routine read next is to be one.
+    in_coroutine: bool,
+    coroutine_next: bool,
+    /// The values a case's pattern works out ahead of the subject.
+    pattern_kinds: Vec<Form>,
+    /// What the reference warns of in how a statement is written, found
+    /// while reading, with the row and column of each, for whoever
+    /// compiled the text to say through the warnings module.
+    warnings: Vec<(String, u32, usize)>,
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
@@ -190,6 +204,7 @@ pub struct Builder<'a> {
     /// the same, since the library may spell a builtin as a routine.
     past_library: bool,
     named_in_program: Vec<String>,
+    native_exports: HashSet<String>,
     /// The file this text came out of, where it was read as the run
     /// went, so that every program built from it carries it.
     written_in: Option<Rc<str>>,
@@ -234,11 +249,16 @@ pub struct Builder<'a> {
     outside_lambda: Vec<String>,
     loop_depth: usize,
     range_end: Option<(usize, u32)>,
+    annotation_sites: Vec<(String, usize)>,
+    module_sites: Vec<(String, usize)>,
     declarations: Vec<(usize, String, bool)>,
 }
 
 pub struct Built {
     pub program: Rc<Routine>,
+    /// The reference's warnings about how the text is written, with the
+    /// row and column of each.
+    pub warnings: Vec<(String, u32, usize)>,
     pub globals: Vec<String>,
     /// The names the outermost statements declared global, which text
     /// read into two dictionaries writes to the outer one.
@@ -258,6 +278,7 @@ pub struct Built {
     /// A name only ever read there, such as a builtin reached by its bare
     /// word, is not among these, though it too gets a global slot.
     pub bound_globally: Vec<String>,
+    native_exports: HashSet<String>,
 }
 
 /// What a run of postfix words is part of, which says where it stops.
@@ -352,10 +373,16 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
     let mark = Some((&at, &hard, &column));
     let mut words = HashMap::new();
+    let mut bound = shadowed.to_vec();
+    let mut exports = HashSet::new();
     if table.flag("ext.stmt.function.closes_over") {
-        build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed).map_err(|said| (said, at.get(), column.get()))?;
+        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new()).map_err(|said| (said, at.get(), column.get()))?;
+        exports = discovery.native_exports;
+        for name in discovery.bound_globally {
+            if !bound.contains(&name) { bound.push(name); }
+        }
     }
-    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, mark, None, None, true, &mut words, false, value_only, shadowed).map_err(|said| (said, at.get(), column.get()))
+    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, mark, None, None, true, &mut words, false, value_only, &bound, &exports).map_err(|said| (said, at.get(), column.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
@@ -363,10 +390,11 @@ type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool) -> Res<Built> {
     let mut words = HashMap::new();
-    if table.flag("ext.stmt.function.closes_over") {
-        build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[])?;
-    }
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false, value_only, &[])
+    let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
+        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new())?;
+        (pass.bound_globally, pass.native_exports)
+    } else { (Vec::new(), HashSet::new()) };
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports)
 }
 
 /// Every name a `global` statement names anywhere in this text, however
@@ -451,7 +479,7 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
     output
 }
 
-fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String]) -> Res<Built> {
+fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>) -> Res<Built> {
     let original_words = tokens;
     let names_in_classes = class_spellings(tokens, table);
     let tokens = names_in_classes.as_slice();
@@ -489,7 +517,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { declarations: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -546,6 +574,16 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         while !r.exhausted() {
             let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
             let own_line = r.look().row > before;
+            if opening && own_line && before != 0 && within.is_none() && !read_in && !survey
+                && table.flag("ext.syntax.names.shadow_builtins") {
+                for word in r.named_in_program.clone() {
+                    if let Some(operation) = table.prims.get(&word).copied() {
+                        let address = r.global_address(&word);
+                        let native = constant(Value::Intrinsic(operation, Rc::from(word.as_str())));
+                        stmts.push(Form::Write(address, Box::new(native)));
+                    }
+                }
+            }
             // Where the reading stops, the row it had reached is kept,
             // so a language with a word for such a stopping names it.
             let stmt = match r.stmt() {
@@ -582,6 +620,13 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         ahead.extend(stmts);
         sequence(ahead)
     };
+    let body = if r.module_sites.is_empty() { body } else {
+        r.annotation_sites = std::mem::take(&mut r.module_sites);
+        let annotation = r.build_annotator()?.expect("module annotations");
+        let name = annotation.ident.clone();
+        let bind = r.write(&name, constant(Value::Routine(annotation)));
+        sequence(vec![body, bind])
+    };
     // What the reading itself remarked on was noticed before a single
     // statement ran, so it is said ahead of the whole body.
     let body = if r.noted_when_read.is_empty() {
@@ -600,8 +645,8 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
-    Ok(Built { program: Rc::new(program), globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program })
+    let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+    Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
 /// Which parameters of each program are written with the reference sign.
@@ -1197,6 +1242,10 @@ impl<'a> Builder<'a> {
             }
         }
         if let Some(slot) = self.aliased(name) {
+            if self.past_library { self.native_exports.remove(name); }
+            if self.past_library && !self.named_in_program.iter().any(|word| word == name) {
+                self.named_in_program.push(name.to_owned());
+            }
             return slot;
         }
         let is_borrowed = self.layers.iter().rev().find(|l| l.holds == Holds::Every).map_or(false, |l| l.borrowed.iter().any(|word| word == name));
@@ -1218,6 +1267,7 @@ impl<'a> Builder<'a> {
                             scope.idents.len() - 1
                         }
                     };
+                    if i == 0 && self.past_library { self.native_exports.remove(name); }
                     if i == 0 && self.past_library && !self.named_in_program.iter().any(|word| word == name) {
                         self.named_in_program.push(name.to_string());
                     }
@@ -1405,7 +1455,16 @@ impl<'a> Builder<'a> {
     fn read(&mut self, name: &str) -> Form {
         if let Some((depth, names)) = self.class_bindings.last() {
             if *depth == self.layers.len() {
-                if let Some(slot) = names.get(name) { return Form::Read(slot.clone()); }
+                if let Some(slot) = names.get(name).cloned() {
+                    let conditional = self.table.flag("ext.syntax.names.shadow_builtins")
+                        && self.table.prims.contains_key(name)
+                        && self.under_way.last().is_some_and(|body| body.uncertain.iter().any(|word| word == name));
+                    if conditional {
+                        let fallback = self.read_fallback(name);
+                        return self.choose(Form::Missing(slot.clone()), fallback, Form::Read(slot));
+                    }
+                    return Form::Read(slot);
+                }
             }
         }
         // A name the class body has never bound at compile time may
@@ -1464,6 +1523,19 @@ impl<'a> Builder<'a> {
                 return constant(Value::text(&said));
             }
         }
+        if self.in_class_body() && self.table.flag("ext.syntax.names.shadow_builtins") {
+            if let Some(operation) = self.table.prims.get(name).copied() {
+                let member = self.parts().lexical_members.iter().any(|word| word == name);
+                let address = if member && !self.declared_outside_class(name) {
+                    self.global_address(name)
+                } else { self.address_to_read(name) };
+                let global_depth = self.layers.iter().skip(1).filter(|layer| layer.holds != Holds::Nothing).count();
+                if address.up == global_depth && !self.named_in_program.iter().any(|word| word == name) {
+                    return constant(Value::Intrinsic(operation, Rc::from(name)));
+                }
+                return Form::Read(address);
+            }
+        }
         Form::Read(self.address_to_read(name))
     }
 
@@ -1514,22 +1586,27 @@ impl<'a> Builder<'a> {
 
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
+        let annotator = self.build_annotator()?;
         let began = self.pos;
         let mut start = self.pos;
         while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.lexeme)) { start += 1; }
+        let expression_body = name == "<generator>" || self.table.strings("ext.stmt.function.anonymous").first().map_or(false, |n| n == name);
         let mut doc = None;
         let mut finish = start;
         while let Some(token) = self.tokens.get(finish).filter(|t| t.shape == Shape::Quote) {
             doc.get_or_insert_with(String::new).push_str(&token.lexeme);
             finish += 1;
         }
-        if self.tokens.get(finish).map_or(false, |t| t.shape == Shape::Woven) { doc = None; }
+        if expression_body || self.tokens.get(finish).map_or(false, |t| t.shape == Shape::Woven) { doc = None; }
         let qualification=self.full_name_of(name);
         let taking = self.taking.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is set aside while
         // this one is built, so that each keeps only its own.
         let around = std::mem::take(&mut self.carrying);
+        // The word before a routine makes it a coroutine; a scope inside
+        // it is a coroutine only by a word of its own.
+        let coroutine_around = std::mem::replace(&mut self.in_coroutine, std::mem::take(&mut self.coroutine_next));
         let afresh = self.global_where_written(name);
         self.naming.push(name.to_string());
         self.named_afresh.push(afresh);
@@ -1594,7 +1671,56 @@ impl<'a> Builder<'a> {
         self.naming.pop();
         self.named_afresh.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(constant(Value::Routine(Rc::new(Routine { qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
+        self.in_coroutine = coroutine_around;
+        let mut locals: Vec<String> = scope.idents.iter().filter(|n| !n.starts_with('#') && !scope.borrowed.contains(n) && !scope.aliases.iter().any(|pair| &pair.0 == *n) && !scope.reaching.iter().any(|a| a.ident.as_ref() == n.as_str())).cloned().collect();
+        locals.sort_by_key(|word| params.iter().position(|p| p == word).map_or((3, 0), |slot| {
+            let group = taking.as_ref().map_or(0, |r| match r[slot] { 'b' | 'p' => 0, 'n' => 1, _ => 2 });
+            (group, slot)
+        }));
+        let mut flags = 3i64;
+        if self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { flags += 16; }
+        for (kind, bit) in [('v', 4), ('k', 8)] {
+            if taking.as_ref().map_or(false, |rules| rules.contains(&kind)) { flags |= bit; }
+        }
+        if scope.permits_async { flags |= 128; } else if generator { flags |= 32; }
+        let mut literals = vec![doc.as_ref().map_or(Value::Nil, |s| Value::text(s))];
+        let mut referenced = Vec::new();
+        let mut suspension = false;
+        inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
+        if scope.permits_async && suspension { flags = (flags & !128) | 512; }
+        Ok(constant(Value::Routine(Rc::new(Routine { annotator, literals, referenced, locals, flags, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
+    }
+
+    fn build_annotator(&mut self) -> Res<Option<Rc<Routine>>> {
+        let sites = std::mem::take(&mut self.annotation_sites);
+        if sites.len() == 0 { return Ok(None); }
+        let resume = self.pos;
+        let taking = self.taking.take();
+        let kinds = std::mem::take(&mut self.formal_kinds);
+        let title = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
+        self.pos = sites[0].1;
+        let made = self.routine(&title, Holds::Every, Traps::Yields, vec!["format".to_owned()], 1, |b| {
+            let mut pairs = Vec::new();
+            for (mut word, at) in sites {
+                if let Some((owner, _)) = &b.within {
+                    let owner = owner.split('.').next_back().unwrap_or(owner).trim_start_matches('_');
+                    if word.starts_with("__") && !word.ends_with("__") && !owner.is_empty() {
+                        word.insert_str(0, &format!("_{owner}"));
+                    }
+                }
+                b.pos = at;
+                let expression = b.expr_at(0, false)?;
+                pairs.push(prim_call(Prim::Couple, vec![constant(Value::text(&word)), expression]));
+            }
+            Ok(prim_call(Prim::MakeMap, pairs))
+        });
+        self.pos = resume;
+        self.taking = taking;
+        self.formal_kinds = kinds;
+        match made? {
+            Form::Const(Value::Routine(r)) => Ok(Some(r)),
+            _ => unreachable!(),
+        }
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -1611,7 +1737,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -1798,6 +1924,250 @@ impl<'a> Builder<'a> {
     }
 
     fn stmt(&mut self) -> Res<Form> {
+        let opened = self.pos;
+        self.warnings_in_statement(opened);
+        let made = self.stmt_of_line()?;
+        self.past_stmt(opened)?;
+        Ok(made)
+    }
+
+    /// The token past the statement opened at `opened`: its line end,
+    /// or the edge of a block, met outside every bracket.
+    fn statement_limit(&self, opened: usize) -> usize {
+        let mut limit = opened;
+        let mut nesting = 0usize;
+        while let Some(token) = self.tokens.get(limit) {
+            if nesting == 0 && matches!(token.shape, Shape::LineEnd | Shape::Finish | Shape::Open | Shape::Close) { break; }
+            if token.shape == Shape::Sign {
+                match token.lexeme.as_str() {
+                    "(" | "[" | "{" => nesting += 1,
+                    ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            limit += 1;
+        }
+        limit
+    }
+
+    /// The closing bracket paired with the one opened at `at`, before `limit`.
+    fn pair_close(&self, at: usize, limit: usize) -> Option<usize> {
+        let mut nesting = 0usize;
+        for here in at..limit {
+            let token = &self.tokens[here];
+            if token.shape != Shape::Sign { continue; }
+            match token.lexeme.as_str() {
+                "(" | "[" | "{" => nesting += 1,
+                ")" | "]" | "}" => { nesting -= 1; if nesting == 0 { return Some(here); } }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The opening bracket paired with the one closed at `at`, at or after `floor`.
+    fn pair_open(&self, at: usize, floor: usize) -> Option<usize> {
+        let mut nesting = 0usize;
+        let mut here = at;
+        loop {
+            let token = &self.tokens[here];
+            if token.shape == Shape::Sign {
+                match token.lexeme.as_str() {
+                    ")" | "]" | "}" => nesting += 1,
+                    "(" | "[" | "{" => { nesting -= 1; if nesting == 0 { return Some(here); } }
+                    _ => {}
+                }
+            }
+            if here == floor { return None; }
+            here -= 1;
+        }
+    }
+
+    /// Whether one of the signs stands unbracketed between the pair.
+    fn pair_holds(&self, open: usize, close: usize, signs: &[&str]) -> bool {
+        let mut nesting = 0usize;
+        for here in open + 1..close {
+            let token = &self.tokens[here];
+            if token.shape != Shape::Sign { continue; }
+            match token.lexeme.as_str() {
+                "(" | "[" | "{" => nesting += 1,
+                ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
+                other if nesting == 0 && signs.contains(&other) => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// A literal beginning at `at` -- a number, text, bytes, or a display
+    /// of a tuple, list, dictionary or set -- as the reference names its
+    /// kind, with the token past it. A bracketed expression is none.
+    fn literal_at(&self, at: usize, limit: usize) -> Option<(&'static str, usize)> {
+        let token = self.tokens.get(at)?;
+        if at >= limit { return None; }
+        match token.shape {
+            Shape::Numeral => {
+                // The reference folds numbers joined by arithmetic signs
+                // into one number before it looks; the chain is read as
+                // that one number, real where any part or a division is.
+                let mut kind = Self::numeral_kind(&token.lexeme);
+                let mut past = at + 1;
+                while past + 1 < limit && Self::joins_operands(&self.tokens[past]) && self.tokens[past].lexeme != "." && self.tokens[past + 1].shape == Shape::Numeral {
+                    let next = Self::numeral_kind(&self.tokens[past + 1].lexeme);
+                    kind = if kind == "complex" || next == "complex" { "complex" }
+                        else if kind == "float" || next == "float" || self.tokens[past].lexeme == "/" { "float" }
+                        else { "int" };
+                    past += 2;
+                }
+                Some((kind, past))
+            }
+            Shape::Quote => {
+                let mut past = at + 1;
+                while past < limit && self.tokens[past].shape == Shape::Quote { past += 1; }
+                Some(("str", past))
+            }
+            Shape::ByteQuote => Some(("bytes", at + 1)),
+            Shape::Sign => {
+                let opener = token.lexeme.as_str();
+                if !["(", "[", "{"].contains(&opener) { return None; }
+                let close = self.pair_close(at, limit)?;
+                let kind = if opener == "[" { "list" }
+                    else if opener == "{" { if close == at + 1 || self.pair_holds(at, close, &[":"]) { "dict" } else { "set" } }
+                    else if self.pair_holds(at, close, &[","]) { "tuple" }
+                    else if close == at + 2 { self.literal_at(at + 1, close)?.0 }
+                    else { return None };
+                Some((kind, close + 1))
+            }
+            _ => None,
+        }
+    }
+
+    /// The reference's name for a number's kind, from its spelling.
+    fn numeral_kind(lexeme: &str) -> &'static str {
+        let spelling = lexeme.to_ascii_lowercase();
+        let prefixed = ["0x", "0o", "0b"].iter().any(|prefix| spelling.starts_with(prefix));
+        if spelling.ends_with('j') { "complex" }
+        else if !prefixed && (spelling.contains('.') || spelling.contains('e')) { "float" }
+        else { "int" }
+    }
+
+    /// The kind of a literal whose last token stands just before `past`,
+    /// where the operand ending there is that literal alone: not a call
+    /// or a subscript of it, and not a wider expression it ends.
+    fn literal_ending(&self, past: usize, opened: usize) -> Option<&'static str> {
+        if past <= opened { return None; }
+        let last = past - 1;
+        let token = &self.tokens[last];
+        let closes = token.shape == Shape::Sign && [")", "]", "}"].contains(&token.lexeme.as_str());
+        let begin = if closes {
+            let open = self.pair_open(last, opened)?;
+            if open > opened {
+                let ahead = &self.tokens[open - 1];
+                let names = ahead.shape == Shape::Bare && !self.table.keywords.contains(&ahead.lexeme);
+                let closed = ahead.shape == Shape::Sign && [")", "]", "}"].contains(&ahead.lexeme.as_str());
+                if names || closed { return None; }
+            }
+            open
+        } else {
+            let mut begin = last;
+            while token.shape == Shape::Quote && begin > opened && self.tokens[begin - 1].shape == Shape::Quote { begin -= 1; }
+            // Numbers reached through arithmetic signs from a number are
+            // the one folded number, back to the first of them.
+            while token.shape == Shape::Numeral && begin > opened + 1 && Self::joins_operands(&self.tokens[begin - 1]) && self.tokens[begin - 1].lexeme != "."
+                && self.tokens[begin - 2].shape == Shape::Numeral { begin -= 2; }
+            begin
+        };
+        let (kind, ends) = self.literal_at(begin, past)?;
+        if ends != past { return None; }
+        if begin > opened && Self::joins_operands(&self.tokens[begin - 1]) { return None; }
+        Some(kind)
+    }
+
+    /// Whether the token is an operator sign that makes a literal part
+    /// of a wider expression rather than an operand on its own.
+    fn joins_operands(token: &Token) -> bool {
+        token.shape == Shape::Sign && ["+", "-", "*", "/", "//", "%", "**", "@", "&", "|", "^", "<<", ">>", "."].contains(&token.lexeme.as_str())
+    }
+
+    /// What the reference warns of in the statement opened at `opened`,
+    /// noted for whoever compiled the text: an assertion of a
+    /// parenthesised tuple, an identity test against a literal, and a
+    /// call made upon a literal. Each place is noted once.
+    fn warnings_in_statement(&mut self, opened: usize) {
+        let table = self.table;
+        if !table.has_any("ext.builtin.exceptions.syntax") || !table.has_any("ext.system.syntax_warnings") { return; }
+        let limit = self.statement_limit(opened);
+        let mut noted: Vec<(String, u32, usize)> = Vec::new();
+        let first = &self.tokens[opened];
+        if first.shape == Shape::Bare && table.spells("ext.stmt.assert", &first.lexeme) && opened + 1 < limit && self.tokens[opened + 1].shape == Shape::Sign && self.tokens[opened + 1].lexeme == "(" {
+            if let Some(close) = self.pair_close(opened + 1, limit) {
+                let next = self.tokens.get(close + 1);
+                let ends = close + 1 >= limit || next.map_or(true, |t| t.shape == Shape::Sign && (t.lexeme == "," || table.separates(&t.lexeme)));
+                if ends && self.pair_holds(opened + 1, close, &[","]) {
+                    let bracket = &self.tokens[opened + 1];
+                    noted.push(("assertion is always true, perhaps remove parentheses?".to_owned(), bracket.row, bracket.column));
+                }
+            }
+        }
+        for here in opened..limit {
+            let token = &self.tokens[here];
+            if token.shape == Shape::Bare && table.spells("ext.op.identical", &token.lexeme) {
+                let negated = here + 1 < limit && self.tokens[here + 1].shape == Shape::Bare && table.spells("ext.op.identical.negated", &self.tokens[here + 1].lexeme);
+                let mut right = here + 1 + usize::from(negated);
+                // The reference folds a sign before a number into the number.
+                let signed = right + 1 < limit && self.tokens[right].shape == Shape::Sign && ["-", "+"].contains(&self.tokens[right].lexeme.as_str()) && self.tokens[right + 1].shape == Shape::Numeral;
+                if signed { right += 1; }
+                let after = self.literal_at(right, limit).filter(|(_, past)| *past >= limit || !Self::joins_operands(&self.tokens[*past])).map(|(kind, _)| kind);
+                if let Some(kind) = after.or_else(|| self.literal_ending(here, opened)) {
+                    let (spoken, meant) = if negated { ("is not", "!=") } else { ("is", "==") };
+                    noted.push((format!("\"{spoken}\" with '{kind}' literal. Did you mean \"{meant}\"?"), token.row, token.column));
+                }
+            }
+            if here > opened && token.shape == Shape::Sign && token.lexeme == "(" {
+                if let Some(kind) = self.literal_ending(here, opened) {
+                    noted.push((format!("'{kind}' object is not callable; perhaps you missed a comma?"), token.row, token.column));
+                }
+            }
+        }
+        for warning in noted {
+            if !self.warnings.contains(&warning) { self.warnings.push(warning); }
+        }
+    }
+
+    /// After a statement of a line-ended language must come the line's
+    /// end, a separator, or the edge of the block. What else stands
+    /// there is refused; a lone `print` or `exec` with an expression
+    /// after it is the statement the language once spelled that way.
+    fn past_stmt(&mut self, opened: usize) -> Res<()> {
+        let table = self.table;
+        if !table.has_any("ext.stmt.legacy_call") || !table.has_any("ext.builtin.exceptions.syntax") { return Ok(()); }
+        let shape = self.look().shape;
+        if self.on_stmt_end() || matches!(shape, Shape::Finish | Shape::Close | Shape::Open | Shape::Lead) { return Ok(()); }
+        // Compound statements step over the line ends past their block
+        // to look for another arm; a token on a later line than the
+        // statement's last token therefore opens the next statement.
+        if self.pos <= opened { return Ok(()); }
+        let previous = &self.tokens[self.pos - 1];
+        // A block's close stands on the line after the block, so a
+        // statement ending on a token that shapes the block is over.
+        if matches!(previous.shape, Shape::LineEnd | Shape::Close | Shape::Open | Shape::Lead | Shape::Finish) { return Ok(()); }
+        let ended_on = if previous.end_row != 0 { previous.end_row } else { previous.row };
+        if self.look().row > ended_on { return Ok(()); }
+        let first = self.tokens[opened].clone();
+        let lone_word = opened + 1 == self.pos && first.shape == Shape::Bare;
+        if lone_word && table.spells("ext.stmt.legacy_call", &first.lexeme) && !self.on_any("ext.stmt.yield") {
+            let here = self.pos;
+            let expression = self.comma_value().is_ok();
+            self.pos = here;
+            if expression {
+                let word = first.lexeme;
+                return Err(format!("SyntaxError: Missing parentheses in call to '{word}'. Did you mean {word}(...)?"));
+            }
+        }
+        Err("SyntaxError: invalid syntax".to_owned())
+    }
+
+    fn stmt_of_line(&mut self) -> Res<Form> {
         // A language that says where a complaint happened wants each
         // statement to carry the line it was written on.
         // Only the program's own lines are carried: what stands ahead of
@@ -1952,10 +2322,25 @@ impl<'a> Builder<'a> {
             if self.key("stmt.let") {
                 return self.bind();
             }
+            // The deferring word ahead of an import is stepped over; the
+            // import behind it is read and answered as any other.
+            if self.key("ext.stmt.import.lazy") && self.glance(1).shape == Shape::Bare
+                && (self.table.spells("ext.stmt.import", &self.glance(1).lexeme) || self.table.spells("ext.stmt.import.from", &self.glance(1).lexeme)) {
+                self.advance();
+                return self.stmt();
+            }
             if self.key("ext.stmt.async") {
                 let word = self.advance().lexeme;
                 if !self.key("stmt.function") && !self.key("stmt.for") && !self.key("ext.stmt.with") {
                     return Err(format!("Expected a function, for loop or with block after '{}', got '{}'", word, self.look().lexeme));
+                }
+                // A marked function runs as functions do and is a
+                // coroutine; a marked loop or context block is read as
+                // asynchronous, and may stand only within a coroutine.
+                self.coroutine_next = self.key("stmt.function");
+                self.asynchronous = self.key("stmt.for") || self.key("ext.stmt.with");
+                if self.asynchronous && !self.in_coroutine && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    return Err(format!("SyntaxError: '{} {}' outside async function", word, self.look().lexeme));
                 }
                 return self.stmt();
             }
@@ -2349,7 +2734,7 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
-        if self.key("ext.stmt.async") { self.advance(); }
+        if self.key("ext.stmt.async") { self.advance(); self.coroutine_next = true; }
         let named;
         let class_binding = self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit");
         if self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit") {
@@ -2383,6 +2768,7 @@ impl<'a> Builder<'a> {
     /// The items are found and bound in order, then the body is run.
     fn with_block(&mut self) -> Res<Form> {
         let table = self.table;
+        let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
         let (open, close) = (table.single("syntax.group.open").unwrap(), table.single("syntax.group.close").unwrap());
         let mut enclosed = false;
@@ -2414,18 +2800,45 @@ impl<'a> Builder<'a> {
                 let manager = self.gensym("manager");
                 let manager_read = Form::Read(manager.clone());
                 steps.push(Form::Write(manager.clone(), Box::new(value)));
-                value = self.located(bounds, prim_call(Prim::StartContext, vec![manager_read]));
+                let watched = if asynchronous {
+                    // An asynchronous manager is entered by its own word;
+                    // its leaving method, bound now, stands in the watched
+                    // place and is called with the outcome at the end.
+                    let leaving = self.gensym("leaving");
+                    steps.push(Form::Write(leaving.clone(), Box::new(self.located(bounds, prim_call(Prim::AsyncContext(true), vec![manager_read.clone()])))));
+                    value = prim_call(Prim::AsyncContext(false), vec![manager_read]);
+                    leaving
+                } else {
+                    value = prim_call(Prim::StartContext, vec![manager_read]);
+                    manager
+                };
+                value = self.located(bounds, value);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
                 value = Form::Read(entered);
-                contexts.push((steps.len(), manager, bounds));
+                contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
                 self.advance();
                 let place = self.gensym("with");
                 let name = place.ident.to_string();
                 steps.push(Form::Write(place, Box::new(value)));
-                steps.extend(self.with_target(&name)?);
+                let start = self.pos;
+                let mut boundary = start;
+                let mut closing = Vec::new();
+                for token in &self.tokens[start..] {
+                    let spelling = token.lexeme.as_str();
+                    if closing.is_empty() && (["block.intro", "syntax.call.separator", "syntax.group.close"].iter()
+                        .any(|label| table.spells(label, spelling))) { break; }
+                    match spelling {
+                        "(" => closing.push(")"), "[" => closing.push("]"), "{" => closing.push("}"),
+                        _ if closing.last().copied() == Some(spelling) => { closing.pop(); }
+                        _ => {}
+                    }
+                    boundary += 1;
+                }
+                steps.push(self.distribute(start..boundary, &name)?);
+                self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
@@ -3126,6 +3539,9 @@ impl<'a> Builder<'a> {
     /// conditional writes where the rest of the body reads; a name new
     /// to the body is given a place of its own.
     fn member_address(&mut self, word: &str, purpose: &str) -> Address {
+        if !self.parts().lexical_members.iter().any(|entry| entry == word) {
+            self.parts().lexical_members.push(word.to_owned());
+        }
         match self.class_bindings.last().and_then(|(_, names)| names.get(word)).cloned() {
             Some(place) => place,
             None => self.gensym(purpose),
@@ -3249,8 +3665,7 @@ impl<'a> Builder<'a> {
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }
-        let async_method = self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).lexeme);
-        if async_method { self.advance(); }
+        if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).lexeme) { self.advance(); self.coroutine_next = true; }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
@@ -3332,8 +3747,14 @@ impl<'a> Builder<'a> {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
                 self.pos += 2;
-                self.put_by_annotation(&["stmt.assign"])?;
-                self.parts().annotated_names.push((Value::text(&member), Value::Nil));
+                self.parts().lexical_members.push(member.clone());
+                // The annotation is kept as a routine answering its value,
+                // worked out only once the class's annotations are asked
+                // for, when a name the body had not yet bound -- the class
+                // itself among them -- is bound.
+                let deferred = self.annotation_routine()?;
+                let key = self.private_key(&member);
+                self.parts().annotated_names.push((constant(Value::text(&key)), deferred));
                 if self.on_assign() {
                     self.advance();
                     let value = self.comma_value()?;
@@ -3638,7 +4059,7 @@ impl<'a> Builder<'a> {
             setup.push(self.class_with_receiver()?.0);
             decorated = self.read(&word);
         } else {
-            if self.key("ext.stmt.async") { self.advance(); }
+            if self.key("ext.stmt.async") { self.advance(); self.coroutine_next = true; }
             if !self.key("stmt.function") {
                 return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
             }
@@ -3676,6 +4097,23 @@ impl<'a> Builder<'a> {
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
             let end = table.single("ext.stmt.class.bases.close").ok_or("The bases need a closing mark")?;
+            let mut levels = Vec::new();
+            let mut spreading = false;
+            for token in &self.tokens[self.pos..] {
+                let word = token.lexeme.as_str();
+                if levels.is_empty() && word == end { break; }
+                if levels.is_empty() && (table.spells("op.mul", word) || table.spells("op.pow", word)) { spreading = true; }
+                match word {
+                    "(" => levels.push(")"), "[" => levels.push("]"), "{" => levels.push("}"),
+                    _ if levels.last().copied() == Some(word) => { levels.pop(); }, _ => {}
+                }
+            }
+            if spreading {
+                let arguments = self.args("syntax.call.close", "syntax.call.separator")?;
+                let kept = self.gensym("header_arguments");
+                setup.push(Form::Write(kept.clone(), Box::new(prim_call(Prim::MakeTuple, arguments))));
+                handed_words.push(("\0header".to_owned(), Form::Read(kept)));
+            } else {
             let mut first = true;
             while !self.sign(end) {
                 let expanded = table.spells("op.mul", &self.look().lexeme) || table.spells("op.pow", &self.look().lexeme);
@@ -3717,6 +4155,7 @@ impl<'a> Builder<'a> {
                 }
             }
             self.need_sign(end, "after the bases")?;
+            }
         }
         let full_name = self.full_name_of(&class_title);
         let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
@@ -3730,10 +4169,12 @@ impl<'a> Builder<'a> {
             self.advance();
             self.skip_line_ends();
         }
+        let body_source = self.pos;
+        let lexical_members = self.surveyed.get(&body_source).map(|scope| scope.bound.clone()).unwrap_or_default();
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         self.class_globals.push((self.layers.len(), Vec::new()));
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { completed_class, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { lexical_members, completed_class, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -3770,6 +4211,10 @@ impl<'a> Builder<'a> {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.advance();
         }
+        if self.survey {
+            let bound = self.parts().lexical_members.clone();
+            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
+        }
         self.class_bindings.pop();
         self.class_globals.pop();
         self.within = previous;
@@ -3779,12 +4224,15 @@ impl<'a> Builder<'a> {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
         }
-        // What the body annotated, carried by the class under the table's
-        // word; a body that annotated nothing leaves the class without it.
-        if let (Some(word), false) = (table.strings("ext.stmt.class.annotations").first(), annotated_names.is_empty()) {
-            if ranking.iter().all(|old| old != word) { ranking.push(word.clone()); }
-            attributes.push(word.clone());
-            held.push(constant(Value::Dict(Rc::new(annotated_names.into()))));
+        // The routines answering what the body annotated, carried under
+        // a hidden name until the class's annotations are asked for; a
+        // body that annotated nothing leaves the class without them.
+        if table.has_any("ext.stmt.class.annotations") && !annotated_names.is_empty() {
+            // Keys and routines alternate in one row, made as the body runs.
+            ranking.push(crate::data::ANNOTATE_WORD.to_owned());
+            attributes.push(crate::data::ANNOTATE_WORD.to_owned());
+            let row: Vec<Form> = annotated_names.into_iter().flat_map(|(key, routine)| [key, routine]).collect();
+            held.push(prim_call(Prim::MakeArray, row));
         }
         // The header's keywords ride along as entries under their hidden
         // names, for the building of the class to hand on.
@@ -4065,7 +4513,7 @@ impl<'a> Builder<'a> {
         {
             self.advance();
             match table.has_any("ext.stmt.annotation") {
-                true => self.put_by_annotation(&["block.intro"])?,
+                true => { self.annotation_sites.push(("return".to_owned(), self.pos)); self.put_by_annotation(&["block.intro"])?; },
                 false => {
                     self.skip_nothing_mark();
                     self.need_word("as a return type")?;
@@ -4505,6 +4953,7 @@ impl<'a> Builder<'a> {
             if self.look().shape == Shape::Close { self.advance(); break; }
             if !self.key("ext.stmt.match.case") { return Err(self.bad_case()); }
             self.advance();
+            self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
             let first = if starts_wide { self.advance(); self.pattern_name()? } else { self.pattern_choice()? };
             let mut members = vec![first];
@@ -4528,7 +4977,8 @@ impl<'a> Builder<'a> {
                 let address = self.address_to_write(&name);
                 (name, address)
             }).collect();
-            let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple };
+            let kinds = std::mem::take(&mut self.pattern_kinds);
+            let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple, kinds };
             if self.key("ext.stmt.match.guard") {
                 self.advance();
                 let guard = self.expr(0)?;
@@ -4637,10 +5087,16 @@ impl<'a> Builder<'a> {
             }
             return Ok(CaseTest::Equal(number));
         }
-        if self.look().shape == Shape::Quote {
-            let mut chars = String::new();
-            while self.look().shape == Shape::Quote { chars.push_str(&self.advance().lexeme); }
-            return Ok(CaseTest::Equal(Value::text(&chars)));
+        if matches!(self.look().shape, Shape::Quote | Shape::CharacterRow) {
+            let mut numbers = Vec::new();
+            loop {
+                match self.look().shape {
+                    Shape::Quote => numbers.extend(self.advance().lexeme.chars().map(|ch| ch as u32)),
+                    Shape::CharacterRow => numbers.extend(self.advance().lexeme.split_whitespace().map(|word| word.parse::<u32>().unwrap())),
+                    _ => break,
+                }
+            }
+            return Ok(CaseTest::Equal(Value::characters(numbers)));
         }
         if self.on_any("syntax.array.open") || self.on_any("syntax.group.open") {
             let array = self.on_any("syntax.array.open");
@@ -4669,62 +5125,71 @@ impl<'a> Builder<'a> {
         }
         if self.on_any("syntax.map.open") {
             self.advance();
-            let mut values = Vec::new();
-            let mut rest_name = None;
+            let mut pairs = Vec::new();
+            let mut rest: Option<(usize, String)> = None;
             while !self.on_any("syntax.map.close") {
-                if let Some(start) = rest_name {
-                    self.pos = start;
+                if let Some((start, _)) = &rest {
+                    self.pos = *start;
                     let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: invalid syntax".to_owned() } else { self.bad_case() };
                     return Err(words);
                 }
                 if self.on_any("op.pow") {
                     self.advance();
-                    rest_name = Some(self.pos);
-                    let capture = self.pattern_name()?;
-                    if !matches!(capture, CaseTest::Keep(_)) { return Err(self.bad_case()); }
-                    values.push(capture);
+                    let start = self.pos;
+                    let CaseTest::Keep(name) = self.pattern_name()? else { return Err(self.bad_case()) };
+                    rest = Some((start, name));
                 } else {
-                    match self.pattern_single()? {
-                        CaseTest::Equal(_) | CaseTest::Pending(_) => {}
-                        _ => return Err(self.bad_case()),
-                    }
+                    let key = self.pattern_single()?;
+                    if !matches!(key, CaseTest::Equal(_) | CaseTest::Worth(_)) { return Err(self.bad_case()); }
                     self.need_sign(table.single("syntax.map.pair").unwrap_or_default(), "between a key and its pattern")?;
-                    values.push(self.pattern_choice()?);
+                    pairs.push((key, self.pattern_choice()?));
                 }
                 if !self.on_any("syntax.map.separator") { break; }
                 self.advance();
             }
             self.need_sign(table.single("syntax.map.close").unwrap_or_default(), "after the mapping pattern")?;
-            return Ok(CaseTest::Pending(values));
+            return Ok(CaseTest::Table { pairs, rest: rest.map(|(_, name)| name) });
         }
         if self.look().shape != Shape::Bare { return Err(self.bad_case()); }
         for (label, value) in [("literal.null", Value::Nil), ("literal.true", Value::Flag(true)), ("literal.false", Value::Flag(false))] {
             if self.key(label) { self.advance(); return Ok(CaseTest::Equal(value)); }
         }
         let binding = self.pattern_name()?;
-        let mut qualified = false;
+        let mut path = Vec::new();
         while self.on_any("op.pipe") {
             self.advance();
-            self.need_word("after the member mark")?;
-            qualified = true;
+            path.push(self.need_word("after the member mark")?);
         }
-        if !self.on_any("syntax.call.open") {
-            return Ok(if qualified { CaseTest::Pending(Vec::new()) } else { binding });
-        }
+        let opens_call = self.on_any("syntax.call.open");
+        if path.is_empty() && !opens_call { return Ok(binding); }
+        // A dotted name, or the class ahead of a class pattern's brackets,
+        // is worked out ahead of the subject and handed to the fitting by
+        // its place among such values.
+        let CaseTest::Keep(head) = &binding else { return Err(self.bad_case()) };
+        let mut worked = self.read(head);
+        for member in &path { worked = prim_call(Prim::Of, vec![worked, constant(Value::text(member))]); }
+        let place = self.pattern_kinds.len();
+        self.pattern_kinds.push(worked);
+        if !opens_call { return Ok(CaseTest::Worth(place)); }
         self.advance();
-        let mut fields = Vec::new();
-        let mut named = HashSet::new();
+        let mut positional = Vec::new();
+        let mut named: Vec<(String, CaseTest)> = Vec::new();
         while !self.on_any("syntax.call.close") {
             if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
-                if !named.insert(self.advance().lexeme) { return Err(self.bad_case()); }
+                let word = self.advance().lexeme;
+                if named.iter().any(|(seen, _)| *seen == word) { return Err(self.bad_case()); }
                 self.advance();
-            } else if !named.is_empty() { return Err(self.bad_case()); }
-            fields.push(self.pattern_choice()?);
+                named.push((word, self.pattern_choice()?));
+            } else if !named.is_empty() {
+                return Err(self.bad_case());
+            } else {
+                positional.push(self.pattern_choice()?);
+            }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
         }
         self.need_sign(table.single("syntax.call.close").unwrap_or_default(), "after the class pattern")?;
-        Ok(CaseTest::Pending(fields))
+        Ok(CaseTest::Shape { kind: place, positional, named })
     }
 
     /// `switch (v) { case a: ... default: ... }`. The first case equal to
@@ -4972,6 +5437,7 @@ impl<'a> Builder<'a> {
 
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
+        let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
         if table.has_any("ext.builtin.exceptions.syntax") && matches!(self.look().shape, Shape::Quote | Shape::ByteQuote | Shape::Numeral) { return Err(String::from("SyntaxError: cannot assign to literal")); }
         let place = if table.single("ext.op.tuple").is_some() && table.single("ext.stmt.unpack").is_some() {
@@ -5020,6 +5486,7 @@ impl<'a> Builder<'a> {
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
+                let start = if asynchronous { prim_call(Prim::AsyncWalk, vec![start]) } else { start };
                 let bounds = self.span_since(beginning);
                 let start = self.located(bounds, start);
                 let source = match table.single("ext.op.comprehension.for") {
@@ -5188,6 +5655,7 @@ impl<'a> Builder<'a> {
                 params.push(self.need_word("as a parameter name")?);
                 if !short && self.on_any("ext.stmt.annotation") {
                     self.advance();
+                    self.annotation_sites.push((params.last().unwrap().to_owned(), self.pos));
                     self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
                 } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().lexeme) {
                     self.advance();
@@ -5275,6 +5743,24 @@ impl<'a> Builder<'a> {
 
     /// Pass over the kind written beside a name. Its brackets shelter
     /// their contents from the marks ending the surrounding declaration.
+    /// A class body's annotation as a routine of no parameters that
+    /// answers the annotation's value, made where the body runs so that
+    /// it is bound to the body's frame.
+    fn annotation_routine(&mut self) -> Res<Form> {
+        let ident = self.table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
+        // A plain expression: an equals sign after it gives the member its
+        // value and is no assignment within the annotation.
+        self.routine(ident, Holds::Every, Traps::Naught, Vec::new(), 0, |b| b.expr_at(0, false))
+    }
+
+    /// The key a blueprint carries a member's annotation under: a name
+    /// beginning with two underscores and not ending so is mangled with
+    /// the class's name, the reference's way with private names.
+    fn private_key(&self, member: &str) -> String {
+        let class = self.within.as_ref().map(|(name, _)| name.trim_start_matches('_')).unwrap_or("");
+        if member.starts_with("__") && !member.ends_with("__") && !class.is_empty() { format!("_{class}{member}") } else { member.to_owned() }
+    }
+
     fn put_by_annotation(&mut self, boundaries: &[&str]) -> Res<()> {
         let table = self.table;
         let mut nesting = Vec::new();
@@ -5398,7 +5884,7 @@ impl<'a> Builder<'a> {
         if returns_here(self) {
             self.advance();
             match table.has_any("ext.stmt.annotation") {
-                true => self.put_by_annotation(&["block.intro"])?,
+                true => { self.annotation_sites.push(("return".to_owned(), self.pos)); self.put_by_annotation(&["block.intro"])?; },
                 false => {
                     self.skip_nothing_mark();
                     self.need_word("as a return type")?;
@@ -5548,6 +6034,7 @@ impl<'a> Builder<'a> {
         let mut unavailable = self.outside_lambda.clone();
         unavailable.extend(enclosing);
         let prior = std::mem::replace(&mut self.outside_lambda, unavailable);
+        self.declared_at = (self.tokens[keyword_at].row as u32).saturating_sub(self.before);
         let lambda_ident = table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
         let mut function = self.routine(lambda_ident, Holds::Every, Traps::Yields, names, required, |b| {
             let mut steps = Vec::new();
@@ -5626,7 +6113,7 @@ impl<'a> Builder<'a> {
         if returns_here {
             self.advance();
             match table.has_any("ext.stmt.annotation") {
-                true => self.put_by_annotation(&["block.intro"])?,
+                true => { self.annotation_sites.push(("return".to_owned(), self.pos)); self.put_by_annotation(&["block.intro"])?; },
                 false => {
                     self.skip_nothing_mark();
                     self.need_word("as a return type")?;
@@ -5883,6 +6370,9 @@ impl<'a> Builder<'a> {
         let name = self.gensym("given").ident.to_string();
         let mut forms = vec![self.write(&name, answer)];
         for sign in signs {
+            if self.table.spells("ext.stmt.yield", &self.tokens[left].lexeme) {
+                return Err(String::from("SyntaxError: assignment to yield expression not possible"));
+            }
             forms.push(self.distribute(left..sign, &name)?);
             left = sign + 1;
         }
@@ -5895,6 +6385,13 @@ impl<'a> Builder<'a> {
         if !matches!(&place, Form::Read(_)
             | Form::Apply(Callee::Prim(Prim::At | Prim::Of, _), _)) {
             return Err(table.single("ext.stmt.annotation.amiss").unwrap_or("Expected an assignment target").to_string());
+        }
+        if self.layers.len() == 1 {
+            if let Form::Read(slot) = &place {
+                if self.tokens[self.pos - 1].lexeme == slot.ident.as_ref() {
+                    self.module_sites.push((slot.ident.to_string(), self.pos + 1));
+                }
+            }
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
@@ -5948,6 +6445,20 @@ impl<'a> Builder<'a> {
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
+        let word = self.look().lexeme.to_owned();
+        let unchanged = self.layers.len() == 1 && !self.in_class_body()
+            && self.table.flag("ext.syntax.names.shadow_builtins")
+            && (self.table.prims.contains_key(&word) || self.table.spells("ext.stmt.class.parent", &word))
+            && self.glance(1).shape == Shape::Sign && self.table.spells("stmt.assign", &self.glance(1).lexeme)
+            && self.glance(2).shape == Shape::Bare && self.glance(2).lexeme == word
+            && matches!(self.glance(3).shape, Shape::LineEnd | Shape::Finish)
+            && (self.native_exports.contains(&word) || !self.named_in_program.contains(&word));
+        let built = self.binding_or_value()?;
+        if unchanged { self.native_exports.insert(word); }
+        Ok(built)
+    }
+
+    fn binding_or_value(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             if let Some(mark) = self.declaration_mark() {
                 if !self.divided_at(self.pos, mark, "ext.op.tuple").is_empty() {
@@ -5997,13 +6508,18 @@ impl<'a> Builder<'a> {
         self.kind_mark = enclosing_mark;
         self.place_depth -= usize::from(writing);
         let mut expr = read?;
-        if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("{") { return Err(String::from("SyntaxError: invalid syntax")); }
         if self.on_writing() && self.table.has_any("ext.stmt.class.special") {
             if self.tokens.get(began + 1).map_or(false, |token| self.table.spells("op.pipe", &token.lexeme)) {
                 let assignment = self.pos;
                 self.pos = began;
                 expr = self.deletion_place()?;
                 self.pos = assignment;
+            }
+        }
+        if self.on_writing() && !self.on_assign() && self.table.has_any("ext.builtin.exceptions.syntax") {
+            let first = self.tokens[began..self.pos].iter().find(|token| token.lexeme != "(");
+            if first.is_some_and(|token| self.table.spells("ext.stmt.yield", &token.lexeme)) {
+                return Err(String::from("SyntaxError: 'yield expression' is an illegal expression for augmented assignment"));
             }
         }
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
@@ -6329,7 +6845,15 @@ impl<'a> Builder<'a> {
                 // What the chain stands on is taken as a cell, so that
                 // rewriting the arrays within it lands where it lives
                 // and nothing need be written back afterwards.
-                let start = self.cell_of(stands_on)?;
+                let start = match stands_on {
+                    place @ Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), _) => self.cell_of(place)?,
+                    call @ Form::Apply(..) if self.table.flag("ext.syntax.call.bind_names") => {
+                        let saved = self.gensym("target_result");
+                        steps.push(Form::Write(saved.clone(), Box::new(call)));
+                        self.cell_of(Form::Read(saved))?
+                    }
+                    other => self.cell_of(other)?,
+                };
                 // Tied, not written: a plain write of a cell writes what
                 // it holds, and here the cell itself is wanted.
                 let tied = self.address_to_write(&root);
@@ -6914,6 +7438,10 @@ impl<'a> Builder<'a> {
             return Ok(constant(Value::Octets { cell: Rc::new(std::cell::RefCell::new(start.lexeme.chars().map(|c| c as u8).collect())), changeable: false,
                 lead: Rc::from(self.table.strings("ext.system.bytes.repr")[0].as_str()) }));
         }
+        if start.shape == Shape::CharacterRow {
+            let numbers = start.lexeme.split_whitespace().map(|word| word.parse().unwrap()).collect();
+            return Ok(constant(Value::characters(numbers)));
+        }
         if start.shape == Shape::Quote { return Ok(constant(Value::text(&start.lexeme))); }
         if start.shape == Shape::Unheld { return Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(&start.lexeme))])); }
         if start.shape != Shape::Woven {
@@ -6950,7 +7478,7 @@ impl<'a> Builder<'a> {
         }
         if self.key("ext.stmt.yield") {
             let begins = self.pos;
-            let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(String::from("'yield' outside function")) }
+            let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(if table.spells("ext.stmt.yield.from", &self.glance(1).lexeme) { "'yield from' outside function" } else { "'yield' outside function" }.to_owned()) }
                 else { self.layers.last().and_then(|s| s.gathering_kind).map(|kind| format!("'yield' inside {kind}")) };
             self.advance();
             self.generator_seen = true;
@@ -7098,10 +7626,10 @@ impl<'a> Builder<'a> {
                 self.advance();
                 constant(numeral(&t.lexeme, table)?)
             }
-            Shape::ByteQuote | Shape::Quote | Shape::Woven | Shape::Unheld => {
+            Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld => {
                 let mut text = self.quotation()?;
                 if table.flag("ext.lexical.string.adjacent") {
-                    while matches!(self.look().shape, Shape::ByteQuote | Shape::Quote | Shape::Woven | Shape::Unheld) {
+                    while matches!(self.look().shape, Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld) {
                         if (t.shape == Shape::ByteQuote) != (self.look().shape == Shape::ByteQuote) {
                             return Err(table.single("ext.lexical.string.bytes.mixed").unwrap_or("").to_owned());
                         }
@@ -7124,6 +7652,16 @@ impl<'a> Builder<'a> {
                     given.extend(self.arguments_of(&maker, "syntax.call.close", "syntax.call.separator")?);
                 }
                 prim_call(Prim::Spawn, given)
+            }
+            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme)
+                && self.uses_bound_callable(&t.lexeme) => {
+                self.advance();
+                let target = self.read(&t.lexeme);
+                if table.single("syntax.call.open").is_some_and(|open| self.sign(open)) {
+                    self.advance();
+                    let arguments = self.arguments_of(&t.lexeme, "syntax.call.close", "syntax.call.separator")?;
+                    invoke(target, arguments)
+                } else { target }
             }
             // Beyond every class body the parent word the program has
             // bound, not opening a call, is an ordinary name, to be read,
@@ -7200,6 +7738,7 @@ impl<'a> Builder<'a> {
                 } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.error", &t.lexeme) {
                     constant(Value::Channel(2))
                 } else if matches!(table.prims.get(&t.lexeme), Some(Prim::Octets(0 | 1)))
+                    && self.place_depth == 0 && !self.uses_bound_callable(&t.lexeme)
                     && !table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
                     let words = table.strings("ext.system.bytes.type");
                     constant(Value::OctetKind { changeable: table.prims.get(&t.lexeme) == Some(&Prim::Octets(1)),
@@ -8251,7 +8790,7 @@ impl<'a> Builder<'a> {
         let parameter = self.gather_name("first_source");
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
         let mut async_result = false;
-        let routine = self.routine("<generator>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
+        let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
             let before = r.gather_names.len();
@@ -8691,12 +9230,36 @@ impl<'a> Builder<'a> {
         Ok(items)
     }
 
+    fn uses_bound_callable(&self, word: &str) -> bool {
+        if !self.table.flag("ext.syntax.names.shadow_builtins") { return false; }
+        let depth = self.layers.len();
+        if self.in_class_body() {
+            if let Some(body) = self.under_way.last() {
+                if body.lexical_members.iter().any(|entry| entry == word) { return true; }
+                if body.book.is_some() && !matches!(self.table.prims.get(word), Some(Prim::HereBook | Prim::MembersOf)) { return true; }
+            }
+        }
+        let member = self.class_bindings.last().is_some_and(|(level, entries)| *level == depth && entries.contains_key(word));
+        let declared = self.class_globals.last().is_some_and(|(level, words)| *level == depth && words.iter().any(|entry| entry == word));
+        if member || declared || self.gather_names.iter().any(|entry| entry.0 == word) {
+            return true;
+        }
+        for layer in self.layers.iter().skip(1).rev() {
+            if layer.holds == Holds::Nothing { continue; }
+            if layer.aliases.iter().any(|entry| entry.0 == word)
+                || layer.borrowed.iter().any(|entry| entry == word)
+                || layer.idents.iter().any(|entry| entry == word) {
+                return true;
+            }
+            if layer.holds == Holds::Every && !self.table.flag("ext.stmt.function.closes_over") { break; }
+        }
+        !self.native_exports.contains(word) && self.named_in_program.iter().any(|entry| entry == word)
+    }
+
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
         // A name the program has bound is called as that name, in front
         // of any builtin word spelled the same, where the table says so.
-        if self.table.flag("ext.syntax.names.shadow_builtins")
-            && (self.named_in_program.iter().any(|word| word == name)
-                || self.layers.last().map_or(false, |scope| scope.formal_slots.iter().any(|slot| scope.idents[*slot] == name))) {
+        if self.uses_bound_callable(name) {
             let target = self.read(name);
             return Ok(invoke(target, args));
         }
@@ -9160,7 +9723,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
@@ -9515,4 +10078,56 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
             || last.as_deref().map_or(false, |part| borrows_enclosing(part, names)) || otherwise.as_deref().map_or(false, |part| borrows_enclosing(part, names)),
         _ => false,
     }
+}
+
+fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool) {
+    fn literal(value: &Value, constants: &mut Vec<Value>) {
+        if let Value::Routine(p) = value {
+            if p.frameless { return; }
+            if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants); }
+        }
+        if constants.iter().all(|v| std::mem::discriminant(v) != std::mem::discriminant(value) || !v.equals(value)) { constants.push(value.clone()); }
+    }
+    fn named(name: &str, locals: &[String], names: &mut Vec<String>) {
+        if !name.is_empty() && !name.starts_with('#') && !locals.iter().any(|s| s == name) && !names.iter().any(|s| s == name) { names.push(name.to_owned()); }
+    }
+    let mut children: Vec<&Form> = Vec::new();
+    match form {
+        Form::Const(Value::Routine(p)) if p.frameless => children.push(&p.body),
+        Form::Const(v) => literal(v, constants),
+        Form::Read(a) | Form::Take(a) | Form::Glance(a) => { if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); } },
+        Form::Write(_, child) | Form::OnLine(_, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
+        Form::Apply(callee, args) => {
+            if matches!(callee, Callee::Prim(Prim::Suspend, _)) { *suspension = true; }
+            match callee {
+                Callee::Code(target) => children.push(target),
+                Callee::Prim(op, spelling) => if !matches!(op, Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume) { named(spelling, locals, names); },
+            }
+            children.extend(args);
+        }
+        Form::Dyad { a, b, .. } => {
+            for input in [a, b] {
+                match input {
+                    Input::Form(f) => children.push(f),
+                    Input::Const(v) => literal(v, constants),
+                    Input::Address(a) => if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); },
+                }
+            }
+        }
+        Form::Cycle { test, body, step, otherwise, .. } => {
+            children.extend([test.as_ref(), body.as_ref()]);
+            children.extend(step.as_deref());
+            children.extend(otherwise.as_deref());
+        }
+        Form::Attempt { body, clauses, last, otherwise, .. } => {
+            children.push(body);
+            for clause in clauses { children.push(&clause.body); if let Some(choices) = &clause.choices { children.extend(choices); } }
+            children.extend(otherwise.as_deref());
+            children.extend(last.as_deref());
+        }
+        Form::Class { values, .. } => children.extend(values),
+        Form::Assert { condition, message } => children.extend([condition.as_ref(), message.as_ref()]),
+        _ => {}
+    }
+    for child in children { inspect_form(child, locals, constants, names, suspension); }
 }

@@ -189,6 +189,8 @@ pub struct Step {
 /// A walk keeps its own cells and the part of the stack still wanted.
 #[derive(Debug)]
 pub struct Generator {
+    pub name: String,
+    pub qualified: String,
     pub trace_frame: Option<Rc<Instance>>,
     pub program: Option<Rc<Routine>>,
     pub frame: Vec<Value>,
@@ -223,7 +225,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), trace_frame: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None,
             resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
@@ -266,7 +268,7 @@ pub enum CursorSource {
     /// keeps no `__reversed__` of its own.
     IndexedBack(Value, BigInt),
     /// A callable asked again and again until it answers the sentinel.
-    Called(Value, Value),
+    Called(Value, Value, Option<Value>),
     /// A thing of the program's own, asked for each member the way a
     /// loop asks it.
     Handed(Value),
@@ -749,7 +751,7 @@ impl Value {
             Value::Object(o) => {
                 if let Some(args) = self.raised_arguments() {
                     let mut parts = args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>();
-                    if o.class.all_fields().iter().any(|(k, _)| k == "\0import-error") {
+                    if o.class_now().all_fields().iter().any(|(k, _)| k == "\0import-error") {
                         let fields = o.fields.borrow();
                         for name in ["name", "path", "name_from"] {
                             if let Some((_, value)) = fields.iter().find(|(k, _)| k == name) {
@@ -757,7 +759,7 @@ impl Value {
                             }
                         }
                     }
-                    return format!("{}({})", o.class.name, parts.join(", "));
+                    return format!("{}({})", o.class_now().name, parts.join(", "));
                 }
                 self.display(sp)
             }
@@ -769,7 +771,7 @@ impl Value {
 
     fn raised_arguments(&self) -> Option<Vec<Value>> {
         let Value::Object(object) = self else { return None };
-        if !object.class.all_fields().iter().any(|(n, _)| n == "\0exception") { return None; }
+        if !object.class_now().all_fields().iter().any(|(n, _)| n == "\0exception") { return None; }
         let fields = object.fields.borrow();
         if let Some((_, Value::Tuple(args))) = fields.iter().find(|(n, _)| n == "\0arguments") { return Some(args.as_ref().clone()); }
         Some(fields.iter().filter(|(n, _)| n == "message").map(|(_, v)| v.clone()).collect())
@@ -791,7 +793,7 @@ impl Value {
     /// their wording belong to Python alone, and are reached only
     /// through the markers Python's own roster puts on its classes.
     fn unicode_error_text(o: &Rc<Instance>, sp: &Wording) -> Option<String> {
-        let kind = o.class.all_fields().iter().find_map(|(n, _)| match n.as_str() {
+        let kind = o.class_now().all_fields().iter().find_map(|(n, _)| match n.as_str() {
             "\0unicode-encode" => Some(0u8), "\0unicode-decode" => Some(1u8),
             "\0unicode-translate" => Some(2u8), _ => None,
         })?;
@@ -847,13 +849,24 @@ impl Value {
         if let Some((_, Value::Text(shown))) = o.fields.borrow().iter().find(|(n, _)| n == "\0shown") { return Some(shown.to_string()); }
         Some(match args.as_slice() {
             [] => String::new(),
-            [one] if o.class.all_fields().iter().any(|(n, _)| n == "\0quoted") => one.repr(sp),
+            [one] if o.class_now().all_fields().iter().any(|(n, _)| n == "\0quoted") => one.repr(sp),
             [one] => one.display(sp),
             many => Self::tuple_text(many, sp),
         })
     }
     pub fn text_codes(&self) -> Option<Vec<u32>> {
         match self { Value::Text(s) => Some(s.chars().map(u32::from).collect()), Value::Codepoints(row) => Some(row.as_ref().clone()), _ => None }
+    }
+
+    /// A read-only category question (is it alphabetic, printable,
+    /// upper-cased and so on) asks after each character on its own; a
+    /// half of a surrogate pair kept whole answers none of them, the
+    /// same as the noncharacter standing in for it here answers none
+    /// of them either, so a walk built this way answers exactly as a
+    /// walk of the real numbers would, without ever once minting a
+    /// `char` a surrogate cannot become.
+    pub fn predicate_text(row: &[u32]) -> String {
+        row.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect()
     }
 
     pub fn from_codes(row: Vec<u32>) -> Value {
@@ -871,7 +884,7 @@ impl Value {
                 Some('\n') => result.push_str("\\n"),
                 Some('\r') => result.push_str("\\r"),
                 Some('\t') => result.push_str("\\t"),
-                Some(c) if c.is_control() => result.push_str(&Self::unicode_escaped(n)),
+                Some(c) if crate::unicode::bits(c) & 1 == 0 => result.push_str(&Self::unicode_escaped(n)),
                 Some(c) => result.push(c),
             }
         }
@@ -1101,6 +1114,9 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        if let (Value::Object(instance), plain @ Value::Text(_)) | (plain @ Value::Text(_), Value::Object(instance)) = (self, other) {
+            if let Some((_, value @ Value::Text(_))) = instance.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return value.equals(plain); }
+        }
         // Two of a kind, and that kind a plain one: answered outright,
         // before the number tower is entered or a cell is looked into.
         // These three are the great bulk of all the asking.
@@ -1269,7 +1285,7 @@ impl Value {
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
             Value::Real(r) if sp.shortest_reals => real_roundtrip(if r.below && r.p.is_zero() && !r.outside() { -0.0 } else { as_binary(&r.p, &r.q) }),
-            Value::Real(r) if r.floating => format!("{:?}", if r.below && r.p.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) }).to_lowercase(),
+            Value::Real(r) if r.floating => format!("{:?}", if r.below && r.p.is_zero() && !r.q.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) }).to_lowercase(),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
@@ -1289,7 +1305,7 @@ impl Value {
         let mut shown = self.display(words);
         if let Value::Real(real) = self {
             if !words.shortest_reals {
-                let number = if real.below && real.p.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
+                let number = if real.below && real.p.is_zero() && !real.q.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
                 shown = format!("{number:?}").to_ascii_lowercase();
                 if let Some((mantissa, exponent)) = shown.split_once('e') {
                     let power = exponent.parse::<i32>().ok()?;
@@ -1419,12 +1435,15 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }),
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
-            Value::Generator(_) => "<generator>".to_string(),
+            Value::Generator(cell) => match cell.try_borrow() {
+                Ok(g) if !g.qualified.is_empty() => format!("<generator object {} at 0x1>", g.qualified),
+                _ => "<generator>".to_string(),
+            },
             Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
             Value::Descriptor(_) => "<descriptor>".to_string(),
             Value::Trace(_) => "<traceback object>".to_string(),
             Value::Hashed(pair) => pair.0.plain(),
-            Value::Fields(o) => format!("<attributes of {}>", o.class.name),
+            Value::Fields(o) => format!("<attributes of {}>", o.class_now().name),
             Value::Declined(word) => word.to_string(),
             Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),
             Value::Routine(p) => {
@@ -1446,7 +1465,7 @@ impl Value {
                 _ => "<member wrapper>".to_string(),
             },
             Value::Adapter(_) => "<member wrapper>".to_string(),
-            Value::Object(o) => format!("<object {}>", o.class.name),
+            Value::Object(o) => format!("<object {}>", o.class_now().name),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
         }
@@ -1712,8 +1731,15 @@ pub fn who_keeps(filed: &str) -> (&str, Option<&str>) {
 
 /// One object: the class that made it and what it holds. An object is a
 /// handle, so two names for it see one another's writes.
+impl Instance {
+    pub fn class_now(&self) -> Rc<Class> {
+        self.replacement_class.borrow().clone().unwrap_or_else(|| self.class.clone())
+    }
+}
+
 #[derive(Debug)]
 pub struct Instance {
+    pub replacement_class: RefCell<Option<Rc<Class>>>,
     pub class: Rc<Class>,
     pub fields: RefCell<Vec<(String, Value)>>,
     /// Which object this is by the order it was made, counting from
@@ -1835,7 +1861,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Real(Rc::new(Real { floating: false, p, q: BigInt::zero(), places, below: false, point: false }))
+    Value::Real(Rc::new(Real { floating: false, p, q: BigInt::zero(), places, below: x.is_sign_negative(), point: false }))
 }
 
 /// A real brought to the nearest one of a width of bits, held exactly.
@@ -1845,7 +1871,7 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize, shortest: b
     if shortest {
         if let Value::Real(r) = &v {
             let number = nearest_real(&r.p, &r.q);
-            return real_of(if number == 0.0 && r.below { -0.0 } else { number }, places).with_point(r.point);
+            return real_of(if r.below && (number == 0.0 || number.is_nan()) { -number } else { number }, places).with_point(r.point);
         }
         return v;
     }

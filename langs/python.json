@@ -813,7 +813,8 @@
     "IndentationError",
     "TabError",
     "MemoryError",
-    "BufferError"
+    "BufferError",
+    "StopAsyncIteration"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -1721,6 +1722,7 @@
     "split",
     "str.split"
   ],
+  "ext.builtin.text.getnewargs": ["__getnewargs__", "str.__getnewargs__"],
   "ext.builtin.text.splitlines": [
     "splitlines",
     "str.splitlines"
@@ -2312,44 +2314,83 @@
     "'"
   ],
   "ext.op.rem.format.character": [
-    "TypeError: %c requires int or char"
+    "TypeError: format argument",
+    ": %c requires ",
+    ", not "
+  ],
+  "ext.op.rem.format.character.range": [
+    "OverflowError: format argument",
+    ": %c argument not in range(",
+    ")"
   ],
   "ext.op.rem.format.code": [
-    "ValueError: unsupported format character '",
-    "' (0x",
-    ") at index "
+    "ValueError: unsupported format %",
+    " at position "
   ],
   "ext.op.rem.format.few": [
-    "TypeError: not enough arguments for format string"
+    "TypeError: not enough arguments for format string (got ",
+    ")"
   ],
   "ext.op.rem.format.incomplete": [
-    "ValueError: incomplete format"
+    "ValueError: stray % at position "
+  ],
+  "ext.op.rem.format.key.incomplete": [
+    "ValueError: stray % or incomplete format key at position "
+  ],
+  "ext.op.rem.format.unexpected": [
+    "ValueError: stray % at position ",
+    " or unexpected format character ",
+    " at position "
   ],
   "ext.op.rem.format.infinity": [
     "OverflowError: cannot convert float infinity to integer"
   ],
   "ext.op.rem.format.integer": [
-    "TypeError: %",
-    " format: an integer is required, not "
+    "TypeError: format argument",
+    ": %",
+    " requires an integer, not "
   ],
   "ext.op.rem.format.many": [
-    "TypeError: not all arguments converted during string formatting"
+    "TypeError: not all arguments converted during ",
+    " formatting (required ",
+    ", got ",
+    ")"
   ],
   "ext.op.rem.format.mapping": [
-    "TypeError: format requires a mapping"
+    "TypeError: format requires a mapping, not "
+  ],
+  "ext.op.rem.format.mapping.key": [
+    "ValueError: format requires a parenthesised mapping key at position "
+  ],
+  "ext.op.rem.format.mapping.star": [
+    "ValueError: * cannot be used with a parenthesised mapping key at position "
+  ],
+  "ext.op.rem.format.width.big": [
+    "ValueError: width too big at position "
+  ],
+  "ext.op.rem.format.precision.big": [
+    "ValueError: precision too big at position "
   ],
   "ext.op.rem.format.nan": [
     "ValueError: cannot convert float NaN to integer"
   ],
   "ext.op.rem.format.number": [
-    "TypeError: %",
-    " format: a real number is required, not "
+    "TypeError: format argument",
+    ": %",
+    " requires a real number, not "
   ],
   "ext.op.rem.format.real": [
-    "TypeError: must be real number, not "
+    "TypeError: format argument",
+    ": %",
+    " requires a real number, not "
   ],
   "ext.op.rem.format.star": [
-    "TypeError: * wants int"
+    "TypeError: format argument ",
+    ": * requires int, not "
+  ],
+  "ext.op.rem.format.star.big": [
+    "OverflowError: format argument ",
+    ": too big for "
   ],
   "ext.op.rem.format.unsupported": [
     "Unsupported string format"
@@ -2423,6 +2464,9 @@
   ],
   "ext.stmt.async.unrun": [
     "NotImplementedError: asynchronous functions cannot be run"
+  ],
+  "ext.stmt.async.stop": [
+    "StopAsyncIteration"
   ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
@@ -2499,6 +2543,7 @@
   "ext.stmt.class.detail.allocate": [
     "__new__"
   ],
+  "ext.stmt.class.detail.code.fields": ["co_name", "co_qualname", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_names", "co_consts", "co_flags", "co_filename", "co_firstlineno", "__annotate__"],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"
   ],
@@ -2584,6 +2629,9 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
+  "ext.builtin.inline_values": ["_has_inline_values"],
+  "ext.stmt.class.detail.flags": ["__flags__"],
+  "ext.stmt.class.detail.prepare": ["__prepare__"],
   "ext.stmt.class.detail.unready": [
     "NotImplementedError: this class operation is not supported"
   ],
@@ -2835,7 +2883,12 @@
     "__reduce__",
     "__setstate__",
     "__reduce_ex__",
-    "__getnewargs__"
+    "__getnewargs__",
+    "__aiter__",
+    "__anext__",
+    "__aenter__",
+    "__aexit__",
+    "__match_args__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
@@ -2934,6 +2987,9 @@
   "ext.stmt.import.from": [
     "from"
   ],
+  "ext.stmt.import.lazy": [
+    "lazy"
+  ],
   "ext.stmt.import.member.missing": [
     "ImportError: cannot import name '",
     "' from '",
@@ -2948,6 +3004,10 @@
   ],
   "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
+  "ext.stmt.legacy_call": [
+    "print",
+    "exec"
+  ],
   "ext.stmt.match": [
     "match"
   ],
@@ -3098,13 +3158,22 @@
     "throw"
   ],
   "ext.stmt.yield.throw.invalid": [
-    "TypeError: exceptions must be classes or instances deriving from BaseException, not "
+    "TypeError: exceptions must be classes or instances deriving from BaseException, not ",
+    "TypeError: instance exception may not have a separate value",
+    "TypeError: throw() third argument must be a traceback object",
+    "TypeError: calling exception class should have returned an instance of BaseException"
+  ],
+  "ext.stmt.yield.throw.warning": [
+    "warnings",
+    "warn_explicit",
+    "DeprecationWarning",
+    "the (type, exc, tb) signature of throw() is deprecated, use the single-arg signature instead."
   ],
   "ext.stmt.yield.unrun": [
     "Generators cannot be run"
   ],
   "ext.stmt.yield.unstarted": [
-    "TypeError: cannot send a non-None value to a just-started generator"
+    "TypeError: can't send non-None value to a just-started generator"
   ],
   "ext.stmt.yield.unsupported": [
     "NotImplementedError: suspension in this form is not supported"
@@ -3386,6 +3455,10 @@
   "ext.system.names.module": [
     "builtins"
   ],
+  "ext.system.syntax_warnings": [
+    "warnings",
+    "warn_explicit"
+  ],
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
@@ -3429,6 +3502,15 @@
   ],
   "ext.text.format.invalid": [
     "ValueError: Invalid format specifier"
+  ],
+  "ext.text.format.invalid.detail": [
+    "ValueError: Invalid format specifier '",
+    "' for object of type '",
+    "'"
+  ],
+  "ext.text.format.group.conflict": [
+    "ValueError: Cannot specify ",
+    "."
   ],
   "ext.text.format.key": [
     "KeyError: '",
@@ -3499,5 +3581,7 @@
     "ValueError: Negative zero coercion (z) not allowed in string format specifier"
   ],
   "ext.lexical.escape.named.amiss": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"],
-  "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "invalid escape sequence '\\{}'"]
+  "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "invalid escape sequence '\\{}'"],
+  "ext.builtin.iter.stop_value": ["stop_value"],
+  "ext.builtin.iter.stop_exception": ["stop_exception"]
 }

@@ -15,6 +15,7 @@ pub enum Shape {
     WovenEnd,
     Field,
     Unheld,
+    CharacterRow,
     EscapeNotice,
     Sign,
     LineEnd,
@@ -355,6 +356,207 @@ pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
 /// leading ones how many pieces there are and each of the rest
 /// carrying one. Nothing here refuses a number for what it names, so
 /// half of a pair is spelled as readily as anything else.
+/// A name a `\N{...}` escape may spell, and the codepoint it
+/// stands for: the Latin-1 quarter of the table the library's own
+/// `unicodedata` module already answers from. A name past it is
+/// past what either can answer.
+fn latin1_named(name: &str) -> Option<u32> {
+    match name {
+        "SPACE" => Some(0x20),
+        "EXCLAMATION MARK" => Some(0x21),
+        "QUOTATION MARK" => Some(0x22),
+        "NUMBER SIGN" => Some(0x23),
+        "DOLLAR SIGN" => Some(0x24),
+        "PERCENT SIGN" => Some(0x25),
+        "AMPERSAND" => Some(0x26),
+        "APOSTROPHE" => Some(0x27),
+        "LEFT PARENTHESIS" => Some(0x28),
+        "RIGHT PARENTHESIS" => Some(0x29),
+        "ASTERISK" => Some(0x2a),
+        "PLUS SIGN" => Some(0x2b),
+        "COMMA" => Some(0x2c),
+        "HYPHEN-MINUS" => Some(0x2d),
+        "FULL STOP" => Some(0x2e),
+        "SOLIDUS" => Some(0x2f),
+        "DIGIT ZERO" => Some(0x30),
+        "DIGIT ONE" => Some(0x31),
+        "DIGIT TWO" => Some(0x32),
+        "DIGIT THREE" => Some(0x33),
+        "DIGIT FOUR" => Some(0x34),
+        "DIGIT FIVE" => Some(0x35),
+        "DIGIT SIX" => Some(0x36),
+        "DIGIT SEVEN" => Some(0x37),
+        "DIGIT EIGHT" => Some(0x38),
+        "DIGIT NINE" => Some(0x39),
+        "COLON" => Some(0x3a),
+        "SEMICOLON" => Some(0x3b),
+        "LESS-THAN SIGN" => Some(0x3c),
+        "EQUALS SIGN" => Some(0x3d),
+        "GREATER-THAN SIGN" => Some(0x3e),
+        "QUESTION MARK" => Some(0x3f),
+        "COMMERCIAL AT" => Some(0x40),
+        "LATIN CAPITAL LETTER A" => Some(0x41),
+        "LATIN CAPITAL LETTER B" => Some(0x42),
+        "LATIN CAPITAL LETTER C" => Some(0x43),
+        "LATIN CAPITAL LETTER D" => Some(0x44),
+        "LATIN CAPITAL LETTER E" => Some(0x45),
+        "LATIN CAPITAL LETTER F" => Some(0x46),
+        "LATIN CAPITAL LETTER G" => Some(0x47),
+        "LATIN CAPITAL LETTER H" => Some(0x48),
+        "LATIN CAPITAL LETTER I" => Some(0x49),
+        "LATIN CAPITAL LETTER J" => Some(0x4a),
+        "LATIN CAPITAL LETTER K" => Some(0x4b),
+        "LATIN CAPITAL LETTER L" => Some(0x4c),
+        "LATIN CAPITAL LETTER M" => Some(0x4d),
+        "LATIN CAPITAL LETTER N" => Some(0x4e),
+        "LATIN CAPITAL LETTER O" => Some(0x4f),
+        "LATIN CAPITAL LETTER P" => Some(0x50),
+        "LATIN CAPITAL LETTER Q" => Some(0x51),
+        "LATIN CAPITAL LETTER R" => Some(0x52),
+        "LATIN CAPITAL LETTER S" => Some(0x53),
+        "LATIN CAPITAL LETTER T" => Some(0x54),
+        "LATIN CAPITAL LETTER U" => Some(0x55),
+        "LATIN CAPITAL LETTER V" => Some(0x56),
+        "LATIN CAPITAL LETTER W" => Some(0x57),
+        "LATIN CAPITAL LETTER X" => Some(0x58),
+        "LATIN CAPITAL LETTER Y" => Some(0x59),
+        "LATIN CAPITAL LETTER Z" => Some(0x5a),
+        "LEFT SQUARE BRACKET" => Some(0x5b),
+        "REVERSE SOLIDUS" => Some(0x5c),
+        "RIGHT SQUARE BRACKET" => Some(0x5d),
+        "CIRCUMFLEX ACCENT" => Some(0x5e),
+        "LOW LINE" => Some(0x5f),
+        "GRAVE ACCENT" => Some(0x60),
+        "LATIN SMALL LETTER A" => Some(0x61),
+        "LATIN SMALL LETTER B" => Some(0x62),
+        "LATIN SMALL LETTER C" => Some(0x63),
+        "LATIN SMALL LETTER D" => Some(0x64),
+        "LATIN SMALL LETTER E" => Some(0x65),
+        "LATIN SMALL LETTER F" => Some(0x66),
+        "LATIN SMALL LETTER G" => Some(0x67),
+        "LATIN SMALL LETTER H" => Some(0x68),
+        "LATIN SMALL LETTER I" => Some(0x69),
+        "LATIN SMALL LETTER J" => Some(0x6a),
+        "LATIN SMALL LETTER K" => Some(0x6b),
+        "LATIN SMALL LETTER L" => Some(0x6c),
+        "LATIN SMALL LETTER M" => Some(0x6d),
+        "LATIN SMALL LETTER N" => Some(0x6e),
+        "LATIN SMALL LETTER O" => Some(0x6f),
+        "LATIN SMALL LETTER P" => Some(0x70),
+        "LATIN SMALL LETTER Q" => Some(0x71),
+        "LATIN SMALL LETTER R" => Some(0x72),
+        "LATIN SMALL LETTER S" => Some(0x73),
+        "LATIN SMALL LETTER T" => Some(0x74),
+        "LATIN SMALL LETTER U" => Some(0x75),
+        "LATIN SMALL LETTER V" => Some(0x76),
+        "LATIN SMALL LETTER W" => Some(0x77),
+        "LATIN SMALL LETTER X" => Some(0x78),
+        "LATIN SMALL LETTER Y" => Some(0x79),
+        "LATIN SMALL LETTER Z" => Some(0x7a),
+        "LEFT CURLY BRACKET" => Some(0x7b),
+        "VERTICAL LINE" => Some(0x7c),
+        "RIGHT CURLY BRACKET" => Some(0x7d),
+        "TILDE" => Some(0x7e),
+        "NO-BREAK SPACE" => Some(0xa0),
+        "INVERTED EXCLAMATION MARK" => Some(0xa1),
+        "CENT SIGN" => Some(0xa2),
+        "POUND SIGN" => Some(0xa3),
+        "CURRENCY SIGN" => Some(0xa4),
+        "YEN SIGN" => Some(0xa5),
+        "BROKEN BAR" => Some(0xa6),
+        "SECTION SIGN" => Some(0xa7),
+        "DIAERESIS" => Some(0xa8),
+        "COPYRIGHT SIGN" => Some(0xa9),
+        "FEMININE ORDINAL INDICATOR" => Some(0xaa),
+        "LEFT-POINTING DOUBLE ANGLE QUOTATION MARK" => Some(0xab),
+        "NOT SIGN" => Some(0xac),
+        "SOFT HYPHEN" => Some(0xad),
+        "REGISTERED SIGN" => Some(0xae),
+        "MACRON" => Some(0xaf),
+        "DEGREE SIGN" => Some(0xb0),
+        "PLUS-MINUS SIGN" => Some(0xb1),
+        "SUPERSCRIPT TWO" => Some(0xb2),
+        "SUPERSCRIPT THREE" => Some(0xb3),
+        "ACUTE ACCENT" => Some(0xb4),
+        "MICRO SIGN" => Some(0xb5),
+        "PILCROW SIGN" => Some(0xb6),
+        "MIDDLE DOT" => Some(0xb7),
+        "CEDILLA" => Some(0xb8),
+        "SUPERSCRIPT ONE" => Some(0xb9),
+        "MASCULINE ORDINAL INDICATOR" => Some(0xba),
+        "RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK" => Some(0xbb),
+        "VULGAR FRACTION ONE QUARTER" => Some(0xbc),
+        "VULGAR FRACTION ONE HALF" => Some(0xbd),
+        "VULGAR FRACTION THREE QUARTERS" => Some(0xbe),
+        "INVERTED QUESTION MARK" => Some(0xbf),
+        "LATIN CAPITAL LETTER A WITH GRAVE" => Some(0xc0),
+        "LATIN CAPITAL LETTER A WITH ACUTE" => Some(0xc1),
+        "LATIN CAPITAL LETTER A WITH CIRCUMFLEX" => Some(0xc2),
+        "LATIN CAPITAL LETTER A WITH TILDE" => Some(0xc3),
+        "LATIN CAPITAL LETTER A WITH DIAERESIS" => Some(0xc4),
+        "LATIN CAPITAL LETTER A WITH RING ABOVE" => Some(0xc5),
+        "LATIN CAPITAL LETTER AE" => Some(0xc6),
+        "LATIN CAPITAL LETTER C WITH CEDILLA" => Some(0xc7),
+        "LATIN CAPITAL LETTER E WITH GRAVE" => Some(0xc8),
+        "LATIN CAPITAL LETTER E WITH ACUTE" => Some(0xc9),
+        "LATIN CAPITAL LETTER E WITH CIRCUMFLEX" => Some(0xca),
+        "LATIN CAPITAL LETTER E WITH DIAERESIS" => Some(0xcb),
+        "LATIN CAPITAL LETTER I WITH GRAVE" => Some(0xcc),
+        "LATIN CAPITAL LETTER I WITH ACUTE" => Some(0xcd),
+        "LATIN CAPITAL LETTER I WITH CIRCUMFLEX" => Some(0xce),
+        "LATIN CAPITAL LETTER I WITH DIAERESIS" => Some(0xcf),
+        "LATIN CAPITAL LETTER ETH" => Some(0xd0),
+        "LATIN CAPITAL LETTER N WITH TILDE" => Some(0xd1),
+        "LATIN CAPITAL LETTER O WITH GRAVE" => Some(0xd2),
+        "LATIN CAPITAL LETTER O WITH ACUTE" => Some(0xd3),
+        "LATIN CAPITAL LETTER O WITH CIRCUMFLEX" => Some(0xd4),
+        "LATIN CAPITAL LETTER O WITH TILDE" => Some(0xd5),
+        "LATIN CAPITAL LETTER O WITH DIAERESIS" => Some(0xd6),
+        "MULTIPLICATION SIGN" => Some(0xd7),
+        "LATIN CAPITAL LETTER O WITH STROKE" => Some(0xd8),
+        "LATIN CAPITAL LETTER U WITH GRAVE" => Some(0xd9),
+        "LATIN CAPITAL LETTER U WITH ACUTE" => Some(0xda),
+        "LATIN CAPITAL LETTER U WITH CIRCUMFLEX" => Some(0xdb),
+        "LATIN CAPITAL LETTER U WITH DIAERESIS" => Some(0xdc),
+        "LATIN CAPITAL LETTER Y WITH ACUTE" => Some(0xdd),
+        "LATIN CAPITAL LETTER THORN" => Some(0xde),
+        "LATIN SMALL LETTER SHARP S" => Some(0xdf),
+        "LATIN SMALL LETTER A WITH GRAVE" => Some(0xe0),
+        "LATIN SMALL LETTER A WITH ACUTE" => Some(0xe1),
+        "LATIN SMALL LETTER A WITH CIRCUMFLEX" => Some(0xe2),
+        "LATIN SMALL LETTER A WITH TILDE" => Some(0xe3),
+        "LATIN SMALL LETTER A WITH DIAERESIS" => Some(0xe4),
+        "LATIN SMALL LETTER A WITH RING ABOVE" => Some(0xe5),
+        "LATIN SMALL LETTER AE" => Some(0xe6),
+        "LATIN SMALL LETTER C WITH CEDILLA" => Some(0xe7),
+        "LATIN SMALL LETTER E WITH GRAVE" => Some(0xe8),
+        "LATIN SMALL LETTER E WITH ACUTE" => Some(0xe9),
+        "LATIN SMALL LETTER E WITH CIRCUMFLEX" => Some(0xea),
+        "LATIN SMALL LETTER E WITH DIAERESIS" => Some(0xeb),
+        "LATIN SMALL LETTER I WITH GRAVE" => Some(0xec),
+        "LATIN SMALL LETTER I WITH ACUTE" => Some(0xed),
+        "LATIN SMALL LETTER I WITH CIRCUMFLEX" => Some(0xee),
+        "LATIN SMALL LETTER I WITH DIAERESIS" => Some(0xef),
+        "LATIN SMALL LETTER ETH" => Some(0xf0),
+        "LATIN SMALL LETTER N WITH TILDE" => Some(0xf1),
+        "LATIN SMALL LETTER O WITH GRAVE" => Some(0xf2),
+        "LATIN SMALL LETTER O WITH ACUTE" => Some(0xf3),
+        "LATIN SMALL LETTER O WITH CIRCUMFLEX" => Some(0xf4),
+        "LATIN SMALL LETTER O WITH TILDE" => Some(0xf5),
+        "LATIN SMALL LETTER O WITH DIAERESIS" => Some(0xf6),
+        "DIVISION SIGN" => Some(0xf7),
+        "LATIN SMALL LETTER O WITH STROKE" => Some(0xf8),
+        "LATIN SMALL LETTER U WITH GRAVE" => Some(0xf9),
+        "LATIN SMALL LETTER U WITH ACUTE" => Some(0xfa),
+        "LATIN SMALL LETTER U WITH CIRCUMFLEX" => Some(0xfb),
+        "LATIN SMALL LETTER U WITH DIAERESIS" => Some(0xfc),
+        "LATIN SMALL LETTER Y WITH ACUTE" => Some(0xfd),
+        "LATIN SMALL LETTER THORN" => Some(0xfe),
+        "LATIN SMALL LETTER Y WITH DIAERESIS" => Some(0xff),
+        _ => None,
+    }
+}
+
 fn numbered_bytes(number: u32) -> Vec<u8> {
     let pieces = match number {
         n if n < 0x80 => return vec![n as u8],
@@ -620,6 +822,7 @@ struct Quotation<'a> {
     table: &'a Table,
     row: u32,
     made: Vec<Token>,
+    substitutes: std::collections::BTreeMap<usize, u32>,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -649,10 +852,13 @@ impl Quotation<'_> {
         self.made.push(Token { end_row: 0, end_column: 0, column: 1, row: self.row, shape: kind, lexeme: text, span: 0 });
     }
     fn flush(&mut self, text: &mut String, missing: &mut bool) {
-        let kind = if *missing { Shape::Unheld } else { Shape::Quote };
+        let kind = if *missing { Shape::Unheld } else if self.substitutes.is_empty() { Shape::Quote } else { Shape::CharacterRow };
         let value = if *missing {
             self.table.single("ext.lexical.escape.unavailable").unwrap_or("Unicode escape cannot be represented").to_owned()
+        } else if kind == Shape::CharacterRow {
+            text.char_indices().map(|(position, ch)| self.substitutes.get(&position).copied().unwrap_or(ch as u32).to_string()).collect::<Vec<_>>().join(" ")
         } else { std::mem::take(text) };
+        self.substitutes.clear();
         self.token(kind, value);
         text.clear();
         *missing = false;
@@ -754,8 +960,12 @@ impl Quotation<'_> {
                     self.forward(1);
                 }
                 if self.here() == Some('}') && self.next != begin + 3 {
+                    let name: String = self.source[begin + 3..self.next].iter().collect();
                     self.forward(1);
-                    *missing = true;
+                    match latin1_named(&name).or_else(|| match name.as_str() { "EM SPACE" => Some(0x2003), "EN SPACE" => Some(0x2002), _ => None }) {
+                        Some(found) => text.push(char::from_u32(found).expect("a named character is always one char")),
+                        None => *missing = true,
+                    }
                     return Ok(());
                 }
             }
@@ -777,7 +987,8 @@ impl Quotation<'_> {
                 value = value.checked_mul(16).and_then(|n| n.checked_add(digit)).ok_or_else(|| beyond.to_owned())?;
             }
             if value > 0x10ffff { return Err(beyond.to_owned()); }
-            if let Some(ch) = char::from_u32(value) { text.push(ch); } else { *missing = true; }
+            if let Some(ch) = char::from_u32(value) { text.push(ch); }
+            else { self.substitutes.insert(text.len(), value); text.push('?'); }
             self.forward(count + 2);
             return Ok(());
         }
@@ -1100,7 +1311,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 continue;
             }
             if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
-                let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new() };
+                let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
                 if let Err(mut words) = quote.literal(body, &end, raw, fields, 0) {
                     if !fields && table.has_any("ext.builtin.exceptions.syntax") && words.starts_with("SyntaxError: unterminated ") {
                         let mut detected = quote.row;
@@ -1430,6 +1641,22 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             joined.push(token);
         }
         tokens = joined;
+    }
+    // Brackets may stand open two hundred deep and no deeper, as the
+    // reference's reader has it; the one past that is refused, for a
+    // table with syntax words of its own.
+    if table.has_any("ext.builtin.exceptions.syntax") {
+        let mut standing = 0usize;
+        for item in tokens.iter().filter(|item| item.shape == Shape::Sign) {
+            let text = item.lexeme.as_str();
+            if [")", "]", "}"].contains(&text) { standing = standing.saturating_sub(1); continue; }
+            if !["(", "[", "{"].contains(&text) { continue; }
+            standing += 1;
+            if standing > 200 {
+                *ended = (item.row, item.column);
+                return Err("SyntaxError: too many nested parentheses".to_owned());
+            }
+        }
     }
     column.set(at_column(src.len()));
     tokens.push(tok(Shape::Finish, "EOF".into(), row));

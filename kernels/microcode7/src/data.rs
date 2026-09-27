@@ -161,6 +161,10 @@ pub struct IteratorState {
     pub walks: Option<Rc<str>>,
 }
 
+/// The hidden entry under which a blueprint keeps the routines answering
+/// its annotations until they are asked for; no program spells it.
+pub const ANNOTATE_WORD: &str = "\0annotate";
+
 #[derive(Clone)]
 pub enum IteratorKind {
     Stored { entries: Rc<Vec<Value>>, next: usize },
@@ -179,7 +183,7 @@ pub enum IteratorKind {
     /// `__reversed__` of its own.
     PlacedBack(Value, BigInt),
     /// A callable summoned for each member until it answers the sentinel.
-    Summoned { work: Value, stop: Value },
+    Summoned { work: Value, stop: Value, stop_exception: Option<Value> },
     /// A thing of the program's own, asked for each member the way a
     /// loop asks it.
     Handed(Value),
@@ -716,7 +720,7 @@ impl Value {
             Value::Thing(thing) => match self.arguments_held() {
                 Some(row) => {
                     let mut shown: Vec<String> = row.iter().map(|x| x.representation(words)).collect();
-                    if thing.of.every_field().iter().any(|(k, _)| k == "\0import-fault") {
+                    if thing.blueprint().every_field().iter().any(|(k, _)| k == "\0import-fault") {
                         for key in ["name", "path", "name_from"] {
                             let value = thing.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
                             match value {
@@ -725,7 +729,7 @@ impl Value {
                             }
                         }
                     }
-                    format!("{}({})", thing.of.name, shown.join(", "))
+                    format!("{}({})", thing.blueprint().name, shown.join(", "))
                 },
                 None => self.render(words),
             },
@@ -747,7 +751,7 @@ impl Value {
 
     fn arguments_held(&self) -> Option<Vec<Value>> {
         if let Value::Thing(thing) = self {
-            if thing.of.every_field().iter().any(|(key, _)| key == "\0fault-kind") {
+            if thing.blueprint().every_field().iter().any(|(key, _)| key == "\0fault-kind") {
                 let holds = thing.holds.borrow();
                 return Some(match holds.iter().find(|(key, _)| key == "\0raised-values") {
                     Some((_, Value::Arguments(row))) => row.to_vec(),
@@ -774,7 +778,7 @@ impl Value {
     /// their wording belong to Python alone, and are reached only
     /// through the markers Python's own roster puts on its kinds.
     fn unicode_fault_text(thing: &Rc<Thing>, words: Names) -> Option<String> {
-        let marker = thing.of.every_field().iter().find_map(|(k, _)| match k.as_str() {
+        let marker = thing.blueprint().every_field().iter().find_map(|(k, _)| match k.as_str() {
             "\0unicode-encode" => Some(0u8), "\0unicode-decode" => Some(1u8),
             "\0unicode-translate" => Some(2u8), _ => None,
         })?;
@@ -830,7 +834,7 @@ impl Value {
         if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }
         Some(if row.is_empty() { String::new() }
             else if row.len() > 1 { Self::argument_text(&row, words) }
-            else if thing.of.every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
+            else if thing.blueprint().every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
             else { row[0].render(words) })
     }
 
@@ -847,6 +851,16 @@ impl Value {
             Value::Text(word) => Some(word.chars().map(|c| c as u32).collect()),
             _ => None,
         }
+    }
+
+    /// A stand-in text for a row of numbers a category question walks
+    /// one at a time: a stow that reading left behind answers none of
+    /// them, exactly as the half of a surrogate pair it stands for
+    /// answers none of Python's own, so the stand-in below is a real
+    /// character no category claims, standing in for one no `char` can
+    /// hold at all.
+    pub fn category_text(numbers: &[u32]) -> String {
+        numbers.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect()
     }
 
     pub fn characters(numbers: Vec<u32>) -> Value {
@@ -866,7 +880,7 @@ impl Value {
             92 => String::from("\\\\"),
             n if n == delimiter as u32 => format!("\\{delimiter}"),
             n => match char::from_u32(n) {
-                Some(c) if !c.is_control() => c.to_string(),
+                Some(c) if crate::unicode::property(c, 1) => c.to_string(),
                 _ => Self::unicode_escaped(n),
             },
         }).collect::<String>();
@@ -950,6 +964,12 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        for (candidate, text) in [(self, other), (other, self)] {
+            if let (Value::Thing(object), Value::Text(word)) = (candidate, text) {
+                let slots = object.holds.borrow();
+                if let Some((_, Value::Text(under))) = slots.iter().find(|entry| entry.0 == "\0underlying") { return under == word; }
+            }
+        }
         // Most askings are of two small numbers, two great ones, or two
         // pieces of text, and all three can be settled here and now.
         // Left to the ratios below, a pair of small numbers would have
@@ -1151,7 +1171,7 @@ impl Value {
             // table asks the shortest spelling, and in the library's own
             // spelling elsewhere.
             Value::Frac(e) if e.float_style && !w.brief_reals => {
-                let number = if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
+                let number = if !e.beneath.is_zero() && e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
                 format!("{number:?}").to_lowercase()
             }
             Value::Frac(e) if w.brief_reals && e.places.is_some() => decimal_roundtrip(if e.under && e.above.is_zero() && !e.past_numbers() { -0.0 } else { nearest_binary(&e.above, &e.beneath) }),
@@ -1326,11 +1346,18 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
-            Value::Generator(_) => "<generator>".into(),
+            Value::Generator(generator) => {
+                if let Ok(state) = generator.try_borrow() {
+                    if !state.titles[1].is_empty() {
+                        return format!("<generator object {} at 0x1>", state.titles[1]);
+                    }
+                }
+                "<generator>".into()
+            },
             Value::Adorned(_) => String::from("<descriptor>"),
             Value::Backtrace(_) => String::from("<traceback object>"),
             Value::Keyed(value, _) => value.bare(),
-            Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
+            Value::Attributes(t) => format!("<attributes of {}>", t.blueprint().name),
             Value::Refusal(word) => word.to_string(),
             Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
             Value::Routine(p) | Value::Bound(p, _) => {
@@ -1358,7 +1385,7 @@ impl Value {
                 let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
-            Value::Thing(t) => format!("<object {}>", t.of.name),
+            Value::Thing(t) => format!("<object {}>", t.blueprint().name),
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(|bound| bound.quoted(false)).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
@@ -1599,8 +1626,15 @@ pub fn holder_of(filed: &str) -> (&str, Option<&str>) {
 /// One thing: the class it was made from and what it holds. Naming a
 /// thing twice names one thing, so a write through either name shows in
 /// both.
+impl Thing {
+    pub fn blueprint(&self) -> Rc<Blueprint> {
+        self.reclassified.borrow().clone().unwrap_or_else(|| self.of.clone())
+    }
+}
+
 #[derive(Debug)]
 pub struct Thing {
+    pub reclassified: RefCell<Option<Rc<Blueprint>>>,
     pub of: Rc<Blueprint>,
     pub holds: RefCell<Vec<(String, Value)>>,
     /// Which thing this is by the turn it was made in, counting from
@@ -1723,7 +1757,7 @@ pub fn past_the_numbers(x: f64, figures: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Frac(Rc::new(Ratio { float_style: false, above, beneath: BigInt::zero(), places: Some(figures), under: false, pointed: false }))
+    Value::Frac(Rc::new(Ratio { float_style: false, above, beneath: BigInt::zero(), places: Some(figures), under: x.is_sign_negative(), pointed: false }))
 }
 
 /// What a binary real is worth, held as a ratio: so many halves,
@@ -1764,7 +1798,7 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize, brief: boo
         return match &v {
             Value::Frac(r) if r.places.is_some() => {
                 let mut worth = rounded_binary(&r.above, &r.beneath);
-                if r.under && worth == 0.0 { worth = -0.0; }
+                if r.under && (worth == 0.0 || worth.is_nan()) { worth = -worth; }
                 worth_of_binary(worth, figures).keeping_point(r.pointed)
             }
             _ => v,

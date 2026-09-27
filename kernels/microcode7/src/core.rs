@@ -20,7 +20,7 @@ impl Value {
     pub fn kind_word(&self) -> String {
         let word = match self {
             Self::Complex(_) => "complex",
-            Self::Thing(thing) => return thing.of.name.to_owned(),
+            Self::Thing(thing) => return thing.blueprint().name.to_owned(),
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().kind_word(),
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Dict(_) => "dict",
             Self::Set(_) => if self.set_sealed() { "frozenset" } else { "set" },
@@ -58,6 +58,7 @@ impl Value {
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
             Self::Wrapped(35, _) => "cell",
+            Self::Wrapped(7, _) => "code",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
@@ -114,7 +115,7 @@ impl Value {
             }
             Self::Shared(cell) | Self::Mutable(cell, _) => cell.borrow().quoted(brief),
             Self::Frac(r) if r.places.is_some() => {
-                if r.under && r.above == BigInt::from(0) { return String::from("-0.0"); }
+                if r.beneath != BigInt::from(0) && r.under && r.above == BigInt::from(0) { return String::from("-0.0"); }
                 let f = crate::data::nearest_binary(&r.above, &r.beneath);
                 if brief { return crate::data::decimal_roundtrip(f); }
                 match f { f if f.is_nan() => "nan".to_owned(), f if f.is_infinite() => if f.is_sign_negative() { "-inf" } else { "inf" }.to_owned(), f => format!("{f:?}") }

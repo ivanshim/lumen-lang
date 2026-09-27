@@ -33,7 +33,7 @@ pub fn made_number(above: BigInt, beneath: BigInt, places: Option<usize>, under:
     // its sign alone, so that two got by different roads are one worth.
     if beneath.is_zero() {
         let places = places.or(Some(DEFAULT_PLACES));
-        return Value::Frac(Rc::new(Ratio { float_style: false, above: above.signum(), beneath, places, under: false, pointed: false }));
+        return Value::Frac(Rc::new(Ratio { float_style: false, above: above.signum(), beneath, places, under, pointed: false }));
     }
     if above.is_zero() {
         return match places {
@@ -269,6 +269,7 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
             x if x.is_infinite() => f64::INFINITY,
             x => { let size = x.abs(); if size == f64::MAX { size - f64::from_bits(size.to_bits() - 1) } else { f64::from_bits(size.to_bits() + 1) - size } }
         },
+        "copysign" => one.copysign(two),
         "sqrt" => one.sqrt(),
         "exp" => one.exp(),
         "expm1" => one.exp_m1(),
@@ -345,7 +346,7 @@ fn scaled_by_twos(mut real: f64, mut power: i64) -> f64 {
 
 pub fn worked_takes(named: &str) -> usize {
     match named {
-        "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+        "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
         "fma" => 3,
         _ => 1,
     }
@@ -391,7 +392,7 @@ pub fn binary_work(op: Calc, first: &Value, second: &Value) -> Option<Result<Val
         return Some(divide_integers(&a.above, &b.above));
     }
     if a.places.or(b.places).is_none() { return None; }
-    let read = |r: &Ratio| if r.under && r.above.is_zero() { -0.0 }
+    let read = |r: &Ratio| if r.under && r.above.is_zero() { if r.beneath.is_zero() { -f64::NAN } else { -0.0 } }
         else { crate::data::nearest_binary(&r.above, &r.beneath) };
     let one = read(&a);
     let two = read(&b);

@@ -3,15 +3,9 @@
 # here; the rest refuse at the bottom of the file.
 
 def has_inline_values(obj):
-    # CPython asks whether a thing keeps its attributes in an array laid
-    # out inside the object itself, with the dictionary made only when
-    # something asks for one. No object of this runtime does: an
-    # instance keeps its attributes in the very dictionary `__dict__`
-    # hands out, and writing into that dictionary is writing the
-    # attribute. So the true answer here is no, for anything, and a test
-    # that looks for the inline layout fails because the layout is not
-    # here rather than because the probe is missing.
-    return False
+    # The kernel tracks the compact layout until dictionary replacement,
+    # deletion, or growth beyond its available attribute places.
+    return _has_inline_values(obj)
 
 
 class SelfInterruptingContextManager:

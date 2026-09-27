@@ -103,10 +103,9 @@ pub fn answered(value: &Value, operation: &str) -> bool {
         "is_integer", "__index__", "__truediv__"];
     const FRACTION: &[&str] = &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"];
     let names: &[&str] = match value.contents() {
-        Value::Text(_) => TEXT,
+        Value::Text(_) | Value::Codepoints(_) => TEXT,
         Value::Array(_) => ROW,
-        Value::Map(_) => PAIRS,
-        Value::Fields(_) => &["clear"],
+        Value::Map(_) | Value::Fields(_) => PAIRS,
         Value::Tuple(_) | Value::Counted(_) => PLACES,
         Value::Small(_) | Value::Huge(_) | Value::Flag(_) => WHOLE,
         Value::Real(_) | Value::Frac(_) => FRACTION,
@@ -146,6 +145,24 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
     }
     match &held {
         // A real read from its hexadecimal spelling, as float.fromhex reads it.
+        // A held surrogate answers the six category questions from a
+        // stand-in text built for exactly this reading; every other
+        // text working still refuses it, so nothing it stands for ever
+        // reaches the outside through a working that would spell it.
+        Value::Codepoints(row) if matches!(op, "isdigit" | "isalpha" | "isalnum" | "isspace" | "islower" | "isupper") => {
+            arity(0, 0)?;
+            let s = Value::predicate_text(row);
+            let space = |c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c);
+            let valid = !s.is_empty() && match op {
+                "isdigit" => s.chars().all(|c| crate::unicode::bits(c) & 1024 != 0),
+                "isalpha" => s.chars().all(|c| crate::unicode::bits(c) & 2048 != 0),
+                "isalnum" => s.chars().all(|c| crate::unicode::bits(c) & (2048|2|512|1024) != 0),
+                "isspace" => s.chars().all(space),
+                "islower" => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&128!=0 } else { true } }) && seen }
+                _ => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&64!=0 } else { true } }) && seen }
+            };
+            return Ok(Value::Flag(valid));
+        }
         Value::Text(s) if op=="fromhex" => {
             arity(0,0)?;
             let number=hex_real(&s).ok_or_else(||fault("hex"))?;

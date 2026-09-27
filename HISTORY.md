@@ -1953,3 +1953,29 @@ Merged, the fifty files count 2130 on stack8 and 2142 on microcode7, up
 from 2061 and 2074, with no passing test lost; scratch/reader-tail/4 moved
 to test_set's 633-passing line. The Lambda count now splits test_math and
 test_str by class too, as test_set.
+
+### 1ag. Batch 20e merged as #512; batch 20f: ten branches integrated in one pass
+
+Pull request #512 merged into main. Ten finished branches, each merged
+with batch 20d on its own and checked there, conflicted with one another;
+rather than another round of pairwise merges, one integrating worker
+merged them into batch 20f one at a time, resolving each conflict (label
+rosters taken as unions, scratch records regenerated only where both
+kernels agreed and no pass of either parent was lost) and checking the
+whole once on Lambda. None had to be left out.
+
+fix/str-methods: the str methods stack8 lacked and CPython's argument
+checks and wording (test_str 91 to 120). fix/class-forms: the class forms
+and operations the kernels still refused, and type's own members
+(test_class 22 to 38, test_with +15 with the others). fix/grammar:
+statement ends, the old print and exec forms, async for/with, match
+patterns, syntax warnings and class annotations (test_grammar 48 to 57,
+test_print 3 to 9, test_global +2, test_opcodes +1). fix/format: printf
+and format-spec formatting (test_format 6 to 15). fix/string-escapes,
+fix/iter-int, fix/generator-doctests, fix/name-shadowing,
+fix/code-objects (functions' __code__ and __annotations__) and
+fix/math-rest (test_math 72 to 79) complete it; test_fstring 67 to 73,
+test_iter 53 to 59, test_generators 34 to 39, test_builtin 64 to 70.
+
+Merged, the fifty files count 2262 on stack8 and 2260 on microcode7, up
+from 2130 and 2142, with no passing test lost.

@@ -873,10 +873,14 @@ only. The extension labels so far, all from PHP:
   it raised and in its last part, the watch being kept with the suspended
   body and set up again when it goes on. `ext.stmt.yield.throw.invalid` opens the
   refusal of a thing raised into a suspension that is no exception at
-  all, and the kind of that thing closes it. `ext.stmt.yield.exit` names the
+  all, and the kind of that thing closes it. Its remaining entries reject a
+  separate value with an exception instance, an invalid traceback, and an
+  exception constructor returning something other than an exception. `ext.stmt.yield.exit` names the
   class raised at the suspension when the walk is ended, and
   `ext.stmt.yield.close.ignored` the complaint for a body that takes that
   class and hands out another value.
+  `ext.stmt.yield.throw.warning` supplies the warning module, callable, category
+  and message used by the deprecated multi-argument throw signature.
   `ext.builtin.next`, `ext.builtin.iter` and `ext.builtin.tuple` name the
   calls that ask for one item (with an optional answer at the end), make
   a walk, and gather its items into a tuple.
@@ -1589,7 +1593,8 @@ only. The extension labels so far, all from PHP:
   without the language's title before it.
 - `ext.stmt.class.special.declined` names the single value with which a
   method declines an operation, leaving the other operand to answer.
-  `ext.stmt.class.special.stop` names the fault which ends a walk.
+  `ext.stmt.class.special.stop` names the fault which ends a walk, and
+  `ext.stmt.async.stop` the fault which ends an asynchronous walk.
   `ext.stmt.class.special.unready` gives the words for a special operation
   whose meaning the run cannot yet honour. A fault handed to a with
   exit carries an opaque traceback; looking within it stops with these
@@ -1656,15 +1661,30 @@ only. The extension labels so far, all from PHP:
   names. `ext.stmt.match.as` binds the whole value after a pattern fits.
   `ext.stmt.match.guard` begins the condition asked after those bindings
   are made. A failed pattern writes no bindings.
-- `ext.stmt.match.unready` gives the words said on reaching a mapping,
-  class or named-value pattern whose running is not yet furnished.
-  Such patterns are read whole. A tuple subject may be taken apart, but
-  keeping that tuple whole says these words too: the kernels have no
-  tuple value to hand over, and must not hand over a mutable array in
-  its stead. `ext.stmt.match.invalid` gives the words
+- `ext.stmt.match.unready` gives the words said when a pattern would
+  keep a tuple subject whole: the kernels have no tuple value to hand
+  over, and must not hand over a mutable array in its stead. Mapping,
+  class and value patterns are fitted at the run. A dotted name, or the
+  class before a class pattern's brackets, is worked out ahead of the
+  subject and handed to the fitting by its place; a value pattern fits
+  what equals it. A mapping pattern looks each key up in a map subject
+  and fits the entry found, and a doubly starred name keeps the pairs
+  left over as a map. A class pattern asks whether the subject is an
+  instance of the class, then fits each keyword's sub-pattern to the
+  member so named, and each positional sub-pattern to the member the
+  class's `__match_args__` (the last word of `ext.stmt.class.special`)
+  names in its place -- or, for a builtin kind, to the subject itself.
+  A member the subject lacks fails the pattern. `ext.stmt.match.invalid` gives the words
   for a pattern written amiss, including repeated bindings and alternatives
   which do not bind the same names. Both labels take lists of words,
   whose first entry is the whole complaint.
+- `ext.stmt.legacy_call` names the words (`print`, `exec`) that were once
+  statements of their own. A statement that is one of these words alone,
+  with an expression after it on the same line, is refused with the
+  reference's words for the old form; any other statement that runs on
+  past its end, without a line end or separator, is refused as invalid
+  syntax. A language without the label lets its statements stand as
+  they are read.
 - `ext.op.bit.left` and `ext.op.bit.right` are also spelled by the
   indented definition, with the existing whole-number shift operations.
   Its `ext.lexical.number.separator` admits underscores between digits.
@@ -1802,8 +1822,21 @@ only. The extension labels so far, all from PHP:
   and targets followed by a body; `ext.stmt.with.unrun` stops the run before
   an item or body is worked out, since context entry and exit are wanting.
 - `ext.stmt.async`: the block reader's word before an asynchronous
-  declaration. Here only a function follows it; the whole function is
-  read, then `ext.stmt.async.unrun` refuses the declaration when reached.
+  declaration, loop or context block. A function so marked is read and
+  run as any function is, in a class body as elsewhere. A loop so marked
+  asks its subject for its asynchronous walk and steps it by that
+  walk's own word for the next member, ending on `ext.stmt.async.stop`;
+  a context block so marked is entered and left by the asynchronous
+  words. The four words stand at places 79 to 82 of
+  `ext.stmt.class.special` (`__aiter__`, `__anext__`, `__aenter__`,
+  `__aexit__`), before `__match_args__` at place 83. Either marked form
+  outside a function so marked is refused as the reference refuses it
+  ("'async for' outside async function"); a subject without the
+  asynchronous walk word is refused with the reference's TypeError. A
+  value refused as a manager, by either form, is told the protocol and
+  the method it misses in the reference's words
+  (`ext.stmt.with.invalid` followed by "(missed __exit__ method)"), and
+  one keeping the other protocol whole is told which statement was meant.
 - `ext.stmt.loop.else`: the block reader's switch for a last arm after a
   loop. Exhaustion reaches it; a break passes over it. A continue leaves
   the last arm still to be reached when the loop is done.
@@ -3379,7 +3412,10 @@ only. The extension labels so far, all from PHP:
   as such a language leaves it.
 - `ext.stmt.import`, `ext.stmt.import.from` and `ext.stmt.import.as`:
   lists of words for asking for modules, asking for names within a
-  module, and giving a wanted name another name here. A module path
+  module, and giving a wanted name another name here.
+  `ext.stmt.import.lazy` names the word that may stand before either
+  asking (`lazy import os`, `lazy from sys import path`); the asking is
+  read as it would be without the word, and answered at once. A module path
   is a name with dots in it, using the pipe spelling as its divider,
   never a pipe expression. A plain import binds the first word of
   each path, or its alias; a from-import binds each wanted name, or
@@ -3473,6 +3509,18 @@ only. The extension labels so far, all from PHP:
 - `ext.system.module.name`: a list of names bound to the text
   `"__main__"` before the file runs. These are ordinary bindings and
   may be written anew by the program.
+- `ext.system.syntax_warnings`: the module and the function in it that
+  the reference says its syntax warnings through, for a text compiled
+  while the program runs. The readers note three such warnings while
+  reading a statement -- an assertion of a parenthesised tuple
+  ("assertion is always true, perhaps remove parentheses?"), an identity
+  test against a literal ("is" with 'int' literal. Did you mean "=="?)
+  and a call made upon a literal ('tuple' object is not callable;
+  perhaps you missed a comma?) -- and the compile builtin hands each to
+  that function with the text's file name and the line, so a filter the
+  program set is honoured; one that turns the warning into an error
+  makes it the syntax fault the reference raises, at that line. A
+  program read from its file says nothing of these.
 - `ext.system.names.module`: the module a name is looked for in when
   nothing in the program has bound it and the kernel knows no word of
   its own for it. The module is fetched the first time a name is missed
@@ -3661,6 +3709,8 @@ only. The extension labels so far, all from PHP:
   and paths through properties and indexed places are taken in order.
   The labels here and below are lists of words, not signs to be scanned.
 - `ext.text.format.invalid`: the complaint for an ill-formed specification.
+- `ext.text.format.invalid.detail`: the invalid specification and value type.
+- `ext.text.format.group.conflict`: the incompatible grouping marks.
   `ext.text.format.unknown` holds the words before a presentation letter,
   between that letter and the value's kind, and after the kind.
   `ext.text.format.kinds` names whole, real, text, flag, list, map, nothing,
@@ -3702,17 +3752,30 @@ only. The extension labels so far, all from PHP:
   precedes an unknown conversion letter. `ext.text.format.recursion` says
   that nested specifications have gone deeper than two levels.
 - `ext.op.rem.format.few`, `.many` and `.mapping`: complaints for too few
-  or too many positional arguments, or a keyed mark given no map.
+  or too many positional arguments, or a keyed mark given no map. The first
+  two report supplied and consumed argument counts.
+  `ext.op.rem.format.mapping.key` and `.star` report the percent mark
+  position when a mapping directive lacks a key or uses a starred count.
+  `ext.op.rem.format.width.big` and `.precision.big` report that position
+  for a literal count that exceeds the accepted range.
   `ext.op.rem.format.number` and `.integer` each hold two pieces, before
   the conversion letter and between it and the kind that cannot supply it.
-  `ext.op.rem.format.real` precedes the kind of a nonnumeric real argument.
+  `ext.op.rem.format.real` gives the location, directive, and kind of a
+  nonnumeric real argument.
 - `ext.op.rem.format.nan` and `.infinity`: complaints for a decimal
   integer conversion whose real argument is no number or is infinite.
 - `ext.op.rem.format.character`, `.star` and `.incomplete`: complaints for
   a character mark without a character or whole number, a starred count
   without a whole number, and an unfinished percent mark.
-  `ext.op.rem.format.code` has three pieces preceding an unknown letter,
-  its hexadecimal ordinal, and its place within the format string.
+  `ext.op.rem.format.character.range` gives the offending argument and
+  the permitted character range.
+  `ext.op.rem.format.key.incomplete` gives the position of an unfinished
+  parenthesised key. `ext.op.rem.format.unexpected` names an unexpected
+  character and both its and the percent mark positions.
+  `ext.op.rem.format.star.big` gives the argument number and whether its
+  starred count was a width or precision.
+  `ext.op.rem.format.code` has two pieces around the unknown letter and
+  before the position of its percent mark within the format string.
 - `ext.op.rem.format.byte`: the two pieces enclosing the kind of a value
   handed to a mark which shows a row of bytes. A row of bytes on the left
   of the remainder sign fills its marks byte for byte: the marks that
@@ -4349,7 +4412,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `MemoryError` `BufferError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `MemoryError` `BufferError` `StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4397,6 +4460,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.inline_values` | - | - | `_has_inline_values` | - | - | - | - | - | - | - |
 | `ext.builtin.input` | - | - | `input` | - | - | - | - | - | - | - |
 | `ext.builtin.input.reader` | - | - | `sys` `_input` | - | - | - | - | - | - | - |
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
@@ -4404,6 +4468,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.issubclass` | - | - | `issubclass` | - | - | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
+| `ext.builtin.iter.stop_exception` | - | - | `stop_exception` | - | - | - | - | - | - | - |
+| `ext.builtin.iter.stop_value` | - | - | `stop_value` | - | - | - | - | - | - | - |
 | `ext.builtin.iterable` | - | - | `iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
@@ -4654,6 +4720,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.fault.walk` | - | - | `TypeError: can only join an iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.text.find` | - | - | `find` `str.find` | - | - | - | - | - | - | - |
 | `ext.builtin.text.format_map` | - | - | `format_map` `str.format_map` | - | - | - | - | - | - | - |
+| `ext.builtin.text.getnewargs` | - | - | `__getnewargs__` `str.__getnewargs__` | - | - | - | - | - | - | - |
 | `ext.builtin.text.index` | - | - | `index` `str.index` | - | - | - | - | - | - | - |
 | `ext.builtin.text.isascii` | - | - | `isascii` `str.isascii` | - | - | - | - | - | - | - |
 | `ext.builtin.text.isdecimal` | - | - | `isdecimal` `str.isdecimal` | - | - | - | - | - | - | - |
@@ -4910,19 +4977,27 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.byte` | - | - | `TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '` `'` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.character` | - | - | `TypeError: %c requires int or char` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.incomplete` | - | - | `ValueError: incomplete format` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.character` | - | - | `TypeError: format argument` `: %c requires ` `, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.character.range` | - | - | `OverflowError: format argument` `: %c argument not in range(` `)` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format %` ` at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string (got ` `)` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.incomplete` | - | - | `ValueError: stray % at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.integer` | - | - | `TypeError: %` ` format: an integer is required, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.many` | - | - | `TypeError: not all arguments converted during string formatting` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.mapping` | - | - | `TypeError: format requires a mapping` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.integer` | - | - | `TypeError: format argument` `: %` ` requires an integer, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.key.incomplete` | - | - | `ValueError: stray % or incomplete format key at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.many` | - | - | `TypeError: not all arguments converted during ` ` formatting (required ` `, got ` `)` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.mapping` | - | - | `TypeError: format requires a mapping, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.mapping.key` | - | - | `ValueError: format requires a parenthesised mapping key at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.mapping.star` | - | - | `ValueError: * cannot be used with a parenthesised mapping key at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.number` | - | - | `TypeError: %` ` format: a real number is required, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.real` | - | - | `TypeError: must be real number, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.star` | - | - | `TypeError: * wants int` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.number` | - | - | `TypeError: format argument` `: %` ` requires a real number, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.precision.big` | - | - | `ValueError: precision too big at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.real` | - | - | `TypeError: format argument` `: %` ` requires a real number, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.star` | - | - | `TypeError: format argument ` `: * requires int, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.star.big` | - | - | `OverflowError: format argument ` `: too big for ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.unexpected` | - | - | `ValueError: stray % at position ` ` or unexpected format character ` ` at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.unsupported` | - | - | `Unsupported string format` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.width.big` | - | - | `ValueError: width too big at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.formats_text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.rem.real_zero` | - | - | `ZeroDivisionError: float modulo` | - | - | - | - | - | - | - |
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
@@ -4958,6 +5033,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.names.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.async.stop` | - | - | `StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unready` | - | - | `NotImplementedError: asynchronous execution is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unrun` | - | - | `NotImplementedError: asynchronous functions cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.binding.unrun` | - | - | `This binding target cannot be run` | - | - | - | - | - | - | - |
@@ -5001,6 +5077,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
@@ -5011,6 +5088,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.descriptor.set` | - | - | `__set__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.unbound` | - | - | `TypeError: unbound method ` `.` `() needs an argument` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.flags` | - | - | `__flags__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.getitem` | - | - | `__class_getitem__` | - | - | - | - | - | - | - |
@@ -5032,6 +5110,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.prepare` | - | - | `__prepare__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.doc` | - | - | `doc` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fdel` | - | - | `fdel` | - | - | - | - | - | - | - |
@@ -5071,7 +5150,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` `__reduce__` `__setstate__` `__reduce_ex__` `__getnewargs__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` `__reduce__` `__setstate__` `__reduce_ex__` `__getnewargs__` `__aiter__` `__anext__` `__aenter__` `__aexit__` `__match_args__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
@@ -5118,10 +5197,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.import.lazy` | - | - | `lazy` | - | - | - | - | - | - | - |
 | `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |
 | `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.match` | - | - | `match` | - | - | - | - | - | - | - |
 | `ext.stmt.match.as` | - | - | `as` | - | - | - | - | - | - | - |
@@ -5176,9 +5257,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.suspends` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.throw` | - | - | `throw` | - | - | - | - | - | - | - |
-| `ext.stmt.yield.throw.invalid` | - | - | `TypeError: exceptions must be classes or instances deriving from BaseException, not ` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw.invalid` | - | - | `TypeError: exceptions must be classes or instances deriving from BaseException, not ` `TypeError: instance exception may not have a separate value` `TypeError: throw() third argument must be a traceback object` `TypeError: calling exception class should have returned an instance of BaseException` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw.warning` | - | - | `warnings` `warn_explicit` `DeprecationWarning` `the (type, exc, tb) signature of throw() is deprecated, use the single-arg signature instead.` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |
-| `ext.stmt.yield.unstarted` | - | - | `TypeError: cannot send a non-None value to a just-started generator` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unstarted` | - | - | `TypeError: can't send non-None value to a just-started generator` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unsupported` | - | - | `NotImplementedError: suspension in this form is not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
@@ -5319,6 +5401,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.source.marked` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.source.method` | - | - | - | - | `__METHOD__` | - | - | - | - | - |
 | `ext.system.source.routine` | - | - | - | - | `__FUNCTION__` | - | - | - | - | - |
+| `ext.system.syntax_warnings` | - | - | `warnings` `warn_explicit` | - | - | - | - | - | - | - |
 | `ext.system.text.bytes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.empty_array` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.text` | - | - | - | - | `0` | - | - | - | - | - |
@@ -5334,8 +5417,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.complex.zero` | - | - | `ValueError: Zero padding is not allowed in complex format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.digits` | - | - | `ValueError: Too many decimal digits in format string` | - | - | - | - | - | - | - |
+| `ext.text.format.group.conflict` | - | - | `ValueError: Cannot specify ` `.` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid` | - | - | `ValueError: Invalid format specifier` | - | - | - | - | - | - | - |
+| `ext.text.format.invalid.detail` | - | - | `ValueError: Invalid format specifier '` `' for object of type '` `'` | - | - | - | - | - | - | - |
 | `ext.text.format.key` | - | - | `KeyError: '` `'` | - | - | - | - | - | - | - |
 | `ext.text.format.kinds` | - | - | `int` `float` `str` `bool` `list` `dict` `NoneType` `object` `complex` `tuple` `set` `range` `bytes` `bytearray` `type` | - | - | - | - | - | - | - |
 | `ext.text.format.numbered.auto` | - | - | `ValueError: cannot switch from manual field specification to automatic field numbering` | - | - | - | - | - | - | - |
@@ -5363,6 +5448,11 @@ name, followed by the line, next and frame members, frame line and code members,
 code name, filename and first-line members, frame class name and module code name.
 Frames are allocated on demand when an exception first records its location.
 
+`ext.builtin.text.getnewargs` exposes a string’s reconstruction arguments as a one-item tuple containing a fresh base string.
+`ext.stmt.class.detail.prepare` names the metaclass namespace preparation method.
+
+`ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.
+
 `ext.lexical.escape.named.amiss` supplies the malformed named-character escape
 complaint, with two `{}` slots for its first and last byte positions. The
 format-error roster also names excessive format-field nesting.
@@ -5379,3 +5469,10 @@ use these to report integer storage sizes, including inherited attributes.
 `ext.builtin.core.power.integer` optionally carries three further strings for
 the prefix, separator and suffix of a refused three-operand power, naming
 all three operand types after their special methods have declined.
+Python iter() also names its sentinel as stop_value and accepts a
+stop_exception class or tuple of classes for callable iterators.
+
+`ext.builtin.iter.stop_value` names the corresponding keyword accepted by Python callable iterators.
+
+`ext.builtin.iter.stop_exception` names the corresponding keyword accepted by Python callable iterators.
+`ext.stmt.class.detail.code.fields` names code metadata members (name, qualified name, positional-only and keyword-only counts, local count, names, constants, flags, filename, first line) and the lazy function annotation member. Code values use the same wrapper as traceback frame code.

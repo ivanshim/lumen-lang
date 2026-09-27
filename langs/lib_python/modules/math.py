@@ -2,7 +2,7 @@
 pi = 3.141592653589793
 e = 2.718281828459045
 inf = __math('fdiv', 1.0, 0.0)
-nan = __math('fdiv', 0.0, 0.0)
+nan = float('nan')
 
 def _overflow_guard(x):
     # A whole number too great for any real of the width to hold is
@@ -15,7 +15,7 @@ def _overflow_guard(x):
 def sqrt(x):
     _overflow_guard(x)
     if x < 0:
-        raise 'ValueError: math domain error'
+        raise ValueError('expected a nonnegative input, got ' + str(float(x)))
     return __math('sqrt', x)
 
 def fabs(x):
@@ -41,7 +41,10 @@ def _answers_own(x, name):
 
 def floor(x):
     if _answers_own(x, '__floor__'):
-        answer = x.__floor__()
+        method = x.__floor__
+        if method is None:
+            raise TypeError("'NoneType' object is not callable")
+        answer = method()
         if type(answer) != type(1) and type(answer) != type(True):
             raise 'TypeError: __floor__ returned non-Integral (type ' + type(answer).__name__ + ')'
         return answer
@@ -56,7 +59,10 @@ def floor(x):
 
 def ceil(x):
     if _answers_own(x, '__ceil__'):
-        answer = x.__ceil__()
+        method = x.__ceil__
+        if method is None:
+            raise TypeError("'NoneType' object is not callable")
+        answer = method()
         if type(answer) != type(1) and type(answer) != type(True):
             raise 'TypeError: __ceil__ returned non-Integral (type ' + type(answer).__name__ + ')'
         return answer
@@ -70,8 +76,13 @@ def ceil(x):
     return n
 
 def trunc(x):
+    if not isinstance(x, (int, float)) and not _answers_own(x, '__trunc__'):
+        raise TypeError("type '" + type(x).__name__ + "' doesn't define __trunc__ method")
     if _answers_own(x, '__trunc__'):
-        answer = x.__trunc__()
+        method = x.__trunc__
+        if method is None:
+            raise TypeError("'NoneType' object is not callable")
+        answer = method()
         if type(answer) != type(1) and type(answer) != type(True):
             raise 'TypeError: __trunc__ returned non-Integral (type ' + type(answer).__name__ + ')'
         return answer
@@ -129,7 +140,7 @@ def _int_frexp(n):
 
 def _log_int(xi, working, per_bit):
     if xi <= 0:
-        raise 'ValueError: math domain error'
+        raise ValueError('expected a positive input')
     m, e = _int_frexp(xi)
     return __math(working, m) + e * per_bit
 
@@ -151,13 +162,13 @@ def _log_value(x, working, per_bit):
                 raise
             return _log_int(xi, working, per_bit)
         if real <= 0:
-            raise 'ValueError: math domain error'
+            raise ValueError('expected a positive input, got ' + str(real))
         return __math(working, real)
     xi = _index_or_none(x)
     if xi is not None:
         return _log_int(xi, working, per_bit)
     if x <= 0:
-        raise 'ValueError: math domain error'
+        raise ValueError('expected a positive input, got ' + str(float(x)))
     return __math(working, x)
 
 def log(x, base=None):
@@ -200,10 +211,7 @@ def isclose(a, b, rel_tol=0.000000001, abs_tol=0.0):
 def copysign(x, y):
     _check_real(x)
     _check_real(y)
-    sign = __math('fdiv', 1.0, y)
-    if y < 0 or sign < 0:
-        return __math('fdiv', -fabs(x), 1.0)
-    return fabs(x)
+    return __math('copysign', float(x), float(y))
 
 def gcd(*integers):
     result = 0
@@ -251,7 +259,9 @@ def fsum(values):
     neg_inf = False
     saw_nan = False
     for x in values:
-        _check_real(x)
+        if type(x) != type(1.0):
+            _check_real(x)
+        x = float(x)
         if isnan(x):
             saw_nan = True
             continue
@@ -263,7 +273,9 @@ def fsum(values):
             continue
         kept = []
         for y in partials:
-            if fabs(x) < fabs(y):
+            # These operands are already binary reals. Compare their
+            # magnitudes without re-entering the conversion protocol.
+            if (-x if x < 0 else x) < (-y if y < 0 else y):
                 x, y = y, x
             high = x + y
             low = y - (high - x)
@@ -361,37 +373,53 @@ def isqrt(n):
     return low
 
 def hypot(*coordinates):
-    import decimal
-    squares = decimal.Decimal(0)
+    values = []
+    for coordinate in coordinates:
+        if type(coordinate) != type(1.0):
+            _check_real(coordinate)
+        values.append(float(coordinate))
+    return _hypot_values(values)
+
+
+def _hypot_values(values):
+    # Both callers have already converted every coordinate. Keep that
+    # ordering even when an early coordinate is infinite or NaN: a later
+    # conversion can still raise. Inspecting these base floats directly
+    # avoids repeating the public conversion protocol for each distance.
     saw_inf = False
     saw_nan = False
-    for coordinate in coordinates:
-        _check_real(coordinate)
-        if type(coordinate).__name__ == 'Decimal':
-            exact = decimal.Decimal(coordinate)
-            value = None
-        elif type(coordinate).__name__ == 'Fraction':
-            exact = decimal.Decimal(float(coordinate))
-            value = None
-        else:
-            value = float(coordinate)
-            exact = decimal.Decimal(value)
-        if value is not None and isinf(value):
-            saw_inf = True
-            continue
-        if value is not None and isnan(value):
-            saw_nan = True
-            continue
-        squares += exact * exact
+    for value in values:
+        saw_inf = saw_inf or value == inf or value == -inf
+        saw_nan = saw_nan or value != value
     if saw_inf:
         return inf
     if saw_nan:
         return nan
+    if len(values) == 0:
+        return 0.0
+    if len(values) == 1:
+        return fabs(values[0])
+    import decimal
+    squares = decimal.Decimal(0)
+    for value in values:
+        exact = decimal.Decimal(value)
+        squares += exact * exact
     if squares == 0:
         return 0.0
-    return float(squares.sqrt())
+    try:
+        return float(squares.sqrt())
+    except OverflowError:
+        return inf
+
 
 def _point_items(point):
+    # An exact tuple already is an immutable snapshot. Subclasses still
+    # take the iterator path so that their iteration overrides are heard.
+    kind = type(point)
+    if kind == type(()):
+        return point
+    if kind == type([]):
+        return list(point)
     items = []
     if type(point).__name__ in ('generator', 'list_iterator', 'tuple_iterator'):
         iterator = point
@@ -404,11 +432,18 @@ def _point_items(point):
             return items
         items.append(value)
 
-def dist(p, q):
+def dist(p, q, /):
     p, q = _point_items(p), _point_items(q)
     if len(p) != len(q):
         raise 'ValueError: both points must have the same number of dimensions'
-    return hypot(*[p[i] - q[i] for i in range(len(p))])
+    differences = []
+    for i in range(len(p)):
+        if type(p[i]) != type(1.0):
+            _check_real(p[i])
+        if type(q[i]) != type(1.0):
+            _check_real(q[i])
+        differences.append(float(p[i]) - float(q[i]))
+    return _hypot_values(differences)
 
 def log2(x):
     return _log_value(x, 'log2', 1.0)
@@ -487,7 +522,7 @@ def acosh(x):
 def atanh(x):
     _overflow_guard(x)
     if x <= -1 or x >= 1:
-        raise 'ValueError: math domain error'
+        raise ValueError('expected a number between -1 and 1, got ' + str(float(x)))
     return __math('atanh', x)
 
 # These operations require binary representation or a special-function
@@ -505,7 +540,7 @@ def gamma(x):
     if not isfinite(x):
         raise 'ValueError: math domain error'
     if x <= 0 and x == int(x):
-        raise 'ValueError: math domain error'
+        raise ValueError('expected a noninteger or positive integer, got ' + str(x))
     if x == int(x):
         return float(factorial(int(x) - 1))
     if x * 2 == int(x * 2):

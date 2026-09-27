@@ -440,7 +440,7 @@ class Decimal:
         return Decimal._finite(False, root, exponent // 2 - guard)
 
     def _cmp(self, other):
-        other = _coerced(other)
+        other = Decimal(other) if isinstance(other, float) else _coerced(other)
         if self._nan or other._nan:
             return None
         if self._inf or other._inf:
@@ -455,7 +455,7 @@ class Decimal:
         return -1 if a < b else (1 if a > b else 0)
 
     def __eq__(self, other):
-        if not isinstance(other, Decimal) and not isinstance(other, int) and not isinstance(other, bool):
+        if not isinstance(other, (Decimal, int, float)) and not isinstance(other, bool):
             return NotImplemented
         return self._cmp(other) == 0
 
