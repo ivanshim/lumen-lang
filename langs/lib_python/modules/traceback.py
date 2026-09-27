@@ -29,7 +29,11 @@ def format_tb(tb, limit=None):
 def format_exception_only(exc, value=None):
     if value is not None:
         exc = value
-    kind, message = __current_fault(exc)
+    try:
+        kind, message = __current_fault(exc)
+    except BaseException:
+        kind = type(exc).__name__
+        message = '<exception str() failed>'
     if kind is None:
         raise 'TypeError: an exception value is required'
     prefix = kind + ': '
@@ -58,7 +62,7 @@ def format_exception_only(exc, value=None):
                     padding = ''
                     for ch in shown[:start]:
                         padding += ch if ch.isspace() else ' '
-                    result.append('    ' + padding + '^' * (end - exc.offset) + '\n')
+                    result.append('    ' + padding + '^' * max(1, min(end - exc.offset, len(shown) - start)) + '\n')
         message = str(exc.msg or '<no detail available>') + suffix
     result.append((prefix + message if message else kind) + '\n')
     notes = getattr(exc, '__notes__', None)
@@ -119,3 +123,146 @@ def print_exc(limit=None, file=None, chain=True):
     if file is None:
         file = sys.stderr
     file.write(format_exc(limit, chain))
+
+
+class FrameSummary:
+    def __init__(self, filename, lineno, name):
+        self.filename = filename
+        self.lineno = lineno
+        self.name = name
+        self.end_lineno = None
+        self.colno = None
+        self.end_colno = None
+        self.locals = None
+        self._line = None
+
+    @property
+    def line(self):
+        if self._line is None:
+            self._line = ''
+            try:
+                import builtins
+                with builtins.open(self.filename) as source:
+                    self._line = source.read().splitlines()[self.lineno - 1].strip()
+            except (OSError, IndexError):
+                pass
+        return self._line.strip()
+
+    def __iter__(self):
+        return iter((self.filename, self.lineno, self.name, self.line))
+
+    def __getitem__(self, index):
+        return (self.filename, self.lineno, self.name, self.line)[index]
+
+    def __len__(self):
+        return 4
+
+
+class StackSummary:
+    def __init__(self, frames):
+        self._frames = list(frames)
+
+    def __iter__(self):
+        return iter(self._frames)
+
+    def __len__(self):
+        return len(self._frames)
+
+    def __getitem__(self, index):
+        return self._frames[index]
+
+    def append(self, frame):
+        self._frames.append(frame)
+
+    def reverse(self):
+        self._frames.reverse()
+
+    def format(self):
+        result = []
+        for frame in self:
+            entry = '  File "' + frame.filename + '", line ' + str(frame.lineno) + ', in ' + frame.name + '\n'
+            if frame.line:
+                entry += '    ' + frame.line + '\n'
+            result.append(entry)
+        return result
+
+
+def _limited_frames(frames, limit):
+    if limit is None:
+        import sys
+        limit = getattr(sys, 'tracebacklimit', None)
+        if limit is not None and limit < 0:
+            limit = 0
+    if limit is not None:
+        frames = frames[:limit] if limit >= 0 else frames[limit:]
+    return StackSummary(frames)
+
+
+def extract_tb(tb, limit=None):
+    frames = []
+    while tb is not None:
+        code = tb.tb_frame.f_code
+        frame = FrameSummary(code.co_filename, tb.tb_lineno, code.co_name)
+        frame.end_lineno = tb.tb_end_lineno
+        frame.colno = tb.tb_colno
+        frame.end_colno = tb.tb_end_colno
+        frames.append(frame)
+        tb = tb.tb_next
+    return _limited_frames(frames, limit)
+
+
+def extract_stack(f=None, limit=None):
+    if f is None:
+        import sys
+        f = sys._getframe(1)
+    frames = []
+    while f is not None:
+        frames.append(FrameSummary(f.f_code.co_filename, f.f_lineno, f.f_code.co_name))
+        f = f.f_back
+    frames = _limited_frames(frames, limit)
+    frames.reverse()
+    return frames
+
+
+def format_list(extracted_list):
+    frames = StackSummary([])
+    for frame in extracted_list:
+        if not isinstance(frame, FrameSummary):
+            filename, lineno, name, line = frame
+            frame = FrameSummary(filename, lineno, name)
+            frame._line = line
+        frames.append(frame)
+    return frames.format()
+
+
+def format_stack(f=None, limit=None):
+    if f is None:
+        import sys
+        f = sys._getframe(1)
+    return extract_stack(f, limit).format()
+
+
+class TracebackException:
+    def __init__(self, exc_type, exc_value, exc_traceback):
+        self.exc_type = exc_type
+        self._limit = None
+        self.stack = extract_tb(exc_traceback, self._limit)
+        self._exception = exc_value
+        self._traceback = exc_traceback
+
+    @classmethod
+    def from_exception(cls, exc, *args, **kwargs):
+        return cls(type(exc), exc, exc.__traceback__, *args, **kwargs)
+
+    def format(self, *, chain=True):
+        return iter(format_exception(self.exc_type, self._exception, self._traceback,
+                                     limit=self._limit, chain=chain))
+
+    def format_exception_only(self):
+        return iter(format_exception_only(self._exception))
+
+    def print(self, *, file=None, chain=True):
+        import sys
+        if file is None:
+            file = sys.stderr
+        file.write(''.join(self.format(chain=chain)))

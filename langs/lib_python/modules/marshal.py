@@ -29,9 +29,11 @@ class _Writer:
         # contents, so that a thing holding itself is read back.
         where = id(value)
         if where in self.memo:
-            self.pieces.append('b' + str(self.memo[where]) + ';')
+            self.pieces.append('b' + str(self.memo[where][0]) + ';')
             return True
-        self.memo[where] = len(self.memo)
+        # Retain temporary reduction tuples until writing finishes: an
+        # address alone can be reused for a different object meanwhile.
+        self.memo[where] = (len(self.memo), value)
         return False
 
     def put(self, value):

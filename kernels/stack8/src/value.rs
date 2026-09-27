@@ -279,6 +279,7 @@ pub enum CursorSource {
 
 #[derive(Debug)]
 pub struct Traceback {
+    pub location: Option<(u32, u32, u32, u32)>,
     pub line: u32,
     pub frame: Rc<Instance>,
     pub next: Value,
@@ -747,7 +748,16 @@ impl Value {
             }
             Value::Object(o) => {
                 if let Some(args) = self.raised_arguments() {
-                    return format!("{}({})", o.class.name, args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "));
+                    let mut parts = args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>();
+                    if o.class.all_fields().iter().any(|(k, _)| k == "\0import-error") {
+                        let fields = o.fields.borrow();
+                        for name in ["name", "path", "name_from"] {
+                            if let Some((_, value)) = fields.iter().find(|(k, _)| k == name) {
+                                if !matches!(value, Value::Null) { parts.push(format!("{name}={}", value.repr(sp))); }
+                            }
+                        }
+                    }
+                    return format!("{}({})", o.class.name, parts.join(", "));
                 }
                 self.display(sp)
             }
@@ -937,6 +947,7 @@ impl Value {
             Value::Text(s) => Ok(format!("s{}", s)),
             Value::Bytes(bytes, false, _) => Ok(format!("bytes:{:?}", bytes.borrow())),
             Value::Bytes(_, true, _) => Err("bytearray"),
+            Value::Class(kind) => Ok(format!("class:{:p}", Rc::as_ptr(kind))),
             Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
             Value::Method(owner, code) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
 
@@ -1923,6 +1934,17 @@ pub fn members_once<E>(value: &Value, write: impl FnOnce() -> Result<String, E>)
     let written = write();
     forget_members(note);
     written
+}
+
+/// A set can return to itself through a member's representation.
+pub fn set_once<E>(cell: &Rc<RefCell<Members>>, name: &str, write: impl FnOnce() -> Result<String, E>) -> Result<String, E> {
+    let address = Rc::as_ptr(cell) as usize;
+    if !MEMBERS.with(|active| active.borrow_mut().insert(address)) {
+        return Ok(format!("{name}(...)"));
+    }
+    let answer = write();
+    forget_members(Some(address));
+    answer
 }
 
 /// The same for a walk that always has an answer.
