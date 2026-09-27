@@ -561,10 +561,27 @@ def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None,
     return _HostFile(file, mode, encoding, errors)
 
 
+# A view over a row of bytes. CPython's memoryview speaks the buffer
+# protocol and keeps no __bytes__ of its own; here the same answer is
+# reached through an ordinary __bytes__ method, which is what the bytes
+# formatting below and int.from_bytes both ask a thing for first.
+class memoryview:
+    def __init__(self, object):
+        if not isinstance(object, bytes) and not isinstance(object, bytearray):
+            raise TypeError("memoryview: a bytes-like object is required, not " + type(object).__name__)
+        self._object = object
+
+    def __bytes__(self):
+        return bytes(self._object)
+
+    def __repr__(self):
+        return "<memory at 0x%x>" % id(self)
+
+
 # What CPython's builtins holds and this one does not, so that a reader
 # looking for a missing name learns it is missing rather than broken.
 # There is no object behind any of these here: aiter, anext, ascii,
-# copyright, credits, exit, help, license, memoryview,
+# copyright, credits, exit, help, license,
 # quit, __build_class__, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
 # IndentationError, TabError, and the OSError kinds

@@ -5005,7 +5005,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.byte` | - | - | `TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '` `'` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.byte` | - | - | `TypeError: format argument` `: %b requires a bytes-like object, or an object that implements __bytes__, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character` | - | - | `TypeError: format argument` `: %c requires ` `, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character.range` | - | - | `OverflowError: format argument` `: %c argument not in range(` `)` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.code` | - | - | `ValueError: unsupported format %` ` at position ` | - | - | - | - | - | - | - |

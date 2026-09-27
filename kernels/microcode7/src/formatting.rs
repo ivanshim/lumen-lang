@@ -524,6 +524,9 @@ impl Layout<'_> {
                 'a' | 'r' | 's' | 'b' if shows => {
                     let text = match asked.value_worded(item, !matches!(conversion, 's' | 'b'))? {
                         Some(ready) => ready,
+                        None if of_bytes && matches!(conversion, 'b' | 's') => {
+                            return Err(self.complain("ext.op.rem.format.byte", &[&location, self.typename(item)]));
+                        }
                         None if conversion == 's' => self.plain(item)?,
                         None => self.quote(item, conversion == 'a')?,
                     };

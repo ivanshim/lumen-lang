@@ -6218,6 +6218,20 @@ impl<'a> Engine<'a> {
                 return Ok(Value::text(&self.rem_filled(&pattern, b)?));
             }
         }
+        // A row of bytes on the left of the remainder sign fills its
+        // own marks the way text does, and must stand here as well as
+        // in `dyadic` below: a thing on the right is asked for its
+        // `__bytes__` before the refusal further down can name its
+        // kind. A row of bytes whose own class would answer first is
+        // left to the method reading that follows.
+        if let (Action::Mod, Value::Bytes(row, mutable, _), true) = (op, a, self.lang.rem_formats_text) {
+            let below = matches!(Self::worth_of(b).map(|worth| worth.contents()), Some(Value::Bytes(..)));
+            if !(below && self.special_method(b, 31).is_some()) {
+                let template = row.borrow().iter().copied().map(char::from).collect::<String>();
+                let filled = self.byte_filled(&template, b)?;
+                return Ok(self.byte_make(filled, *mutable));
+            }
+        }
         let places = match op {
             Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
             Action::Lt => Some((4, 6)), Action::Le => Some((5, 7)),
@@ -9728,7 +9742,7 @@ impl<'a> Engine<'a> {
     /// The workings a language of sequences gives its rows, tuples and
     /// text. Nothing at all where the operation is none of theirs, so
     /// that the reading goes on as it would otherwise.
-    fn sequence_work(&self, op: &Action, a: &Value, b: &Value) -> Res<Option<Value>> {
+    fn sequence_work(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Option<Value>> {
         let rowed = |v: &Value| matches!(v, Value::Array(_) | Value::Tuple(_));
         let texted = |v: &Value| matches!(v, Value::Text(_));
         let items = |v: &Value| match v { Value::Array(row) | Value::Tuple(row) => row.as_ref().clone(), _ => Vec::new() };
@@ -9853,7 +9867,7 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+    fn dyadic(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_)) {
             if let (Some(mut left), Some(right)) = (a.text_codes(), b.text_codes()) {
                 if matches!(op, Action::Add | Action::Join) { left.extend(right); return Ok(Value::from_codes(left)); }
@@ -10106,7 +10120,7 @@ impl<'a> Engine<'a> {
             // that arrays, flags, nothing and text that spells no number
             // are all told apart as such a language tells them apart.
             Action::Lt | Action::Le | Action::Gt | Action::Ge if self.lang.loose_equality => {
-                let first = |x: &Value, y: &Value| self.loosely_below(x, y);
+                let mut first = |x: &Value, y: &Value| self.loosely_below(x, y);
                 Value::Flag(match op {
                     Action::Lt => first(a, b)?,
                     Action::Gt => first(b, a)?,
@@ -10713,7 +10727,7 @@ impl<'a> Engine<'a> {
     /// arrays are told apart by how much they hold and then place by
     /// place; text that spells a number stands for that number, and a
     /// number met by text that spells none is itself read as text.
-    fn loosely_below(&self, a: &Value, b: &Value) -> Res<bool> {
+    fn loosely_below(&mut self, a: &Value, b: &Value) -> Res<bool> {
         let sp = self.wording();
         let numeric = |v: &Value| v.sort().map_or(false, |k| matches!(k, Sort::Integer | Sort::Rational | Sort::Real));
         let nothing = |v: &Value| matches!(v, Value::Null | Value::Blank | Value::Gap | Value::Fence);
@@ -12949,12 +12963,36 @@ impl<'a> Engine<'a> {
         Ok(self.byte_make(table, false))
     }
 
+    /// The row of bytes a value stands for when a bytes mark asks for
+    /// one: its own row where it is one, or the row its `__bytes__`
+    /// member hands back where it is a thing that answers to that
+    /// name. Nothing at all where neither holds, so the caller may
+    /// name the refusal in its own words.
+    fn bytes_argument(&mut self, value: &Value) -> Res<Option<Vec<u8>>> {
+        match value {
+            Value::Bytes(row, ..) => Ok(Some(row.borrow().to_vec())),
+            Value::Object(object) => {
+                let Some(method) = self.class_value(&object.class_now(), "__bytes__") else { return Ok(None); };
+                let result = match self.class_apply(method, vec![value.clone()]) {
+                    Ok(answer) => answer,
+                    Err(Fault::Note(words)) => return Err(words),
+                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                };
+                match result {
+                    Value::Bytes(row, false, _) => Ok(Some(row.borrow().to_vec())),
+                    _ => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// A row of bytes filled mark by mark. A mark that shows a value is
     /// handed a row of bytes and nothing else, whichever of its two
     /// letters it is written with, and a mark that words a value writes
     /// the ascii of its representation, so that nothing beyond seven
     /// bits can stand in the answer.
-    fn byte_filled(&self, template: &str, arguments: &Value) -> Res<Vec<u8>> {
+    fn byte_filled(&mut self, template: &str, arguments: &Value) -> Res<Vec<u8>> {
         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
         let mut offered = |value: &Value, code: char| -> Res<Option<String>> {
             let held = value.contents();
@@ -12964,7 +13002,10 @@ impl<'a> Engine<'a> {
             }
             match &held {
                 Value::Bytes(row, ..) => Ok(Some(row.borrow().iter().copied().map(char::from).collect())),
-                other => Err(Self::named_fault(&self.lang.fmt_op_rem_format_byte, &other.core_kind())),
+                other => match self.bytes_argument(other)? {
+                    Some(row) => Ok(Some(row.iter().copied().map(char::from).collect())),
+                    None => Ok(None),
+                },
             }
         };
         let filled = writer.percent(template, arguments, &mut offered, true)?;

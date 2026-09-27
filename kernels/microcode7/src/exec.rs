@@ -8919,15 +8919,37 @@ impl<'a> Machine<'a> {
         format!("{}{}{}{}", at(0), right.kind_word(), at(1), left.kind_word())
     }
 
-    /// A row of bytes filled mark by mark.
-    fn octet_filled(&self, pattern: &str, supplied: &Value) -> Result<Vec<u8>, String> {
+    /// A row of bytes filled mark by mark. The marks are asked of the
+    /// machine itself, so a thing standing for one of them may answer
+    /// by its own __bytes__ method.
+    fn octet_filled(&mut self, pattern: &str, supplied: &Value) -> Result<Vec<u8>, String> {
         let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
         let mut marks = OctetMarks {
             layout: crate::formatting::Layout { table: self.table, names: self.wording() },
-            refusal: self.table.strings("ext.op.rem.format.byte"),
+            machine: self,
         };
         let filled = layout.remainder(pattern, supplied, &mut marks, true)?;
         filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.octet_error("unready"))).collect()
+    }
+
+    /// A row of bytes read off a value for a bytes mark: the value
+    /// itself where it is one, or the answer of its __bytes__ method
+    /// where it has one; nothing where neither holds, so the caller
+    /// names what it was handed.
+    fn octet_argument(&mut self, value: &Value) -> Result<Option<Vec<u8>>, String> {
+        match value {
+            Value::Octets { cell, .. } => Ok(Some(cell.borrow().to_vec())),
+            Value::Thing(thing) => {
+                let Some(method) = self.inherited_entry(&thing.blueprint(), "__bytes__") else { return Ok(None); };
+                match self.apply_class_member(method, vec![value.clone()]) {
+                    Ok(Value::Octets { cell, changeable: false, .. }) => Ok(Some(cell.borrow().to_vec())),
+                    Ok(_) => Ok(None),
+                    Err(Escape::Error(words)) => Err(words),
+                    Err(escape) => { self.got_away = Some(escape); Err(String::new()) }
+                }
+            }
+            _ => Ok(None),
+        }
     }
 
     /// The bytes that written hexadecimal stands for: two figures to a
@@ -11021,6 +11043,20 @@ impl<'a> Machine<'a> {
             if !(over_text && self.appointed(right, 31).is_some()) {
                 let (pattern, right) = (pattern.clone(), right.clone());
                 return self.text_remainder(&pattern, &right).map(|filled| Some(Value::text(&filled)));
+            }
+        }
+        // A row of bytes before the remainder sign lays its own marks
+        // out, byte for byte, and must stand here as well as in the
+        // plain dispatch: a thing on the right is asked for its
+        // __bytes__ before the arithmetic refusal below can name its
+        // kind. A row of bytes whose own class would answer first is
+        // left to the method reading that follows.
+        if let (Prim::Mod, [Value::Octets { cell, changeable, .. }, right], true) = (operation, operands, self.table.flag("ext.op.rem.formats_text")) {
+            let over_bytes = matches!(Self::underlying(right).map(|worth| worth.settled()), Some(Value::Octets { .. }));
+            if !(over_bytes && self.appointed(right, 31).is_some()) {
+                let pattern = cell.borrow().iter().copied().map(char::from).collect::<String>();
+                let filled = self.octet_filled(&pattern, right)?;
+                return Ok(Some(self.octets(filled, *changeable)));
             }
         }
         let pair = match operation {
@@ -19615,12 +19651,12 @@ impl Machine<'_> {
 /// two letters it is written with, and a mark that words a value writes
 /// the ascii of its representation, so that nothing beyond seven bits
 /// can stand in the answer.
-struct OctetMarks<'a> {
+struct OctetMarks<'a, 'b> {
     layout: crate::formatting::Layout<'a>,
-    refusal: &'a [String],
+    machine: &'b mut Machine<'a>,
 }
 
-impl crate::formatting::Elsewhere for OctetMarks<'_> {
+impl crate::formatting::Elsewhere for OctetMarks<'_, '_> {
     fn field_laid(&mut self, _item: &Value, _pattern: &str, _convert: &str) -> Result<Option<String>, String> {
         Ok(None)
     }
@@ -19630,10 +19666,8 @@ impl crate::formatting::Elsewhere for OctetMarks<'_> {
         if quoted { return self.layout.quote(&held, true).map(Some); }
         match &held {
             Value::Octets { cell, .. } => Ok(Some(cell.borrow().iter().copied().map(char::from).collect())),
-            other => {
-                let at = |i: usize| self.refusal.get(i).map_or("", String::as_str);
-                Err(format!("{}{}{}", at(0), other.kind_word(), at(1)))
-            }
+            Value::Thing(_) => self.machine.octet_argument(&held).map(|row| row.map(|bytes| bytes.iter().copied().map(char::from).collect())),
+            _ => Ok(None),
         }
     }
 }

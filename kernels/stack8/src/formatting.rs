@@ -584,6 +584,9 @@ impl Writer<'_> {
             let result = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
                 let shown = match offered(value, code)? {
                     Some(said) => said,
+                    None if of_bytes && matches!(code, 'b' | 's') => {
+                        return Err(self.fault("ext.op.rem.format.byte", &[&location, self.kind(value)]));
+                    }
                     None if code == 's' && matches!(value, Value::Text(_)) => self.representation_plain(value)?,
                     None => self.representation(value, code == 'a')?,
                 };
