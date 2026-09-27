@@ -4842,7 +4842,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.named.amiss` | - | - | `SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \N character escape` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |
-| `ext.lexical.escape.warning` | - | - | `warnings` `warn_explicit` `SyntaxWarning` `invalid escape sequence '\{}'` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.warning` | - | - | `warnings` `warn_explicit` `SyntaxWarning` `"\{}" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\{}"? A raw string is also an option.` | - | - | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
