@@ -156,6 +156,7 @@ pub struct Builder<'a> {
     table: &'a Table,
     forks: Vec<Fork>,
     tokens: &'a [Token],
+    original_words: &'a [Token],
     pos: usize,
     layers: Vec<Layer>,
     /// Whether this text was handed over while the run was already
@@ -401,7 +402,59 @@ fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
     names
 }
 
+pub(crate) fn member_spelling(class: &str, ident: &str) -> String {
+    if ident.starts_with("__") && !ident.ends_with("__") && !ident.contains('.') {
+        let stem = class.trim_start_matches('_');
+        if !stem.is_empty() { return ["_", stem, ident].concat(); }
+    }
+    ident.to_owned()
+}
+
+/// Give each class suite its lexical names before collecting scope bindings.
+/// An inner suite replaces the enclosing prefix, including in nested functions.
+fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
+    let mut output = input.to_vec();
+    if !table.has_any("ext.stmt.class.detail.slots") { return output; }
+    let mut suites = Vec::new();
+    for (index, token) in input.iter().enumerate() {
+        if token.shape != Shape::Bare || !table.spells("ext.stmt.class", &token.lexeme) { continue; }
+        let Some(class) = input.get(index + 1).filter(|t| t.shape == Shape::Bare) else { continue };
+        let mut nesting: i32 = 0;
+        let mut colon = None;
+        for (offset, part) in input.iter().enumerate().skip(index + 2) {
+            if matches!(part.shape, Shape::LineEnd | Shape::Finish) { break; }
+            if part.shape != Shape::Sign { continue; }
+            if ["(", "[", "{"].contains(&part.lexeme.as_str()) { nesting += 1; }
+            if [")", "]", "}"].contains(&part.lexeme.as_str()) { nesting -= 1; }
+            if nesting == 0 && table.spells("block.intro", &part.lexeme) { colon = Some(offset); break; }
+        }
+        let Some(mark) = colon else { continue };
+        let start = (mark + 1..input.len()).find(|&i| input[i].shape != Shape::LineEnd).unwrap_or(input.len());
+        let block = input.get(start).map_or(false, |t| t.shape == Shape::Open);
+        let mut level = 0i32;
+        let mut stop = input.len();
+        for (i, item) in input.iter().enumerate().skip(start) {
+            if item.shape == Shape::Open { level += 1; }
+            if item.shape == Shape::Close { level -= 1; }
+            if (item.shape == Shape::Close && level <= 0) || item.shape == Shape::Finish
+                || (!block && item.shape == Shape::LineEnd) { stop = i; break; }
+        }
+        suites.push((start, stop, class.lexeme.as_str()));
+    }
+    for (begin, end, owner) in suites {
+        for offset in begin..end {
+            if input[offset].shape == Shape::Bare {
+                output[offset].lexeme = member_spelling(owner, &input[offset].lexeme);
+            }
+        }
+    }
+    output
+}
+
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String]) -> Res<Built> {
+    let original_words = tokens;
+    let names_in_classes = class_spellings(tokens, table);
+    let tokens = names_in_classes.as_slice();
     let mut beginnings = seeded.to_vec();
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
@@ -436,7 +489,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { declarations: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { declarations: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -2144,7 +2197,8 @@ impl<'a> Builder<'a> {
     fn module_path(&mut self, dotted: bool) -> Res<String> {
         let mut path = Vec::new();
         loop {
-            let said = self.need_word("among imported names")?;
+            let said = self.original_words[self.pos].lexeme.clone();
+            self.need_word("among imported names")?;
             let pieces = match (dotted, self.table.single("op.pipe")) {
                 (true, Some(mark)) => said.split(mark).collect::<Vec<_>>(),
                 _ => vec![said.as_str()],
@@ -2226,10 +2280,13 @@ impl<'a> Builder<'a> {
                 let original = self.module_path(!taking_names)?;
                 let alias = self.key("ext.stmt.import.as");
                 let local = match alias {
-                    false => original.split(self.table.single("op.pipe").unwrap_or(".")).next().unwrap_or(&original).to_string(),
+                    false if original.contains('.') => original.split('.').next().unwrap().to_owned(),
+                    false => self.tokens[named_at].lexeme.clone(),
                     true => {
                         self.advance();
-                        self.module_path(false)?
+                        let binding = self.look().lexeme.clone();
+                        self.module_path(false)?;
+                        binding
                     }
                 };
                 if future && !matches!(original.as_str(), "nested_scopes" | "generators" | "division" | "absolute_import" | "with_statement" | "print_function" | "unicode_literals" | "barry_as_FLUFL" | "generator_stop" | "annotations") {
@@ -3198,7 +3255,8 @@ impl<'a> Builder<'a> {
         if self.key("stmt.function") {
             self.advance();
             let method_name = self.need_word("as the method name")?;
-            let body = self.method(&method_name)?;
+            let title = self.original_words[self.pos - 1].lexeme.clone();
+            let body = self.method(&title)?;
             self.parts().methods.retain(|(old, _)| old != &method_name);
             if let Some(at) = self.parts().attributes.iter().position(|old| old == &method_name) {
                 self.parts().attributes.remove(at);
@@ -3603,6 +3661,7 @@ impl<'a> Builder<'a> {
 
     fn class_with_receiver(&mut self) -> Res<(Form, bool)> {
         self.advance();
+        let class_title = self.original_words[self.pos].lexeme.clone();
         let named = self.need_word("as the class name")?;
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
@@ -3630,7 +3689,8 @@ impl<'a> Builder<'a> {
                 // the class, and is handed over under a name of its own.
                 let mut builder = false;
                 if keyword {
-                    let word = self.advance().lexeme;
+                    let word = self.original_words[self.pos].lexeme.clone();
+                    self.advance();
                     self.advance();
                     if table.spells("ext.stmt.class.metaclass", &word) { builder = true; }
                     else if table.has_any("ext.stmt.class.detail.subclass") { handed = Some(word); }
@@ -3658,8 +3718,8 @@ impl<'a> Builder<'a> {
             }
             self.need_sign(end, "after the bases")?;
         }
-        let full_name = self.full_name_of(&named);
-        let previous = self.within.replace((named.clone(), parent.as_ref().map(|s| s.ident.to_string())));
+        let full_name = self.full_name_of(&class_title);
+        let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
         let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
         if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
         self.need_intro()?;
@@ -3765,7 +3825,7 @@ impl<'a> Builder<'a> {
         let has_book = book.is_some();
         if let Some(book_place) = &book { values.push(Form::Read(book_place.clone())); }
         let plan = Plan {
-            name: named.clone(), answers: other_parents.len(), field_names: vec![], field_reach: vec![],
+            name: class_title, answers: other_parents.len(), field_names: vec![], field_reach: vec![],
             shared_names: pushed_attributes, constant_names: vec![], methods, extends: parent.is_some(),
             ranking, has_book,
         };
@@ -5303,6 +5363,10 @@ impl<'a> Builder<'a> {
     }
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
+        let title = match self.pos.checked_sub(1).and_then(|at| self.original_words.get(at)) {
+            Some(word) if word.shape == Shape::Bare && self.tokens[self.pos - 1].lexeme == name => word.lexeme.clone(),
+            _ => name.clone(),
+        };
         let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
         self.type_names()?;
@@ -5348,7 +5412,7 @@ impl<'a> Builder<'a> {
         let taken = carried.clone();
         let declared = self.look().shape == Shape::Sign && table.separates(&self.look().lexeme);
         let statics_before = self.statics.len();
-        let program = self.routine(&name, Holds::Every, Traps::Yields, params, least, |r| {
+        let program = self.routine(&title, Holds::Every, Traps::Yields, params, least, |r| {
             r.layers.last_mut().unwrap().permits_async = deferred;
             r.generator_seen = deferred;
             // The names taken away sit in the slots after the
@@ -8584,7 +8648,7 @@ impl<'a> Builder<'a> {
             let bind = self.table.flag("ext.syntax.call.bind_names") && close_key == "syntax.call.close";
             if label {
                 if bind {
-                    let word = self.look().lexeme.clone();
+                    let word = self.original_words[self.pos].lexeme.clone();
                     let twice = self.table.strings("ext.syntax.call.amiss.repeated");
                     if spelled.contains(&word) && !twice.is_empty() {
                         return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
@@ -8630,7 +8694,9 @@ impl<'a> Builder<'a> {
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
         // A name the program has bound is called as that name, in front
         // of any builtin word spelled the same, where the table says so.
-        if self.table.flag("ext.syntax.names.shadow_builtins") && self.named_in_program.iter().any(|word| word == name) {
+        if self.table.flag("ext.syntax.names.shadow_builtins")
+            && (self.named_in_program.iter().any(|word| word == name)
+                || self.layers.last().map_or(false, |scope| scope.formal_slots.iter().any(|slot| scope.idents[*slot] == name))) {
             let target = self.read(name);
             return Ok(invoke(target, args));
         }

@@ -1,0 +1,19 @@
+explicit slots ((5, 4), False)
+private slots (7, 8, 9, 10, True, False)
+underscore class (11, True)
+identifiers (12, (14, 12), False)
+method name __method
+keyword parameter 15
+nested class ((21, 22), '__Inner')
+inheritance (31, 32)
+literal strings (41, 42, '42')
+slot conflict ValueError '_Clash__x' in __slots__ conflicts with class variable
+call keywords ['__x']
+inline class (51, True)
+nested bindings ([1, 2], (62, 64, '__inner', 2.0, 3))
+global binding (71, 71)
+delete attribute False
+suffix rules (91, 92, 93, True, ['__x_', '__x__', '___x', 'normal'])
+dynamic slots (101, False, ['__x'])
+nested bases 31
+outside unchanged 111

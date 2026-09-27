@@ -1,3 +1,6 @@
+# Host primitives used by class bodies need non-private module bindings.
+_host_clock = __clock
+
 # Wall time comes from the system clock.
 def time():
     return __clock(False)
@@ -21,7 +24,7 @@ class _ClockInfo:
         self.implementation = 'clock_gettime(CLOCK_MONOTONIC)' if steady else 'clock_gettime(CLOCK_REALTIME)'
         self.monotonic = steady
         self.adjustable = not steady
-        self.resolution = __clock(steady, True)
+        self.resolution = _host_clock(steady, True)
 
 def get_clock_info(name):
     if name in ('monotonic', 'perf_counter'):

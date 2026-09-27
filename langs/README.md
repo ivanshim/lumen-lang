@@ -1559,9 +1559,16 @@ only. The extension labels so far, all from PHP:
   specification and showing as its text; rounding, asked with the
   places if any were given; complex conversion, which must answer a
   complex; and the directory, whose answer the dir builtin sorts. An
-  absent list leaves ordinary operations as they stood. The trailing entries
-  name instance and subclass checks, an iterator length hint, and the
-  reconstruction arguments returned by a complex value as two real parts.
+  absent list leaves ordinary operations as they stood. Iterator length hints
+  are followed by reduction, state restoration, and protocol-aware reduction
+  methods used by copying and serialization. The internal reduce helper accepts
+  an optional boolean: true snapshots public instance fields, false returns
+  the underlying built-in value of a subclass. Its rebuild counterpart can
+  allocate that subclass without running its initializer. Pickle applies
+  reduction callables, arguments, state, and item streams for protocols 0–5;
+  its output retains the private marshal-based envelope except for boolean
+  roots, which use standard pickle encodings. The final special entry returns
+  a complex value's reconstruction arguments as two real parts.
   `ext.stmt.class.special.amiss` gives the words for a method answering
   with a value of the wrong kind. An object with neither text method is
   shown as `<C object>`, where C is its class name.
@@ -4312,7 +4319,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.issubclass.subject` | - | - | `TypeError: issubclass() arg 1 must be a class` | - | - | - | - | - | - | - |
 | `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
 | `ext.builtin.core.not_iterator` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
-| `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` | - | - | - | - | - | - | - |
+| `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` `TypeError: unsupported operand type(s) for ** or pow(): '` `', '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uncallable` | - | - | `TypeError: '` `' object is not callable` | - | - | - | - | - | - | - |
@@ -4415,6 +4422,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.unwritable` | - | - | `AttributeError: '` `' object has no attribute '` `' and no __dict__ for setting new attributes` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__ceil__` | - | - | `__ceil__` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__floor__` | - | - | `__floor__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__index__` | - | - | `__index__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__truediv__` | - | - | `int.__truediv__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
@@ -5062,7 +5071,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` `__getnewargs__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` `__length_hint__` `__reduce__` `__setstate__` `__reduce_ex__` `__getnewargs__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
@@ -5366,3 +5375,7 @@ Source compilation reports unrecognized escapes through that module.
 item-size and size-method names, followed by decimal values for the base
 size, digit size, digit bit width and subclass base size. The full kernels
 use these to report integer storage sizes, including inherited attributes.
+
+`ext.builtin.core.power.integer` optionally carries three further strings for
+the prefix, separator and suffix of a refused three-operand power, naming
+all three operand types after their special methods have declined.

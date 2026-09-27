@@ -1924,3 +1924,32 @@ from 1967 and 1979, with no passing test lost. fix/name-shadowing was
 merged too at first, but together with these it turned test_enumerate's
 test_pickle (an enumerate subclass pickled on stack8) from a pass into an
 error; it was taken out and goes back to its worker.
+
+### 1af. Batch 20d merged as #511; batch 20e: pickling, floats, fractions, private names
+
+Pull request #511 merged into main after one fix: fix/set-operations had
+raised test_set to 628 without moving scratch/reader-tail/4 (the record of
+test_set's whole progress line), which CI's scratch check caught; the
+record was moved and the Lambda checker now compares that record with the
+class-by-class test_set run.
+
+Batch 20e folds four branches. fix/pickle: pickling and copying through
+CPython's reduce protocol for every protocol, with the built-in iterators,
+range and sentinels reducing as CPython's do; merged with batch 20d it
+found two real interactions, fixed there — an inherited `__reduce_ex__`
+that bypassed a class's own `__reduce__`, and the serializer's memo keeping
+object ids without keeping the temporary reduction tuples alive, so a
+reused address could rebuild an iterator as a class (test_builtin 56 to
+64, test_dict +7, test_iter 45 to 53, test_range 17 to 22, test_set 628 to
+633, test_slice +2, test_list +2). fix/float-edges: float corners and
+round() on floats (test_float 22 to 27). fix/private-slots: private-name
+mangling inside class bodies, including `__slots__` (test_binop 3 to 11 of
+12; the twelfth rests on the documented `//` divergence).
+fix/fractions-rest: mixed arithmetic, typing's numeric protocols,
+functools.total_ordering and the fractions module's remaining errors
+(test_fractions 26 to 42).
+
+Merged, the fifty files count 2130 on stack8 and 2142 on microcode7, up
+from 2061 and 2074, with no passing test lost; scratch/reader-tail/4 moved
+to test_set's 633-passing line. The Lambda count now splits test_math and
+test_str by class too, as test_set.

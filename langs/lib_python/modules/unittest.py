@@ -1,3 +1,10 @@
+# Host primitives used by class bodies need non-private module bindings.
+_host_call_outcome = __call_outcome
+_host_class_methods = __class_methods
+_host_clock = __clock
+_host_load_module = __load_module
+_host_program_namespace = __program_namespace
+
 # Assertions and the test lifecycle live beside the modules they serve.
 class SkipTest(Exception):
     pass
@@ -156,9 +163,7 @@ class TestCase:
             raise 'TypeError: specify delta or places not both'
         if places is None:
             places = 7
-        difference = a - b
-        if difference < 0:
-            difference = -difference
+        difference = abs(a - b)
         if delta is not None:
             close = difference <= delta
         else:
@@ -213,7 +218,7 @@ class TestCase:
         while len(self._cleanups) > 0:
             cleanup = self._cleanups[len(self._cleanups) - 1]
             self._cleanups = self._cleanups[:-1]
-            outcome = __call_outcome(_Call(cleanup[0], cleanup[1], cleanup[2]).invoke)
+            outcome = _host_call_outcome(_Call(cleanup[0], cleanup[1], cleanup[2]).invoke)
             if not outcome[0]:
                 successful = False
                 if self._result is None:
@@ -235,9 +240,7 @@ class TestCase:
             raise 'TypeError: specify delta or places not both'
         if places is None:
             places = 7
-        difference = a - b
-        if difference < 0:
-            difference = -difference
+        difference = abs(a - b)
         if delta is not None:
             close = difference <= delta
         else:
@@ -331,7 +334,7 @@ class TestCase:
             result = TestResult()
         self._result = result
         result.testsRun += 1
-        outcome = __call_outcome(self._run_test)
+        outcome = _host_call_outcome(self._run_test)
         self.doCleanups()
         if outcome[0]:
             return result
@@ -433,7 +436,7 @@ class TestSuite:
         fixture = getattr(self.class_, name, None)
         if fixture is None:
             return True
-        outcome = __call_outcome(fixture)
+        outcome = _host_call_outcome(fixture)
         if outcome[0]:
             return True
         entry = [name, _message(outcome[1], outcome[2]), _class_name(self.class_)]
@@ -454,7 +457,7 @@ class TestSuite:
 
 class TestLoader:
     def getTestCaseNames(self, cls):
-        return _ordered([name for name in __class_methods(cls) if name[:4] == 'test'])
+        return _ordered([name for name in _host_class_methods(cls) if name[:4] == 'test'])
 
     def loadTestsFromTestCase(self, cls):
         methods = self.getTestCaseNames(cls)
@@ -466,12 +469,12 @@ class TestLoader:
 
     def loadTestsFromModule(self, module, pattern=None):
         if module is None or module == '__main__':
-            names = __program_namespace()
+            names = _host_program_namespace()
             module_name = '__main__'
         else:
             if type(module) == type(''):
-                module = __load_module(module)
-            names = __program_namespace(module)
+                module = _host_load_module(module)
+            names = _host_program_namespace(module)
             module_name = _class_name(module)
         suite = TestSuite()
         for name in _ordered(list(names)):
@@ -703,9 +706,9 @@ class TextTestRunner:
         result = TestResult()
         if self.resultclass is not None:
             result = self.resultclass()
-        started = __clock()
+        started = _host_clock()
         self._run(test, result)
-        elapsed = __clock() - started
+        elapsed = _host_clock() - started
         if self.verbosity > 0:
             self._write('\n')
         for error in result.errors:

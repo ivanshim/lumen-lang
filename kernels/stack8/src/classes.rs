@@ -287,6 +287,7 @@ impl<'a> Engine<'a> {
         }
         for slot in named {
             let Value::Text(word) = slot else { unreachable!() };
+            let word: Rc<str> = Rc::from(crate::compile::private_name(&c.name, &word));
             if word.as_ref() == self.class_word("namespace") { continue; }
             if Self::own_class_value(c, &word).is_some() { return Err(format!("ValueError: '{word}' in __slots__ conflicts with class variable").into()); }
             c.shared.borrow_mut().push((word.to_string(), Self::adapter(16, vec![Value::Text(word.clone()), Value::Class(c.clone())])));
@@ -774,6 +775,11 @@ impl<'a> Engine<'a> {
             }
             10 => self.root_state(&subject),
             11 | 12 => {
+                if place == 12 {
+                    if let Some(answer) = self.special_call(&subject, 79, Vec::new()).map_err(Fault::Note)? {
+                        return Ok(answer);
+                    }
+                }
                 let class = match &subject { Value::Object(o) => Value::Class(o.class.clone()), other => self.class_type(vec![other.clone()])? };
                 Value::Tuple(Rc::new(vec![class, Value::Tuple(Rc::new(Vec::new())), self.root_state(&subject)]))
             }
@@ -1053,7 +1059,11 @@ impl<'a> Engine<'a> {
                         return Ok(Self::adapter(3,vec![Value::text(name),worth]));
                     }
                 }
-                if let Some(root)=self.root_member(name,Some(&o.class)) {
+                // A native base's reduction slots must not be replaced by
+                // the root's empty-argument reconstruction of an ordinary object.
+                let native_reduction = [79, 81].iter().any(|at| self.lang.class_special.get(*at).map_or(false, |word| word == name))
+                    && Self::worth_of(&subject).map_or(false, |worth| self.native_special(&worth, name));
+                if let Some(root)=self.root_member(name,Some(&o.class)).filter(|_| !native_reduction) {
                     // The root's own maker takes the class rather than a
                     // thing, and the hook for a class stood on hears
                     // from the class; any other is bound to the thing.

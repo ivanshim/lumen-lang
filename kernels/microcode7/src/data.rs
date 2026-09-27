@@ -163,7 +163,7 @@ pub struct IteratorState {
 
 #[derive(Clone)]
 pub enum IteratorKind {
-    Stored(std::collections::VecDeque<Value>),
+    Stored { entries: Rc<Vec<Value>>, next: usize },
     /// A progression stepped through one place at a time.
     Stepping(Rc<Progression>, BigInt),
     /// A list read through its cell at every step, so that members put

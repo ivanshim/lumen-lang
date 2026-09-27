@@ -115,5 +115,97 @@ def singledispatch(func):
 def cmp_to_key(mycmp):
     raise 'NotImplementedError: cmp_to_key needs object ordering methods'
 
+def _gt_from_lt(self, other):
+    result = type(self).__lt__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return not result and self != other
+
+def _le_from_lt(self, other):
+    result = type(self).__lt__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return result or self == other
+
+def _ge_from_lt(self, other):
+    result = type(self).__lt__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return not result
+
+def _ge_from_le(self, other):
+    result = type(self).__le__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return not result or self == other
+
+def _lt_from_le(self, other):
+    result = type(self).__le__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return result and self != other
+
+def _gt_from_le(self, other):
+    result = type(self).__le__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return not result
+
+def _lt_from_gt(self, other):
+    result = type(self).__gt__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return not result and self != other
+
+def _ge_from_gt(self, other):
+    result = type(self).__gt__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return result or self == other
+
+def _le_from_gt(self, other):
+    result = type(self).__gt__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return not result
+
+def _le_from_ge(self, other):
+    result = type(self).__ge__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return not result or self == other
+
+def _gt_from_ge(self, other):
+    result = type(self).__ge__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return result and self != other
+
+def _lt_from_ge(self, other):
+    result = type(self).__ge__(self, other)
+    if result is NotImplemented:
+        return NotImplemented
+    return not result
+
 def total_ordering(cls):
-    raise 'NotImplementedError: total_ordering needs object ordering methods'
+    roots = []
+    for name in ('__lt__', '__le__', '__gt__', '__ge__'):
+        for base in cls.__mro__[:-1]:
+            if name in base.__dict__:
+                if name not in roots:
+                    roots.append(name)
+    if not roots:
+        raise ValueError('must define at least one ordering operation: < > <= >=')
+    root = max(roots)
+    if root == '__lt__':
+        methods = [('__gt__', _gt_from_lt), ('__le__', _le_from_lt), ('__ge__', _ge_from_lt)]
+    if root == '__le__':
+        methods = [('__ge__', _ge_from_le), ('__lt__', _lt_from_le), ('__gt__', _gt_from_le)]
+    if root == '__gt__':
+        methods = [('__lt__', _lt_from_gt), ('__ge__', _ge_from_gt), ('__le__', _le_from_gt)]
+    if root == '__ge__':
+        methods = [('__le__', _le_from_ge), ('__gt__', _gt_from_ge), ('__lt__', _lt_from_ge)]
+    for name, method in methods:
+        if name not in roots:
+            setattr(cls, name, method)
+    return cls
