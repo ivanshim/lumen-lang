@@ -307,6 +307,10 @@ pub struct Machine<'a> {
     /// The dictionary of builtin words, and the blueprint of a code
     /// value, each made when first wanted.
     natives_book: Option<Rc<RefCell<Value>>>,
+    /// The one thing a program is handed for the name of the builtins,
+    /// made when first asked for and kept, so that every asking is
+    /// answered by the selfsame thing and the selfsame dictionary.
+    builtins_stand_in: Option<Value>,
     code_kind: Option<Rc<Blueprint>>,
     ancestor: Option<Rc<Blueprint>>,
     /// The blueprint of properties, once one has been asked for.
@@ -1165,6 +1169,7 @@ impl<'a> Machine<'a> {
             readings: Vec::new(),
             reading_now: None,
             natives_book: None,
+            builtins_stand_in: None,
             code_kind: None,
             ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
             table,
@@ -2861,6 +2866,7 @@ impl<'a> Machine<'a> {
     /// or cannot be read at all, the name stays missing.
     fn spare_name(&mut self, wanted: &str) -> Option<Value> {
         if self.within_spare { return None; }
+        if self.names_the_builtins(wanted) { return Some(self.builtins_stand_in()); }
         let named = self.table.strings("ext.system.names.module").first()?.clone();
         if !self.imported.contains_key(&named) {
             self.within_spare = true;
@@ -17319,7 +17325,10 @@ impl<'a> Machine<'a> {
         match self.book_holding(at)? {
             Held::World => {
                 let book = self.world_book.as_ref()?;
-                if let Some(worth) = looked_up(book, name) { return Some(Ok(worth)); }
+                if let Some(worth) = looked_up(book, name) {
+                    if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(Ok(self.builtins_stand_in())); }
+                    return Some(Ok(worth));
+                }
                 let cell = self.outermost.cells.borrow()[at].clone();
                 if self.passed_over(name, &cell) { return None; }
                 if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
@@ -17395,6 +17404,51 @@ impl<'a> Machine<'a> {
             }
             None => {}
         }
+    }
+
+    /// Whether this word is the name the definition gives the builtins.
+    fn names_the_builtins(&self, word: &str) -> bool {
+        self.table.strings("ext.system.module.builtins").iter().any(|given| given == word)
+    }
+
+    /// Whether a value read from a book is the kernel's own dictionary
+    /// of builtin words, rather than one the program put there itself.
+    fn is_our_natives(&self, held: &Value) -> bool {
+        let Some(own) = &self.natives_book else { return false };
+        match held {
+            Value::Shared(cell) | Value::Mutable(cell, _) => Rc::ptr_eq(cell, own),
+            _ => false,
+        }
+    }
+
+    /// The thing a program asking for the builtins by name is handed: a
+    /// thing of the root's kind whose own dictionary is the dictionary
+    /// of builtin words. One thing is made and kept, so that the name
+    /// gives the same answer every time and the dictionary it hands
+    /// out is the one dictionary.
+    fn builtins_stand_in(&mut self) -> Value {
+        if let Some(held) = &self.builtins_stand_in { return held.clone(); }
+        let of = self.common_ancestor();
+        let words = Value::Mutable(self.natives_kept(), true);
+        self.made += 1;
+        let made = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, turn: self.made,
+            holds: RefCell::new(vec![("\0dictionary".to_owned(), words)]) }));
+        self.builtins_stand_in = Some(made.clone());
+        made
+    }
+
+    /// The builtins in force where the run now stands: what the reading
+    /// under way keeps them under, were it handed a dictionary of its
+    /// own, else the kernel's own dictionary.
+    pub(super) fn builtins_here(&mut self) -> Value {
+        if let Some(which) = self.reading_now {
+            let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
+            let roots = outer.unwrap_or(near);
+            if let Some(word) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
+                if let Ok(Some(held)) = self.booked_get(&roots, &word) { return held; }
+            }
+        }
+        Value::Mutable(self.natives_kept(), true)
     }
 
     /// The dictionary of every builtin word, made once.
@@ -17858,7 +17912,7 @@ impl<'a> Machine<'a> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await)?;
+        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await, None, None)?;
         for (message, row, column) in &built.warnings {
             self.syntax_warning(mode, message, &file, *row, *column, &source)?;
         }
@@ -18003,7 +18057,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await)?;
+        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None)?;
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         self.text_concluded(&built, &file, mode, shown)
@@ -18076,7 +18130,15 @@ impl<'a> Machine<'a> {
             _ => false,
         };
         let shadowed: Vec<String> = if own_natives { self.table.prims.keys().cloned().collect() } else { Vec::new() };
-        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await)?;
+        // The dictionary the text was handed and the builtins in force
+        // there go onto every routine it makes, so a routine can answer
+        // for both once the reading that made it is over.
+        let globe = Value::Shared(outer.clone());
+        let born = match self.table.single("ext.system.module.builtins").map(str::to_owned) {
+            Some(word) => match self.booked_get(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
+            None => Value::Mutable(self.natives_kept(), true),
+        };
+        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born))?;
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -18092,12 +18154,12 @@ impl<'a> Machine<'a> {
     /// statement shown as it runs, which is an expression written out
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
-    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool) -> Result<(crate::build::Built, bool), String> {
+    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
         if mode == 2 {
-            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), true, shadowed, top_await) { return Ok((built, true)); }
+            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), globe.clone(), born.clone(), true, shadowed, top_await) { return Ok((built, true)); }
         }
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, mode == 1, shadowed, top_await)
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, mode == 1, shadowed, top_await)
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 

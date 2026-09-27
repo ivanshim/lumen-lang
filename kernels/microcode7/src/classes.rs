@@ -121,6 +121,19 @@ impl<'a> Machine<'a> {
         } {
             return if given.is_empty(){Ok(singleton)}else{Err(format!("TypeError: {shown} takes no arguments").into())};
         }
+        // A routine framed by hand from a code value and a dictionary
+        // of names: the reference's own way of making a function, which
+        // keeps the dictionary it was handed and the builtins in force
+        // where it was made.
+        if word=="function" {
+            let (Some(Value::Wrapped(7,code)),Some(globe))=(given.first(),given.get(1))else{return Err(self.class_unready());};
+            let Some(Value::Routine(template))=code.first()else{return Err(self.class_unready());};
+            let born=self.builtins_here();
+            let mut made=(**template).clone();
+            made.globe=Some(globe.clone());
+            made.born=Some(born);
+            return Ok(Value::Routine(Rc::new(made)));
+        }
         let Some(op)=self.table.prims.get(word).copied()else{return Err(self.class_unready());};
         let (positional,named)=self.open_arguments(given)?;
         let made=if named.is_empty(){self.prim(op,word,&positional)?}else{self.core_primitive(op,word,positional,named)?};
@@ -816,6 +829,19 @@ impl<'a> Machine<'a> {
         if let Some(entry)=self.written_over.get(&Self::written_key(value,&self.outermost)) {return entry.4.clone();}
         match value {Value::Bound(code,_)|Value::Routine(code)|Value::Method(code,_)=>code.clone(),_=>unreachable!("only a routine runs code")}
     }
+    /// The builtins a routine reaches its unbound names through: what
+    /// the dictionary it was handed keeps under that name, else the
+    /// builtins in force where it was made, else the kernel's own
+    /// dictionary.
+    fn routine_builtins(&mut self,code:&Routine)->Res {
+        if let Some(word)=self.table.single("ext.system.module.builtins").map(str::to_owned) {
+            if let Some(globe)=&code.globe {
+                if let Some(held)=self.mapping_read(globe,&word)?{return Ok(held);}
+            }
+        }
+        if let Some(born)=&code.born{return Ok(born.clone());}
+        Ok(Value::Mutable(self.natives_kept(),true))
+    }
     /// What a routine holds of its own under a name: its name, full name
     /// or account as the program wrote them, the namespace handed to it,
     /// or an entry of the namespace it keeps.
@@ -1501,7 +1527,17 @@ impl<'a> Machine<'a> {
             if fields.get(10).map_or(false, |word| word == key) {
                 return Ok(code.annotator.clone().map_or(Value::Nil, |a| Value::Bound(a, annotation_room.clone())));
             }
-            if key==self.detail("globals")&&code.written_in.is_none(){return Ok(Value::Shared(self.book_about(true)));}
+            if key==self.detail("globals"){
+                // A routine framed by hand keeps the dictionary it was
+                // handed; one the program wrote answers the outermost
+                // dictionary of the run it was written in.
+                if let Some(globe)=&code.globe { return Ok(globe.clone()); }
+                if code.written_in.is_none(){return Ok(Value::Shared(self.book_about(true)));}
+            }
+            // The builtins a routine reaches its unbound names through.
+            if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key) {
+                return self.routine_builtins(&code);
+            }
             if key==self.detail("keywords"){
                 let named=self.spare_worths(&code,&room,'n');
                 if named.is_empty(){return Ok(Value::Nil);}
@@ -1816,6 +1852,9 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Nil);
                 }
                 if key==self.detail("globals")||key==self.detail("closure"){return Err(self.detail("property.readonly").to_owned().into());}
+                // The builtins a routine reaches its unbound names
+                // through are read off it, never written over.
+                if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key){return Err(self.detail("property.readonly").to_owned().into());}
                 if key==self.detail("code")||key==self.detail("defaults")||key==self.detail("keywords"){
                     self.write_routine_over(&subject,key,replacement)?;
                     return Ok(Value::Nil);

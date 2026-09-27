@@ -128,6 +128,21 @@ impl<'a> Engine<'a> {
         } {
             return if args.is_empty() { Ok(singleton) } else { Err(format!("TypeError: {shown} takes no arguments").into()) };
         }
+        // A routine built by hand out of a code value and a
+        // dictionary of names: the reference's way of making a
+        // function, which keeps the dictionary it was handed.
+        if word == "function" {
+            let (Some(Value::Adapter(code)), Some(globe)) = (args.first(), args.get(1)) else { return Err(self.class_refusal()); };
+            if code.0 != 7 { return Err(self.class_refusal()); }
+            let Some(Value::Routine(template)) = code.1.first() else { return Err(self.class_refusal()); };
+            let born = self.ambient_builtins();
+            let mut made = (**template).clone();
+            made.globe = Some(globe.clone());
+            made.born = Some(born);
+            made.revised = RefCell::new(None);
+            self.made += 1;
+            return Ok(Value::Routine(Rc::new(made)));
+        }
         let Some(op) = self.lang.builtins.get(word).copied() else { return Err(self.class_refusal()); };
         let items = self.call_items(args)?;
         let made = self.builtin_call(op, word, items)?;
@@ -1227,7 +1242,16 @@ impl<'a> Engine<'a> {
                     return Ok(result);
                 }
                 if !annotate_name.is_empty() && name == annotate_name { return Ok(f.annotation.clone().map_or(Value::Null, Value::Routine)); }
+                // A routine built by hand keeps the dictionary it was
+                // handed and answers with that, however it came to be.
+                if name==self.class_word("globals") {
+                    if let Some(globe)=&f.globe { return Ok(globe.clone()); }
+                }
                 if name==self.class_word("globals") && f.written_in.is_none() {return Ok(Value::Bond(self.outer_book_made()));}
+                // The builtins a routine reads its unbound names from.
+                if self.lang.module_builtins.iter().any(|word| word == name) {
+                    return self.routine_builtins(f);
+                }
                 if name==self.class_word("name") {return Ok(self.routine_held(&subject,name,Value::text(&f.ident)));}
                 if name==self.class_word("qualified") {return Ok(self.routine_held(&subject,name,Value::text(&f.qualified)));}
                 if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
@@ -1472,6 +1496,27 @@ impl<'a> Engine<'a> {
     /// Where a routine keeps the namespace the program handed it in
     /// place of the one it was made with.
     const HANDED_BOOK: &'static str = "\0 namespace";
+    /// The builtins a routine answers with: what its own dictionary
+    /// keeps under that name where it holds one, else the builtins in
+    /// force where it was built, else the module's own dictionary. A
+    /// module handed there stands for the dictionary it keeps.
+    fn routine_builtins(&mut self, program: &Rc<Routine>) -> Flow<Value> {
+        let word = match self.lang.module_builtins.first() { Some(word) => word.clone(), None => return Ok(self.native_dict()) };
+        if let Some(globe) = &program.globe {
+            if let Some(held) = self.dyn_lookup(globe, &word)? { return self.as_builtins_dictionary(held); }
+        }
+        if let Some(born) = &program.born { return self.as_builtins_dictionary(born.clone()); }
+        Ok(self.native_dict())
+    }
+    /// A module handed over where a dictionary of builtins is wanted
+    /// stands for the dictionary it keeps, as the reference reads it.
+    pub(super) fn as_builtins_dictionary(&mut self, held: Value) -> Flow<Value> {
+        if self.module_holding(&held).is_some() {
+            let word = self.class_word("namespace").to_string();
+            return self.class_get(held, &word, false);
+        }
+        Ok(held)
+    }
     /// A member a routine holds of its own: its name, full name or
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
@@ -1753,6 +1798,9 @@ impl<'a> Engine<'a> {
                     return self.routine_namespace_write(at, value);
                 }
                 if ["globals","closure"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_word("property.readonly").to_string().into());}
+                // The builtins a routine reaches its unbound names
+                // through are read off it, never written over.
+                if self.lang.module_builtins.iter().any(|word| word == name) {return Err(self.class_word("property.readonly").to_string().into());}
                 if name==self.class_word("defaults") || name==self.class_word("keywords") || name==self.class_word("code") {
                     let Value::Routine(f)=&subject else {return Err(self.class_refusal())};
                     if name==self.class_word("code") && Self::code_kind_differs(f, value.as_ref()) {

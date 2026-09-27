@@ -60,6 +60,10 @@ pub struct Engine<'a> {
     /// The dictionary of builtin words, and the class of a code value,
     /// each made once a program asks for it.
     natives: Option<Rc<RefCell<Value>>>,
+    /// The module-like stand-in a program asking for `__builtins__`
+    /// itself is handed, with the dictionary of builtin words kept
+    /// under its own namespace, made the first time it is asked for.
+    builtins_view: Option<Value>,
     code_class: Option<Rc<Class>>,
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
@@ -1112,6 +1116,7 @@ impl<'a> Engine<'a> {
             reading_in: None,
             text_within: None,
             natives: None,
+            builtins_view: None,
             code_class: None,
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
@@ -2366,16 +2371,14 @@ impl<'a> Engine<'a> {
     /// and a name it does not hold is missing as it was.
     fn kept_by_module(&mut self, name: &str) -> Option<Value> {
         if self.fetching_names { return None; }
-        let path = self.lang.names_module.first()?.clone();
-        let module = match self.modules.get(&path) {
-            Some(held) => held.clone(),
-            None => {
-                self.fetching_names = true;
-                let brought = self.import_module(&path);
-                self.fetching_names = false;
-                brought.ok()?
-            }
-        };
+        // The name of the builtins dictionary itself is read as the
+        // module-shaped stand-in the reference keeps it as, so that a
+        // program asking that name is handed something it can ask for
+        // a dictionary of its own.
+        if self.lang.module_builtins.iter().any(|word| word == name) {
+            return self.builtins_view().ok();
+        }
+        let module = self.names_module_value().ok()?;
         let Value::Object(object) = module else { return None };
         let held = object.fields.borrow().iter().find(|(word, _)| word == name)
             .map(|(_, held)| match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() })?;
@@ -8233,7 +8236,11 @@ impl<'a> Engine<'a> {
                 Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
                 Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class_now().clone()),
                 Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {
-                    Value::Fields(o)
+                    // A thing that keeps a namespace of its own hands
+                    // that over; one that keeps only fields stands as
+                    // its own namespace, as it always has.
+                    let kept = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, held)| held.clone());
+                    match kept { Some(held) => held, None => Value::Fields(o) }
                 }
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
@@ -17424,6 +17431,17 @@ impl Engine<'_> {
         match kept {
             Kept::Outer => {
                 let book = self.outer_book.clone()?;
+                // The name of the builtins dictionary is read as the
+                // module-shaped stand-in the reference keeps it as,
+                // where the dictionary holds the kernel's own builtins;
+                // one a program put there itself reads as it wrote it.
+                if self.lang.module_builtins.iter().any(|word| word == name)
+                    && self.our_native_dict(&book_entry(&book, name).unwrap_or(Value::Null)) {
+                    return Some(match self.builtins_view() {
+                        Ok(held) => Ok(held),
+                        Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+                    });
+                }
                 if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
                 if self.left_out(name, &self.world[far]) { return None; }
                 if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
@@ -17516,6 +17534,61 @@ impl Engine<'_> {
         let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.natives = Some(book.clone());
         book
+    }
+
+    /// The dictionary of builtin words itself, as a value a program may
+    /// hold and ask after.
+    fn native_dict(&mut self) -> Value {
+        self.natives_book().borrow().clone()
+    }
+
+    /// Whether a value is that very dictionary, rather than some other
+    /// dictionary a program handed over for its own names.
+    fn our_native_dict(&self, held: &Value) -> bool {
+        matches!(held, Value::Bond(cell) if self.natives.as_ref().map_or(false, |ours| Rc::ptr_eq(cell, ours)))
+    }
+
+    /// The module a program asking for the builtins by name is handed:
+    /// a thing of the module's own kind that keeps the dictionary of
+    /// builtin words as its namespace, made once and kept, so that the
+    /// name and every routine answering for their builtins give one and
+    /// the same dictionary every time.
+    fn builtins_view(&mut self) -> Flow<Value> {
+        if let Some(held) = &self.builtins_view { return Ok(held.clone()); }
+        let module = self.names_module_value()?;
+        let class = match &module { Value::Object(o) => o.class_now(), _ => self.root_class() };
+        let dictionary = self.native_dict();
+        self.made += 1;
+        let object = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
+            fields: RefCell::new(vec![("\0namespace".to_string(), dictionary)]), mark: self.made }));
+        self.builtins_view = Some(object.clone());
+        Ok(object)
+    }
+
+    /// The builtins in force where the run now stands: what the
+    /// dictionary being read keeps them under, where the run stands in
+    /// text handed a dictionary of its own, else the module's own.
+    fn ambient_builtins(&mut self) -> Value {
+        let word = match self.lang.module_builtins.first() { Some(word) => word.clone(), None => return self.native_dict() };
+        if self.reading_in.is_none() { return self.native_dict(); }
+        let book = self.book_here(true);
+        if let Ok(Some(held)) = self.book_get(&book, &word) {
+            if !self.our_native_dict(&held) {
+                if let Ok(dictionary) = self.as_builtins_dictionary(held) { return dictionary; }
+            }
+        }
+        self.native_dict()
+    }
+
+    /// The module the unbound names stand in, read in the first time it
+    /// is asked for and kept from then on.
+    fn names_module_value(&mut self) -> Flow<Value> {
+        let path = match self.lang.names_module.first() { Some(path) => path.clone(), None => return Ok(Value::Null) };
+        if let Some(held) = self.modules.get(&path) { return Ok(held.clone()); }
+        self.fetching_names = true;
+        let brought = self.import_module(&path);
+        self.fetching_names = false;
+        brought
     }
 
     /// The dictionary of the outermost names, made the first time it
@@ -18207,6 +18280,21 @@ impl Engine<'_> {
         };
         if own_natives {
             for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
+        }
+        // A routine written by text handed a dictionary of its own
+        // keeps that dictionary and the builtins in force there, so
+        // that it may answer for both later.
+        if let Some(word) = self.lang.module_builtins.first().cloned() {
+            let globe = outer.borrow().clone();
+            let born = match self.book_get(&outer, &word) {
+                Ok(Some(held)) if !self.our_native_dict(&held) => match self.as_builtins_dictionary(held) {
+                    Ok(dictionary) => dictionary,
+                    Err(_) => self.native_dict(),
+                },
+                _ => self.native_dict(),
+            };
+            local.globe = Some(globe);
+            local.born = Some(born);
         }
         let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await)?;
         let names: Vec<String> = local.idents[offset..].to_vec();
