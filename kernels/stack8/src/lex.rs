@@ -1172,6 +1172,21 @@ impl<'a> Cursor<'a> {
             while self.look(0).map_or(false, |c| lang.extends_name(c)) {
                 s.push(self.step());
             }
+            if number_spelling(&s, lang).is_err() && !lang.syntax_members.is_empty() {
+                for keyword in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+                    if let Some(prefix) = s.strip_suffix(keyword) {
+                        if !prefix.is_empty() && number_spelling(prefix, lang).is_ok()
+                            && !(prefix == "0" && keyword == "or")
+                            && !(prefix.starts_with("0x") && matches!(keyword, "and" | "else")) {
+                            let kept = prefix.len();
+                            self.at -= keyword.len();
+                            self.column -= keyword.len();
+                            s.truncate(kept);
+                            break;
+                        }
+                    }
+                }
+            }
             if let Err(mut said) = number_spelling(&s, lang) {
                 if !lang.syntax_members.is_empty() {
                     self.column = col + number_error_column(&s, &said);
@@ -1921,7 +1936,7 @@ fn number_error_column(word: &str, message: &str) -> usize {
     let start = if radix == 10 { 0 } else { 2 };
     for i in start..letters.len() {
         let c = letters[i];
-        if c == '_' && !letters.get(i + 1).map_or(false, |c| c.is_digit(radix)) { return i; }
+        if c == '_' && !letters.get(i + 1).map_or(false, |c| c.is_digit(radix) || radix < 10 && c.is_ascii_digit()) { return i; }
         if radix != 10 && c != '_' && !c.is_digit(radix) {
             return if radix < 10 && c.is_ascii_digit() { i } else { i.saturating_sub(1) };
         }
