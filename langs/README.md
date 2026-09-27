@@ -873,10 +873,14 @@ only. The extension labels so far, all from PHP:
   it raised and in its last part, the watch being kept with the suspended
   body and set up again when it goes on. `ext.stmt.yield.throw.invalid` opens the
   refusal of a thing raised into a suspension that is no exception at
-  all, and the kind of that thing closes it. `ext.stmt.yield.exit` names the
+  all, and the kind of that thing closes it. Its remaining entries reject a
+  separate value with an exception instance, an invalid traceback, and an
+  exception constructor returning something other than an exception. `ext.stmt.yield.exit` names the
   class raised at the suspension when the walk is ended, and
   `ext.stmt.yield.close.ignored` the complaint for a body that takes that
   class and hands out another value.
+  `ext.stmt.yield.throw.warning` supplies the warning module, callable, category
+  and message used by the deprecated multi-argument throw signature.
   `ext.builtin.next`, `ext.builtin.iter` and `ext.builtin.tuple` name the
   calls that ask for one item (with an optional answer at the end), make
   a walk, and gather its items into a tuple.
@@ -5249,9 +5253,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.suspends` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.throw` | - | - | `throw` | - | - | - | - | - | - | - |
-| `ext.stmt.yield.throw.invalid` | - | - | `TypeError: exceptions must be classes or instances deriving from BaseException, not ` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw.invalid` | - | - | `TypeError: exceptions must be classes or instances deriving from BaseException, not ` `TypeError: instance exception may not have a separate value` `TypeError: throw() third argument must be a traceback object` `TypeError: calling exception class should have returned an instance of BaseException` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw.warning` | - | - | `warnings` `warn_explicit` `DeprecationWarning` `the (type, exc, tb) signature of throw() is deprecated, use the single-arg signature instead.` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |
-| `ext.stmt.yield.unstarted` | - | - | `TypeError: cannot send a non-None value to a just-started generator` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unstarted` | - | - | `TypeError: can't send non-None value to a just-started generator` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unsupported` | - | - | `NotImplementedError: suspension in this form is not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |

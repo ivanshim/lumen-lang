@@ -232,8 +232,54 @@ def pairwise(iterable):
     values = _finite(iterable)
     return [(values[i], values[i + 1]) for i in range(len(values) - 1)]
 
+class _TeeData:
+    def __init__(self, source):
+        self.source = source
+        self.running = False
+
+
+class _Tee:
+    def __init__(self, data, link=None):
+        self.data = data
+        self.link = [None, None] if link is None else link
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        link = self.link
+        if link[1] is None:
+            if self.data.running:
+                raise RuntimeError('cannot re-enter the tee iterator')
+            self.data.running = True
+            try:
+                value = next(self.data.source)
+            finally:
+                self.data.running = False
+            link[0] = value
+            link[1] = [None, None]
+        self.link = link[1]
+        return link[0]
+
+    def __copy__(self):
+        return _Tee(self.data, self.link)
+
+
 def tee(iterable, n=2):
-    raise 'NotImplementedError: tee needs tuple values and independent iterators'
+    import operator
+    n = operator.index(n)
+    if n < 0:
+        raise ValueError('n must be >= 0')
+    source = iter(iterable)
+    if n == 0:
+        return ()
+    if not isinstance(source, _Tee):
+        source = _Tee(_TeeData(source))
+    copies = [source]
+    for _ in range(n - 1):
+        copies.append(source.__copy__())
+    return tuple(copies)
+
 
 def batched(iterable, n, strict=False):
     if n < 1:

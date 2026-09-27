@@ -3154,13 +3154,22 @@
     "throw"
   ],
   "ext.stmt.yield.throw.invalid": [
-    "TypeError: exceptions must be classes or instances deriving from BaseException, not "
+    "TypeError: exceptions must be classes or instances deriving from BaseException, not ",
+    "TypeError: instance exception may not have a separate value",
+    "TypeError: throw() third argument must be a traceback object",
+    "TypeError: calling exception class should have returned an instance of BaseException"
+  ],
+  "ext.stmt.yield.throw.warning": [
+    "warnings",
+    "warn_explicit",
+    "DeprecationWarning",
+    "the (type, exc, tb) signature of throw() is deprecated, use the single-arg signature instead."
   ],
   "ext.stmt.yield.unrun": [
     "Generators cannot be run"
   ],
   "ext.stmt.yield.unstarted": [
-    "TypeError: cannot send a non-None value to a just-started generator"
+    "TypeError: can't send non-None value to a just-started generator"
   ],
   "ext.stmt.yield.unsupported": [
     "NotImplementedError: suspension in this form is not supported"

@@ -1115,6 +1115,10 @@ impl<'a> Engine<'a> {
                 // calling it does what calling the routine does.
                 if name==self.class_word("call") { return Ok(Value::Routine(f.clone())); }
             }
+            Value::Generator(held) if name == self.class_word("name") || name == self.class_word("qualified") => {
+                let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
+                return Ok(Value::text(if name == self.class_word("name") { &state.name } else { &state.qualified }));
+            }
             Value::Generator(held) if !self.lang.yield_running.is_empty() && name==self.lang.yield_running[0] => {
                 // Running exactly while its own frame is on the way
                 // through the machine, which is exactly when the cell
@@ -1337,6 +1341,21 @@ impl<'a> Engine<'a> {
                 Some(Value::Null | Value::Trace(_)) => {},
                 None => return Err("TypeError: __traceback__ may not be deleted".into()),
                 _ => return Err("TypeError: __traceback__ must be a traceback or None".into()),
+            }
+        }
+        if let Value::Generator(cell) = &subject {
+            if self.lang.yield_running.first().is_some_and(|word| word == name) {
+                let parts = &self.lang.class_details["method.fixed"];
+                return Err(format!("{}{name}{}{}{}", parts[0], parts[1], subject.core_kind(), parts[2]).into());
+            }
+            if name == self.class_word("name") || name == self.class_word("qualified") {
+                let Some(Value::Text(text)) = value.as_ref().map(Value::contents) else {
+                    let words = self.lang.class_details.get("text.amiss").cloned().unwrap_or_default();
+                    return Err(format!("{}{name}{}", words[0], words[1]).into());
+                };
+                let mut state = cell.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+                if name == self.class_word("name") { state.name = text.to_string(); } else { state.qualified = text.to_string(); }
+                return Ok(Value::Null);
             }
         }
         let mut value = value;

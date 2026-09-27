@@ -80,6 +80,12 @@ class _GeneratorContextManager:
             throw(value)
         except StopIteration as stopped:
             return stopped is not value
+        except RuntimeError as raised:
+            if raised is value:
+                return False
+            if isinstance(value, StopIteration) and raised.__cause__ is value:
+                return False
+            raise
         except BaseException as raised:
             if raised is value:
                 return False
