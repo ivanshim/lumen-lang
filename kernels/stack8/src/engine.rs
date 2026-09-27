@@ -3854,7 +3854,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn routine_code(&mut self, program: &Rc<Routine>) -> Value {
-        if !program.enclosed.is_empty() || !program.held.is_empty() {
+        if !program.enclosed.is_empty() {
             let mut body = (**program).clone();
             body.held.clear();
             body.enclosed.clear();
