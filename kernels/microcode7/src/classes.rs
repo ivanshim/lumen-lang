@@ -1120,6 +1120,22 @@ impl<'a> Machine<'a> {
             return Err(self.absent_attribute(&value, key));
         }
         if matches!(&value,Value::Wrapped(6,_)) && self.table.spells("ext.stmt.class.property.setter",key) {return Ok(Self::wrap(13,vec![value]));}
+        if key==self.detail("namespace") {
+            let settled=value.settled();
+            let native=match &settled {
+                Value::Intrinsic(op,word) if Self::names_a_kind(op)=>Some(word.clone()),
+                other=>self.kind_spelling(other),
+            };
+            if let Some(word)=native {
+                let mut names=self.kind_member_names(&word);
+                names.push(key.to_owned());
+                let pairs:Vec<(Value,Value)>=names.into_iter().map(|entry| {
+                    let shown=format!("<attribute '{entry}' of '{word}' objects>");
+                    (Value::text(&entry),Value::text(&shown))
+                }).collect();
+                return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(pairs.into()))),'m'));
+            }
+        }
         // Routines, wrapped routines and slots are members that bind, and
         // read as such; a slot writes and removes besides.
         if self.protocol_spelled() {
@@ -1138,6 +1154,15 @@ impl<'a> Machine<'a> {
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
                 if key==self.detail("doc") {
                     if let Some(doc)=Self::builtin_kind_doc(word) { return Ok(Value::text(doc)); }
+                }
+                if key==self.detail("namespace") {
+                    let mut entries=self.kind_member_names(word);
+                    entries.push(key.to_owned());
+                    let members:Vec<(Value,Value)>=entries.into_iter().map(|name| {
+                        let descriptor=format!("<attribute '{name}' of '{word}' objects>");
+                        (Value::text(&name),Value::text(&descriptor))
+                    }).collect();
+                    return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(members.into()))),'m'));
                 }
                 // Read as a class the kind stands on the root and on
                 // nothing further, which is the whole of its line.
@@ -1450,6 +1475,7 @@ impl<'a> Machine<'a> {
                     let fresh:Vec<(String,Value)>=match replacement.as_ref().map(Value::settled) {
                         None=>Vec::new(),
                         Some(Value::Dict(entries))=>entries.iter().filter_map(|(k,v)|if let Value::Text(k)=k{Some((k.to_string(),v.clone()))}else{None}).collect(),
+                        Some(Value::Attributes(view))=>view.holds.borrow().iter().filter(|(name,_)|!name.starts_with('\0')).cloned().collect(),
                         Some(other)=>return Err(self.namespace_refused(&other)),
                     };
                     let mut holds=t.holds.borrow_mut();

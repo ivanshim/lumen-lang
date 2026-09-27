@@ -4537,7 +4537,7 @@ impl<'a> Engine<'a> {
         if matches!(sample, Value::Slice(_)) { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
-        if matches!(family, Kindred::Set(_)) { names.extend(self.lang.constructor.iter().cloned()); }
+        if matches!(family, Kindred::Set(_) | Kindred::Map) { names.extend(self.lang.constructor.iter().cloned()); }
         for (spelling, working) in self.lang.value_methods.iter() {
             if crate::methods::answered(sample, working) { names.push(spelling.clone()); }
         }
@@ -4683,6 +4683,21 @@ impl<'a> Engine<'a> {
             if let Some(view) = raw { return Ok(Some(Value::View(Rc::new((view.0.clone(), "mapping".to_string()))))); }
         }
         let held = value.contents();
+        if name == self.class_word("namespace") {
+            let kind = match &held {
+                Value::Native(op, spelling) if Self::kind_builtin(op) => Some(spelling.clone()),
+                other => self.kind_spelled(other),
+            };
+            if let Some(kind) = kind {
+                let mut keys = self.kind_special_names(&kind);
+                keys.push(name.to_string());
+                let members:Vec<(Value,Value)>=keys.into_iter().map(|key| {
+                    (Value::text(&key),Value::text(&format!("<attribute '{key}' of '{kind}' objects>")))
+                }).collect();
+                let map=Value::Map(Rc::new(members.into()));
+                return Ok(Some(Value::View(Rc::new((map,"mapping".to_string())))));
+            }
+        }
         if let Some(size) = self.integer_member(&held, name) { return Ok(Some(size)); }
         if matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_))
             && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) {
@@ -4857,7 +4872,7 @@ impl<'a> Engine<'a> {
     /// value of a builtin kind answers to it as a member of its own.
     pub(super) fn native_place(&self, subject: &Value, name: &str) -> Option<usize> {
         let family = Self::native_family(subject)?;
-        if matches!(family, Kindred::Set(_)) && self.lang.constructor.as_deref() == Some(name) { return Some(usize::MAX); }
+        if matches!(family, Kindred::Set(_) | Kindred::Map) && self.lang.constructor.as_deref() == Some(name) { return Some(usize::MAX); }
         let place = self.lang.class_special.iter().position(|word| word == name)?;
         Self::family_answers(family, place).then_some(place)
     }
@@ -4888,6 +4903,15 @@ impl<'a> Engine<'a> {
     /// so the answers and the refusals are the plain forms' too.
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if place == usize::MAX {
+            if let Value::Map(existing) = receiver.contents() {
+                let mut supplied=self.call_items(args).map_err(|fault| fault.told(&self.wording()))?;
+                supplied.extend(named.into_iter().map(|(key,value)| (Some(key),value)));
+                let Value::Map(additions)=self.builtin_call(Builtin::Dict,operation,supplied)? else { return Err(self.special_fault()); };
+                let mut combined=existing.to_vec();
+                for (key,value) in additions.iter().cloned() { self.map_enter(&mut combined,key,value)?; }
+                if let Some(cell)=Self::map_cell(receiver) { *cell.borrow_mut()=Value::Map(Rc::new(combined.into())); }
+                return Ok(Value::Null);
+            }
             let Value::Set(cell) = receiver.contents() else { return Err(self.special_fault()); };
             if cell.borrow().fixed { return Ok(Value::Null); }
             if args.len() > 1 || !named.is_empty() { return Err(self.set_said(".arguments", "")); }
@@ -7520,6 +7544,8 @@ impl<'a> Engine<'a> {
                 // the kind is one a class may stand on.
                 let kind_doc = name.as_ref() == self.class_word("doc")
                     && matches!(&held, Value::Native(_, word) if Self::builtin_kind_doc(word).is_some());
+                let kind_namespace = name.as_ref() == self.class_word("namespace")
+                    && (matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) || self.kind_spelled(&held).is_some());
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
@@ -7528,7 +7554,7 @@ impl<'a> Engine<'a> {
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
                 let generator_running = matches!(&held, Value::Generator(_)) && self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref());
-                Value::Flag(self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || kind_named || kind_maker || kind_doc || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || kind_named || kind_maker || kind_doc || kind_namespace || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -8841,6 +8867,12 @@ impl<'a> Engine<'a> {
         let source = Self::worth_of(&source.contents()).unwrap_or_else(|| source.clone());
         match source.contents() {
             Value::Map(held) => pairs.extend(held.iter().cloned()),
+            Value::Text(text) if text.is_empty() => {}
+            Value::Text(_) => {
+                let words = &self.lang.core_words["core.dict.pair"];
+                return (pairs, Some(format!("{}0{}1{}", words[0], words[1], words[2])));
+            }
+            Value::Null => return (pairs, Some("TypeError: 'NoneType' object is not iterable".to_string())),
             Value::Array(items) | Value::Tuple(items) => {
                 for (at, item) in items.iter().enumerate() {
                     match item.contents() {
