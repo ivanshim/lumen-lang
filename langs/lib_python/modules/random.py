@@ -61,6 +61,18 @@ def choices(population, weights=None, *, cum_weights=None, k=1):
             result.append(population[at])
     return result
 
+def sample(population, k):
+    values = list(population)
+    if k < 0 or k > len(values):
+        raise ValueError("Sample larger than population or is negative")
+    result = []
+    for index in range(k):
+        remaining = len(values) - index
+        chosen = _next() % remaining
+        result.append(values[chosen])
+        values[chosen] = values[remaining - 1]
+    return result
+
 def shuffle(sequence):
     for i in range(len(sequence) - 1, 0, -1):
         j = randrange(i + 1)
