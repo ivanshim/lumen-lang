@@ -5203,7 +5203,7 @@ impl<'a> Engine<'a> {
                 let words = self.wording();
                 return Ok(if alike { whole.representation(&words) } else { self.render(std::slice::from_ref(&whole)) });
             }
-            if matches!(held, Value::Array(_)) && Self::holds_object(&held) {
+            if matches!(&held, Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) {
                 if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
                     if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
                 }
@@ -12709,7 +12709,7 @@ impl<'a> Engine<'a> {
                 // cell: a walk may then watch the map, and a value given
                 // to every key of a new map stays the one value.
                 if (matches!(builtin, Builtin::Reversed | Builtin::ValueMethod) && matches!(held, Value::Map(_) | Value::Array(_))
-                    || builtin == Builtin::Repr && matches!(held, Value::Array(_)) && Self::holds_object(&held)) { continue; }
+                    || builtin == Builtin::Repr && matches!(&held, Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_))))) { continue; }
                 *value = held;
             }
         }
@@ -15439,7 +15439,7 @@ impl Engine<'_> {
                 // for its very kind is honoured.
                 if b == Builtin::InstanceOf && matches!(value, Value::View(_)) { continue; }
                 if b == Builtin::Repr && matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))
-                    && Self::holds_object(&value.contents()) { continue; }
+                    && matches!(value.contents(), Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) { continue; }
                 *value = value.contents();
             }
         }

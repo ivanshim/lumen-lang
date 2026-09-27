@@ -9756,7 +9756,7 @@ impl<'a> Machine<'a> {
                 if self.collections_read_alike() { return Ok(whole.repr(&self.wording())); }
                 return Ok(self.show(std::slice::from_ref(&whole)));
             }
-            if matches!(inner, Value::Vector(_)) && Self::carries_instance(&inner) {
+            if matches!(&inner, Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) {
                 let ceiling = self.table.count("ext.system.recursion.limit");
                 if ceiling.is_some_and(|limit| self.standing >= limit) {
                     if let Some(words) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{words}")); }
@@ -10992,7 +10992,7 @@ impl<'a> Machine<'a> {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
             } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
                 self.prim_values(op, name, v)?
-            } else if op == Prim::Quoted && v.first().map_or(false, |item| matches!(item, Value::Shared(_) | Value::Mutable(..)) && Self::carries_instance(&item.settled())) {
+            } else if op == Prim::Quoted && v.first().map_or(false, |item| matches!(item, Value::Shared(_) | Value::Mutable(..)) && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_))))) {
                 self.prim_values(op, name, v)?
             } else if (self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences())
                 && matches!(v.first(), Some(Value::Shared(_) | Value::Mutable(..))) {
@@ -17556,7 +17556,7 @@ impl Machine<'_> {
                 // for its very kind is honoured.
                 if op == Prim::Belongs && matches!(item, Value::Window(..)) { continue; }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
-                    && Self::carries_instance(&item.settled()) { continue; }
+                    && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
                 *item = item.settled();
             }
         }
