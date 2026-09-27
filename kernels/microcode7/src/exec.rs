@@ -7140,6 +7140,21 @@ impl<'a> Machine<'a> {
                 _ => Err(self.method_fault("arguments").into()),
             };
         }
+        if name == "complex_from_number" {
+            if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+            let number = &arguments[0];
+            let converted = if matches!(receiver, Value::Intrinsic(Prim::ComplexMade, _)) && matches!(number.settled(), Value::Complex(_)) {
+                number.settled()
+            } else {
+                let (real, imag, _) = self.complex_slot(number, "number", true).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))?;
+                crate::complex::pair(self.table, real, imag)
+            };
+            return match receiver {
+                Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![converted]),
+                Value::Intrinsic(Prim::ComplexMade, _) => Ok(converted),
+                _ => Err(self.method_fault("arguments").into()),
+            };
+        }
         if name == "float_fromhex" {
             if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
             let number = self.value_member(&arguments[0], "fromhex", Vec::new(), Vec::new())?;
@@ -7825,9 +7840,10 @@ impl<'a> Machine<'a> {
                 };
                 if parts[which].replace(value).is_some() { return Err(crate::complex::complaint(table,"arguments").into()); }
             }
-            let mut given = vec![parts[0].take().unwrap_or(Value::Small(0))];
-            if let Some(imaginary) = parts[1].take() { given.push(imaginary); }
-            return crate::complex::create(table,&given).map(Some).map_err(Escape::Error);
+            let real = parts[0].take().unwrap_or(Value::Small(0));
+            let imag = parts[1].take().unwrap_or(Value::Small(0));
+            let made = self.complex_pair(&real, &imag).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))?;
+            return Ok(Some(made));
         }
         // A map walked backwards from its cell is watched as a loop over
         // it is.
@@ -10844,6 +10860,100 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// One argument of the complex constructor read into its two
+    /// coordinates, with whether it stood as a complex worth. The
+    /// "real" side asks a thing's `__complex__`; the "imag" side
+    /// turns down a thing that is only complex, as the reference does.
+    fn complex_slot(&mut self, value: &Value, which: &str, consult_complex: bool) -> Result<(f64, f64, bool), String> {
+        let turned_down = format!("TypeError: complex() argument '{}' must be a real number, not {}", which, value.kind_word());
+        if let Value::Complex(pair) = value { return Ok((pair.0, pair.1, true)); }
+        if matches!(value, Value::Thing(_)) {
+            if consult_complex {
+                match self.ask_special(value, 74, &[])? {
+                    Some(Value::Complex(pair)) => return Ok((pair.0, pair.1, true)),
+                    Some(_) => return Err(self.bad_answer()),
+                    None => {}
+                }
+            }
+            if let Some(Value::Complex(pair)) = Self::underlying(value) { return Ok((pair.0, pair.1, true)); }
+            match self.ask_special(value, 39, &[])? {
+                Some(ref float @ Value::Frac(ref ratio)) if ratio.places.is_some() => {
+                    let (real, _) = crate::complex::coordinates(float).expect("a float carries one coordinate");
+                    return Ok((real, 0.0, false));
+                }
+                Some(_) => return Err(self.bad_answer()),
+                None => {}
+            }
+            if let Some(whole) = self.stood_for_whole(value)? {
+                let Some((real, _)) = crate::complex::coordinates(&whole) else {
+                    return Err(crate::complex::complaint(self.table, "integer.overflow"));
+                };
+                return Ok((real, 0.0, false));
+            }
+            return Err(turned_down);
+        }
+        if let Some((real, imag)) = crate::complex::coordinates(value) { return Ok((real, imag, false)); }
+        Err(turned_down)
+    }
+
+    /// Whether a value answers `__float__` or `__index__`, the two
+    /// number protocols that keep the constructor's "real" warning
+    /// quiet.
+    fn number_protocols(&self, value: &Value) -> bool {
+        self.appointment(value, 39).is_some() || self.appointment(value, 43).is_some()
+    }
+
+    /// The constructor's two-part road, where a complex standing for
+    /// either part is warned about as the reference warns, and every
+    /// thing is read through the protocols it answers.
+    fn complex_pair(&mut self, real: &Value, imag: &Value) -> Result<Value, String> {
+        let (rr, ri, real_is_complex) = self.complex_slot(real, "real", true)?;
+        let (ir, ii, imag_is_complex) = self.complex_slot(imag, "imag", false)?;
+        if real_is_complex && !self.number_protocols(real) {
+            self.deprecation_warning(&format!("complex() argument 'real' must be a real number, not {}", real.kind_word()))?;
+        }
+        if imag_is_complex {
+            self.deprecation_warning(&format!("complex() argument 'imag' must be a real number, not {}", imag.kind_word()))?;
+        }
+        let mut horizontal = rr;
+        let mut vertical = ir;
+        if imag_is_complex { horizontal -= ii; }
+        if real_is_complex { vertical += ri; }
+        Ok(crate::complex::pair(self.table, horizontal, vertical))
+    }
+
+    /// A DeprecationWarning said through the reference's warnings
+    /// module, so a filter the program set is honoured; one that turns
+    /// the warning into an error raises it, as in the reference.
+    fn deprecation_warning(&mut self, message: &str) -> Result<(), String> {
+        let words = self.table.strings("ext.system.syntax_warnings").to_vec();
+        if words.len() < 2 { return Ok(()); }
+        let Some(category) = self.fault_kinds.get("DeprecationWarning").cloned() else { return Ok(()); };
+        let namespace = self.load_namespace(&words[0])?;
+        let teller = self.namespace_item(&namespace, &words[0], &words[1])?;
+        let handed = vec![Value::text(message), category, Value::text("<string>"), Value::Small(1)];
+        match self.apply_class_member(teller, handed) {
+            Ok(_) => Ok(()),
+            Err(Escape::Error(said)) => Err(said),
+            Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
+        }
+    }
+
+    /// The constructor's road for calls without keywords: none is
+    /// nought, two is the warned pair road, one parses a string, keeps
+    /// a complex as itself, reads a number, and refuses the rest by
+    /// name.
+    fn complex_make(&mut self, values: &[Value]) -> Result<Value, String> {
+        if values.is_empty() { return Ok(crate::complex::pair(self.table, 0.0, 0.0)); }
+        if values.len() > 2 { return Err(crate::complex::complaint(self.table, "arguments")); }
+        if values.len() == 2 { return self.complex_pair(&values[0], &values[1]); }
+        if matches!(&values[0], Value::Text(_) | Value::Huge(_)) { return crate::complex::create(self.table, values); }
+        if let Some((real, imag)) = crate::complex::coordinates(&values[0]) {
+            return Ok(if matches!(&values[0], Value::Complex(_)) { values[0].clone() } else { crate::complex::pair(self.table, real, imag) });
+        }
+        Err(format!("TypeError: complex() argument must be a string or a number, not {}", values[0].kind_word()))
+    }
+
     /// The complaint for a working neither operand's methods would
     /// take: its sign and the two kinds set among the four pieces the
     /// table gives.
@@ -11186,7 +11296,14 @@ impl<'a> Machine<'a> {
             // answer with one.
             (Prim::ComplexMade, [item @ Value::Thing(_)]) => match self.ask_special(item, 74, &[])? {
                 Some(answer @ Value::Complex(_)) => answer,
-                Some(_) => return Err(self.bad_answer()),
+                Some(answer) => match Self::underlying(&answer) {
+                    Some(Value::Complex(pair)) => {
+                        let told = format!("__complex__ returned non-complex (type {}).  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python.", answer.kind_word());
+                        self.deprecation_warning(&told)?;
+                        Value::Complex(pair)
+                    }
+                    _ => return Err(self.bad_answer()),
+                },
                 None => match Self::underlying(item) {
                     Some(number @ Value::Complex(_)) => number,
                     _ => {
@@ -12356,7 +12473,7 @@ impl<'a> Machine<'a> {
             }
             Prim::ClassWork(work) => return self.work_on_class(work, v.to_vec()).map_err(|e| self.suspension_fault(e)),
             Prim::Pointed => v[0].clone().keeping_point(true),
-            Prim::ComplexMade => crate::complex::create(self.table, v)?,
+            Prim::ComplexMade => self.complex_make(v)?,
             Prim::NumberAlone => match &v[0] {
                 Value::Small(_) | Value::Huge(_) | Value::Frac(_) => v[0].clone(),
                 Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }),
@@ -14229,6 +14346,7 @@ impl<'a> Machine<'a> {
                     (Value::Small(n), Value::Small(m)) => n == m,
                     (Value::Huge(a), Value::Huge(b)) => Rc::ptr_eq(a, b),
                     (Value::Frac(a), Value::Frac(b)) => Rc::ptr_eq(a, b),
+                    (Value::Complex(a), Value::Complex(b)) => Rc::ptr_eq(a, b),
                     (Value::Text(a), Value::Text(b)) => Rc::ptr_eq(a, b),
                     (Value::Tuple(a), Value::Tuple(b)) => Rc::ptr_eq(a, b),
                     (Value::Span(a), Value::Span(b)) => Rc::ptr_eq(a, b),

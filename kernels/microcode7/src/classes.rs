@@ -1230,6 +1230,9 @@ impl<'a> Machine<'a> {
             if *op == Prim::AsReal && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
             }
+            if *op == Prim::ComplexMade && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
+                return Ok(Value::Member(Rc::new(value.clone()), String::from("complex_from_number")));
+            }
             if Self::names_a_kind(op) {
                 if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
@@ -1273,6 +1276,9 @@ impl<'a> Machine<'a> {
             }
             if (Self::native_word(b).as_deref() == Some("float") || Self::native_beneath(b).as_deref() == Some("float")) && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
+            }
+            if (Self::native_word(b).as_deref() == Some("complex") || Self::native_beneath(b).as_deref() == Some("complex")) && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
+                return Ok(Value::Member(Rc::new(value.clone()), String::from("complex_from_number")));
             }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
