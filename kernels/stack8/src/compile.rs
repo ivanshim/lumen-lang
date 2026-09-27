@@ -5418,8 +5418,24 @@ impl<'a> Compiler<'a> {
     /// before its brackets binds it; one written where a value stands
     /// has none, and stands for itself.
     fn function_value(&mut self, name: &str) -> Res<()> {
-        let original = self.pos.checked_sub(1).and_then(|i| self.spelled.get(i))
-            .filter(|t| t.shape == Shape::Instr && self.tokens[self.pos - 1].lexeme == name).map(|t| t.lexeme.clone()).unwrap_or_else(|| name.to_string());
+        let mut name_at = self.pos.checked_sub(1);
+        // The function wrapper may already have read its type parameters.
+        // Step over that list to recover the declaration's original name.
+        if let (Some(last), Some(pair)) = (name_at, self.lang.index_brackets.as_ref()) {
+            if self.lang.type_parameters && self.tokens[last].is_lexeme(Shape::Sign, &pair.close) {
+                let mut depth = 0usize;
+                for at in (0..=last).rev() {
+                    if self.tokens[at].is_lexeme(Shape::Sign, &pair.close) { depth += 1; }
+                    if self.tokens[at].is_lexeme(Shape::Sign, &pair.open) {
+                        depth -= 1;
+                        if depth == 0 { name_at = at.checked_sub(1); break; }
+                    }
+                }
+            }
+        }
+        let original = name_at.filter(|&i| self.tokens[i].lexeme == name)
+            .and_then(|i| self.spelled.get(i)).filter(|t| t.shape == Shape::Instr)
+            .map(|t| t.lexeme.clone()).unwrap_or_else(|| name.to_string());
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
         self.declaration_types()?;
         let lang = self.lang;
