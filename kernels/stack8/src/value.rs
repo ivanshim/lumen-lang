@@ -1269,11 +1269,11 @@ impl Value {
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
             Value::Real(r) if sp.shortest_reals => real_roundtrip(if r.below && r.p.is_zero() && !r.outside() { -0.0 } else { as_binary(&r.p, &r.q) }),
-            Value::Real(r) if r.floating => format!("{:?}", if r.below && r.p.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) }).to_lowercase(),
+            Value::Real(r) if r.floating => format!("{:?}", if r.below && r.p.is_zero() && !r.outside() { -0.0 } else { as_binary(&r.p, &r.q) }).to_lowercase(),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
-            Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
+            Value::Real(r) if r.below && r.p.is_zero() && !r.outside() => "-0".to_string(),
             Value::Real(r) if sp.real_digits.is_some() => written_out(as_binary(&r.p, &r.q), figures_now(false).unwrap_or(sp.real_digits)),
             Value::Real(r) if sp.binary_reals => expanded_real(as_binary(&r.p, &r.q), r.places),
             other => other.plain(),
@@ -1289,7 +1289,7 @@ impl Value {
         let mut shown = self.display(words);
         if let Value::Real(real) = self {
             if !words.shortest_reals {
-                let number = if real.below && real.p.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
+                let number = if real.below && real.p.is_zero() && !real.outside() { -0.0 } else { as_binary(&real.p, &real.q) };
                 shown = format!("{number:?}").to_ascii_lowercase();
                 if let Some((mantissa, exponent)) = shown.split_once('e') {
                     let power = exponent.parse::<i32>().ok()?;
@@ -1835,7 +1835,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Real(Rc::new(Real { floating: false, p, q: BigInt::zero(), places, below: false, point: false }))
+    Value::Real(Rc::new(Real { floating: false, p, q: BigInt::zero(), places, below: x.is_nan() && x.is_sign_negative(), point: false }))
 }
 
 /// A real brought to the nearest one of a width of bits, held exactly.
@@ -1844,6 +1844,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
 pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize, shortest: bool) -> Value {
     if shortest {
         if let Value::Real(r) = &v {
+            if r.outside() { return v; }
             let number = nearest_real(&r.p, &r.q);
             return real_of(if number == 0.0 && r.below { -0.0 } else { number }, places).with_point(r.point);
         }
@@ -1857,6 +1858,7 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize, shortest: b
         Value::Frac(r) => (r.p.clone(), r.q.clone(), false),
         _ => return v,
     };
+    if q.is_zero() { return v; }
     let binary = as_binary(&p, &q);
     match from_binary(binary) {
         // A nought below nought keeps its minus at any width.

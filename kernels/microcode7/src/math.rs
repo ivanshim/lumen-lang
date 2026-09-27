@@ -160,6 +160,15 @@ fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
         Calc::OverReal => Ok(made_number(&a.above * &b.beneath, &a.beneath * &b.above, Some(places.unwrap_or(DEFAULT_PLACES)), a.above.is_negative() != b.above.is_negative())),
         Calc::IntDiv => Ok(make_number((&a.above * &b.beneath) / (&b.above * &a.beneath), BigInt::one(), places)),
         Calc::Remainder => {
+            if let Some(width) = places {
+                let dividend = if a.under && a.above.is_zero() { -0.0 } else { crate::data::nearest_binary(&a.above, &a.beneath) };
+                let divisor = if b.under && b.above.is_zero() { -0.0 } else { crate::data::nearest_binary(&b.above, &b.beneath) };
+                let remainder = dividend % divisor;
+                let settled = if remainder == 0.0 { 0.0_f64.copysign(divisor) }
+                    else if remainder.is_sign_negative() != divisor.is_sign_negative() { remainder + divisor }
+                    else { remainder };
+                return Ok(crate::data::worth_of_binary(settled, width));
+            }
             let q = ratio_of(&precise(Calc::IntDiv, a, b)?).unwrap();
             let p = ratio_of(&precise(Calc::Times, b, &q)?).unwrap();
             precise(Calc::Minus, a, &p)

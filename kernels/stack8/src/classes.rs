@@ -667,6 +667,9 @@ impl<'a> Engine<'a> {
             let mut initial = args.clone();
             match self.lang.builtins.get(word) {
                 Some(Builtin::Set) => initial.clear(),
+                Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                    initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
+                }
                 Some(Builtin::Frozen) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
                 }
@@ -940,6 +943,9 @@ impl<'a> Engine<'a> {
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
             Value::Native(op, word) if Self::kind_builtin(op) => {
+                if *op == Builtin::AsReal && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
+                }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
@@ -962,6 +968,12 @@ impl<'a> Engine<'a> {
                 if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
             }
             Value::Class(c) => {
+                if (Self::own_kind(c).as_deref() == Some("float") || Self::kind_beneath(c).as_deref() == Some("float")) && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
+                }
+                if Self::kind_beneath(c).as_deref() == Some("float") && name == "fromhex" {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_fromhex".to_string()))));
+                }
                 if name==self.class_word("name") { return Ok(Value::text(&c.name)); }
                 if name==self.class_word("qualified") { return Ok(self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name))); }
                 if name==self.class_word("bases") { return Ok(Value::Tuple(Rc::new(c.direct.iter().cloned().map(Value::Class).collect()))); }

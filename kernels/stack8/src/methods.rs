@@ -363,7 +363,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "imag" => Ok(if real {crate::complex::real(0.0)} else {Value::Small(0)}),
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
-                "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::Tuple(Rc::new(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)])))},
+                "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(r)=>return Err(if r.no_number() { "ValueError: cannot convert NaN to integer ratio".to_string() } else { "OverflowError: cannot convert Infinity to integer ratio".to_string() }),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::Tuple(Rc::new(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)])))},
                 // The int nearest a float, one side or the other: an
                 // infinity carries no such int, and a nan is not one of
                 // the numbers at all, so each fails the way turning it
@@ -431,19 +431,12 @@ fn hex_real(spelling: &str) -> Option<f64> {
             let (mantissa, power) = match body.split_once('p') { Some((m, e)) => (m, e.parse::<i64>().ok()?), None => (body, 0) };
             let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
             if whole.is_empty() && fraction.is_empty() { return None; }
-            let mut value = 0f64;
-            for c in whole.chars() { value = value * 16.0 + c.to_digit(16)? as f64; }
-            let mut scale = 1.0 / 16.0;
-            for c in fraction.chars() { value += c.to_digit(16)? as f64 * scale; scale /= 16.0; }
-            let mut exponent = power;
-            let mut result = value;
-            // Doubling leaves a zero alone just as it leaves a real that
-            // has grown past the numbers alone, so both stop the count.
-            // Without the zero, a spelling such as 0x0p123456789123456789
-            // would be doubled that many times over to reach the same 0.
-            while exponent > 0 { result *= 2.0; exponent -= 1; if result.is_infinite() || result == 0.0 { break; } }
-            while exponent < 0 { result /= 2.0; exponent += 1; if result == 0.0 { break; } }
-            result
+            for digit in whole.chars().chain(fraction.chars()) { digit.to_digit(16)?; }
+            unsafe extern "C" {
+                fn strtod(source: *const std::ffi::c_char, end: *mut *mut std::ffi::c_char) -> f64;
+            }
+            let normalized = std::ffi::CString::new(format!("0x{mantissa}p{power}")).ok()?;
+            unsafe { strtod(normalized.as_ptr(), std::ptr::null_mut()) }
         }
     };
     Some(if negative { -magnitude } else { magnitude })

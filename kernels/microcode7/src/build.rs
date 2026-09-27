@@ -7904,6 +7904,12 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
+            if calling && table.strings("ext.builtin.method.from_number").iter().any(|word| word.rsplit('.').next() == Some(named.as_str())) {
+                self.advance();
+                let values = self.args("syntax.call.close", "syntax.call.separator")?;
+                node = invoke(prim_call(Prim::Of, vec![node, constant(Value::text(&named))]), values);
+                continue;
+            }
             let kind_follows = self.kind_mark.map_or(false, |mark| mark >= self.pos
                 && self.tokens[self.pos..mark].iter().all(|token| token.shape == Shape::Sign
                     && table.spells("syntax.group.close", &token.lexeme)));

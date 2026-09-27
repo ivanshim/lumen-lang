@@ -2162,6 +2162,9 @@ only. The extension labels so far, all from PHP:
   own, called on its first argument. `ext.builtin.method.error.hex` and
   `.hex_overflow` give the complaints for a spelling that is no
   hexadecimal real and for one too large to hold.
+- `ext.builtin.method.from_number` spells `float.from_number`; it takes a
+  number or the float/index protocols, omits text conversion, and makes
+  an instance of a float subclass when read through that subclass.
 - `ext.builtin.method.error.arguments`, `.attribute`, `.separator`,
   `.substring`, `.pop`, `.index`, `.remove`, `.list_index` and `.fill`:
   lists holding the complaints for bad arguments, an absent member, an
@@ -4455,6 +4458,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.extend` | - | - | `extend` | - | - | - | - | - | - | - |
 | `ext.builtin.method.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.method.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.method.from_number` | - | - | `float.from_number` | - | - | - | - | - | - | - |
 | `ext.builtin.method.fromhex` | - | - | `float.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.fromkeys` | - | - | `dict.fromkeys` `fromkeys` | - | - | - | - | - | - | - |
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |

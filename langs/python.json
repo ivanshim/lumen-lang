@@ -92,6 +92,9 @@
   "ext.builtin.method.fromhex": [
     "float.fromhex"
   ],
+  "ext.builtin.method.from_number": [
+    "float.from_number"
+  ],
   "ext.builtin.method.conjugate": [
     "conjugate"
   ],

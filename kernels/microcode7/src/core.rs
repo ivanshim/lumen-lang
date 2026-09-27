@@ -114,7 +114,7 @@ impl Value {
             }
             Self::Shared(cell) | Self::Mutable(cell, _) => cell.borrow().quoted(brief),
             Self::Frac(r) if r.places.is_some() => {
-                if r.under && r.above == BigInt::from(0) { return String::from("-0.0"); }
+                if r.under && r.above == BigInt::from(0) && !r.past_numbers() { return String::from("-0.0"); }
                 let f = crate::data::nearest_binary(&r.above, &r.beneath);
                 if brief { return crate::data::decimal_roundtrip(f); }
                 match f { f if f.is_nan() => "nan".to_owned(), f if f.is_infinite() => if f.is_sign_negative() { "-inf" } else { "inf" }.to_owned(), f => format!("{f:?}") }

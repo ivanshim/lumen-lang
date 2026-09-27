@@ -200,8 +200,7 @@ def isclose(a, b, rel_tol=0.000000001, abs_tol=0.0):
 def copysign(x, y):
     _check_real(x)
     _check_real(y)
-    sign = __math('fdiv', 1.0, y)
-    if y < 0 or sign < 0:
+    if y < 0 or __math('signbit', y) != 0.0:
         return __math('fdiv', -fabs(x), 1.0)
     return fabs(x)
 

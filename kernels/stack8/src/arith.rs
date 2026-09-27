@@ -205,6 +205,16 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
         Operation::OverReal => shape_signed(&a.p * &b.q, &a.q * &b.p, Some(places.unwrap_or(DEFAULT_PLACES)), opposed),
         Operation::Floor => shape_number((&a.p * &b.q) / (&b.p * &a.q), BigInt::one(), places),
         Operation::Remainder => {
+            if places.is_some() {
+                let mut left = crate::value::as_binary(&a.p, &a.q);
+                let mut right = crate::value::as_binary(&b.p, &b.q);
+                if left == 0.0 && a.below { left = -0.0; }
+                if right == 0.0 && b.below { right = -0.0; }
+                let mut rest = left % right;
+                if rest == 0.0 { rest = 0.0_f64.copysign(right); }
+                else if rest.is_sign_negative() != right.is_sign_negative() { rest += right; }
+                return Ok(crate::value::real_of(rest, places.unwrap_or(DEFAULT_PLACES)));
+            }
             // a - b * (a // b)
             let q = Exact::from_value(&precise(Operation::Floor, a, b)?).expect("a number");
             let bq = Exact::from_value(&precise(Operation::Times, b, &q)?).expect("a number");
