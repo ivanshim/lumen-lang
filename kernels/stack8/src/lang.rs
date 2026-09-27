@@ -238,6 +238,8 @@ pub struct Lang {
     pub codepoint_digits: Option<usize>,
     pub wide_letter: Option<char>,
     pub wide_digits: Option<usize>,
+    pub escape_warning: Vec<String>,
+    pub named_amiss: Option<String>,
     pub named_letter: Option<char>,
     pub escape_unavailable: Option<String>,
     pub escape_letters: Vec<char>,
@@ -1319,7 +1321,7 @@ w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.
 b ext.stmt.terminator.only | w ext.stmt.separator
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 
-w ext.lexical.line_continuation | w ext.lexical.string.bytes.unavailable | w ext.lexical.string.format.errors | w ext.lexical.string.format.unavailable | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable | w ext.lexical.string.value.unready | b ext.builtin.range.zero_start | w ext.lexical.string.unready
+w ext.lexical.line_continuation | w ext.lexical.string.bytes.unavailable | w ext.lexical.string.format.errors | w ext.lexical.string.format.unavailable | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.named.amiss | w ext.lexical.escape.warning | w ext.lexical.escape.unavailable | w ext.lexical.string.value.unready | b ext.builtin.range.zero_start | w ext.lexical.string.unready
 b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
@@ -2280,6 +2282,8 @@ impl Lang {
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
             codepoint_amiss: r.head("ext.lexical.escape.codepoint.amiss")?,
+            escape_warning: r.strings("ext.lexical.escape.warning")?,
+            named_amiss: r.head("ext.lexical.escape.named.amiss")?,
             codepoint_beyond: r.head("ext.lexical.escape.codepoint.beyond")?,
             byte_letter: r.letter("ext.lexical.escape.byte")?,
             number_amiss: r.head("ext.lexical.number.amiss")?,

@@ -151,6 +151,7 @@ impl Value {
                 let text: String = bytes.borrow().iter().map(|byte| char::from(*byte)).collect();
                 Value::text(&text).core_hash()
             }
+            Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
             Value::Null => Some(0x9e3779b9),

@@ -17,6 +17,7 @@ class _Writer:
     def __init__(self, slices, refuse):
         self.pieces = []
         self.memo = {}
+        self.kept = []
         self.slices = slices
         self.refuse = refuse
 
@@ -32,6 +33,8 @@ class _Writer:
             self.pieces.append('b' + str(self.memo[where]) + ';')
             return True
         self.memo[where] = len(self.memo)
+        # Temporary reduction containers must live as long as their ids.
+        self.kept.append(value)
         return False
 
     def put(self, value):
