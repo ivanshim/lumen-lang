@@ -853,6 +853,16 @@ impl Value {
         }
     }
 
+    /// A stand-in text for a row of numbers a category question walks
+    /// one at a time: a stow that reading left behind answers none of
+    /// them, exactly as the half of a surrogate pair it stands for
+    /// answers none of Python's own, so the stand-in below is a real
+    /// character no category claims, standing in for one no `char` can
+    /// hold at all.
+    pub fn category_text(numbers: &[u32]) -> String {
+        numbers.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect()
+    }
+
     pub fn characters(numbers: Vec<u32>) -> Value {
         let mut word = String::new();
         for &number in &numbers {

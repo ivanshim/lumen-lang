@@ -856,6 +856,17 @@ impl Value {
         match self { Value::Text(s) => Some(s.chars().map(u32::from).collect()), Value::Codepoints(row) => Some(row.as_ref().clone()), _ => None }
     }
 
+    /// A read-only category question (is it alphabetic, printable,
+    /// upper-cased and so on) asks after each character on its own; a
+    /// half of a surrogate pair kept whole answers none of them, the
+    /// same as the noncharacter standing in for it here answers none
+    /// of them either, so a walk built this way answers exactly as a
+    /// walk of the real numbers would, without ever once minting a
+    /// `char` a surrogate cannot become.
+    pub fn predicate_text(row: &[u32]) -> String {
+        row.iter().map(|&n| char::from_u32(n).unwrap_or('\u{FFFE}')).collect()
+    }
+
     pub fn from_codes(row: Vec<u32>) -> Value {
         if let Some(text) = row.iter().copied().map(char::from_u32).collect::<Option<String>>() { Value::text(&text) }
         else { Value::Codepoints(Rc::new(row)) }

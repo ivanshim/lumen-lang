@@ -4938,10 +4938,16 @@ impl<'a> Builder<'a> {
             }
             return Ok(CaseTest::Equal(number));
         }
-        if self.look().shape == Shape::Quote {
-            let mut chars = String::new();
-            while self.look().shape == Shape::Quote { chars.push_str(&self.advance().lexeme); }
-            return Ok(CaseTest::Equal(Value::text(&chars)));
+        if matches!(self.look().shape, Shape::Quote | Shape::CharacterRow) {
+            let mut numbers = Vec::new();
+            loop {
+                match self.look().shape {
+                    Shape::Quote => numbers.extend(self.advance().lexeme.chars().map(|ch| ch as u32)),
+                    Shape::CharacterRow => numbers.extend(self.advance().lexeme.split_whitespace().map(|word| word.parse::<u32>().unwrap())),
+                    _ => break,
+                }
+            }
+            return Ok(CaseTest::Equal(Value::characters(numbers)));
         }
         if self.on_any("syntax.array.open") || self.on_any("syntax.group.open") {
             let array = self.on_any("syntax.array.open");

@@ -3492,10 +3492,15 @@ impl<'a> Compiler<'a> {
             };
             return Ok(Pattern::Literal(value));
         }
-        if token.shape == Shape::Quote {
-            let mut text = self.take().lexeme;
-            while self.look().shape == Shape::Quote { text.push_str(&self.take().lexeme); }
-            return Ok(Pattern::Literal(Value::text(&text)));
+        if matches!(token.shape, Shape::Quote | Shape::Codepoints) {
+            let mut points = Vec::new();
+            while matches!(self.look().shape, Shape::Quote | Shape::Codepoints) {
+                let part = self.take();
+                if part.shape == Shape::Codepoints {
+                    points.extend(part.lexeme.split(',').map(|n| n.parse::<u32>().unwrap()));
+                } else { points.extend(part.lexeme.chars().map(u32::from)); }
+            }
+            return Ok(Pattern::Literal(Value::from_codes(points)));
         }
         for (brackets, grouped) in [(lang.array_brackets.clone(), false), (lang.grouping.clone(), true)] {
             let Some(b) = brackets else { continue; };

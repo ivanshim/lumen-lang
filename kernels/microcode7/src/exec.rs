@@ -1700,6 +1700,17 @@ impl<'a> Machine<'a> {
 
     /// Everything the run writes out passes through here, so a language
     /// able to keep its own output has one place that keeps it.
+    /// What printing writes is a value's own text, unquoted, put
+    /// out through the same door an explicit `.encode('utf-8')`
+    /// would use; a half of a surrogate pair kept whole is refused
+    /// there the same way, before anything reaches the writing.
+    fn written_surrogate_check(&mut self, value: &Value) -> Result<(), String> {
+        if matches!(value.settled(), Value::Unpaired(_)) {
+            self.codec_function("_encode_surrogates", vec![value.settled(), Value::text("utf-8"), Value::text("strict")])?;
+        }
+        Ok(())
+    }
+
     fn utter(&self, text: &str) {
         let mut holding = self.holding.borrow_mut();
         match holding.last_mut() {
@@ -5850,6 +5861,16 @@ impl<'a> Machine<'a> {
     /// map is marked before it settles, since settling leaves a plain
     /// row with none of a window's ways, and the window upon the values
     /// is marked apart from the other two.
+    /// Whether that text working only ever answers a category
+    /// question, one character at a time, and never hands any of
+    /// them back out: the one safe way to let a row holding a stowed
+    /// surrogate half answer it, from a stand-in text built for
+    /// exactly this reading.
+    fn category_safe_work(work: crate::text::Work) -> bool {
+        use crate::text::Work::*;
+        matches!(work, ISTITLE | ISIDENTIFIER | ISPRINTABLE | ISDECIMAL | ISNUMERIC | ISASCII)
+    }
+
     fn native_mark(value: &Value) -> Option<char> {
         let mut held = value.clone();
         while let Value::Mutable(cell, _) | Value::Shared(cell) = held { let inner = cell.borrow().clone(); held = inner; }
@@ -6248,6 +6269,11 @@ impl<'a> Machine<'a> {
         }
         if let (Value::Text(subject), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
             return Some(Value::TextCall { subject: subject.clone(), work: *work, name: Rc::from(name) });
+        }
+        if let (Value::Unpaired(numbers), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
+            if Self::category_safe_work(*work) {
+                return Some(Value::TextCall { subject: Rc::from(Value::category_text(numbers).as_str()), work: *work, name: Rc::from(name) });
+            }
         }
         // A walk, a row, a map or a set hands over the walking pair and
         // the holder's members as a method bound to it.
@@ -7280,6 +7306,7 @@ impl<'a> Machine<'a> {
                     sink = self.attribute(&namespace, &route[1]).unwrap_or(Value::Nil);
                     if matches!(sink, Value::Nil) { return Ok(Some(Value::Nil)); }
                 }
+                for item in positional.iter() { self.written_surrogate_check(item)?; }
                 let writer = self.attribute(&sink, &route[2])
                     .ok_or_else(|| self.member_missing(&sink, &route[2]))?;
                 let mut first = true;
@@ -7299,6 +7326,7 @@ impl<'a> Machine<'a> {
                 }
                 return Ok(Some(Value::Nil));
             }
+            for item in positional.iter() { self.written_surrogate_check(item)?; }
             let mut written = String::new();
             for (at, item) in positional.iter().enumerate() {
                 if at != 0 { written.push_str(&join); }
