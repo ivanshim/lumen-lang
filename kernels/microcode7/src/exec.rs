@@ -3216,6 +3216,12 @@ impl<'a> Machine<'a> {
         let source = Self::underlying(&source.settled()).unwrap_or_else(|| source.clone());
         let stopped = match source.settled() {
             Value::Dict(entries) => { pairs.extend(entries.iter().cloned()); None }
+            Value::Text(text) if text.is_empty() => None,
+            Value::Text(_) => {
+                let wording = self.table.strings("ext.builtin.core.dict.pair");
+                Some(format!("{}0{}1{}", wording[0], wording[1], wording[2]))
+            }
+            Value::Nil => Some("TypeError: 'NoneType' object is not iterable".to_owned()),
             Value::Vector(items) | Value::Tuple(items) => {
                 let mut fault = None;
                 for (at, item) in items.iter().enumerate() {
@@ -6069,7 +6075,7 @@ impl<'a> Machine<'a> {
     pub(super) fn kind_member_names(&self, word: &str) -> Vec<String> {
         let Some(sample) = self.kind_stand_in(word) else { return Vec::new() };
         let mut gathered = Vec::new();
-        if matches!(sample, Value::Set(_)) {
+        if matches!(sample, Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
         }
         for name in self.table.strings("ext.stmt.class.special") {
@@ -6125,7 +6131,7 @@ impl<'a> Machine<'a> {
         if let Value::Span(_) = sample { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
         let mut gathered = Vec::new();
-        if matches!(sample, Value::Set(_)) {
+        if matches!(sample, Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
         }
         for name in self.table.strings("ext.stmt.class.special") {
@@ -6298,7 +6304,7 @@ impl<'a> Machine<'a> {
     pub(super) fn native_place(&self, value: &Value, name: &str) -> Option<usize> {
         let mark = Self::native_mark(value)?;
         if self.table.single("ext.stmt.class.constructor") == Some(name) {
-            if matches!(mark, 'e' | 'E') { return Some(usize::MAX); }
+            if matches!(mark, 'e' | 'E' | 'd') { return Some(usize::MAX); }
             if mark == 'l' { return Some(usize::MAX - 1); }
         }
         let at = self.table.strings("ext.stmt.class.special").iter().position(|word| word == name)?;
@@ -6347,6 +6353,15 @@ impl<'a> Machine<'a> {
         }
         if at == usize::MAX {
             match receiver.settled() {
+                Value::Dict(previous) => {
+                    let (positions,mut names)=self.open_arguments(arguments)?;
+                    names.extend(keywords);
+                    let Value::Dict(additions)=self.dictionary(&positions,names).map_err(Escape::from)? else { return Err(self.bad_answer().into()); };
+                    let mut merged=previous.to_vec();
+                    for (key,value) in additions.iter().cloned() { self.map_enter(&mut merged,key,value).map_err(Escape::from)?; }
+                    if let Some(cell)=Self::dict_cell(receiver) { cell.replace(Value::Dict(Rc::new(merged.into()))); }
+                    return Ok(Value::Nil);
+                }
                 Value::Set(store) => {
                     if store.borrow().sealed { return Ok(Value::Nil); }
                     if !keywords.is_empty() || arguments.len() > 1 { return Err(self.set_complaint("arguments", "").into()); }
@@ -6559,6 +6574,22 @@ impl<'a> Machine<'a> {
         if matches!(value.settled(), Value::Generator(_)) && ["throw", "send", "close"].iter()
             .any(|part| self.table.spells(&format!("ext.stmt.yield.{part}"), name)) {
             return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
+        }
+        if name == self.table.single("ext.stmt.class.detail.namespace").unwrap_or("") {
+            let actual=value.settled();
+            let named=match &actual {
+                Value::Intrinsic(op, word) if Self::names_a_kind(op) => Some(word.clone()),
+                other => self.kind_spelling(other),
+            };
+            if let Some(word)=named {
+                let mut methods=self.kind_member_names(&word);
+                methods.push(name.to_owned());
+                let entries:Vec<(Value,Value)>=methods.into_iter().map(|member| {
+                    let detail=format!("<attribute '{member}' of '{word}' objects>");
+                    (Value::text(&member),Value::text(&detail))
+                }).collect();
+                return Some(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))),'m'));
+            }
         }
         if let Some(answer) = self.integer_attribute(value, name) { return Some(answer); }
         if matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_))
@@ -11985,7 +12016,10 @@ impl<'a> Machine<'a> {
                         match value {
                             Value::Dict(pairs) => Some(pairs.to_vec()),
                             Value::Window(owner, 'm') => match owner.settled() { Value::Dict(pairs) => Some(pairs.to_vec()), _ => None },
-                            _ => None,
+                            held => {
+                                let plain=Self::underlying(held).unwrap_or_else(|| held.clone()).settled();
+                                if let Value::Dict(pairs)=plain { Some(pairs.to_vec()) } else { None }
+                            },
                         }
                     };
                     let equal = match (pairs_of(a), pairs_of(b)) {
@@ -12319,6 +12353,15 @@ impl<'a> Machine<'a> {
             }
             Prim::SetAssign(operation) => {
                 n(2)?;
+                if operation == 0 && self.table.flag("ext.op.bit.or.maps") {
+                    if let Value::Dict(original) = v[0].settled() {
+                        let (offered, stopped) = self.pairs_offered(&v[1]);
+                        let mut joined = original.to_vec();
+                        for (key, value) in offered { self.map_enter(&mut joined, key, value)?; }
+                        if let Some(words) = stopped { return Err(words); }
+                        return Ok(Value::Dict(Rc::new(joined.into())));
+                    }
+                }
                 let ordinary = [Prim::BitsEither, Prim::BitsBoth, Prim::Minus, Prim::BitsOne][operation as usize];
                 let answer = self.prim(ordinary, name, v)?;
                 match (&v[0], &answer) {

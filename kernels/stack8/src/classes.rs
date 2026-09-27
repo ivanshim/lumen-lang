@@ -984,6 +984,21 @@ impl<'a> Engine<'a> {
         if let Value::Adapter(property) = &subject {
             if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
         }
+        if name==self.class_word("namespace") {
+            let held=subject.contents();
+            let builtin=match &held {
+                Value::Native(op,word) if Self::kind_builtin(op)=>Some(word.clone()),
+                other=>self.kind_spelled(other),
+            };
+            if let Some(word)=builtin {
+                let mut listed=self.kind_special_names(&word);
+                listed.push(name.to_string());
+                let pairs:Vec<(Value,Value)>=listed.into_iter().map(|entry| {
+                    (Value::text(&entry),Value::text(&format!("<attribute '{entry}' of '{word}' objects>")))
+                }).collect();
+                return Ok(Value::View(Rc::new((Value::Map(Rc::new(pairs.into())),"mapping".to_string()))));
+            }
+        }
         // A routine, a wrapped routine and a slot each read as a member
         // that binds; the slot writes and removes as well.
         if name == self.class_word("descriptor.get") && !name.is_empty()
@@ -1017,6 +1032,13 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
                 if name==self.class_word("doc") {
                     if let Some(doc) = Self::builtin_kind_doc(word) { return Ok(Value::text(doc)); }
+                }
+                if name==self.class_word("namespace") {
+                    let mut names=self.kind_special_names(word);
+                    names.push(name.to_string());
+                    let rows=names.into_iter().map(|key| (Value::text(&key),Value::text(&format!("<attribute '{key}' of '{word}' objects>")))).collect();
+                    let book=Value::Map(Rc::new(rows));
+                    return Ok(Value::View(Rc::new((book,"mapping".to_string()))));
                 }
                 // The kind read as a class stands on the root and on
                 // nothing else, so that is the whole of its line.
@@ -1559,6 +1581,7 @@ impl<'a> Engine<'a> {
                     let entries=match value.as_ref().map(|v| Self::worth_of(v).unwrap_or_else(|| v.clone()).contents()) {
                         None => Vec::new(),
                         Some(Value::Map(pairs)) => pairs.iter().filter_map(|(k,v)| match k {Value::Text(t)=>Some((t.to_string(),v.clone())),_=>None}).collect(),
+                        Some(Value::Fields(view)) => view.fields.borrow().iter().filter(|(key,_)| !key.starts_with('\0')).cloned().collect(),
                         Some(other) => {
                             let pieces=self.lang.class_details.get("namespace.amiss").cloned().unwrap_or_default();
                             if pieces.len()!=2 {return Err(self.class_refusal());}
