@@ -2736,6 +2736,9 @@ impl<'a> Builder<'a> {
     /// A watched arm written beside its colon ends at the line end;
     /// one written below it follows the ordinary indentation reading.
     fn watched_body(&mut self) -> Res<Form> {
+        if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if !self.on_any("block.intro") { return Err(String::from("SyntaxError: expected ':'")); }
+        }
         // Standing in a class body, the arm names members and is read
         // the way the body around it is read.
         if self.in_class_body() { return self.class_limb(); }
@@ -2811,7 +2814,19 @@ impl<'a> Builder<'a> {
                 }
                 held = if self.key("ext.stmt.catch.as") {
                     self.advance();
+                    let start = self.pos;
                     let binding = self.need_word("after the caught value's binding word")?;
+                    if table.has_any("ext.builtin.exceptions.syntax") {
+                        let kind = match self.look().lexeme.as_str() { "." => Some("attribute"), "[" => Some("subscript"), _ => None };
+                        if let Some(kind) = kind {
+                            while !self.on_any("block.intro") && !self.on_stmt_end() && !self.exhausted() { self.advance(); }
+                            let tail = &self.tokens[self.pos - 1];
+                            self.range_end = Some((tail.column + tail.lexeme.chars().count(), tail.row));
+                            self.pos = start;
+                            let clause = if grouped { "except*" } else { "except" };
+                            return Err(format!("SyntaxError: cannot use {clause} statement with {kind}"));
+                        }
+                    }
                     self.claim(&binding);
                     Some(self.address_to_write(&binding))
                 } else { None };
@@ -6512,6 +6527,10 @@ impl<'a> Builder<'a> {
                     _ => return Err("Invalid assignment target".to_string()),
                 }
             }
+            other if self.table.has_any("ext.builtin.exceptions.syntax") => {
+                let kind = match other { Form::Apply(Callee::Code(_), _) => "function call", _ => "expression" };
+                return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?"));
+            }
             _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
         };
         let made = match before_bounds {
@@ -6570,6 +6589,14 @@ impl<'a> Builder<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            if table.has_any("ext.builtin.exceptions.syntax") && (text == "|" || text == "&") {
+                let following = self.glance(1);
+                if following.lexeme == text && (following.row, following.column) == (t.row, t.column + 1) {
+                    self.range_end = Some((t.column + 2, t.row));
+                    let keyword = if text == "|" { "or" } else { "and" };
+                    return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{keyword}' or '{text}' instead of '{text}{text}'?"));
+                }
+            }
             let conditional = table.strings("ext.op.if_else");
             if floor == 0 && conditional.first() == Some(&text) {
                 self.advance();
@@ -7258,18 +7285,50 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
+            if targets && table.has_any("ext.builtin.exceptions.syntax") {
+                let token = self.look();
+                let description = match token.lexeme.as_str() {
+                    "None" | "False" | "True" => Some(token.lexeme.as_str()),
+                    "*" => Some("starred"),
+                    "not" | "~" | "-" | "+" => Some("expression"),
+                    _ if matches!(token.shape, Shape::Quote | Shape::Numeral | Shape::ByteQuote) => Some("literal"),
+                    _ => None,
+                };
+                if let Some(description) = description { return Err(format!("SyntaxError: cannot delete {description}")); }
+            }
             if targets && !self.bracketed_holder() {
                 let closes = if self.on_any("syntax.group.open") { table.single("syntax.group.close") }
                     else if self.on_any("syntax.array.open") { table.single("syntax.array.close") } else { None };
                 if let Some(closes) = closes {
+                    let parentheses = self.on_any("syntax.group.open");
                     self.advance();
+                    if table.has_any("ext.builtin.exceptions.syntax") && parentheses && self.sign("*") {
+                        let comma = self.tokens[self.pos..].iter().take_while(|part| part.lexeme != closes).any(|part| part.lexeme == ",");
+                        if !comma { return Err(String::from("SyntaxError: cannot use starred expression here")); }
+                    }
                     items.push(self.forget_list(true, true, Some(closes.to_string()))?);
                     if self.on_any("syntax.call.separator") { self.advance(); }
                     continue;
                 }
             }
             self.unsupported_place = false;
-            let named = if targets { self.deletion_place()? } else { self.expr(0)? };
+            let named = if targets {
+                let place = self.deletion_place()?;
+                self.called_on_value(place)?
+            } else { self.expr(0)? };
+            if targets && table.has_any("ext.builtin.exceptions.syntax") {
+                if matches!(&named, Form::Apply(Callee::Code(_), _)) {
+                    return Err(String::from("SyntaxError: cannot delete function call"));
+                }
+                let word = &self.look().lexeme;
+                let invalid = match word.as_str() {
+                    ":=" => Some("named expression"),
+                    "if" => Some("conditional expression"),
+                    _ if table.dyadic.contains_key(word) => Some("expression"),
+                    _ => None,
+                };
+                if let Some(kind) = invalid { return Err(format!("SyntaxError: cannot delete {kind}")); }
+            }
             items.push(if self.unsupported_place {
                 prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.del.unrun").unwrap_or_default()))])
             } else { match named {
@@ -7864,6 +7923,9 @@ impl<'a> Builder<'a> {
                         }
                         return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]));
                     }
+                    if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(14))) {
+                        return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(Value::text(&named))]));
+                    }
                     if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(_))) {
                         args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
                         return Ok(sequence(args));
@@ -8426,6 +8488,11 @@ impl<'a> Builder<'a> {
             let word = token.lexeme.as_str();
             if nesting.is_empty() {
                 if word == "=" && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
+                    let strings = &self.tokens[begins..at.saturating_sub(1).max(begins)];
+                    if !strings.is_empty() && strings.iter().all(|entry| entry.shape == Shape::Quote) {
+                        self.pos = at - 2;
+                        return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
+                    }
                     self.range_end = Some((token.column + 1, token.row));
                     self.pos = begins;
                     return Err(String::from("SyntaxError: expression cannot contain assignment, perhaps you meant \"==\"?"));
