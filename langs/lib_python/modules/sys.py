@@ -170,8 +170,12 @@ def _input(prompt=''):
         return line[:-1]
     return line
 
-def exit(status=None):
-    raise SystemExit(status)
+def exit(*args, **kwargs):
+    if kwargs:
+        raise TypeError('exit() takes no keyword arguments')
+    if len(args) > 1:
+        raise TypeError('exit() takes at most 1 argument (%d given)' % len(args))
+    raise SystemExit(args[0] if args else None)
 
 # The default answer to breakpoint(): a name in $PYTHONBREAKPOINT picks
 # what runs in its place, '0' turns it off, and an unset or empty name

@@ -848,7 +848,8 @@
     "ReferenceError",
     "MemoryError",
     "BufferError",
-    "StopAsyncIteration"
+    "StopAsyncIteration",
+    "SystemError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -887,6 +888,12 @@
   ],
   "ext.builtin.exceptions.note": [
     "add_note"
+  ],
+  "ext.builtin.exceptions.setstate": [
+    "__setstate__"
+  ],
+  "ext.builtin.exceptions.reduce": [
+    "__reduce__"
   ],
   "ext.builtin.exceptions.note.invalid": [
     "TypeError: note must be a str"
