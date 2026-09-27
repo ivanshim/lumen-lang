@@ -4309,7 +4309,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.issubclass.subject` | - | - | `TypeError: issubclass() arg 1 must be a class` | - | - | - | - | - | - | - |
 | `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
 | `ext.builtin.core.not_iterator` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
-| `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` | - | - | - | - | - | - | - |
+| `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` `TypeError: unsupported operand type(s) for ** or pow(): '` `', '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uncallable` | - | - | `TypeError: '` `' object is not callable` | - | - | - | - | - | - | - |
@@ -5353,3 +5353,7 @@ Frames are allocated on demand when an exception first records its location.
 item-size and size-method names, followed by decimal values for the base
 size, digit size, digit bit width and subclass base size. The full kernels
 use these to report integer storage sizes, including inherited attributes.
+
+`ext.builtin.core.power.integer` optionally carries three further strings for
+the prefix, separator and suffix of a refused three-operand power, naming
+all three operand types after their special methods have declined.

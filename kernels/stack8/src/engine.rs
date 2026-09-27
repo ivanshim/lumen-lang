@@ -6000,11 +6000,14 @@ impl<'a> Engine<'a> {
                 return Err(self.operands_complaint(&format!("{word}()"), &args[0], &args[1]));
             }
             Builtin::Power if args.len() == 2 && args.iter().any(|v| matches!(v, Value::Object(_))) => self.special_dyad(&Action::Power, &args[0], &args[1])?,
-            Builtin::Power if args.len() == 3 && args[..2].iter().any(|v| matches!(v, Value::Object(_))) => {
+            Builtin::Power if args.len() == 3 && args.iter().any(|v| matches!(v, Value::Object(_))) => {
                 if let Some(answer) = self.special_call(&args[0], 24, vec![args[1].clone(), args[2].clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(Some(answer)); } }
                 if let Some(answer) = self.special_call(&args[1], 32, vec![args[0].clone(), args[2].clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(Some(answer)); } }
-                let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
-                return Err(self.operands_complaint(&format!("{word}()"), &args[0], &args[1]));
+                let words = &self.lang.core_words["core.power.integer"];
+                if let [_, prefix, separator, suffix] = words.as_slice() {
+                    return Err(format!("{prefix}{}{separator}{}{separator}{}{suffix}", Self::shown_kind(&args[0]), Self::shown_kind(&args[1]), Self::shown_kind(&args[2])));
+                }
+                return Err(words.first().cloned().unwrap_or_else(|| self.special_fault()));
             }
             // A thing may say what complex number it stands for, and
             // must answer with one.
@@ -6014,7 +6017,17 @@ impl<'a> Engine<'a> {
                     Some(_) => return Err(self.special_fault()),
                     None => match Self::worth_of(&args[0]).filter(|v| matches!(v, Value::Complex(_))) {
                         Some(value) => value,
-                        None => return Ok(None),
+                        None => {
+                            let real = match self.special_call(&args[0], 39, Vec::new())? {
+                                Some(value @ Value::Real(_)) => value,
+                                Some(_) => return Err(self.special_fault()),
+                                None => match self.special_index(&args[0])? {
+                                    Some(value) => value,
+                                    None => return Ok(None),
+                                },
+                            };
+                            crate::complex::construct(self.lang, &[real])?
+                        }
                     },
                 }
             }
@@ -15570,7 +15583,7 @@ impl Engine<'_> {
                     return crate::complex::work(self.lang, &Action::Power, &args[0], &args[1]);
                 }
                 if args.len() == 3 && !matches!(args[2], Value::Null) {
-                    if args.iter().any(|v| !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) { return Err(self.core_fault("core.power.integer", "")); }
+                    if args.iter().any(|v| !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) { return Err(self.lang.core_words["core.power.integer"][0].clone()); }
                     let (mut a, mut exp, modulus) = (integer(&args[0])?, integer(&args[1])?, integer(&args[2])?);
                     if modulus.is_zero() { return Err(self.core_fault("core.mod.zero", "")); }
                     let positive = modulus.abs();

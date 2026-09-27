@@ -677,7 +677,10 @@
     "' object is not an iterator"
   ],
   "ext.builtin.core.power.integer": [
-    "TypeError: pow() 3rd argument not allowed unless all arguments are integers"
+    "TypeError: pow() 3rd argument not allowed unless all arguments are integers",
+    "TypeError: unsupported operand type(s) for ** or pow(): '",
+    "', '",
+    "'"
   ],
   "ext.builtin.core.power.overflow": [
     "OverflowError: math range error"
