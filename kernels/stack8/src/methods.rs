@@ -101,7 +101,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
     const PLACES: &[&str] = &["index", "count"];
     const WHOLE: &[&str] = &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio",
         "is_integer", "__index__", "__truediv__"];
-    const FRACTION: &[&str] = &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex"];
+    const FRACTION: &[&str] = &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"];
     let names: &[&str] = match value.contents() {
         Value::Text(_) => TEXT,
         Value::Array(_) => ROW,
@@ -364,6 +364,17 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
                 "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::Tuple(Rc::new(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)])))},
+                // The int nearest a float, one side or the other: an
+                // infinity carries no such int, and a nan is not one of
+                // the numbers at all, so each fails the way turning it
+                // into a plain int already fails.
+                "__floor__" | "__ceil__" if real => {
+                    let Value::Real(r) = &held else { unreachable!() };
+                    if r.no_number() { return Err("ValueError: cannot convert float NaN to integer".to_string()); }
+                    if r.outside() { return Err("OverflowError: cannot convert float infinity to integer".to_string()); }
+                    let whole = if op == "__floor__" { r.p.div_floor(&r.q) } else { -((-&r.p).div_floor(&r.q)) };
+                    Ok(Value::of_big(whole))
+                },
                 "hex" if matches!(held,Value::Real(_)) => {
                     let Value::Real(r) = &held else { unreachable!() };
                     let n=crate::value::as_binary(&r.p,&r.q);

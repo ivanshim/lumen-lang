@@ -13775,7 +13775,13 @@ impl<'a> Machine<'a> {
                         } else { None };
                     if let Some(real) = special { return Ok(crate::data::worth_of_binary(real, math::DEFAULT_PLACES)); }
                 }
-                let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
+                // The message names the very string handed over, in
+                // its own repr, the way CPython's own float() does.
+                let shown = v.first().map(|first| first.representation(self.wording()));
+                let failure = || match &shown {
+                    Some(shown) => format!("{}: {}", self.argument_fault("ext.builtin.to_real.text.amiss", None), shown),
+                    None => self.argument_fault("ext.builtin.to_real.text.amiss", None),
+                };
                 // Figures may be grouped with a separator, which has to
                 // stand between two of them; anywhere else it is a fault.
                 let regrouped = match v.first() {
@@ -18123,7 +18129,38 @@ impl Machine<'_> {
             }
             Rounded => {
                 require(1, 2)?;
-                let places = match input.get(1) { None | Some(Value::Nil) => 0, Some(v) => whole(v)?.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
+                let ndigits = match input.get(1) { None | Some(Value::Nil) => None, Some(v) => Some(whole(v)?) };
+                // A float past every number, or the one that is not a
+                // number at all, carries no rounding of its own: asked
+                // to round down to a plain whole number it fails the way
+                // turning it into one always fails, but handed a count
+                // of places (any count) it comes back exactly as given,
+                // there being no nearer float at that scale to move to.
+                if let Value::Frac(r) = &input[0] {
+                    if r.beneath.is_zero() {
+                        if r.above.is_zero() {
+                            if ndigits.is_none() { return Err("ValueError: cannot convert float NaN to integer".to_string()); }
+                        } else if ndigits.is_none() {
+                            return Err("OverflowError: cannot convert float infinity to integer".to_string());
+                        }
+                        return Ok(input[0].clone());
+                    }
+                }
+                // A count of places beyond where a double's own decimal
+                // digits reach is answered without a scale that wide:
+                // past the top of that reach the float already names its
+                // own rounding, and past the bottom every float rounds
+                // away to a nought carrying its sign.
+                if let Value::Frac(r) = &input[0] {
+                    if let Some(n) = &ndigits {
+                        if *n > BigInt::from(323) { return Ok(input[0].clone()); }
+                        if *n < BigInt::from(-308) {
+                            let negative = r.above.is_negative();
+                            return Ok(crate::data::worth_of_binary(if negative { -0.0 } else { 0.0 }, math::DEFAULT_PLACES));
+                        }
+                    }
+                }
+                let places = match &ndigits { None => 0, Some(n) => n.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
                 // A whole number rounded to places after the point is itself;
                 // to places before it, a half goes to the even neighbour where
                 // the table says so.
@@ -18155,6 +18192,7 @@ impl Machine<'_> {
                     if input.len() < 2 || matches!(input[1], Value::Nil) { return Ok(Value::from_big(rounded)); }
                     let worth = if places < 0 { crate::data::nearest_binary(&(rounded * factor), &BigInt::from(1)) }
                         else { crate::data::nearest_binary(&rounded, &factor) };
+                    if worth.is_infinite() { return Err("OverflowError: rounded value too large to represent".to_string()); }
                     return Ok(crate::data::worth_of_binary(if negative && worth == 0.0 { -0.0 } else { worth }, math::DEFAULT_PLACES));
                 }
                 // Follow the arithmetic of the shared library at each step.

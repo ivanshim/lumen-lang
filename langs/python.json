@@ -1109,6 +1109,12 @@
   "ext.builtin.method.is_integer": [
     "is_integer"
   ],
+  "ext.builtin.method.__floor__": [
+    "__floor__"
+  ],
+  "ext.builtin.method.__ceil__": [
+    "__ceil__"
+  ],
   "ext.builtin.method.isalnum": [
     "isalnum"
   ],

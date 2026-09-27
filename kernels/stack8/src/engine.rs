@@ -13780,9 +13780,15 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let Value::Text(text) = &args[0] else { unreachable!() };
                 // A separator may stand between two figures and nowhere else.
+                // The message names the very string handed over, in
+                // its own repr, the way CPython's own float() does.
+                let amiss = |slf: &mut Self, of: &Value| -> String {
+                    let prefix = slf.lang.to_real_text_amiss[0].clone();
+                    match slf.special_text(of, true) { Ok(shown) => format!("{prefix}: {shown}"), Err(_) => prefix }
+                };
                 let text = match self.lang.number_separator_between_digits(text) {
                     Some(joined) => joined,
-                    None => return Err(self.lang.to_real_text_amiss[0].clone()),
+                    None => return Err(amiss(self, &args[0])),
                 };
                 let text = &text;
                 let plain = text.trim().to_ascii_lowercase();
@@ -13796,8 +13802,9 @@ impl<'a> Engine<'a> {
                     if self.lang.shortest_reals { return Ok(crate::value::real_of(number, arith::DEFAULT_PLACES)); }
                     if !number.is_finite() { return Ok(crate::value::outside_number(number, arith::DEFAULT_PLACES)); }
                 }
-                let number = number_spelled(text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
-                self.at_real_width(arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?)
+                let number = number_spelled(text).ok_or_else(|| amiss(self, &args[0]))?;
+                let widened = match arith::to_real(&number, arith::DEFAULT_PLACES) { Some(w) => w, None => return Err(amiss(self, &args[0])) };
+                self.at_real_width(widened)
             }
             Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
                 let Value::Flag(b) = args[0] else { unreachable!() };
@@ -15950,7 +15957,36 @@ impl Engine<'_> {
             }
             Builtin::Round => {
                 arity(1, 2)?;
-                let digits = match args.get(1) { None | Some(Value::Null) => 0, Some(n) => integer(n)?.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
+                let ndigits_big: Option<BigInt> = match args.get(1) { None | Some(Value::Null) => None, Some(n) => Some(integer(n)?) };
+                // An infinite or a NaN float carries no rounding to a
+                // places count of its own: rounded to a plain integer it
+                // fails the way CPython's own float-to-int conversion
+                // does, but given a places count (any places count) it
+                // passes through unchanged, since there is no nearer
+                // float at that scale to move to.
+                if let Value::Real(f) = &args[0] {
+                    if f.no_number() {
+                        if ndigits_big.is_none() { return Err("ValueError: cannot convert float NaN to integer".to_string()); }
+                        return Ok(args[0].clone());
+                    }
+                    if f.outside() {
+                        if ndigits_big.is_none() { return Err("OverflowError: cannot convert float infinity to integer".to_string()); }
+                        return Ok(args[0].clone());
+                    }
+                }
+                // A places count outside where a double's decimal digits
+                // reach is answered without building a scale that big:
+                // above it the float already names its own rounding,
+                // below it every float rounds to a signed nought.
+                if let Value::Real(f) = &args[0] {
+                    if let Some(n) = &ndigits_big {
+                        if *n > BigInt::from(323) { return Ok(args[0].clone()); }
+                        if *n < BigInt::from(-308) {
+                            return Ok(crate::value::real_of(if f.p.is_negative() { -0.0 } else { 0.0 }, arith::DEFAULT_PLACES));
+                        }
+                    }
+                }
+                let digits = match &ndigits_big { None => 0, Some(n) => n.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
                 // A whole number is its own rounding to any count of places
                 // at or after the point; rounded to places before it, a half
                 // goes to the even neighbour where the definition says so.
@@ -15980,6 +16016,7 @@ impl Engine<'_> {
                     if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { return Ok(Value::of_big(whole)); }
                     let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
                     let result = crate::value::as_binary(&above, &beneath);
+                    if result.is_infinite() { return Err("OverflowError: rounded value too large to represent".to_string()); }
                     return Ok(crate::value::real_of(if result == 0.0 && p.is_negative() { -0.0 } else { result }, arith::DEFAULT_PLACES));
                 }
                 // Keep the library's scale, signed half, and truncating quotient.
