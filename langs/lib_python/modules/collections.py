@@ -116,9 +116,40 @@ class deque:
     def __repr__(self):
         return 'deque(' + repr(self.data) + ')'
 
-class defaultdict:
+class defaultdict(dict):
+    def __new__(cls, default_factory=None, *args, **kwargs):
+        return super().__new__(cls)
+
     def __init__(self, default_factory=None, *args, **kwargs):
-        raise 'NotImplementedError: defaultdict needs object indexing methods'
+        if default_factory is not None and not callable(default_factory):
+            raise TypeError('first argument must be callable or None')
+        self.default_factory = default_factory
+        super().__init__(*args, **kwargs)
+
+    def __getitem__(self, key):
+        try:
+            return dict.__getitem__(self, key)
+        except KeyError:
+            return self.__missing__(key)
+
+    def __missing__(self, key):
+        if self.default_factory is None:
+            raise KeyError(key)
+        self[key] = value = self.default_factory()
+        return value
+
+    def __repr__(self):
+        return 'defaultdict(' + repr(self.default_factory) + ', ' + dict.__repr__(self) + ')'
+
+    def copy(self):
+        return type(self)(self.default_factory, self)
+
+    def __copy__(self):
+        return self.copy()
+
+    def __reduce__(self):
+        args = (self.default_factory,)
+        return type(self), args, None, None, iter(self.items())
 
 class Counter:
     def __init__(self, iterable=None, **kwargs):
