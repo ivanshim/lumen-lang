@@ -1,3 +1,7 @@
+# Host primitives used by class bodies need non-private module bindings.
+_host_stream_read = __stream_read
+_host_stream_write = __stream_write
+
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
 # Where a name that is `import`ed is looked for: a directory put here
@@ -120,7 +124,7 @@ class _Output:
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
-        return __stream_write(*args, False)
+        return _host_stream_write(*args, False)
 
     def flush(self):
         pass
@@ -132,7 +136,7 @@ class _Error:
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
-        return __stream_write(*args, True)
+        return _host_stream_write(*args, True)
 
     def flush(self):
         pass
@@ -142,10 +146,10 @@ class _Error:
 
 class _Input:
     def read(self, size=-1):
-        return __stream_read(size, False)
+        return _host_stream_read(size, False)
 
     def readline(self, size=-1):
-        return __stream_read(size, True)
+        return _host_stream_read(size, True)
 
     def isatty(self):
         return False

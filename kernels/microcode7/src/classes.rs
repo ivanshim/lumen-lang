@@ -284,6 +284,7 @@ impl<'a> Machine<'a> {
         }
         for word in words {
             let Value::Text(name)=word else{unreachable!()};
+            let name = Rc::<str>::from(crate::build::member_spelling(&class.name, &name));
             if name.as_ref()==self.detail("namespace"){continue;}
             if Self::own_entry(class,&name).is_some(){return Err(format!("ValueError: '{name}' in __slots__ conflicts with class variable").into());}
             let descriptor=Self::wrap(32,vec![Value::Text(name.clone()),Value::Blueprint(class.clone())]);

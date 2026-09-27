@@ -287,6 +287,7 @@ impl<'a> Engine<'a> {
         }
         for slot in named {
             let Value::Text(word) = slot else { unreachable!() };
+            let word: Rc<str> = Rc::from(crate::compile::private_name(&c.name, &word));
             if word.as_ref() == self.class_word("namespace") { continue; }
             if Self::own_class_value(c, &word).is_some() { return Err(format!("ValueError: '{word}' in __slots__ conflicts with class variable").into()); }
             c.shared.borrow_mut().push((word.to_string(), Self::adapter(16, vec![Value::Text(word.clone()), Value::Class(c.clone())])));

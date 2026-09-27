@@ -200,6 +200,7 @@ pub struct Compiler<'a> {
     annotation_target: Option<usize>,
     lang: &'a Lang,
     tokens: &'a [Token],
+    spelled: &'a [Token],
     pos: usize,
     registry: &'a mut Registry,
     pieces: Vec<Piece>,
@@ -397,6 +398,59 @@ fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
     names
 }
 
+/// Private spelling is lexical: functions keep their surrounding class,
+/// while a nested class starts a new prefix. Strings are never identifiers.
+pub(crate) fn private_name(owner: &str, name: &str) -> String {
+    let prefix = owner.trim_start_matches('_');
+    if prefix.is_empty() || !name.starts_with("__") || name.ends_with("__") || name.contains('.') {
+        name.to_string()
+    } else {
+        format!("_{prefix}{name}")
+    }
+}
+
+fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
+    let mut result = source.to_vec();
+    if !lang.class_details.get("slots").map_or(false, |v| !v.is_empty()) { return result; }
+    // Work from the original spelling on every pass, including the body
+    // of an inner class whose enclosing body has already been visited.
+    for at in 0..source.len() {
+        if source[at].shape != Shape::Instr || !Lang::spells(&lang.class_words, &source[at].lexeme) { continue; }
+        let Some(owner) = source.get(at + 1).filter(|t| t.shape == Shape::Instr) else { continue };
+        let mut head = at + 2;
+        let mut brackets = 0usize;
+        while head < source.len() {
+            let token = &source[head];
+            if token.shape == Shape::Sign {
+                match token.lexeme.as_str() {
+                    "(" | "[" | "{" => brackets += 1,
+                    ")" | "]" | "}" => brackets = brackets.saturating_sub(1),
+                    _ => {}
+                }
+                if brackets == 0 && Lang::spells(&lang.block_intros, &token.lexeme) { break; }
+            }
+            if matches!(token.shape, Shape::LineEnd | Shape::Finish) { break; }
+            head += 1;
+        }
+        if head == source.len() || source[head].shape != Shape::Sign { continue; }
+        let mut begin = head + 1;
+        while source.get(begin).map_or(false, |t| t.shape == Shape::LineEnd) { begin += 1; }
+        let indented = source.get(begin).map_or(false, |t| t.shape == Shape::Open);
+        let mut depth = 0usize;
+        for i in begin..source.len() {
+            match source[i].shape {
+                Shape::Open => depth += 1,
+                Shape::Close => { depth = depth.saturating_sub(1); if depth == 0 { break; } }
+                Shape::LineEnd if !indented => break,
+                Shape::Finish => break,
+                Shape::Instr => result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme),
+                _ => {}
+            }
+        }
+    }
+    result
+}
+
 fn compile_pass(
     tokens: &[Token],
     lang: &Lang,
@@ -410,6 +464,9 @@ fn compile_pass(
     discovering: bool,
     wants_value: bool,
 ) -> Res<Rc<Routine>> {
+    let spelled = tokens;
+    let renamed = private_tokens(tokens, lang);
+    let tokens = renamed.as_slice();
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
@@ -456,7 +513,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -2272,7 +2329,8 @@ impl<'a> Compiler<'a> {
     /// A path names what is wanted, without asking any part for a value.
     /// The scanner may already have joined a builtin's dotted spelling.
     fn import_name(&mut self, path: bool) -> Res<String> {
-        let word = self.want_name("in an import")?;
+        let word = self.spelled[self.pos].lexeme.clone();
+        self.want_name("in an import")?;
         let divider = self.lang.pipe_words.first().map(String::as_str);
         let parts: Vec<&str> = match divider.filter(|_| path) {
             Some(mark) => word.split(mark).collect(),
@@ -2356,11 +2414,12 @@ impl<'a> Compiler<'a> {
             loop {
                 let feature_at = self.pos;
                 let original = self.import_name(!from)?;
-                let mut bound = original.split(lang.pipe_words.first().map_or(".", String::as_str)).next().unwrap_or(&original).to_string();
+                let mut bound = if original.contains('.') { original.split('.').next().unwrap().to_string() } else { self.tokens[feature_at].lexeme.clone() };
                 let aliased = self.on_keyword(&lang.import_as_words);
                 if self.on_keyword(&lang.import_as_words) {
                     self.take();
-                    bound = self.import_name(false)?;
+                    bound = self.look().lexeme.clone();
+                    self.import_name(false)?;
                 }
                 if future && !["nested_scopes", "generators", "division", "absolute_import", "with_statement", "print_function", "unicode_literals", "barry_as_FLUFL", "generator_stop", "annotations"].contains(&original.as_str()) {
                     let last = &self.tokens[self.pos - 1];
@@ -4337,7 +4396,8 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.function_words) {
             self.take();
             let named = self.want_name("as the method name")?;
-            let method = self.method(&named)?;
+            let original = self.spelled[self.pos - 1].lexeme.clone();
+            let method = self.method(&original)?;
             self.gathering().methods.retain(|(old, _)| old != &named);
             self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
@@ -4642,6 +4702,7 @@ impl<'a> Compiler<'a> {
     fn explicit_class(&mut self) -> Res<bool> {
         let lang = self.lang;
         self.take();
+        let original_name = self.spelled[self.pos].lexeme.clone();
         let name = self.want_name("as the class name")?;
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
@@ -4667,7 +4728,8 @@ impl<'a> Compiler<'a> {
                 // class; every other keyword is for the parent's hook.
                 let mut names_maker = false;
                 if keyword {
-                    let word = self.take().lexeme;
+                    let word = self.spelled[self.pos].lexeme.clone();
+                    self.take();
                     self.take();
                     if Lang::spells(&lang.metaclass_word, &word) { names_maker = true; }
                     else if lang.class_details.get("subclass").map_or(true, |v| v.is_empty()) { unready = true; }
@@ -4695,8 +4757,8 @@ impl<'a> Compiler<'a> {
             }
             self.want_sign(&close, "after the bases")?;
         }
-        let qualification = self.qualified(&name);
-        let outer = self.within.replace((name.clone(), base.clone()));
+        let qualification = self.qualified(&original_name);
+        let outer = self.within.replace((original_name.clone(), base.clone()));
         let outer_depth = std::mem::replace(&mut self.class_depth, self.pieces.len());
         if lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.clone(),base.clone()));}
         self.expect_intro()?;
@@ -4807,7 +4869,7 @@ impl<'a> Compiler<'a> {
             self.read(book_place);
             count += 1;
         }
-        let plan = Plan { name: name.clone(), answers: further.len(), field_names: Vec::new(), field_reach: Vec::new(),
+        let plan = Plan { name: original_name, answers: further.len(), field_names: Vec::new(), field_reach: Vec::new(),
             shared_names: pushed.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some(),
             member_order: order, has_book };
         self.act(Action::Forge(Rc::new(plan)), count);
@@ -5356,6 +5418,8 @@ impl<'a> Compiler<'a> {
     /// before its brackets binds it; one written where a value stands
     /// has none, and stands for itself.
     fn function_value(&mut self, name: &str) -> Res<()> {
+        let original = self.pos.checked_sub(1).and_then(|i| self.spelled.get(i))
+            .filter(|t| t.shape == Shape::Instr && self.tokens[self.pos - 1].lexeme == name).map(|t| t.lexeme.clone()).unwrap_or_else(|| name.to_string());
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
         self.declaration_types()?;
         let lang = self.lang;
@@ -5381,7 +5445,7 @@ impl<'a> Compiler<'a> {
             }
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
-        let program = self.routine(name, formals, least, true, |a| {
+        let program = self.routine(&original, formals, least, true, |a| {
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
             // The names carried away take the slots after the
@@ -9145,13 +9209,13 @@ impl<'a> Compiler<'a> {
             after_name |= tagged;
             after_pairs |= named_spread && self.lang.bind_names;
             if tagged {
-                let word = self.look().lexeme.clone();
+                let word = self.spelled[self.pos].lexeme.clone();
                 let twice = &self.lang.call_keyword_repeated;
                 if spelled.contains(&word) && !twice.is_empty() {
                     return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
                 }
-                spelled.push(word);
-                self.constant(Value::text(&self.look().lexeme));
+                spelled.push(word.clone());
+                self.constant(Value::text(&word));
             } else if spread {
                 self.constant(Value::Flag(Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme)));
                 self.take();
