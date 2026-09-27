@@ -21,9 +21,13 @@ def randrange(start, stop=None, step=1):
     if stop is None:
         start, stop = 0, start
     values = range(start, stop, step)
-    if len(values) == 0:
+    distance = values.stop - values.start
+    if values.step < 0:
+        distance = -distance
+    if distance <= 0:
         raise 'ValueError: empty range for randrange()'
-    return values[_next() % len(values)]
+    count = (distance - 1) // abs(values.step) + 1
+    return values[_next() % count]
 
 def randint(a, b):
     return randrange(a, b + 1)
