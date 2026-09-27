@@ -2826,7 +2826,25 @@ impl<'a> Engine<'a> {
 
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
+    fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+        let (_, holder) = self.function_members.iter().find(|(value, _)| matches!(value, Value::Routine(code) if Rc::ptr_eq(code, program)))?;
+        let book = holder.fields.borrow().iter().find(|(name, _)| name == "\0 namespace")?.1.clone();
+        match book {
+            Value::Bond(cell) | Value::Binding(cell) => Some(cell),
+            Value::Map(_) => Some(Rc::new(RefCell::new(book))),
+            _ => None,
+        }
+    }
+
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        let Some(book) = self.constructor_book(program) else { return self.invoke_top_body(program, n); };
+        let earlier = self.outer_book.replace(book);
+        let answer = self.invoke_top_body(program, n);
+        self.outer_book = earlier;
+        answer
+    }
+
+    fn invoke_top_body(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
         // A routine whose spare arguments or code the program wrote
         // over runs as it now stands.
         let revised = program.revised.borrow().clone();
@@ -3494,7 +3512,7 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn iterator(&mut self, source: Value) -> Flow<Value> {
+    pub(super) fn iterator(&mut self, source: Value) -> Flow<Value> {
         if matches!(source, Value::Generator(_)) { return Ok(source); }
         let items = self.comprehension_items(&source)?;
         Ok(self.watched_walk(&source, items))
@@ -3576,7 +3594,16 @@ impl<'a> Engine<'a> {
     /// A step back into a suspended body, either handing it a value or
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown in is raised on the spot.
-    fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Flow<Option<Value>> {
+    fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Flow<Option<Value>> {
+        let book = held.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| self.constructor_book(body)));
+        let Some(book) = book else { return self.step_generator_body(held, sent, hurled, given); };
+        let saved = self.outer_book.replace(book);
+        let outcome = self.step_generator_body(held, sent, hurled, given);
+        self.outer_book = saved;
+        outcome
+    }
+
+    fn step_generator_body(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Flow<Option<Value>> {
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
         // what comes back out of that reaches the body itself.
@@ -4827,9 +4854,13 @@ impl<'a> Engine<'a> {
                 let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
                 return Ok(Some(Value::text(if name == self.class_word("name") { &state.name } else { &state.qualified })));
             }
-            if let Some(index @ (14 | 15)) = self.lang.trace_fields.iter().position(|key| key == name) {
+            if let Some(index @ (14 | 15 | 19..=24)) = self.lang.trace_fields.iter().position(|key| key == name) {
+                if index == 23 { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
+                if index == 24 && held.try_borrow().is_err() { return Ok(Some(Value::Null)); }
                 let state = held.try_borrow().map_err(|_| self.lang.class_unready.first().cloned().unwrap_or_default())?;
-                if index == 14 { return Ok(Some(if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) })); }
+                if matches!(index, 14 | 19 | 20) { return Ok(Some(if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) })); }
+                if matches!(index, 21 | 22) { return Ok(Some(Value::Flag(state.started && !state.closed))); }
+                if index == 24 { return Ok(Some(state.delegate.clone().unwrap_or(Value::Null))); }
                 if let Some(program) = &state.program { return Ok(Some(self.routine_code(program))); }
             }
             if self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
@@ -7531,7 +7562,7 @@ impl<'a> Engine<'a> {
                 let gathered_so_far = both.next().expect("growing literal").contents();
                 let next = both.next().expect("literal item");
                 if let Value::Set(cell) = gathered_so_far {
-                    let incoming = if *spread { self.comprehension_items(&next)? } else { vec![next] };
+                    let incoming = if *spread { self.spread_members(&next)? } else { vec![next] };
                     for item in incoming { self.set_put(&cell, item)?; }
                     Value::Set(cell)
                 } else if *map {
@@ -7559,7 +7590,7 @@ impl<'a> Engine<'a> {
                     // item joins in one push rather than a clone of
                     // everything gathered so far for every item added.
                     let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a, _ => unreachable!() };
-                    if *spread { Rc::make_mut(&mut items).extend(self.comprehension_items(&next)?); } else { Rc::make_mut(&mut items).push(next); }
+                    if *spread { Rc::make_mut(&mut items).extend(self.spread_members(&next)?); } else { Rc::make_mut(&mut items).push(next); }
                     Value::Array(items)
                 }
             }
@@ -7875,7 +7906,7 @@ impl<'a> Engine<'a> {
                 };
                 let field = match &held {
                     Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18)),
-                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15)),
+                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=24)),
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     Value::Slice(_) => self.slice_bound_named(name).is_some(),
@@ -11207,6 +11238,14 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn spread_members(&mut self, next: &Value) -> Res<Vec<Value>> {
+        let kind = next.core_kind();
+        let ordinary = format!("TypeError: '{kind}' object is not iterable");
+        self.comprehension_items(next).map_err(|why| {
+            if why == ordinary { format!("TypeError: Value after * must be an iterable, not {kind}") } else { why }
+        })
+    }
+
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Some(worth) = self.worth_free_of(value, &[15]) { return self.comprehension_items(&worth); }
         // A thing of the program's own that says how it is walked, by a
@@ -11245,7 +11284,7 @@ impl<'a> Engine<'a> {
                 Ok(items)
             }
             Value::Bond(cell) => self.comprehension_items(&cell.borrow()),
-            _ => Err(self.lang.collection_unwalkable.first().cloned().unwrap_or_else(|| "Value has no members to gather".to_string())),
+            _ => Err(format!("TypeError: '{}' object is not iterable", value.core_kind())),
         }
     }
 
@@ -17409,7 +17448,9 @@ impl Engine<'_> {
             match key { Some(key) => named.push((key, value)), None => args.push(value) }
         }
         for (key, value) in named {
-            let at = self.lang.compile_parameters.iter().position(|word| word == &key).filter(|_| builtin == Builtin::ReadyText)
+            let at = if builtin == Builtin::ReadyText { self.lang.compile_parameters.iter().position(|word| word == &key) }
+                else if matches!(builtin, Builtin::RunText | Builtin::Eval) { ["source", "globals", "locals"].iter().position(|word| *word == key) }
+                else { None }
                 .ok_or_else(|| Self::named_fault(&self.lang.call_unknown, &key))?;
             if at < args.len() && !matches!(args[at], Value::Gap) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
             if args.len() <= at { args.resize(at + 1, Value::Gap); }
