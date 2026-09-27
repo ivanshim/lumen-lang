@@ -1954,43 +1954,41 @@ impl<'a> Machine<'a> {
             let (farewells, walks, notices) = crate::ghost::gather();
             if farewells.is_empty() && walks.is_empty() && notices.is_empty() { return; }
             for (thing, farewell) in farewells {
-                self.call_unheard(farewell, vec![Value::Thing(thing)]);
+                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
             }
             for walk in walks {
                 if let Err(away) = self.shut_generator(&walk) {
-                    self.report_unraisable(away, &Value::Generator(walk.clone()));
+                    self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
                 }
             }
             for (notify, bearer) in notices {
-                self.call_unheard(notify, vec![bearer]);
+                self.call_unheard(notify, vec![bearer], "callback");
             }
         }
     }
 
     /// A call the run makes on its own account, whose raised value no
     /// clause can take: it is reported and dropped.
-    fn call_unheard(&mut self, callee: Value, arguments: Vec<Value>) {
+    fn call_unheard(&mut self, callee: Value, arguments: Vec<Value>, reason: &str) {
         let about = callee.clone();
         if let Err(away) = self.apply_held(callee, arguments) {
-            self.report_unraisable(away, &about);
+            self.report_unraisable(away, &about, reason);
         }
     }
 
-    fn report_unraisable(&mut self, away: Escape, about: &Value) {
-        let words = match away {
-            Escape::Thrown(raised) => match &raised {
-                Value::Thing(thing) => {
-                    let said = self.object_words(&raised, false).unwrap_or_default();
-                    if said.is_empty() { thing.of.name.clone() } else { format!("{}: {}", thing.of.name, said) }
-                }
-                _ => self.object_words(&raised, true).unwrap_or_default(),
+    fn report_unraisable(&mut self, away: Escape, about: &Value, reason: &str) {
+        let raised = match away {
+            Escape::Thrown(value) => value,
+            Escape::Error(words) | Escape::Stopped(words) => match self.as_raised(&words) {
+                Some(value) => value,
+                None => { eprintln!("{words}"); return; }
             },
-            Escape::Error(words) | Escape::Stopped(words) => words,
             _ => return,
         };
-        let shown = self.object_words(about, true).unwrap_or_default();
-        eprintln!("Exception ignored in: {shown}");
-        eprintln!("{words}");
+        let traceback = self.traceback_of(&raised);
+        let Ok(sys) = self.namespace_for("sys") else { return };
+        let Some(report) = self.attribute(&sys, "_report_unraisable") else { return };
+        let _ = self.apply_held(report, vec![raised, traceback, about.clone(), Value::text(reason)]);
     }
 
     /// The program asked for the rounds nothing reaches to be found and
@@ -2010,13 +2008,13 @@ impl<'a> Machine<'a> {
                         let Some(farewell) = crate::ghost::farewell_of(&thing.of) else { continue };
                         if crate::ghost::first_farewell(thing) {
                             bade = true;
-                            self.call_unheard(farewell, vec![Value::Thing(thing.clone())]);
+                            self.call_unheard(farewell, vec![Value::Thing(thing.clone())], "deallocator");
                         }
                     }
                     Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |w| w.asleep()) => {
                         bade = true;
                         if let Err(away) = self.shut_generator(walk) {
-                            self.report_unraisable(away, &Value::Generator(walk.clone()));
+                            self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
                         }
                     }
                     _ => {}
