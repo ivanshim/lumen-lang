@@ -193,6 +193,7 @@ pub enum IteratorKind {
 
 #[derive(Debug)]
 pub struct TraceLink {
+    pub extent: Option<(u32, u32, u32, u32)>,
     pub location: u32,
     pub activation: Rc<Thing>,
     pub following: Value,
