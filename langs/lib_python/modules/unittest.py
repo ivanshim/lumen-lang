@@ -787,9 +787,20 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     suite = loader.loadTestsFromModule(module)
     only = _only_classes()
     if only is not None:
-        # A long file can be run in parts: LUMEN_UNITTEST_ONLY names the test
-        # classes to run (comma-separated), in the order a whole run takes them.
-        suite = TestSuite([tests for tests in suite.tests if tests.class_.__name__ in only])
+        # Keep the loader's class and method order when running a long file
+        # in parts. A plain class name selects every method in that class.
+        selected = []
+        for tests in suite.tests:
+            name = tests.class_.__name__
+            if name in only:
+                selected.append(tests)
+            else:
+                methods = [test for test in tests.tests if name + '.' + test._method in only]
+                if len(methods) > 0:
+                    part = TestSuite(methods)
+                    part.class_ = tests.class_
+                    selected.append(part)
+        suite = TestSuite(selected)
     if testRunner is None:
         testRunner = TextTestRunner(verbosity=verbosity)
     result = testRunner.run(suite)
