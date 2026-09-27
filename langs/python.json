@@ -2823,6 +2823,9 @@
     "__instancecheck__",
     "__subclasscheck__",
     "__length_hint__",
+    "__reduce__",
+    "__setstate__",
+    "__reduce_ex__",
     "__getnewargs__"
   ],
   "ext.stmt.class.special.amiss": [
