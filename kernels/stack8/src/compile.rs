@@ -198,6 +198,7 @@ pub struct Compiler<'a> {
     plans: HashMap<usize, BindingPlan>,
     discovering: bool,
     annotation_target: Option<usize>,
+    syntax_try_nesting: usize,
     lang: &'a Lang,
     tokens: &'a [Token],
     spelled: &'a [Token],
@@ -513,7 +514,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, syntax_try_nesting: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1676,6 +1677,22 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if !lang.syntax_members.is_empty() {
             let word = self.look().lexeme.clone();
+            if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {
+                let from = self.look_ahead(1).lexeme == "from";
+                let complaint = if self.in_class_body() { Some("inside classes") }
+                    else if !self.piece().outermost { Some("inside functions") }
+                    else if self.syntax_try_nesting > 0 { Some("inside try/except blocks") }
+                    else { None };
+                if let Some(place) = complaint {
+                    return Err(format!("SyntaxError: lazy {} not allowed {place}", if from { "from ... import" } else { "import" }));
+                }
+                if from {
+                    let tail = self.tokens[self.pos..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish));
+                    if tail.map(|t| t.lexeme.as_str()).collect::<Vec<_>>().windows(2).any(|pair| pair == ["import", "*"]) {
+                        return Err("SyntaxError: lazy from ... import * is not allowed".into());
+                    }
+                }
+            }
             let global = Lang::spells(&lang.global_words, &word);
             if !self.in_class_body() && (global || Lang::spells(&lang.nonlocal_words, &word)) {
                 let origin = self.pos;
@@ -2399,6 +2416,9 @@ impl<'a> Compiler<'a> {
             }
             if !relative || !self.on_keyword(&lang.import_words) {
                 module.push_str(&self.import_name(true)?);
+            }
+            if !lang.syntax_members.is_empty() && self.look().lexeme == "lazy" {
+                return Err("SyntaxError: use 'lazy from ... ' instead of 'from ... lazy import'".into());
             }
             if !self.on_keyword(&lang.import_words) {
                 return Err(format!("Expected '{}' after the module name, got '{}'", lang.import_words.first().map_or("", String::as_str), self.look().lexeme));
@@ -3868,12 +3888,19 @@ impl<'a> Compiler<'a> {
         Ok((start, self.mark()))
     }
 
+    fn guarded_attempt_body(&mut self) -> Res<(usize, usize)> {
+        self.syntax_try_nesting += 1;
+        let result = self.attempt_body();
+        self.syntax_try_nesting -= 1;
+        result
+    }
+
     fn indented_attempt(&mut self) -> Res<()> {
         self.take();
         let mark = self.put(Instr::Attempt(Box::new(Attempt {
             context: None, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
         })));
-        let body = self.attempt_body()?;
+        let body = self.guarded_attempt_body()?;
         let mut clauses: Vec<Taking> = Vec::new();
         let mut default_span: Option<(usize, usize)> = None;
         self.skip_seps();
@@ -3941,7 +3968,7 @@ impl<'a> Compiler<'a> {
                 self.claim(&name);
                 Some(self.cell_to_write(&name))
             } else { None };
-            let (start, _) = self.attempt_body()?;
+            let (start, _) = self.guarded_attempt_body()?;
             // A class body lets the caught value's name go once the
             // clause is done with it, as the language this follows lets
             // it go, so the class keeps no member of that name.
@@ -3966,12 +3993,12 @@ impl<'a> Compiler<'a> {
         }
         let otherwise = if lang.try_else && self.on_keyword(&lang.else_words) {
             self.take();
-            Some(self.attempt_body()?)
+            Some(self.guarded_attempt_body()?)
         } else { None };
         self.skip_seps();
         let last = if self.on_keyword(&lang.finally_words) {
             self.take();
-            Some(self.attempt_body()?)
+            Some(self.guarded_attempt_body()?)
         } else { None };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
             return Err("A try needs a catch or a last part".to_string());
@@ -6885,6 +6912,11 @@ impl<'a> Compiler<'a> {
             self.read(&named);
             return Ok(());
         }
+        if floor == 0 && !lang.syntax_members.is_empty()
+            && ["pass", "break", "continue"].contains(&self.look().lexeme.as_str())
+            && self.look_ahead(1).lexeme == "if" {
+            return Err("SyntaxError: expected expression before 'if', but statement is given".into());
+        }
         self.prefix()?;
         if floor == 0 && Lang::spells(&lang.expression_assign, &self.look().lexeme) {
             let name = match &self.piece().instrs[from..] {
@@ -6941,6 +6973,9 @@ impl<'a> Compiler<'a> {
                     return Err(format!("Expected '{}' in conditional expression", other));
                 }
                 self.take();
+                if !lang.syntax_members.is_empty() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {
+                    return Err("SyntaxError: expected expression after 'else', but statement is given".into());
+                }
                 self.expr(0)?;
                 self.land(done);
                 continue;
