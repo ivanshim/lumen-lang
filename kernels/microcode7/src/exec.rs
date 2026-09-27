@@ -17800,6 +17800,21 @@ impl<'a> Machine<'a> {
         let source = match v[0].settled() {
             Value::Text(s) => s,
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
+            Value::Thing(tree) => {
+                // A syntax tree the library's ast module hands over
+                // carries the text it was parsed from; compiling the
+                // tree compiles that text.
+                let mut carried = None;
+                for (word, worth) in tree.holds.borrow().iter() {
+                    if word == "_lumen_tree_source" {
+                        carried = Some(worth.settled());
+                    }
+                }
+                match carried {
+                    Some(Value::Text(s)) => s,
+                    _ => return Err(self.source_refused()),
+                }
+            }
             _ => return Err(self.source_refused()),
         };
         let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };

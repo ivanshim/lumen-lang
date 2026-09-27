@@ -4,10 +4,11 @@
 # number plus or minus an imaginary one -- straight from the source text,
 # and accepts exactly what CPython's literal_eval accepts.
 #
-# Everything that needs a syntax tree does not exist here. This runtime does
-# not hand its parse back to Python, so there is no node to build, walk,
-# dump or unparse, and no node type to compare against; parse and its
-# neighbours say so rather than return something shaped like a tree.
+# A small reader gives parse() a deliberately narrow subset of the grammar
+# (see below): enough for the f-string tree tests, with CPython's node
+# classes and positions. Everything else a syntax tree would serve --
+# walking, dumping, unparsing, and source outside the subset -- still says
+# it has no tree rather than return something shaped like one.
 #
 # One difference from CPython is worth naming: CPython raises SyntaxError for
 # source that will not parse and ValueError for source that parses into
@@ -413,9 +414,1097 @@ def literal_eval(node_or_string):
         _incomplete()
     return _Reader(node_or_string, tokens).top()
 
+# --------------------------------------------------------------------------
+# A deliberately small reader for source text, answering CPython's node
+# classes with CPython's positions. It reads assignment and expression
+# statements over names, numbers, strings, f-strings, calls, subscripts,
+# attribute reads, tuples, lists, dicts, sets and the common operators.
+# Positions follow CPython 3.12+ for f-strings: a FormattedValue covers
+# its braces, a text Constant covers exactly its source (a doubled brace
+# covers both source braces), and adjacent text pieces merge across
+# implicit concatenation, keeping the first piece's start and the last
+# piece's end. A parsed tree remembers its source text, which is what
+# compile() of the tree compiles.
+#
+# Source inside the subset that is malformed gets SyntaxError; source
+# outside the subset still gets the NotImplementedError above.
+
+def _syntax(message):
+    raise 'SyntaxError: ' + message
+
+def _no_tree():
+    raise _NO_TREE
+
+class AST:
+    _fields = ()
+    _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
+
+    def __init__(self, *args, **kwargs):
+        for name in self._fields:
+            setattr(self, name, None)
+        for name in self._attributes:
+            setattr(self, name, None)
+        count = len(args)
+        if count > len(self._fields):
+            count = len(self._fields)
+        for at in range(count):
+            setattr(self, self._fields[at], args[at])
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+class Module(AST):
+    _fields = ('body', 'type_ignores')
+    _attributes = ()
+
+class Expression(AST):
+    _fields = ('body',)
+    _attributes = ()
+
+class stmt(AST):
+    pass
+
+class expr(AST):
+    pass
+
+class Expr(stmt):
+    _fields = ('value',)
+
+class Assign(stmt):
+    _fields = ('targets', 'value', 'type_comment')
+
+class JoinedStr(expr):
+    _fields = ('values',)
+
+class FormattedValue(expr):
+    _fields = ('value', 'conversion', 'format_spec')
+
+class Constant(expr):
+    _fields = ('value', 'kind')
+
+class Name(expr):
+    _fields = ('id', 'ctx')
+
+class BinOp(expr):
+    _fields = ('left', 'op', 'right')
+
+class UnaryOp(expr):
+    _fields = ('op', 'operand')
+
+class BoolOp(expr):
+    _fields = ('op', 'values')
+
+class Compare(expr):
+    _fields = ('left', 'ops', 'comparators')
+
+class Call(expr):
+    _fields = ('func', 'args', 'keywords')
+
+class Attribute(expr):
+    _fields = ('value', 'attr', 'ctx')
+
+class Subscript(expr):
+    _fields = ('value', 'slice', 'ctx')
+
+class Tuple(expr):
+    _fields = ('elts', 'ctx')
+
+class List(expr):
+    _fields = ('elts', 'ctx')
+
+class Dict(expr):
+    _fields = ('keys', 'values')
+
+class Set(expr):
+    _fields = ('elts',)
+
+class expr_context(AST):
+    _attributes = ()
+
+class Load(expr_context):
+    pass
+
+class Store(expr_context):
+    pass
+
+class Del(expr_context):
+    pass
+
+class operator(AST):
+    _attributes = ()
+
+class Add(operator):
+    pass
+
+class Sub(operator):
+    pass
+
+class Mult(operator):
+    pass
+
+class Div(operator):
+    pass
+
+class FloorDiv(operator):
+    pass
+
+class Mod(operator):
+    pass
+
+class Pow(operator):
+    pass
+
+class LShift(operator):
+    pass
+
+class RShift(operator):
+    pass
+
+class BitOr(operator):
+    pass
+
+class BitXor(operator):
+    pass
+
+class BitAnd(operator):
+    pass
+
+class MatMult(operator):
+    pass
+
+class unaryop(AST):
+    _attributes = ()
+
+class UAdd(unaryop):
+    pass
+
+class USub(unaryop):
+    pass
+
+class Not(unaryop):
+    pass
+
+class Invert(unaryop):
+    pass
+
+class boolop(AST):
+    _attributes = ()
+
+class And(boolop):
+    pass
+
+class Or(boolop):
+    pass
+
+class cmpop(AST):
+    _attributes = ()
+
+class Eq(cmpop):
+    pass
+
+class NotEq(cmpop):
+    pass
+
+class Lt(cmpop):
+    pass
+
+class LtE(cmpop):
+    pass
+
+class Gt(cmpop):
+    pass
+
+class GtE(cmpop):
+    pass
+
+class Is(cmpop):
+    pass
+
+class IsNot(cmpop):
+    pass
+
+class In(cmpop):
+    pass
+
+class NotIn(cmpop):
+    pass
+
+_STRING_PREFIXES = ('r', 'b', 'u', 'f', 'rb', 'br', 'fr', 'rf')
+
+_OPS3 = ('**=', '//=', '<<=', '>>=', '...')
+_OPS2 = ('**', '//', '<<', '>>', '==', '!=', '<=', '>=', ':=', '->',
+         '+=', '-=', '*=', '/=', '%=', '@=', '&=', '|=', '^=')
+_OPS1 = '()[]{},:;.+-*/%@=<>!~&|^'
+
+class _Tok:
+    def __init__(self, kind, text, srow, scol, erow, ecol):
+        self.kind = kind
+        self.text = text
+        self.srow = srow
+        self.scol = scol
+        self.erow = erow
+        self.ecol = ecol
+        self.value = None
+        self.prefix = ''
+        self.quote = ''
+        self.cs = 0
+        self.ce = 0
+        self.cs_row = 0
+        self.cs_col = 0
+
+def _adv(source, i, count, row, col):
+    for _ in range(count):
+        if source[i] == '\n':
+            row += 1
+            col = 0
+        else:
+            col += 1
+        i += 1
+    return (i, row, col)
+
+def _string_skip(source, i):
+    # i at a quote; answers the index just past the closing quote.
+    n = len(source)
+    q = source[i]
+    if source[i:i + 3] == q * 3:
+        closer = q * 3
+        i += 3
+    else:
+        closer = q
+        i += 1
+    while i < n:
+        if source[i] == '\\':
+            i += 2
+            continue
+        if source[i:i + len(closer)] == closer:
+            return i + len(closer)
+        i += 1
+    _syntax('unterminated string literal')
+
+def _string_skip_pos(source, i, row, col):
+    start = i
+    i = _string_skip(source, i)
+    _, row, col = _adv(source, start, i - start, row, col)
+    return (i, row, col)
+
+def _fstring_end(source, i):
+    # i at the opening quote of an f-string literal; answers the index
+    # just past the closing quote, the quote and the closing quote's
+    # index. Inside a replacement field every brace is structural; only
+    # in the text between them are {{ and }} escapes.
+    n = len(source)
+    q = source[i]
+    if source[i:i + 3] == q * 3:
+        quote = q * 3
+    else:
+        quote = q
+    i += len(quote)
+    depth = 0
+    while i < n:
+        c = source[i]
+        if c == '\\':
+            i += 2
+            continue
+        if depth == 0 and source[i:i + len(quote)] == quote:
+            return (i + len(quote), quote, i)
+        if c == '{':
+            if depth == 0 and source[i + 1:i + 2] == '{':
+                i += 2
+                continue
+            depth += 1
+            i += 1
+            continue
+        if c == '}':
+            if depth == 0 and source[i + 1:i + 2] == '}':
+                i += 2
+                continue
+            depth -= 1
+            i += 1
+            continue
+        if depth > 0 and (c == '"' or c == "'"):
+            i = _string_skip(source, i)
+            continue
+        i += 1
+    _syntax('unterminated f-string literal')
+
+def _lex(source, start, end, row, col, for_field):
+    # Tokens over source[start:end], beginning at (row, col). Inside a
+    # replacement field (for_field) newlines are plain whitespace; outside
+    # one they end a statement unless brackets are open.
+    toks = []
+    i = start
+    depth = 0
+    while i < end:
+        c = source[i]
+        srow, scol = row, col
+        if c == ' ' or c == '\t' or c == '\f':
+            i += 1
+            col += 1
+            continue
+        if c == '\r':
+            i += 1
+            continue
+        if c == '\\' and source[i + 1:i + 2] == '\n':
+            i, row, col = _adv(source, i, 2, row, col)
+            continue
+        if c == '\n':
+            i += 1
+            row += 1
+            col = 0
+            if depth > 0 or for_field:
+                continue
+            toks.append(_Tok('newline', '\n', srow, scol, srow, scol + 1))
+            continue
+        if c == '#' and not for_field:
+            while i < end and source[i] != '\n':
+                i += 1
+                col += 1
+            continue
+        if c.isdigit() or (c == '.' and source[i + 1:i + 2].isdigit()):
+            j = i
+            while j < end and (source[j].isalnum() or source[j] in '_.'):
+                if source[j] in 'eE':
+                    j += 1
+                    if j < end and (source[j] == '+' or source[j] == '-'):
+                        j += 1
+                    continue
+                j += 1
+            toks.append(_Tok('num', source[i:j], srow, scol, srow, scol + (j - i)))
+            col += j - i
+            i = j
+            continue
+        if c == '_' or c.isalpha():
+            j = i
+            while j < end and (source[j] == '_' or source[j].isalnum()):
+                j += 1
+            word = source[i:j]
+            lowered = word.lower()
+            if j < end and source[j] in '\'"' and lowered in _STRING_PREFIXES:
+                if 'f' in lowered:
+                    lit_end, quote, content_end = _fstring_end(source, j)
+                    ci, crow, ccol = _adv(source, i, (j - i) + len(quote), row, col)
+                    i2, erow, ecol = _adv(source, ci, lit_end - ci, crow, ccol)
+                    tok = _Tok('fstr', source[i:lit_end], srow, scol, erow, ecol)
+                    tok.prefix = lowered
+                    tok.quote = quote
+                    tok.cs = ci
+                    tok.ce = content_end
+                    tok.cs_row = crow
+                    tok.cs_col = ccol
+                    toks.append(tok)
+                    i, row, col = i2, erow, ecol
+                    continue
+                value, after = _read_string(source, j, lowered)
+                _, erow, ecol = _adv(source, i, after - i, row, col)
+                tok = _Tok('str', source[i:after], srow, scol, erow, ecol)
+                tok.value = value
+                tok.prefix = lowered
+                toks.append(tok)
+                i, row, col = after, erow, ecol
+                continue
+            toks.append(_Tok('name', word, srow, scol, srow, scol + (j - i)))
+            col += j - i
+            i = j
+            continue
+        if c == '"' or c == "'":
+            value, after = _read_string(source, i, '')
+            _, erow, ecol = _adv(source, i, after - i, row, col)
+            tok = _Tok('str', source[i:after], srow, scol, erow, ecol)
+            tok.value = value
+            toks.append(tok)
+            i, row, col = after, erow, ecol
+            continue
+        matched = None
+        if source[i:i + 3] in _OPS3:
+            matched = source[i:i + 3]
+        elif source[i:i + 2] in _OPS2:
+            matched = source[i:i + 2]
+        elif c in _OPS1:
+            matched = c
+        if matched is None:
+            _syntax('invalid syntax')
+        if matched in '([{':
+            depth += 1
+        elif matched in ')]}':
+            depth -= 1
+        toks.append(_Tok('op', matched, srow, scol, srow, scol + len(matched)))
+        col += len(matched)
+        i += len(matched)
+    toks.append(_Tok('end', '', row, col, row, col))
+    return toks
+
+def _ftext(source, s, e, raw):
+    # The decoded value of one f-string text piece over source[s:e].
+    units = []
+    i = s
+    while i < e:
+        c = source[i]
+        if c == '{' and source[i + 1:i + 2] == '{':
+            units.append('{')
+            i += 2
+            continue
+        if c == '}' and source[i + 1:i + 2] == '}':
+            units.append('}')
+            i += 2
+            continue
+        if c == '\\' and i + 1 < e:
+            if raw:
+                units.append('\\')
+                units.append(source[i + 1])
+                i += 2
+                continue
+            piece, i = _read_escape(source, i + 1, False)
+            if piece is not None:
+                units.append(piece)
+            continue
+        units.append(c)
+        i += 1
+    return ''.join(units)
+
+def _joined_values(source, seg_i, seg_end, row, col, raw):
+    # The Constant and FormattedValue nodes of one f-string literal's
+    # text over [seg_i, seg_end), in order; adjacent text pieces are not
+    # merged here (merging happens only across concatenated literals).
+    parts = []
+    text_start = seg_i
+    text_srow, text_scol = row, col
+    i = seg_i
+    while i < seg_end:
+        c = source[i]
+        if c == '\\':
+            i, row, col = _adv(source, i, 2, row, col)
+            continue
+        if c == '{' and source[i + 1:i + 2] == '{':
+            i, row, col = _adv(source, i, 2, row, col)
+            continue
+        if c == '}' and source[i + 1:i + 2] == '}':
+            i, row, col = _adv(source, i, 2, row, col)
+            continue
+        if c == '{':
+            if text_start < i:
+                parts.append(Constant(value=_ftext(source, text_start, i, raw),
+                                      lineno=text_srow, col_offset=text_scol,
+                                      end_lineno=row, end_col_offset=col))
+            fv, i, row, col = _formatted(source, i, row, col, raw)
+            parts.append(fv)
+            text_start = i
+            text_srow, text_scol = row, col
+            continue
+        i, row, col = _adv(source, i, 1, row, col)
+    if text_start < seg_end:
+        parts.append(Constant(value=_ftext(source, text_start, seg_end, raw),
+                              lineno=text_srow, col_offset=text_scol,
+                              end_lineno=row, end_col_offset=col))
+    return parts
+
+def _formatted(source, i, row, col, raw):
+    # i at the '{' opening a replacement field; answers the FormattedValue
+    # node, the index just past its '}', and the position there. The
+    # node covers its braces; a format spec is a JoinedStr starting at
+    # the ':' and ending where the field's '}' stands.
+    srow, scol = row, col
+    i, row, col = _adv(source, i, 1, row, col)
+    expr_start = i
+    esrow, escol = row, col
+    expr_end = -1
+    conv = -1
+    spec_start = -1
+    spec_srow = 0
+    spec_scol = 0
+    body_srow = 0
+    body_scol = 0
+    depth = 0
+    n = len(source)
+    while True:
+        if i >= n:
+            _syntax("f-string: valid expression required before '}'")
+        c = source[i]
+        if c == '"' or c == "'":
+            i, row, col = _string_skip_pos(source, i, row, col)
+            continue
+        if c == '\\':
+            i, row, col = _adv(source, i, 2, row, col)
+            continue
+        if c in '([{':
+            depth += 1
+            i, row, col = _adv(source, i, 1, row, col)
+            continue
+        if c in ')]':
+            depth -= 1
+            i, row, col = _adv(source, i, 1, row, col)
+            continue
+        if c == '}':
+            if depth == 0:
+                if expr_end < 0:
+                    expr_end = i
+                break
+            depth -= 1
+            i, row, col = _adv(source, i, 1, row, col)
+            continue
+        if depth == 0 and c == '=' and source[i + 1:i + 2] != '=' and source[i - 1:i] not in ('=', '!', '<', '>', ':'):
+            _no_tree()
+        if depth == 0 and c == '!' and source[i + 1:i + 2] != '=':
+            if expr_end < 0:
+                expr_end = i
+            conv = ord(source[i + 1])
+            i, row, col = _adv(source, i, 2, row, col)
+            continue
+        if depth == 0 and c == ':':
+            if source[i + 1:i + 2] == '=':
+                _no_tree()
+            if expr_end < 0:
+                expr_end = i
+            spec_srow, spec_scol = row, col
+            i, row, col = _adv(source, i, 1, row, col)
+            spec_start = i
+            body_srow, body_scol = row, col
+            sdepth = 0
+            while True:
+                if i >= n:
+                    _syntax("f-string: valid expression required before '}'")
+                c2 = source[i]
+                if c2 == '"' or c2 == "'":
+                    i, row, col = _string_skip_pos(source, i, row, col)
+                    continue
+                if c2 == '\\':
+                    i, row, col = _adv(source, i, 2, row, col)
+                    continue
+                if c2 == '{':
+                    sdepth += 1
+                    i, row, col = _adv(source, i, 1, row, col)
+                    continue
+                if c2 == '}':
+                    if sdepth == 0:
+                        break
+                    sdepth -= 1
+                    i, row, col = _adv(source, i, 1, row, col)
+                    continue
+                i, row, col = _adv(source, i, 1, row, col)
+            break
+        i, row, col = _adv(source, i, 1, row, col)
+    # i is at the field's closing '}' and (row, col) is its position.
+    value = _parse_field_expr(source, expr_start, expr_end, esrow, escol)
+    spec = None
+    if spec_start >= 0:
+        values = _joined_values(source, spec_start, i, body_srow, body_scol, raw)
+        spec = JoinedStr(values=values, lineno=spec_srow, col_offset=spec_scol,
+                         end_lineno=row, end_col_offset=col)
+    node = FormattedValue(value=value, conversion=conv, format_spec=spec,
+                          lineno=srow, col_offset=scol,
+                          end_lineno=row, end_col_offset=col + 1)
+    i, row, col = _adv(source, i, 1, row, col)
+    return (node, i, row, col)
+
+def _parse_field_expr(source, s, e, row, col):
+    toks = _lex(source, s, e, row, col, True)
+    parser = _Parser(source, toks)
+    node, ls, le = parser.parse_expr(False)
+    if parser.peek().kind != 'end':
+        _syntax('invalid syntax')
+    return node
+
+_STMT_WORDS = ('def', 'class', 'if', 'elif', 'else', 'for', 'while', 'try',
+               'except', 'finally', 'with', 'return', 'yield', 'raise',
+               'import', 'from', 'pass', 'break', 'continue', 'global',
+               'nonlocal', 'assert', 'del', 'async', 'await', 'match',
+               'case', 'lambda')
+
+_BINOPS = {'+': Add, '-': Sub, '*': Mult, '/': Div, '//': FloorDiv,
+           '%': Mod, '@': MatMult, '<<': LShift, '>>': RShift,
+           '|': BitOr, '^': BitXor, '&': BitAnd, '**': Pow}
+_CMPOPS = {'==': Eq, '!=': NotEq, '<': Lt, '<=': LtE, '>': Gt, '>=': GtE}
+_UNARY = {'+': UAdd, '-': USub, '~': Invert}
+
+class _Parser:
+    def __init__(self, source, toks):
+        self.source = source
+        self.toks = toks
+        self.at = 0
+
+    def peek(self):
+        return self.toks[self.at]
+
+    def pop(self):
+        tok = self.toks[self.at]
+        self.at += 1
+        return tok
+
+    def at_op(self, text):
+        tok = self.peek()
+        return tok.kind == 'op' and tok.text == text
+
+    def at_name(self, word):
+        tok = self.peek()
+        return tok.kind == 'name' and tok.text == word
+
+    def expect_op(self, text):
+        if not self.at_op(text):
+            _syntax('invalid syntax')
+        return self.pop()
+
+    def parse_module(self):
+        body = []
+        while True:
+            while self.peek().kind == 'newline':
+                self.pop()
+            if self.peek().kind == 'end':
+                break
+            body.append(self.parse_stmt())
+            tok = self.peek()
+            if tok.kind == 'end':
+                break
+            if tok.kind == 'newline':
+                continue
+            if self.at_op(';'):
+                self.pop()
+                continue
+            _syntax('invalid syntax')
+        return Module(body=body, type_ignores=[])
+
+    def parse_stmt(self):
+        tok = self.peek()
+        if tok.kind == 'name' and tok.text in _STMT_WORDS:
+            _no_tree()
+        node, ls, le = self.parse_expr(True)
+        if self.at_op('='):
+            pairs = [(node, ls, le)]
+            while self.at_op('='):
+                self.pop()
+                pairs.append(self.parse_expr(True))
+            value, vs, ve = pairs[-1]
+            targets = []
+            for target, ts, te in pairs[:-1]:
+                self.set_store(target)
+                targets.append(target)
+            first, fs, fe = pairs[0]
+            return Assign(targets=targets, value=value,
+                          lineno=fs[0], col_offset=fs[1],
+                          end_lineno=ve[0], end_col_offset=ve[1])
+        return Expr(value=node, lineno=ls[0], col_offset=ls[1],
+                    end_lineno=le[0], end_col_offset=le[1])
+
+    def set_store(self, node):
+        if type(node) == Name or type(node) == Attribute or type(node) == Subscript:
+            node.ctx = Store()
+            return
+        if type(node) == Tuple or type(node) == List:
+            node.ctx = Store()
+            for elt in node.elts:
+                self.set_store(elt)
+            return
+        _syntax('invalid syntax')
+
+    # Every level answers (node, loose start, loose end): the loose span
+    # reaches over parentheses the node itself does not keep, which is
+    # where statements and binary operations take their ends from.
+
+    def parse_expr(self, bare_tuple):
+        node, ls, le = self.parse_or()
+        if self.at_name('if'):
+            _no_tree()
+        if bare_tuple and self.at_op(','):
+            elts = [node]
+            while self.at_op(','):
+                self.pop()
+                tok = self.peek()
+                if tok.kind in ('newline', 'end') or self.at_op(')') or self.at_op(']') or self.at_op('}'):
+                    break
+                elt, es, ee = self.parse_or()
+                elts.append(elt)
+                le = ee
+            node = Tuple(elts=elts, ctx=Load(), lineno=ls[0], col_offset=ls[1],
+                         end_lineno=le[0], end_col_offset=le[1])
+        return (node, ls, le)
+
+    def parse_or(self):
+        node, ls, le = self.parse_and()
+        while self.at_name('or'):
+            self.pop()
+            right, rs, re = self.parse_and()
+            if type(node) == BoolOp and type(node.op) == Or:
+                node.values.append(right)
+                node.end_lineno = re[0]
+                node.end_col_offset = re[1]
+            else:
+                node = BoolOp(op=Or(), values=[node, right], lineno=ls[0],
+                              col_offset=ls[1], end_lineno=re[0],
+                              end_col_offset=re[1])
+            le = re
+        return (node, ls, le)
+
+    def parse_and(self):
+        node, ls, le = self.parse_not()
+        while self.at_name('and'):
+            self.pop()
+            right, rs, re = self.parse_not()
+            if type(node) == BoolOp and type(node.op) == And:
+                node.values.append(right)
+                node.end_lineno = re[0]
+                node.end_col_offset = re[1]
+            else:
+                node = BoolOp(op=And(), values=[node, right], lineno=ls[0],
+                              col_offset=ls[1], end_lineno=re[0],
+                              end_col_offset=re[1])
+            le = re
+        return (node, ls, le)
+
+    def parse_not(self):
+        if self.at_name('not'):
+            tok = self.pop()
+            operand, os, oe = self.parse_not()
+            node = UnaryOp(op=Not(), operand=operand, lineno=tok.srow,
+                           col_offset=tok.scol, end_lineno=oe[0],
+                           end_col_offset=oe[1])
+            return (node, (tok.srow, tok.scol), oe)
+        return self.parse_comparison()
+
+    def parse_comparison(self):
+        node, ls, le = self.parse_arith()
+        tok = self.peek()
+        op = None
+        if tok.kind == 'op' and tok.text in _CMPOPS:
+            self.pop()
+            op = _CMPOPS[tok.text]()
+        elif self.at_name('is'):
+            self.pop()
+            if self.at_name('not'):
+                self.pop()
+                op = IsNot()
+            else:
+                op = Is()
+        elif self.at_name('in'):
+            self.pop()
+            op = In()
+        elif self.at_name('not'):
+            self.pop()
+            if not self.at_name('in'):
+                _syntax('invalid syntax')
+            self.pop()
+            op = NotIn()
+        if op is None:
+            return (node, ls, le)
+        right, rs, re = self.parse_arith()
+        node = Compare(left=node, ops=[op], comparators=[right], lineno=ls[0],
+                       col_offset=ls[1], end_lineno=re[0], end_col_offset=re[1])
+        return (node, ls, re)
+
+    def parse_arith(self):
+        node, ls, le = self.parse_term()
+        while self.at_op('+') or self.at_op('-'):
+            tok = self.pop()
+            right, rs, re = self.parse_term()
+            node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
+                         lineno=ls[0], col_offset=ls[1],
+                         end_lineno=re[0], end_col_offset=re[1])
+            le = re
+        return (node, ls, le)
+
+    def parse_term(self):
+        node, ls, le = self.parse_unary()
+        while True:
+            tok = self.peek()
+            if tok.kind == 'op' and tok.text in ('*', '/', '//', '%', '@'):
+                self.pop()
+                right, rs, re = self.parse_unary()
+                node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
+                             lineno=ls[0], col_offset=ls[1],
+                             end_lineno=re[0], end_col_offset=re[1])
+                le = re
+            else:
+                return (node, ls, le)
+
+    def parse_unary(self):
+        tok = self.peek()
+        if tok.kind == 'op' and tok.text in _UNARY:
+            self.pop()
+            operand, os, oe = self.parse_unary()
+            node = UnaryOp(op=_UNARY[tok.text](), operand=operand,
+                           lineno=tok.srow, col_offset=tok.scol,
+                           end_lineno=oe[0], end_col_offset=oe[1])
+            return (node, (tok.srow, tok.scol), oe)
+        return self.parse_power()
+
+    def parse_power(self):
+        node, ls, le = self.parse_postfix()
+        if self.at_op('**'):
+            self.pop()
+            right, rs, re = self.parse_unary()
+            node = BinOp(left=node, op=Pow(), right=right, lineno=ls[0],
+                         col_offset=ls[1], end_lineno=re[0],
+                         end_col_offset=re[1])
+            le = re
+        return (node, ls, le)
+
+    def parse_postfix(self):
+        node, ls, le = self.parse_atom()
+        while True:
+            if self.at_op('('):
+                self.pop()
+                args = []
+                if not self.at_op(')'):
+                    while True:
+                        if self.at_op('*') or self.at_op('**'):
+                            _no_tree()
+                        arg, as_, ae = self.parse_or()
+                        args.append(arg)
+                        if self.at_name('if') or self.at_name('for'):
+                            _no_tree()
+                        if self.at_op('='):
+                            _no_tree()
+                        if self.at_op(','):
+                            self.pop()
+                            if self.at_op(')'):
+                                break
+                            continue
+                        break
+                close_tok = self.expect_op(')')
+                node = Call(func=node, args=args, keywords=[], lineno=ls[0],
+                            col_offset=ls[1], end_lineno=close_tok.erow,
+                            end_col_offset=close_tok.ecol)
+                le = (close_tok.erow, close_tok.ecol)
+                continue
+            if self.at_op('['):
+                self.pop()
+                if self.at_op(':'):
+                    _no_tree()
+                index, is_, ie = self.parse_expr(True)
+                if self.at_op(':'):
+                    _no_tree()
+                close_tok = self.expect_op(']')
+                node = Subscript(value=node, slice=index, ctx=Load(),
+                                 lineno=ls[0], col_offset=ls[1],
+                                 end_lineno=close_tok.erow,
+                                 end_col_offset=close_tok.ecol)
+                le = (close_tok.erow, close_tok.ecol)
+                continue
+            if self.at_op('.'):
+                self.pop()
+                tok = self.peek()
+                if tok.kind != 'name':
+                    _syntax('invalid syntax')
+                self.pop()
+                node = Attribute(value=node, attr=tok.text, ctx=Load(),
+                                 lineno=ls[0], col_offset=ls[1],
+                                 end_lineno=tok.erow, end_col_offset=tok.ecol)
+                le = (tok.erow, tok.ecol)
+                continue
+            return (node, ls, le)
+
+    def parse_atom(self):
+        tok = self.peek()
+        if tok.kind == 'num':
+            self.pop()
+            node = Constant(value=_number(tok.text, self.source),
+                            lineno=tok.srow, col_offset=tok.scol,
+                            end_lineno=tok.erow, end_col_offset=tok.ecol)
+            return (node, (tok.srow, tok.scol), (tok.erow, tok.ecol))
+        if tok.kind == 'name':
+            self.pop()
+            word = tok.text
+            if word == 'True':
+                return self.keyword_constant(tok, True)
+            if word == 'False':
+                return self.keyword_constant(tok, False)
+            if word == 'None':
+                return self.keyword_constant(tok, None)
+            if word in _STMT_WORDS or word in ('and', 'or', 'is', 'in', 'not', 'if', 'else'):
+                _no_tree()
+            node = Name(id=word, ctx=Load(), lineno=tok.srow,
+                        col_offset=tok.scol, end_lineno=tok.erow,
+                        end_col_offset=tok.ecol)
+            return (node, (tok.srow, tok.scol), (tok.erow, tok.ecol))
+        if tok.kind == 'str' or tok.kind == 'fstr':
+            return self.parse_string()
+        if self.at_op('...'):
+            self.pop()
+            node = Constant(value=Ellipsis, lineno=tok.srow,
+                            col_offset=tok.scol, end_lineno=tok.erow,
+                            end_col_offset=tok.ecol)
+            return (node, (tok.srow, tok.scol), (tok.erow, tok.ecol))
+        if self.at_op('('):
+            open_tok = self.pop()
+            if self.at_op(')'):
+                close_tok = self.pop()
+                node = Tuple(elts=[], ctx=Load(), lineno=open_tok.srow,
+                             col_offset=open_tok.scol,
+                             end_lineno=close_tok.erow,
+                             end_col_offset=close_tok.ecol)
+                return (node, (open_tok.srow, open_tok.scol),
+                        (close_tok.erow, close_tok.ecol))
+            node, ls, le = self.parse_or()
+            if self.at_name('for'):
+                _no_tree()
+            if self.at_op(','):
+                elts = [node]
+                while self.at_op(','):
+                    self.pop()
+                    if self.at_op(')'):
+                        break
+                    elt, es, ee = self.parse_or()
+                    elts.append(elt)
+                close_tok = self.expect_op(')')
+                node = Tuple(elts=elts, ctx=Load(), lineno=open_tok.srow,
+                             col_offset=open_tok.scol,
+                             end_lineno=close_tok.erow,
+                             end_col_offset=close_tok.ecol)
+                return (node, (open_tok.srow, open_tok.scol),
+                        (close_tok.erow, close_tok.ecol))
+            close_tok = self.expect_op(')')
+            return (node, (open_tok.srow, open_tok.scol),
+                    (close_tok.erow, close_tok.ecol))
+        if self.at_op('['):
+            open_tok = self.pop()
+            elts = []
+            if not self.at_op(']'):
+                while True:
+                    elt, es, ee = self.parse_or()
+                    if self.at_name('for'):
+                        _no_tree()
+                    elts.append(elt)
+                    if self.at_op(','):
+                        self.pop()
+                        if self.at_op(']'):
+                            break
+                        continue
+                    break
+            close_tok = self.expect_op(']')
+            node = List(elts=elts, ctx=Load(), lineno=open_tok.srow,
+                        col_offset=open_tok.scol,
+                        end_lineno=close_tok.erow,
+                        end_col_offset=close_tok.ecol)
+            return (node, (open_tok.srow, open_tok.scol),
+                    (close_tok.erow, close_tok.ecol))
+        if self.at_op('{'):
+            open_tok = self.pop()
+            if self.at_op('}'):
+                close_tok = self.pop()
+                node = Dict(keys=[], values=[], lineno=open_tok.srow,
+                            col_offset=open_tok.scol,
+                            end_lineno=close_tok.erow,
+                            end_col_offset=close_tok.ecol)
+                return (node, (open_tok.srow, open_tok.scol),
+                        (close_tok.erow, close_tok.ecol))
+            first, fs, fe = self.parse_or()
+            if self.at_op(':'):
+                keys = [first]
+                values = []
+                while True:
+                    self.expect_op(':')
+                    value, vs, ve = self.parse_or()
+                    values.append(value)
+                    if self.at_op(','):
+                        self.pop()
+                        if self.at_op('}'):
+                            break
+                        key, ks, ke = self.parse_or()
+                        keys.append(key)
+                        continue
+                    break
+                close_tok = self.expect_op('}')
+                node = Dict(keys=keys, values=values, lineno=open_tok.srow,
+                            col_offset=open_tok.scol,
+                            end_lineno=close_tok.erow,
+                            end_col_offset=close_tok.ecol)
+                return (node, (open_tok.srow, open_tok.scol),
+                        (close_tok.erow, close_tok.ecol))
+            if self.at_name('for'):
+                _no_tree()
+            elts = [first]
+            while self.at_op(','):
+                self.pop()
+                if self.at_op('}'):
+                    break
+                elt, es, ee = self.parse_or()
+                elts.append(elt)
+            close_tok = self.expect_op('}')
+            node = Set(elts=elts, lineno=open_tok.srow,
+                       col_offset=open_tok.scol,
+                       end_lineno=close_tok.erow, end_col_offset=close_tok.ecol)
+            return (node, (open_tok.srow, open_tok.scol),
+                    (close_tok.erow, close_tok.ecol))
+        _syntax('invalid syntax')
+
+    def keyword_constant(self, tok, value):
+        node = Constant(value=value, lineno=tok.srow, col_offset=tok.scol,
+                        end_lineno=tok.erow, end_col_offset=tok.ecol)
+        return (node, (tok.srow, tok.scol), (tok.erow, tok.ecol))
+
+    def parse_string(self):
+        # One string atom: a literal, or several implicitly concatenated,
+        # some of them f-strings. A plain literal in a joined string keeps
+        # its whole literal span; an f-string text piece keeps exactly its
+        # source, and two text pieces side by side after concatenation
+        # merge, keeping the first's start and the last's end.
+        toks = [self.pop()]
+        while self.peek().kind == 'str' or self.peek().kind == 'fstr':
+            toks.append(self.pop())
+        first = toks[0]
+        last = toks[-1]
+        has_f = False
+        for tok in toks:
+            if tok.kind == 'fstr':
+                has_f = True
+        if not has_f:
+            value = first.value
+            for tok in toks[1:]:
+                if type(value) != type(tok.value):
+                    _syntax('cannot mix bytes and nonbytes literals')
+                value = value + tok.value
+            kind = None
+            if 'u' in first.prefix:
+                kind = 'u'
+            node = Constant(value=value, kind=kind, lineno=first.srow,
+                            col_offset=first.scol, end_lineno=last.erow,
+                            end_col_offset=last.ecol)
+            return (node, (first.srow, first.scol), (last.erow, last.ecol))
+        pieces = []
+        for tok in toks:
+            if tok.kind == 'str':
+                pieces.append(Constant(value=tok.value, lineno=tok.srow,
+                                       col_offset=tok.scol,
+                                       end_lineno=tok.erow,
+                                       end_col_offset=tok.ecol))
+            else:
+                raw = 'r' in tok.prefix
+                values = _joined_values(self.source, tok.cs, tok.ce,
+                                        tok.cs_row, tok.cs_col, raw)
+                for value in values:
+                    pieces.append(value)
+        values = []
+        for piece in pieces:
+            if values and type(values[-1]) == Constant and type(piece) == Constant:
+                prev = values[-1]
+                values[-1] = Constant(value=prev.value + piece.value,
+                                      lineno=prev.lineno,
+                                      col_offset=prev.col_offset,
+                                      end_lineno=piece.end_lineno,
+                                      end_col_offset=piece.end_col_offset)
+            else:
+                values.append(piece)
+        node = JoinedStr(values=values, lineno=first.srow,
+                         col_offset=first.scol, end_lineno=last.erow,
+                         end_col_offset=last.ecol)
+        return (node, (first.srow, first.scol), (last.erow, last.ecol))
+
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1):
-    raise _NO_TREE
+    if type(source) != type(''):
+        _no_tree()
+    if mode == 'eval':
+        toks = _lex(source, 0, len(source), 1, 0, False)
+        parser = _Parser(source, toks)
+        while parser.peek().kind == 'newline':
+            parser.pop()
+        node, ls, le = parser.parse_expr(False)
+        tree = Expression(body=node)
+        tree._lumen_tree_source = source
+        return tree
+    if mode != 'exec':
+        _no_tree()
+    toks = _lex(source, 0, len(source), 1, 0, False)
+    parser = _Parser(source, toks)
+    tree = parser.parse_module()
+    tree._lumen_tree_source = source
+    return tree
 
 def unparse(ast_obj):
     raise _NO_TREE

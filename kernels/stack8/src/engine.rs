@@ -17899,6 +17899,19 @@ impl Engine<'_> {
         let source = match args[0].contents() {
             Value::Text(source) => source,
             Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
+            Value::Object(tree) => {
+                // A tree from the library's ast reader keeps the text it
+                // was read from; compiling the tree compiles that text.
+                let fields = tree.fields.borrow();
+                let held = fields.iter().find(|(word, _)| word == "_lumen_tree_source");
+                match held {
+                    Some((_, value)) => match value.contents() {
+                        Value::Text(source) => source,
+                        _ => return Err(self.source_unready()),
+                    },
+                    None => return Err(self.source_unready()),
+                }
+            }
             _ => return Err(self.source_unready()),
         };
         let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
