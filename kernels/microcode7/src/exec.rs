@@ -272,6 +272,8 @@ pub struct Machine<'a> {
     asking_presence: bool,
     raised_on: u32,
     written_in: Rc<str>,
+    entry_file: Rc<str>,
+    code_handles: HashMap<usize, (Rc<Routine>, Value)>,
     /// Where the language keeps its own pages, as the run was
     /// started. Nothing where the run was started naming nowhere,
     /// and then a complaint about a word points at no page of it.
@@ -470,6 +472,19 @@ fn words_of(table: &Table) -> Names<'_> {
 }
 
 impl<'a> Machine<'a> {
+    pub(super) fn code_handle(&mut self, body: &Rc<Routine>) -> Value {
+        let address = Rc::as_ptr(body) as usize;
+        if let Some((_, handle)) = self.code_handles.get(&address) { return handle.clone(); }
+        let origin = self.written_over.values().find(|entry| Rc::ptr_eq(&entry.2, body))
+            .map(|entry| entry.4.clone()).filter(|source| !Rc::ptr_eq(source, body));
+        let handle = match origin {
+            Some(source) => self.code_handle(&source),
+            None => Value::Wrapped(7, Rc::new(vec![Value::Routine(body.clone())])),
+        };
+        self.code_handles.insert(address, (body.clone(), handle.clone()));
+        handle
+    }
+
     fn given_faults(table: &Table) -> HashMap<String, Value> {
         let mut chain: Vec<Rc<Blueprint>> = Vec::new();
         for (number, word) in table.strings("ext.builtin.exceptions").iter().enumerate() {
@@ -1096,6 +1111,8 @@ impl<'a> Machine<'a> {
             started: None,
             ceiling: 0,
             written_in: Rc::from(""),
+            entry_file: Rc::from(""),
+            code_handles: HashMap::new(),
             pages_at: None,
             calls: Vec::new(),
             under: None,
@@ -1143,6 +1160,7 @@ impl<'a> Machine<'a> {
     /// Where the program is written, which a complaint names.
     pub fn found_in(&mut self, place: &str) {
         self.written_in = Rc::from(place);
+        self.entry_file = Rc::from(place);
     }
 
     /// Where the language keeps its own pages, as the run was started.

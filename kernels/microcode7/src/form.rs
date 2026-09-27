@@ -722,6 +722,11 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    pub annotator: Option<Rc<Routine>>,
+    pub literals: Vec<Value>,
+    pub referenced: Vec<String>,
+    pub locals: Vec<String>,
+    pub flags: i64,
     pub doc: Option<String>,
     pub qualification: String,
     /// Method parameters whose fallback is evaluated in the body.

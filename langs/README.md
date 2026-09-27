@@ -4987,6 +4987,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
@@ -5353,3 +5354,5 @@ Frames are allocated on demand when an exception first records its location.
 item-size and size-method names, followed by decimal values for the base
 size, digit size, digit bit width and subclass base size. The full kernels
 use these to report integer storage sizes, including inherited attributes.
+
+`ext.stmt.class.detail.code.fields` names code metadata members (name, qualified name, positional-only and keyword-only counts, local count, names, constants, flags, filename, first line) and the lazy function annotation member. Code values use the same wrapper as traceback frame code.

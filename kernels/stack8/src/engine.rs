@@ -97,6 +97,8 @@ pub struct Engine<'a> {
     line: u32,
     /// Where the program is written, as the request carried it.
     source: Rc<str>,
+    root_source: Rc<str>,
+    frame_codes: HashMap<usize, Value>,
     /// Where the language's own pages are kept, as the run was started.
     /// Nothing where the run was started with nowhere named, and then a
     /// complaint about a word of the language points at no page.
@@ -376,6 +378,16 @@ enum Chooser {
 }
 
 impl<'a> Engine<'a> {
+    pub(super) fn routine_code(&mut self, program: &Rc<Routine>) -> Value {
+        let key = Rc::as_ptr(&program.instrs) as usize;
+        self.frame_codes.entry(key).or_insert_with(|| {
+            let mut body = (**program).clone();
+            body.held.clear();
+            body.enclosed.clear();
+            Self::adapter(7, vec![Value::Routine(Rc::new(body))])
+        }).clone()
+    }
+
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
         let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
@@ -1004,6 +1016,8 @@ impl<'a> Engine<'a> {
             line: 0,
             trace_frame: None,
             source: Rc::from(""),
+            root_source: Rc::from(""),
+            frame_codes: HashMap::new(),
             pages_kept: None,
             calls: Vec::new(),
             under: None,
@@ -1204,6 +1218,7 @@ impl<'a> Engine<'a> {
     /// Where the program is written, which a complaint names.
     pub fn written_in(&mut self, place: &str) {
         self.source = Rc::from(place);
+        self.root_source = Rc::from(place);
     }
 
     /// Where the language's own pages are kept, as the run was started.
@@ -3713,11 +3728,19 @@ impl<'a> Engine<'a> {
                 }
             }
             match &instrs[pc] {
-                Instr::Const(Value::Routine(program)) if self.lang.closes_over && !program.enclosing.is_empty() => {
+                Instr::Const(Value::Routine(program)) if self.lang.closes_over && (!program.enclosing.is_empty() || program.annotation.is_some()) => {
                     let mut closed = (**program).clone();
                     for (at, source) in &program.enclosing {
                         let shared = self.share_cell(source, frame)?;
                         closed.enclosed.push((*at, if self.lang.bind_names { Value::Binding(shared) } else { Value::Bond(shared) }));
+                    }
+                    if let Some(a) = &program.annotation {
+                        let mut annotation = (**a).clone();
+                        for (at, cell) in &a.enclosing {
+                            let shared = self.share_cell(cell, frame)?;
+                            annotation.enclosed.push((*at, Value::Binding(shared)));
+                        }
+                        closed.annotation = Some(Rc::new(annotation));
                     }
                     self.data.push(Value::Routine(Rc::new(closed)));
                 }

@@ -1033,6 +1033,18 @@ impl<'a> Engine<'a> {
             Value::Routine(f) => {
                 let f=&Self::routine_now(f);
                 if let Some(v)=self.routine_member(&subject,name) {return Ok(v);}
+                let annotation_name = self.lang.class_annotations.first().map(String::as_str).unwrap_or("");
+                let annotate_name = self.lang.class_details.get("code.fields").and_then(|v| v.get(10)).map(String::as_str).unwrap_or("");
+                if !annotation_name.is_empty() && name == annotation_name {
+                    let result = match &f.annotation {
+                        Some(a) => self.class_apply(Value::Routine(a.clone()), vec![Value::Small(1)])?,
+                        None => self.keep_collection(Value::Map(Rc::new(Vec::new().into()))),
+                    };
+                    let at = self.function_storage(&subject);
+                    self.function_members[at].1.fields.borrow_mut().push((format!("\0{name}"), result.clone()));
+                    return Ok(result);
+                }
+                if !annotate_name.is_empty() && name == annotate_name { return Ok(f.annotation.clone().map_or(Value::Null, Value::Routine)); }
                 if name==self.class_word("globals") && f.written_in.is_none() {return Ok(Value::Bond(self.outer_book_made()));}
                 if name==self.class_word("name") {return Ok(Value::text(&f.ident));}
                 if name==self.class_word("qualified") {return Ok(Value::text(&f.qualified));}
@@ -1047,7 +1059,7 @@ impl<'a> Engine<'a> {
                     let pairs=Self::spare_arguments(f,true);
                     return Ok(if pairs.is_empty(){Value::Null}else{Value::Map(Rc::new(pairs.into_iter().map(|(i,v)|(Value::text(&f.formals[i]),v)).collect()))});
                 }
-                if name==self.class_word("code") {return Ok(Self::adapter(7,vec![subject.clone()]));}
+                if name==self.class_word("code") {return Ok(self.routine_code(f));}
                 if name==self.class_word("namespace") { let at=self.function_storage(&subject); return Ok(Value::Fields(self.function_members[at].1.clone())); }
                 // The cells a routine closes over, in the order of the
                 // names they stand for, or nothing where it closes over
@@ -1070,9 +1082,26 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
-                    let f=&Self::routine_now(f);
+                    if let Some(field) = self.lang.class_details.get("code.fields").and_then(|v| v.iter().position(|s| s == name)) {
+                        let number = |n: usize| Value::Small(n as i64);
+                        let words = |v: &[String]| Value::Tuple(Rc::new(v.iter().map(|s| Value::text(s)).collect()));
+                        let value = match field {
+                            0 => Value::text(if f.ident.starts_with("#generator") { "<genexpr>" } else { &f.ident }),
+                            1 => Value::text(&f.qualified),
+                            2 => number(f.parameter_rules.as_ref().map_or(0, |v| v.iter().filter(|r| **r == 1).count())),
+                            3 => number(f.parameter_rules.as_ref().map_or(0, |v| v.iter().filter(|r| **r == 2).count())),
+                            4 => number(f.local_names.len()),
+                            5 => words(&f.code_names),
+                            6 => Value::Tuple(Rc::new(f.code_constants.iter().map(|v| if let Value::Routine(r) = v { self.routine_code(r) } else { v.clone() }).collect())),
+                            7 => Value::Small(f.code_flags),
+                            8 => Value::Text(f.written_in.clone().unwrap_or_else(|| self.root_source.clone())),
+                            9 => number(f.declared_on.max(1) as usize),
+                            _ => return Err(self.missing_member(&subject, name)),
+                        };
+                        return Ok(value);
+                    }
                     if name==self.class_word("argcount") {return Ok(Value::Small(f.parameter_rules.as_ref().map_or(f.formals.len(),|rules|rules.iter().filter(|r|**r<2).count()) as i64));}
-                    if name==self.class_word("varnames") {return Ok(Value::Tuple(Rc::new(f.idents.iter().filter(|n|!n.starts_with('#')).map(|n|Value::text(n)).collect())));}
+                    if name==self.class_word("varnames") {return Ok(Value::Tuple(Rc::new(f.local_names.iter().map(|n|Value::text(n)).collect())));}
                 }
             }
             Value::Adapter(w) if w.0==4 || w.0==5 => {
@@ -1155,6 +1184,7 @@ impl<'a> Engine<'a> {
                 return Err(format!("{}{}{}{}{}{}", pieces[0], now.ident, pieces[1], now.enclosing.len(), pieces[2], source.enclosing.len()).into());
             }
             let mut made = (*source).clone();
+            made.annotation = now.annotation.clone();
             made.ident = now.ident.clone();
             made.qualified = now.qualified.clone();
             made.doc = now.doc.clone();
@@ -1187,7 +1217,7 @@ impl<'a> Engine<'a> {
     fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
         let (_,members)=self.function_members.iter().find(|(v,_)| v.equals(subject))?;
         let fields=members.fields.borrow();
-        if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") {
+        if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") || self.lang.class_annotations.first().map_or(false, |s| s == name) {
             let own=format!("\0{name}");
             if let Some((_,v))=fields.iter().find(|(n,_)| *n==own) {return Some(v.clone());}
         }
@@ -1391,6 +1421,16 @@ impl<'a> Engine<'a> {
                     *f.revised.borrow_mut()=Some(Rc::new(now));
                     return Ok(Value::Null);
                 }
+                if self.lang.class_annotations.first().map_or(false, |s| s == name) {
+                    let given = match value.as_ref().map(Value::contents) {
+                        None | Some(Value::Null) => self.keep_collection(Value::Map(Rc::new(Vec::new().into()))),
+                        Some(Value::Map(_)) => value.unwrap(),
+                        _ => return Err(format!("TypeError: {name} must be set to a dict object").into()),
+                    };
+                    let at = self.function_storage(&subject);
+                    Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(), &format!("\0{name}"), Some(given), false).map_err(|_| absent)?;
+                    return Ok(Value::Null);
+                }
                 let at=self.function_storage(&subject);
                 // Its name and full name take text alone, and its account
                 // of itself anything at all; the three stand apart from
@@ -1401,7 +1441,7 @@ impl<'a> Engine<'a> {
                         return Err(if pieces.len()==2 {format!("{}{name}{}",pieces[0],pieces[1]).into()} else {self.class_refusal()});
                     };
                 }
-                if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") {
+                if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") || self.lang.class_annotations.first().map_or(false, |s| s == name) {
                     let own=format!("\0{name}");
                     Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),&own,Some(value.unwrap_or(Value::Null)),false).map_err(|_|absent)?;
                     return Ok(Value::Null);
@@ -1490,7 +1530,7 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
-            [Value::Adapter(w)] if w.0==31=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,7|31)=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Array(bases),Value::Map(members)] | [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){if let Value::Class(c)=b{parents.push(c.clone());}else{return Err(self.class_refusal());}}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}

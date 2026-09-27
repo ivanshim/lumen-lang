@@ -58,6 +58,7 @@ impl Value {
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
             Self::Wrapped(35, _) => "cell",
+            Self::Wrapped(7, _) => "code",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
