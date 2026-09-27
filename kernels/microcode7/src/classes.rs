@@ -1167,6 +1167,16 @@ impl<'a> Machine<'a> {
                         if let Some(entry) = Self::own_entry(base, key) {
                             return self.member_binding(entry, Some(instance.clone()), actual.clone());
                         }
+                        // A member a native forebear carries without
+                        // keeping an entry of its own, `__hash__` or
+                        // `__eq__` among them, is answered off the worth
+                        // the thing holds, which is what the base's own
+                        // reading of that name gives.
+                        if Self::native_beneath(base).is_some() {
+                            if let Some(worth) = Self::underlying(&instance) {
+                                if let Some(member) = self.attribute(&worth, key) { return Ok(member); }
+                            }
+                        }
                     }
                     passed |= Rc::ptr_eq(base, defining);
                 }
@@ -2176,9 +2186,25 @@ impl<'a> Machine<'a> {
                         _ => Ok(Value::Nil),
                     };
                 }
+                // A value working is taken only where the worth answers
+                // to it: `__hash__`, for one, spells the working a slice
+                // answers and a text does not, so a text asked through
+                // its forebear falls to the kind's own member below
+                // rather than to a working that would refuse it.
                 if let (Some(under),Some(operation))=(Self::underlying(&receiver),Self::kind_method_named(self.table,key)) {
-                    let (given,named)=self.open_arguments(args)?;
-                    return self.value_member(&under,&operation,given,named);
+                    if crate::members::answers_to(&under,&operation) {
+                        let (given,named)=self.open_arguments(args)?;
+                        return self.value_member(&under,&operation,given,named);
+                    }
+                }
+                // A member the kind carries that no value working names,
+                // such as `__hash__` or `__len__`, is read off the worth
+                // the thing holds and worked there, as the base's own
+                // reading of the name gives it.
+                if let Some(under)=Self::underlying(&receiver) {
+                    if let Some(member)=self.attribute(&under,key) {
+                        return self.apply_class_member(member,args);
+                    }
                 }
                 continue;
             }

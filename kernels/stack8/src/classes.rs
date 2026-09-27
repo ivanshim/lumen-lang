@@ -2113,10 +2113,28 @@ impl<'a> Engine<'a> {
                     }
                     return Ok(Value::Null);
                 }
+                // A value working is taken only when the worth the
+                // thing keeps answers to it: `__hash__`, for one, names
+                // a working a slice answers and a text does not, so a
+                // text asked through its base falls to the kind's own
+                // member below rather than to a working it refuses.
                 if let (Some(worth),Some(op))=(Self::worth_of(&subject),self.lang.value_methods.get(name).cloned()) {
-                    let mut positional=Vec::new();let mut named=Vec::new();
-                    for (key,v) in self.call_items(args)? {match key{Some(k)=>named.push((k,v)),None=>positional.push(v)}}
-                    return Ok(self.value_method(&worth,&op,positional,named)?);
+                    if crate::methods::answered(&worth,&op) {
+                        let mut positional=Vec::new();let mut named=Vec::new();
+                        for (key,v) in self.call_items(args)? {match key{Some(k)=>named.push((k,v)),None=>positional.push(v)}}
+                        return Ok(self.value_method(&worth,&op,positional,named)?);
+                    }
+                }
+                // A member the kind carries that no value working goes
+                // by, such as `__hash__` or `__eq__`, is the kind's own
+                // and is worked upon the worth the thing keeps -- the
+                // very reading `super().__hash__()` asks of the base.
+                if let Some(worth)=Self::worth_of(&subject) {
+                    if let Some(Value::ValueMethod(method))=self.builtin_member(&worth,name)? {
+                        let mut positional=Vec::new();let mut named=Vec::new();
+                        for (key,v) in self.call_items(args)? {match key{Some(k)=>named.push((k,v)),None=>positional.push(v)}}
+                        return Ok(self.value_method(&method.0,&method.1,positional,named)?);
+                    }
                 }
                 continue;
             }

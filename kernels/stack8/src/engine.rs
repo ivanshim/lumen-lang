@@ -3780,6 +3780,16 @@ impl<'a> Engine<'a> {
             if let (Some((cell, size)), Some(said)) = (&kept.watched, &self.lang.map_resized) {
                 let now = Self::map_size(cell);
                 if now != *size {
+                    // A walk backwards holds the places the map had when
+                    // it began, so a clear followed by a key of the same
+                    // count leaves that count as it was and the walk
+                    // finds nothing more to hand out rather than making
+                    // a complaint about keys that changed.
+                    let backwards = matches!(kept.walked.as_deref(), Some("dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator"));
+                    if backwards && now.0 == size.0 {
+                        kept.closed = true;
+                        return Ok(None);
+                    }
                     let words = if now.0 != size.0 { said.clone() } else { self.lang.core_words["core.dict.changed"][1].clone() };
                     kept.closed = true;
                     return Err(format!("\0{words}").into());
@@ -6285,9 +6295,16 @@ impl<'a> Engine<'a> {
                     let wanted = self.special_key(b)?;
                     let mut found = None;
                     for (key, value) in entries.iter() { if self.special_keys_equal(key, &wanted)? { found = Some(value.clone()); break; } }
-                    return match found {
-                        Some(value) => Ok(value),
-                        None => self.class_apply(method, vec![a.clone(), b.clone()]).map_err(|fault| fault.told(&self.wording())),
+                    if let Some(value) = found { return Ok(value); }
+                    // A value raised by the subclass's own `__missing__`
+                    // is kept aside and raised again where the subscript
+                    // gives way, so the handler that catches it sees the
+                    // very object with its own arguments and not the
+                    // words the class and its message would spell.
+                    return match self.class_apply(method, vec![a.clone(), b.clone()]) {
+                        Ok(value) => Ok(value),
+                        Err(Fault::Note(words)) => Err(words),
+                        Err(fled) => { self.carried = Some(fled); Err(String::new()) }
                     };
                 }
             }
@@ -12231,9 +12248,14 @@ impl<'a> Engine<'a> {
         // it is answered here beside the rest, before a member call
         // with no receiver of its own reaches `methods::call` at all.
         if operation == "fromkeys" {
-            if args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
-            let filling = args.into_iter().next().unwrap_or(Value::Null);
-            return self.dict_fromkeys(receiver, filling);
+            // `fromkeys` is the kind's own class method, so a receiver
+            // of the kind is not the iterable to read: the first thing
+            // handed in is that iterable and the second, where written,
+            // is the value every key is given.
+            if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let filling = args.get(1).cloned().unwrap_or(Value::Null);
+            let target = args.remove(0);
+            return self.dict_fromkeys(&target, filling);
         }
         if matches!(receiver.contents(), Value::Map(_)) {
             if matches!(operation, "get" | "setdefault" | "pop") {
@@ -13577,6 +13599,16 @@ impl<'a> Engine<'a> {
                 let Some((_, operation)) = name.rsplit_once('.') else { return Err(self.member_amiss(&args[0], name)) };
                 let receiver = args.remove(0);
                 let rest = std::mem::take(args);
+                // `dict.fromkeys` spelled with its class before it is
+                // the class method: the first thing handed in is the
+                // iterable itself, unlike the same name read off a map,
+                // where the receiver is the map and the iterable is
+                // the first argument.
+                if operation == "fromkeys" {
+                    if rest.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+                    let filling = rest.into_iter().next().unwrap_or(Value::Null);
+                    return self.dict_fromkeys(&receiver, filling);
+                }
                 return self.value_method(&receiver, operation, rest, Vec::new());
             }
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
@@ -16396,6 +16428,13 @@ impl Engine<'_> {
         // whether the word came as a builtin of its own or as the plain
         // reading of the name; anything else is no kind to ask after.
         let (b, word) = match kind {
+            // A byte kind stands among the kinds a `|` union or a
+            // tuple of kinds carries, so it is answered here beside the
+            // other builtins rather than failing as no kind at all.
+            Value::ByteKind(..) => {
+                let answer = self.byte_call(16, &[value.clone(), kind.clone()])?;
+                return Ok(self.truth(&answer));
+            }
             Value::Native(b, word) => (*b, word.to_string()),
             Value::Adapter(w) if w.0 == 8 => match &w.1[0] {
                 Value::Text(word) => match self.lang.builtins.get(word.as_ref()) {

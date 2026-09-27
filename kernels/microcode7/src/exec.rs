@@ -3491,6 +3491,15 @@ impl<'a> Machine<'a> {
         if let (Some(_), Some((cell, size))) = (&state.members, &state.overseen) {
             let current = Self::dict_extent(cell);
             if current != *size {
+                // A walk taken backwards follows the places the map
+                // held when it began; emptying the map and putting back
+                // the same number of keys leaves that count as it was,
+                // so the walk just finds nothing further to hand over.
+                let backwards = matches!(state.walked.as_deref(), Some("dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator"));
+                if backwards && current.0 == size.0 {
+                    state.ended = true;
+                    return Ok(None);
+                }
                 let which = usize::from(current.0 == size.0);
                 let complaint = self.table.strings("ext.builtin.core.dict.changed")[which].clone();
                 state.ended = true;
@@ -7397,9 +7406,14 @@ impl<'a> Machine<'a> {
         // it is answered here beside the rest, before a member call
         // with no receiver of its own reaches `Request` at all.
         if name == "fromkeys" {
-            if arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
-            let filling = arguments.into_iter().next().unwrap_or(Value::Nil);
-            return self.dict_fromkeys(receiver, filling).map_err(Escape::from);
+            // `fromkeys` belongs to the kind rather than to the value
+            // it was read from, so the first argument is the iterable
+            // whose members become keys and the second, where written,
+            // the value each one is given.
+            if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments").into()); }
+            let filling = arguments.get(1).cloned().unwrap_or(Value::Nil);
+            let target = arguments.remove(0);
+            return self.dict_fromkeys(&target, filling).map_err(Escape::from);
         }
         if matches!(receiver.settled(), Value::Dict(_)) {
             if matches!(name, "get" | "setdefault" | "pop") {
@@ -10986,10 +11000,16 @@ impl<'a> Machine<'a> {
                 let wanted = self.hash_key(key)?;
                 let mut found = None;
                 for (stored, value) in entries.iter() { if self.keys_agree(stored, &wanted)? { found = Some(value.clone()); break; } }
-                return Ok(Some(match found {
-                    Some(value) => value,
-                    None => self.apply_class_member(method, vec![subject.clone(), key.clone()]).map_err(|fault| self.suspension_fault(fault))?,
-                }));
+                if let Some(value) = found { return Ok(Some(value)); }
+                // What the subclass's `__missing__` raises is parked
+                // while the subscript answers with words, then lifted
+                // again by the caller, so a handler catches the object
+                // itself with the arguments it was made with.
+                return match self.apply_class_member(method, vec![subject.clone(), key.clone()]) {
+                    Ok(value) => Ok(Some(value)),
+                    Err(Escape::Error(words)) => Err(words),
+                    Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+                };
             }
         }
         // A thing sought among a set's members is sought as a key is,
@@ -12372,6 +12392,15 @@ impl<'a> Machine<'a> {
             Prim::ValueMethod if name.contains('.') => {
                 let operation = name.rsplit('.').next().unwrap_or(name).to_owned();
                 if v.is_empty() { return Err(self.method_fault("arguments")); }
+                // `dict.fromkeys` written with its class in front is the
+                // class method, so the first value handed in is the
+                // iterable and the second, where written, the filling;
+                // read off a map instead the iterable is the argument.
+                if operation == "fromkeys" {
+                    if v.len() > 2 { return Err(self.method_fault("arguments")); }
+                    let filling = v.get(1).cloned().unwrap_or(Value::Nil);
+                    return self.dict_fromkeys(&v[0], filling);
+                }
                 return self.value_member(&v[0], &operation, v[1..].to_vec(), Vec::new()).map_err(|fault| self.suspension_fault(fault));
             }
             Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => {
@@ -18732,6 +18761,10 @@ impl Machine<'_> {
                 Ok(matches!(item, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
+            // A byte kind may stand inside a tuple of kinds, so it is
+            // asked about here rather than being turned away as
+            // something that names no kind at all.
+            Value::OctetKind { .. } => Ok(matches!(self.octet_routine(16, &[item.clone(), expected.clone()])?, Value::Flag(true))),
             // A union built by `|` carries a bare `Nil` for the
             // `NoneType` member, the very value `None` itself is, so
             // a chained union reads it back this way rather than
