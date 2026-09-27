@@ -1464,7 +1464,13 @@ impl<'a> Builder<'a> {
         let began = self.pos;
         let mut start = self.pos;
         while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.lexeme)) { start += 1; }
-        let doc = self.tokens.get(start).filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.to_owned());
+        let mut doc = None;
+        let mut finish = start;
+        while let Some(token) = self.tokens.get(finish).filter(|t| t.shape == Shape::Quote) {
+            doc.get_or_insert_with(String::new).push_str(&token.lexeme);
+            finish += 1;
+        }
+        if self.tokens.get(finish).map_or(false, |t| t.shape == Shape::Woven) { doc = None; }
         let qualification=self.full_name_of(name);
         let taking = self.taking.take();
         let declared_on = self.declared_at;
@@ -2343,16 +2349,19 @@ impl<'a> Builder<'a> {
         let mut steps = Vec::new();
         let mut contexts = Vec::new();
         loop {
-            let mut value = self.expr(0)?;
+            let begin = self.pos;
+            let expression = self.expr(0)?;
+            let bounds = self.span_since(begin);
+            let mut value = self.located(bounds, expression);
             if table.strings("ext.stmt.class.special").get(33).is_some() {
                 let manager = self.gensym("manager");
                 let manager_read = Form::Read(manager.clone());
                 steps.push(Form::Write(manager.clone(), Box::new(value)));
-                value = prim_call(Prim::StartContext, vec![manager_read]);
+                value = self.located(bounds, prim_call(Prim::StartContext, vec![manager_read]));
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
                 value = Form::Read(entered);
-                contexts.push((steps.len(), manager));
+                contexts.push((steps.len(), manager, bounds));
             }
             if self.key("ext.stmt.with.as") {
                 self.advance();
@@ -2367,9 +2376,9 @@ impl<'a> Builder<'a> {
         }
         if enclosed { self.need_sign(close, "after the with items")?; }
         steps.push(self.body()?);
-        for (from, manager) in contexts.into_iter().rev() {
+        for (from, manager, bounds) in contexts.into_iter().rev() {
             let enclosed = sequence(steps.split_off(from));
-            steps.push(Form::Attempt { context: Some(manager), body: Box::new(enclosed), clauses: Vec::new(), last: None, otherwise: None });
+            steps.push(self.located(bounds, Form::Attempt { context: Some(manager), body: Box::new(enclosed), clauses: Vec::new(), last: None, otherwise: None }));
         }
         Ok(sequence(steps))
     }
@@ -2736,6 +2745,9 @@ impl<'a> Builder<'a> {
     /// A watched arm written beside its colon ends at the line end;
     /// one written below it follows the ordinary indentation reading.
     fn watched_body(&mut self) -> Res<Form> {
+        if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if !self.on_any("block.intro") { return Err(String::from("SyntaxError: expected ':'")); }
+        }
         // Standing in a class body, the arm names members and is read
         // the way the body around it is read.
         if self.in_class_body() { return self.class_limb(); }
@@ -2811,7 +2823,19 @@ impl<'a> Builder<'a> {
                 }
                 held = if self.key("ext.stmt.catch.as") {
                     self.advance();
+                    let start = self.pos;
                     let binding = self.need_word("after the caught value's binding word")?;
+                    if table.has_any("ext.builtin.exceptions.syntax") {
+                        let kind = match self.look().lexeme.as_str() { "." => Some("attribute"), "[" => Some("subscript"), _ => None };
+                        if let Some(kind) = kind {
+                            while !self.on_any("block.intro") && !self.on_stmt_end() && !self.exhausted() { self.advance(); }
+                            let tail = &self.tokens[self.pos - 1];
+                            self.range_end = Some((tail.column + tail.lexeme.chars().count(), tail.row));
+                            self.pos = start;
+                            let clause = if grouped { "except*" } else { "except" };
+                            return Err(format!("SyntaxError: cannot use {clause} statement with {kind}"));
+                        }
+                    }
                     self.claim(&binding);
                     Some(self.address_to_write(&binding))
                 } else { None };
@@ -4874,6 +4898,18 @@ impl<'a> Builder<'a> {
         Ok(true)
     }
 
+    fn span_since(&self, beginning: usize) -> (u32, u32, u32, u32) {
+        let left = &self.tokens[beginning];
+        let right = &self.tokens[self.pos.max(beginning + 1) - 1];
+        (left.row.saturating_sub(self.before), left.column.saturating_sub(1) as u32, if right.end_row == 0 { right.row.saturating_sub(self.before) } else { right.end_row.saturating_sub(self.before) },
+            if right.end_column == 0 { (right.column + right.lexeme.len()).saturating_sub(1) as u32 } else { right.end_column.saturating_sub(1) as u32 })
+    }
+
+    fn located(&self, bounds: (u32, u32, u32, u32), expression: Form) -> Form {
+        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(bounds, Box::new(expression)) }
+        else { expression }
+    }
+
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
@@ -4916,6 +4952,7 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
+            let beginning = self.pos;
             let start = if self.on_any("ext.syntax.array.spread") { self.comma_value()? }
                 else { let item = self.expr(tier + 1)?; self.comma_tail(item)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
@@ -4923,13 +4960,16 @@ impl<'a> Builder<'a> {
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
+                let bounds = self.span_since(beginning);
+                let start = self.located(bounds, start);
                 let source = match table.single("ext.op.comprehension.for") {
                     Some(_) => prim_call(Prim::Iterated, vec![start]),
                     None => start,
                 };
                 self.claim(&var);
                 self.address_to_write(&var);
-                return self.walk(source, None, var, None, place);
+                let walk = self.walk(source, None, var, None, place)?;
+                return Ok(self.located(bounds, walk));
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -6512,6 +6552,10 @@ impl<'a> Builder<'a> {
                     _ => return Err("Invalid assignment target".to_string()),
                 }
             }
+            other if self.table.has_any("ext.builtin.exceptions.syntax") => {
+                let kind = match other { Form::Apply(Callee::Code(_), _) => "function call", _ => "expression" };
+                return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?"));
+            }
             _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
         };
         let made = match before_bounds {
@@ -6570,6 +6614,14 @@ impl<'a> Builder<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            if table.has_any("ext.builtin.exceptions.syntax") && (text == "|" || text == "&") {
+                let following = self.glance(1);
+                if following.lexeme == text && (following.row, following.column) == (t.row, t.column + 1) {
+                    self.range_end = Some((t.column + 2, t.row));
+                    let keyword = if text == "|" { "or" } else { "and" };
+                    return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{keyword}' or '{text}' instead of '{text}{text}'?"));
+                }
+            }
             let conditional = table.strings("ext.op.if_else");
             if floor == 0 && conditional.first() == Some(&text) {
                 self.advance();
@@ -7258,18 +7310,50 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
+            if targets && table.has_any("ext.builtin.exceptions.syntax") {
+                let token = self.look();
+                let description = match token.lexeme.as_str() {
+                    "None" | "False" | "True" => Some(token.lexeme.as_str()),
+                    "*" => Some("starred"),
+                    "not" | "~" | "-" | "+" => Some("expression"),
+                    _ if matches!(token.shape, Shape::Quote | Shape::Numeral | Shape::ByteQuote) => Some("literal"),
+                    _ => None,
+                };
+                if let Some(description) = description { return Err(format!("SyntaxError: cannot delete {description}")); }
+            }
             if targets && !self.bracketed_holder() {
                 let closes = if self.on_any("syntax.group.open") { table.single("syntax.group.close") }
                     else if self.on_any("syntax.array.open") { table.single("syntax.array.close") } else { None };
                 if let Some(closes) = closes {
+                    let parentheses = self.on_any("syntax.group.open");
                     self.advance();
+                    if table.has_any("ext.builtin.exceptions.syntax") && parentheses && self.sign("*") {
+                        let comma = self.tokens[self.pos..].iter().take_while(|part| part.lexeme != closes).any(|part| part.lexeme == ",");
+                        if !comma { return Err(String::from("SyntaxError: cannot use starred expression here")); }
+                    }
                     items.push(self.forget_list(true, true, Some(closes.to_string()))?);
                     if self.on_any("syntax.call.separator") { self.advance(); }
                     continue;
                 }
             }
             self.unsupported_place = false;
-            let named = if targets { self.deletion_place()? } else { self.expr(0)? };
+            let named = if targets {
+                let place = self.deletion_place()?;
+                self.called_on_value(place)?
+            } else { self.expr(0)? };
+            if targets && table.has_any("ext.builtin.exceptions.syntax") {
+                if matches!(&named, Form::Apply(Callee::Code(_), _)) {
+                    return Err(String::from("SyntaxError: cannot delete function call"));
+                }
+                let word = &self.look().lexeme;
+                let invalid = match word.as_str() {
+                    ":=" => Some("named expression"),
+                    "if" => Some("conditional expression"),
+                    _ if table.dyadic.contains_key(word) => Some("expression"),
+                    _ => None,
+                };
+                if let Some(kind) = invalid { return Err(format!("SyntaxError: cannot delete {kind}")); }
+            }
             items.push(if self.unsupported_place {
                 prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.del.unrun").unwrap_or_default()))])
             } else { match named {
@@ -7864,6 +7948,9 @@ impl<'a> Builder<'a> {
                         }
                         return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]));
                     }
+                    if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(14))) {
+                        return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(Value::text(&named))]));
+                    }
                     if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(_))) {
                         args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
                         return Ok(sequence(args));
@@ -8139,6 +8226,7 @@ impl<'a> Builder<'a> {
             self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or("Expected a comprehension source")? + 1;
             let begins = self.pos;
             let source = self.expr(1)?;
+            let bounds = self.span_since(begins);
             let ends = self.pos;
             let parameter = self.gather_name("first_source");
             let previous = self.source_before.replace((begins, ends, parameter.clone()));
@@ -8149,7 +8237,7 @@ impl<'a> Builder<'a> {
             let walks = self.table.flag("ext.stmt.yield.suspends");
             let begin = if self.table.spells("ext.op.comprehension.async", &self.tokens[first_for].lexeme) { Prim::AsyncWalked }
                 else if walks { Prim::Walked } else { Prim::Iterated };
-            return Ok(Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(begin, vec![source])]));
+            return Ok(self.located(bounds, Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(begin, vec![source])])));
         }
         if self.table.flag("ext.stmt.function.closes_over") {
             let routine = self.routine("<gathering>", Holds::Every, Traps::Yields, Vec::new(), 0,
@@ -8309,6 +8397,7 @@ impl<'a> Builder<'a> {
         self.gathering_bindings(target_begin..target_stop, 0)?;
         self.pos = target_stop + 1;
         let walks = self.table.flag("ext.stmt.yield.suspends");
+        let beginning = self.pos;
         let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
             Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
             None => {
@@ -8316,6 +8405,8 @@ impl<'a> Builder<'a> {
                 prim_call(if asynchronous { Prim::AsyncWalked } else if walks { Prim::Walked } else { Prim::Iterated }, vec![value])
             }
         };
+        let bounds = self.span_since(beginning);
+        let source = self.located(bounds, source);
         let source_name = self.gather_name("gather_source");
         let hold = self.write(&source_name, source);
         let cursor = self.gather_name("gather_cursor");
@@ -8324,6 +8415,7 @@ impl<'a> Builder<'a> {
         let index = self.read(&cursor);
         let test = if walks { prim_call(Prim::MoreYet, vec![bag, index]) }
             else { prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]) };
+        let test = self.located(bounds, test);
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
         let item = prim_call(if walks { Prim::AtHand } else { Prim::At }, vec![bag, index]);
@@ -8426,6 +8518,11 @@ impl<'a> Builder<'a> {
             let word = token.lexeme.as_str();
             if nesting.is_empty() {
                 if word == "=" && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
+                    let strings = &self.tokens[begins..at.saturating_sub(1).max(begins)];
+                    if !strings.is_empty() && strings.iter().all(|entry| entry.shape == Shape::Quote) {
+                        self.pos = at - 2;
+                        return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
+                    }
                     self.range_end = Some((token.column + 1, token.row));
                     self.pos = begins;
                     return Err(String::from("SyntaxError: expression cannot contain assignment, perhaps you meant \"==\"?"));
@@ -9337,7 +9434,7 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
     let uses = |address: &Address| names.contains(&address.ident.as_ref());
     match form {
         Form::Read(place) | Form::Glance(place) | Form::Share(place) => uses(place),
-        Form::Write(_, value) | Form::OnLine(_, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
+        Form::Write(_, value) | Form::OnLine(_, value) | Form::Located(_, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
         Form::Apply(Callee::Code(target), args) => borrows_enclosing(target, names) || args.iter().any(|arg| borrows_enclosing(arg, names)),
         Form::Apply(_, args) => args.iter().any(|arg| borrows_enclosing(arg, names)),
         Form::Const(Value::Routine(arm)) if arm.frameless => borrows_enclosing(&arm.body, names),

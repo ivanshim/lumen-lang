@@ -1882,3 +1882,45 @@ about twelve (test_set one class per invocation). Every result matched the
 same check on the build machine. With every check on Lambda, the build
 machine only builds and probes, and is resized between jobs in about
 three minutes (stop, change the type, start).
+
+### 1ad. Batch 20b merged as #509; batch 20c: exceptions, SyntaxError wording, int corners
+
+Pull request #509 merged into main. Batch 20c folds three branches, the
+first begun from batch 20a and checked from the start on Lambda.
+fix/exception-attrs: SyntaxError's and ImportError's attributes as
+CPython constructs and prints them, str() of a Unicode error whose
+attributes were set to None or deleted, MemoryError and BufferError
+(test_exceptions 50 to 68, test_list +2). fix/syntax-messages: CPython's
+precise SyntaxError wording where the readers already found the error,
+and the doctests of test_syntax (test_syntax 56 to 72).
+fix/long-leftovers: int corners that do not rest on the documented `//`
+and divmod divergence — classmethods on int subclasses, to_bytes and
+from_bytes, correctly rounded true division of huge ints (test_long 25 to
+30).
+
+Merged, the fifty files count 1967 on stack8 and 1979 on microcode7, up
+from 1926 and 1938, with no passing test lost; the whole check (scratch,
+gates, all fifty files with test_set by class) ran on Lambda.
+
+### 1ae. Batch 20c merged as #510; batch 20d: sets, dicts, f-string errors, tracebacks
+
+Pull request #510 merged into main. Batch 20d folds four branches, each
+first merged with batch 20b or 20c by its own worker and checked there.
+fix/set-operations: set and frozenset operations with several arguments
+and any iterable, re-initialisation and subclass construction, recursive
+repr guards (test_set 573 to 628). fix/dict-edges: dict.update's forms and
+wording, keys whose __hash__ or __eq__ misbehave, reversed views, instance
+__dict__ replacement (test_dict 88 to 100/101, test_class +1).
+fix/fstring-errors: the SyntaxErrors and SyntaxWarnings CPython gives for
+malformed f-strings and their escapes (test_fstring 58 to 67).
+fix/traceback-frames: exception tracebacks with frames, sys._getframe,
+sys.excepthook and __excepthook__, the traceback module's extract and
+format functions, generators' gi_frame and gi_code (test_exceptions +5,
+test_generators +5, the comprehension files +1 or +2, test_iter and
+test_with +1).
+
+Merged, the fifty files count 2061 on stack8 and 2074 on microcode7, up
+from 1967 and 1979, with no passing test lost. fix/name-shadowing was
+merged too at first, but together with these it turned test_enumerate's
+test_pickle (an enumerate subclass pickled on stack8) from a pass into an
+error; it was taken out and goes back to its worker.

@@ -193,6 +193,7 @@ pub enum IteratorKind {
 
 #[derive(Debug)]
 pub struct TraceLink {
+    pub extent: Option<(u32, u32, u32, u32)>,
     pub location: u32,
     pub activation: Rc<Thing>,
     pub following: Value,
@@ -661,6 +662,7 @@ impl Value {
             Value::Text(word) => Ok(format!("text:{word}")),
             Value::Octets { changeable: true, .. } => Err("bytearray"),
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
+            Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
             Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
@@ -712,7 +714,19 @@ impl Value {
         match self {
             Value::Arguments(row) => Self::argument_text(row, words),
             Value::Thing(thing) => match self.arguments_held() {
-                Some(row) => format!("{}({})", thing.of.name, row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+                Some(row) => {
+                    let mut shown: Vec<String> = row.iter().map(|x| x.representation(words)).collect();
+                    if thing.of.every_field().iter().any(|(k, _)| k == "\0import-fault") {
+                        for key in ["name", "path", "name_from"] {
+                            let value = thing.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+                            match value {
+                                None | Some(Value::Nil) => {},
+                                Some(v) => shown.push(format!("{key}={}", v.representation(words))),
+                            }
+                        }
+                    }
+                    format!("{}({})", thing.of.name, shown.join(", "))
+                },
                 None => self.render(words),
             },
             Value::Vector(row) => {
@@ -1849,6 +1863,7 @@ impl Among {
             Value::Dict(pairs) => (Rc::as_ptr(pairs) as usize, "{...}"),
             Value::Tuple(parts) | Value::Row(parts) | Value::Arguments(parts) => (Rc::as_ptr(parts) as usize, "(...)"),
             Value::Vector(items) => (Rc::as_ptr(items) as usize, "[...]"),
+            Value::Set(store) => (Rc::as_ptr(store) as usize, "(...)"),
             _ => return Among { left: None, instead: None },
         };
         AMONG.with(|notes| {

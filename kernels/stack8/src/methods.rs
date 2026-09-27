@@ -112,6 +112,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
         Value::Codepoints(_) => CATEGORY,
         Value::Array(_) => ROW,
         Value::Map(_) => PAIRS,
+        Value::Fields(_) => &["clear"],
         Value::Tuple(_) | Value::Counted(_) => PLACES,
         Value::Small(_) | Value::Huge(_) | Value::Flag(_) => WHOLE,
         Value::Real(_) | Value::Frac(_) => FRACTION,
