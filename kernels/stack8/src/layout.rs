@@ -177,7 +177,14 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                 let alternate = token.lexeme.chars().count();
                 let (previous, other) = *indents.last().unwrap();
                 if width > previous {
-                    if header.is_none() { return Err(error("IndentationError: unexpected indent".into())); }
+                    if header.is_none() {
+                        if let Some(previous) = last.filter(|t| matches!(t.lexeme.as_str(), "try" | "else" | "finally")) {
+                            if first.map_or(false, |t| std::ptr::eq(t, previous)) {
+                                return Err(("SyntaxError: expected ':'".into(), previous.row, previous.column + previous.lexeme.len()));
+                            }
+                        }
+                        return Err(error("IndentationError: unexpected indent".into()));
+                    }
                     if alternate <= other { return Err(error("TabError: inconsistent use of tabs and spaces in indentation".into())); }
                     indents.push((width, alternate));
                     let mut open = token.clone(); open.shape = Shape::Open; open.column = alternate + 1;
