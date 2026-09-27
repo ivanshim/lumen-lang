@@ -5634,8 +5634,7 @@ impl<'a> Engine<'a> {
         match value {
             Value::Hashed(pair) => self.special_text(&pair.0, representation),
             Value::Fields(object) => {
-                let entries = object.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, v)| (Value::text(k), v.clone())).collect();
-                self.special_text(&Value::Map(Rc::new(entries)), true)
+                self.special_text(&Value::Map(Rc::new(Self::fields_entries(object).into())), true)
             }
             // This walk is handed a collection's members rather than
             // the cell that holds them, so it keeps its own note of the
@@ -5709,7 +5708,7 @@ impl<'a> Engine<'a> {
     }
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
-        if let Value::Fields(o) = value { return Ok(o.fields.borrow().iter().any(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0'))); }
+        if let Value::Fields(o) = value { return Ok(!Self::fields_entries(o).is_empty()); }
         if matches!(value, Value::Declined(_)) { return Err(self.core_fault("core.bool.declined", "")); }
         if let Some(answer) = self.special_call(value, 9, Vec::new())? {
             return match answer {
@@ -6107,14 +6106,12 @@ impl<'a> Engine<'a> {
             }
         }
         if let Value::Fields(o) = a {
-            let entries = o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, v)| (Value::text(k), v.clone())).collect();
-            return self.special_dyad(op, &Value::Map(Rc::new(entries)), b);
+            return self.special_dyad(op, &Value::Map(Rc::new(Self::fields_entries(o).into())), b);
         }
         // The view standing on the right of the sign is that dictionary
         // just the same, so `{} == f.__dict__` answers as CPython does.
         if let Value::Fields(o) = b {
-            let entries = o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, v)| (Value::text(k), v.clone())).collect();
-            return self.special_dyad(op, a, &Value::Map(Rc::new(entries)));
+            return self.special_dyad(op, a, &Value::Map(Rc::new(Self::fields_entries(o).into())));
         }
         // Text on the left of the remainder sign fills its own marks,
         // which is what the left side's own method does in the
@@ -6645,15 +6642,24 @@ impl<'a> Engine<'a> {
             }
             Builtin::Fetch if args.len() == 2 => self.special_dyad(&Action::At, &args[0], &args[1])?,
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Fields(_)) => {
-                let (Value::Fields(o), Value::Text(key)) = (&args[2], &args[0]) else { return Err(self.special_fault()) };
-                let mut fields = o.fields.borrow_mut();
-                if let Some((_, v)) = fields.iter_mut().find(|(k, _)| k == key.as_ref()) { *v = args[1].clone(); }
-                else { fields.push((key.to_string(), args[1].clone())); }
+                let Value::Fields(o) = &args[2] else { unreachable!() };
+                if let Some(told) = self.unkeyable(&args[0]) { return Err(told); }
+                // The key may be of any kind the thing's dictionary can
+                // hold, a text subclass among them; it is kept as it
+                // stands, so a walk over the dictionary hands back the
+                // very key that was written, and it is found by the same
+                // equality a map's own subscript uses.
+                let key = args[0].clone();
+                let mut entries = Self::fields_entries(o);
+                let mut found = None;
+                for (at, (old, _)) in entries.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
+                if let Some(at) = found { entries[at].1 = args[1].clone(); } else { entries.push((key, args[1].clone())); }
+                Self::fields_restore(o, entries);
                 args[2].clone()
             }
             Builtin::Length if args.len() == 1 && matches!(&args[0], Value::Fields(_)) => {
                 let Value::Fields(o) = &args[0] else { unreachable!() };
-                Value::Small(o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).count() as i64)
+                Value::Small(Self::fields_entries(o).len() as i64)
             }
             Builtin::Replace if args.len() == 3 && self.special_method(&args[2], 12).is_some() => {
                 self.special_call(&args[2], 12, vec![args[0].clone(), args[1].clone()])?;
@@ -6934,9 +6940,39 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// The entries a thing's own dictionary shows: the names it holds
+    /// as text, in order, and then the keys of any other kind kept
+    /// beside them under the hidden name `\0keys`.
+    fn fields_entries(o: &crate::value::Instance) -> Vec<(Value, Value)> {
+        let fields = o.fields.borrow();
+        let mut entries: Vec<(Value, Value)> = fields.iter()
+            .filter(|(key, held)| !key.starts_with('\0') && !matches!(held, Value::Blank))
+            .map(|(key, held)| (Value::text(key), held.clone())).collect();
+        if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
+            entries.extend(extra.iter().cloned());
+        }
+        entries
+    }
+
+    /// Write entries back into a thing's dictionary: names written as
+    /// text go in among the thing's own fields, keys of any other kind
+    /// are kept beside them under `\0keys`.
+    fn fields_restore(o: &crate::value::Instance, entries: Vec<(Value, Value)>) {
+        let mut fields = o.fields.borrow_mut();
+        fields.retain(|(key, _)| key.starts_with('\0') && key != "\0keys");
+        let mut extra: Vec<(Value, Value)> = Vec::new();
+        for (key, held) in entries {
+            match key {
+                Value::Text(text) => fields.push((text.to_string(), held)),
+                other => extra.push((other, held)),
+            }
+        }
+        if !extra.is_empty() { fields.push(("\0keys".to_string(), Value::Map(Rc::new(extra.into())))); }
+    }
+
     fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Value::Fields(o) = value {
-            return Ok(o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, _)| Value::text(k)).collect());
+            return Ok(Self::fields_entries(o).into_iter().map(|(key, _)| key).collect());
         }
         if let Value::Walk(walk) = value {
             let mut walk = walk.borrow_mut();
@@ -7166,10 +7202,14 @@ impl<'a> Engine<'a> {
                 let holder = self.data.last().cloned().ok_or_else(|| self.special_fault())?;
                 let target = holder.contents();
                 if let Value::Fields(o) = &target {
-                    let Value::Text(key) = named else { return Err(self.special_fault().into()) };
-                    let mut fields = o.fields.borrow_mut();
-                    let at = fields.iter().position(|(k, _)| k == key.as_ref()).ok_or_else(|| self.special_fault())?;
-                    fields.remove(at);
+                    let key = self.special_key(&named)?;
+                    let mut kept = Vec::new();
+                    let mut found = false;
+                    for (old, held) in Self::fields_entries(o) {
+                        if self.special_keys_equal(&old, &key)? { found = true; } else { kept.push((old, held)); }
+                    }
+                    if !found { return Err(self.special_fault().into()); }
+                    Self::fields_restore(o, kept);
                     self.drop_top()?;
                     self.data.push(Value::Null);
                     return Ok(());
@@ -11928,16 +11968,11 @@ impl<'a> Engine<'a> {
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if let Value::Fields(object) = receiver.contents() {
-            let entries = object.fields.borrow().iter().filter(|(key, held)| !key.starts_with('\0') && !matches!(held, Value::Blank))
-                .map(|(key, held)| (Value::text(key), held.clone())).collect::<Vec<_>>();
+            let entries = Self::fields_entries(&object);
             let map = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);
             let result = self.value_method(&map, operation, args, named);
             if let Value::Map(entries) = map.contents() {
-                let mut fields = object.fields.borrow_mut();
-                fields.retain(|(key, _)| key.starts_with('\0'));
-                fields.extend(entries.iter().filter_map(|(key, held)| match key {
-                    Value::Text(key) => Some((key.to_string(), held.clone())), _ => None,
-                }));
+                Self::fields_restore(&object, entries.iter().cloned().collect());
             }
             return result;
         }
@@ -16795,9 +16830,8 @@ impl Engine<'_> {
             Builtin::Reversed => {
                 arity(1, 1)?;
                 if let Value::Fields(owner) = &args[0] {
-                    let keys = owner.fields.borrow().iter().rev()
-                        .filter(|(key, value)| !key.starts_with('\0') && !matches!(value, Value::Blank))
-                        .map(|(key, _)| Value::text(key)).collect();
+                    let mut keys: Vec<Value> = Self::fields_entries(owner).into_iter().map(|(key, _)| key).collect();
+                    keys.reverse();
                     return Ok(Self::core_cursor_walked(CursorSource::Items(Rc::new(keys), 0), Some(Rc::from("dict_reversekeyiterator"))));
                 }
                 // A map is walked backwards from the last key written to

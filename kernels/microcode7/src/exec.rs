@@ -4492,10 +4492,14 @@ impl<'a> Machine<'a> {
                 let named = self.value_of(place, frame)?;
                 let target = holder.settled();
                 if let Value::Attributes(t) = &target {
-                    let Value::Text(key) = named else { return Err(self.bad_answer().into()) };
-                    let mut fields = t.holds.borrow_mut();
-                    let position = fields.iter().position(|(n, _)| n == key.as_ref()).ok_or_else(|| self.bad_answer())?;
-                    fields.remove(position);
+                    let wanted = self.hash_key(&named)?;
+                    let mut kept = Vec::new();
+                    let mut found = false;
+                    for (stored, held) in Self::attribute_entries(t) {
+                        if self.keys_agree(&stored, &wanted)? { found = true; } else { kept.push((stored, held)); }
+                    }
+                    if !found { return Err(self.bad_answer().into()); }
+                    Self::attribute_restore(t, kept);
                     return Ok(Value::Nil);
                 }
                 if matches!(&target, Value::Dict(entries) if entries.iter().any(|(k, _)| matches!(k, Value::Keyed(..)))) {
@@ -5565,12 +5569,15 @@ impl<'a> Machine<'a> {
                             written_into(&mut cell.borrow_mut(), Some(index.clone()), value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?;
                             return Ok(Value::Nil);
                         }
-                        if let (Some(Value::Text(word)), Value::Attributes(t)) = (&key, &target) {
-                            let mut slots = t.holds.borrow_mut();
-                            match slots.iter_mut().find(|(n, _)| n == word.as_ref()) {
-                                Some((_, old)) => *old = value,
-                                None => slots.push((word.to_string(), value)),
+                        if let (Some(raw), Value::Attributes(t)) = (&key, &target) {
+                            let wanted = self.hash_key(raw)?;
+                            let mut entries = Self::attribute_entries(t);
+                            let mut found = false;
+                            for (stored, held) in entries.iter_mut() {
+                                if self.keys_agree(stored, &wanted)? { *held = value.clone(); found = true; break; }
                             }
+                            if !found { entries.push((raw.clone(), value.clone())); }
+                            Self::attribute_restore(t, entries);
                             return Ok(Value::Nil);
                         }
                         if let (Some(index), true) = (&key, self.appointed(&target, 12).is_some()) {
@@ -7108,17 +7115,11 @@ impl<'a> Machine<'a> {
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if let Value::Attributes(owner) = receiver.settled() {
-            let snapshot = owner.holds.borrow().iter().filter_map(|(word, item)| {
-                if word.starts_with('\0') || matches!(item, Value::Unset) { None }
-                else { Some((Value::text(word), item.clone())) }
-            }).collect::<Vec<_>>();
+            let snapshot = Self::attribute_entries(&owner);
             let storage = Rc::new(RefCell::new(Value::Dict(Rc::new(snapshot.into()))));
             let outcome = self.value_member(&Value::Mutable(storage.clone(), true), name, arguments, keywords);
             if let Value::Dict(changed) = &*storage.borrow() {
-                owner.holds.borrow_mut().retain(|(word, _)| word.starts_with('\0'));
-                for (key, item) in changed.iter() {
-                    if let Value::Text(word) = key { owner.holds.borrow_mut().push((word.to_string(), item.clone())); }
-                }
+                Self::attribute_restore(&owner, changed.iter().cloned().collect());
             }
             return outcome;
         }
@@ -10454,8 +10455,8 @@ impl<'a> Machine<'a> {
         match subject {
             Value::Keyed(value, _) => self.object_words(value, quoted),
             Value::Attributes(t) => {
-                let pairs = t.holds.borrow().iter().filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0')).map(|(name, v)| (Value::text(name), v.clone())).collect();
-                self.object_words(&Value::Dict(Rc::new(pairs)), true)
+                let pairs = Self::attribute_entries(t);
+                self.object_words(&Value::Dict(Rc::new(pairs.into())), true)
             }
             Value::Thing(t) => {
                 if self.is_fault_kind(&t.blueprint()) && self.appointment(subject, usize::from(quoted)).is_none() {
@@ -10553,8 +10554,38 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The entries a thing's own dictionary shows: the names it keeps
+    /// as text, in order, and then the keys of any other kind kept
+    /// beside them under the hidden name `\0keys`.
+    fn attribute_entries(t: &crate::data::Thing) -> Vec<(Value, Value)> {
+        let holds = t.holds.borrow();
+        let mut entries: Vec<(Value, Value)> = holds.iter()
+            .filter(|(name, held)| !name.starts_with('\0') && !matches!(held, Value::Unset))
+            .map(|(name, held)| (Value::text(name), held.clone())).collect();
+        if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
+            entries.extend(extra.iter().cloned());
+        }
+        entries
+    }
+
+    /// Write entries back into a thing's dictionary: names written as
+    /// text go in among the thing's own holds, keys of any other kind
+    /// are kept beside them under `\0keys`.
+    fn attribute_restore(t: &crate::data::Thing, entries: Vec<(Value, Value)>) {
+        let mut holds = t.holds.borrow_mut();
+        holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
+        let mut extra: Vec<(Value, Value)> = Vec::new();
+        for (key, held) in entries {
+            match key {
+                Value::Text(text) => holds.push((text.to_string(), held)),
+                other => extra.push((other, held)),
+            }
+        }
+        if !extra.is_empty() { holds.push(("\0keys".to_string(), Value::Dict(Rc::new(extra.into())))); }
+    }
+
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
-        if let Value::Attributes(t) = subject { return Ok(t.holds.borrow().iter().any(|(name, x)| !matches!(x, Value::Unset) && !name.starts_with('\0'))); }
+        if let Value::Attributes(t) = subject { return Ok(!Self::attribute_entries(t).is_empty()); }
         if matches!(subject, Value::Refusal(_)) { return Err(self.core_complaint("core.bool.declined", "")); }
         match self.ask_special(subject, 9, &[])? {
             Some(Value::Flag(b)) => return Ok(b),
@@ -10833,7 +10864,7 @@ impl<'a> Machine<'a> {
     fn object_members(&mut self, subject: &Value) -> Result<Vec<Value>, String> {
         if let Some(under) = self.underlying_unless(subject, &[15]) { return self.object_members(&under); }
         match subject {
-            Value::Attributes(t) => Ok(t.holds.borrow().iter().filter(|(n, x)| !matches!(x, Value::Unset) && !n.starts_with('\0')).map(|(n, _)| Value::text(n)).collect()),
+            Value::Attributes(t) => Ok(Self::attribute_entries(t).into_iter().map(|(key, _)| key).collect()),
             Value::Cursor(c) => {
                 let mut c = c.borrow_mut();
                 let answer = c.drain(..).collect();
@@ -11412,20 +11443,32 @@ impl<'a> Machine<'a> {
                 }
                 Value::Flag(found != (operation == Prim::Absent))
             }
-            (Prim::At, [Value::Attributes(t), Value::Text(key)]) => {
-                t.holds.borrow().iter().find(|(n, _)| n == key.as_ref()).map(|(_, value)| value.clone()).ok_or_else(|| self.bad_answer())?
+            (Prim::At, [Value::Attributes(t), key]) => {
+                // The key may be a name of any kind the dictionary can
+                // hold, found by the same equality the subscript uses.
+                let wanted = self.hash_key(key)?;
+                let mut found = None;
+                for (stored, value) in Self::attribute_entries(t) {
+                    if self.keys_agree(&stored, &wanted)? { found = Some(value); break; }
+                }
+                found.ok_or_else(|| self.bad_answer())?
             }
-            (Prim::Erase, [one @ Value::Attributes(t), Value::Text(key)]) => {
-                let mut attributes = t.holds.borrow_mut();
-                let index = attributes.iter().position(|(word, _)| word == key.as_ref()).ok_or_else(|| self.bad_answer())?;
-                attributes.remove(index);
+            (Prim::Erase, [one @ Value::Attributes(t), key]) => {
+                let wanted = self.hash_key(key)?;
+                let mut kept = Vec::new();
+                let mut found = false;
+                for (stored, held) in Self::attribute_entries(t) {
+                    if self.keys_agree(&stored, &wanted)? { found = true; } else { kept.push((stored, held)); }
+                }
+                if !found { return Err(self.bad_answer()); }
+                Self::attribute_restore(t, kept);
                 one.clone()
             }
             (Prim::Erase, [one, key]) if self.appointed(one, 13).is_some() => {
                 self.ask_special(one, 13, std::slice::from_ref(key))?;
                 one.clone()
             }
-            (Prim::Length, [Value::Attributes(t)]) => Value::Small(t.holds.borrow().iter().filter(|(n, x)| !matches!(x, Value::Unset) && !n.starts_with('\0')).count() as i64),
+            (Prim::Length, [Value::Attributes(t)]) => Value::Small(Self::attribute_entries(t).len() as i64),
             (Prim::At | Prim::Fetch, [Value::Dict(entries), key]) => {
                 let hashed = self.hash_key(key)?;
                 if let Ok(address) = hashed.hash_address() {
@@ -11629,6 +11672,10 @@ impl<'a> Machine<'a> {
     fn equal_contents(&self, one: &Value, other: &Value) -> bool {
         match one { Value::Shared(cell) => return self.equal_contents(&cell.borrow(), other), _ => {} }
         match other { Value::Shared(cell) => return self.equal_contents(one, &cell.borrow()), _ => {} }
+        // A thing's dictionary is the mapping of its shown entries, so
+        // it is weighed as that mapping with the entries in any order.
+        if let Value::Attributes(held) = one { return self.equal_contents(&held.entries_shown(), other); }
+        if let Value::Attributes(held) = other { return self.equal_contents(one, &held.entries_shown()); }
         // Within a container a value is equal to itself before anything
         // is asked of it, and a flag stands for its number.
         let held_alike = |x: &Value, y: &Value| x.one_place(y) || self.equal_contents(x, y);
@@ -19137,10 +19184,8 @@ impl Machine<'_> {
             Backwards => {
                 require(1, 1)?;
                 if let Value::Attributes(object) = &input[0] {
-                    let mut names = Vec::new();
-                    for (word, held) in object.holds.borrow().iter().rev() {
-                        if !word.starts_with('\0') && !matches!(held, Value::Unset) { names.push(Value::text(word)); }
-                    }
+                    let mut names: Vec<Value> = Self::attribute_entries(object).into_iter().map(|(key, _)| key).collect();
+                    names.reverse();
                     return Ok(Self::cursor_value_walked(IteratorKind::Stored { entries: Rc::new(names), next: 0 }, Some(Rc::from("dict_reversekeyiterator"))));
                 }
                 // Octets run backwards as well. A run forwards over them
