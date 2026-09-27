@@ -1128,8 +1128,17 @@ impl<'a> Engine<'a> {
                 let replaced = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, value)| value.clone());
                 if let Some(dictionary) = replaced {
                     let raw = Self::worth_of(&dictionary).unwrap_or(dictionary).contents();
-                    if let Value::Map(entries) = raw {
-                        if let Some((_, value)) = entries.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == name)) { return Ok(value.clone()); }
+                    // A namespace may be another thing's own fields,
+                    // shared by handing one `__dict__` to another; the
+                    // name is then read from those very fields.
+                    match raw {
+                        Value::Map(entries) => {
+                            if let Some((_, value)) = entries.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == name)) { return Ok(value.clone()); }
+                        }
+                        Value::Fields(view) => {
+                            if let Some((_, value)) = view.fields.borrow().iter().find(|(key, _)| key.as_str() == name) { return Ok(value.clone()); }
+                        }
+                        _ => {}
                     }
                 }
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}

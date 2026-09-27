@@ -1339,6 +1339,12 @@ impl<'a> Machine<'a> {
             if from_class.as_ref().map_or(false,|e|self.writes_too(e)){return self.member_binding(from_class.unwrap(),Some(value.clone()),t.blueprint().clone());}
             let dictionary = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
             if let Some(mapping) = dictionary {
+                // The namespace may be another thing's own holds, shared
+                // by handing one `__dict__` to another; the name is read
+                // out of those holds then.
+                if let Value::Attributes(view) = mapping.settled() {
+                    if let Some((_, held)) = view.holds.borrow().iter().find(|(name, _)| name.as_str() == key) { return Ok(held.clone()); }
+                }
                 let native = Self::underlying(&mapping).unwrap_or(mapping);
                 if let Value::Dict(entries) = native.settled() {
                     for (word, item) in entries.iter() {

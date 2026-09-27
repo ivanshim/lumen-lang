@@ -298,13 +298,15 @@ class frozendict:
         return NotImplemented
 
     # The rows are gathered in whatever order they were written in, so
-    # the hash is made by mixing each pair on its own and folding the
-    # results together in a way that does not mind the order.
+    # the hash is that of the set of pairs, which does not mind the
+    # order and gives the reference's own answer.
     def __hash__(self):
-        folded = 0
+        # A pair that will not hash is told of by its own parts first,
+        # so the kind named is the one within the pair and not the pair
+        # itself; the set of pairs then gives the reference's own answer.
         for key in self._rows:
-            folded ^= hash(key) * 1000003 ^ hash(self._rows[key])
-        return folded
+            hash((key, self._rows[key]))
+        return hash(frozenset(self._rows.items()))
 
     def __repr__(self):
         if not self._rows:
@@ -312,12 +314,17 @@ class frozendict:
         return type(self).__name__ + "(" + repr(self._rows) + ")"
 
     def __or__(self, other):
+        source = other
         if isinstance(other, frozendict):
             other = other._rows
         elif not isinstance(other, dict):
             return NotImplemented
         if not other and type(self) is frozendict:
             return self
+        # An empty frozendict on the left leaves the right one standing,
+        # so `frozendict() | fd` is `fd` itself.
+        if not self._rows and type(self) is frozendict and type(source) is frozendict:
+            return source
         return frozendict(self._rows | other)
 
     def __ror__(self, other):
@@ -347,7 +354,17 @@ class frozendict:
 
     @classmethod
     def fromkeys(cls, keys, value=None):
+        # The class's own making with no arguments may answer with a
+        # value of another kind; its rows start the answer, the keys
+        # given join them, and the answer is built by the class asked.
         rows = {}
+        seed = cls()
+        if isinstance(seed, frozendict):
+            for key in seed._rows:
+                rows[key] = seed._rows[key]
+        elif isinstance(seed, dict):
+            for key in seed:
+                rows[key] = seed[key]
         for key in keys:
             rows[key] = value
         return cls(rows)
