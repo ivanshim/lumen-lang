@@ -128,6 +128,11 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
         return source;
     }
     let library = files.iter().map(|(_, text)| *text).collect::<Vec<_>>().join("\n");
+    // Keep the ported routine for the earlier kernels, while the full
+    // Python kernels retain their builtin's optional places argument.
+    let library = if full && language == "python" {
+        format!("__native_round = round\n{}\nround = __native_round\ndel __native_round", library)
+    } else { library };
     let lead = source.len() - source.trim_start().len();
     if !prologue.is_empty() && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
         let cut = lead + prologue.len();

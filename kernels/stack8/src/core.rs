@@ -111,7 +111,7 @@ impl Value {
             Value::Flag(b) => if *b { "True" } else { "False" }.into(),
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => c.borrow().core_repr(shortest),
             Value::Real(r) => {
-                if r.below && r.p == BigInt::from(0) && r.q != BigInt::from(0) { return "-0.0".into(); }
+                if r.below && r.p == BigInt::from(0) && !r.outside() { return "-0.0".into(); }
                 let number = crate::value::as_binary(&r.p, &r.q);
                 if shortest { return crate::value::real_roundtrip(number); }
                 if number.is_nan() { "nan".into() } else if number == f64::INFINITY { "inf".into() }
@@ -149,9 +149,8 @@ impl Value {
                 Some(finish(h.finish() as i64))
             }
             Value::Bytes(bytes, false, _) => {
-                let mut hash = 0i64;
-                for &byte in bytes.borrow().iter() { hash = hash.wrapping_mul(1000003) ^ i64::from(byte); }
-                Some(finish(hash))
+                let text: String = bytes.borrow().iter().map(|byte| char::from(*byte)).collect();
+                Value::text(&text).core_hash()
             }
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),

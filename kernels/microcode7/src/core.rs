@@ -115,7 +115,7 @@ impl Value {
             }
             Self::Shared(cell) | Self::Mutable(cell, _) => cell.borrow().quoted(brief),
             Self::Frac(r) if r.places.is_some() => {
-                if r.beneath != BigInt::from(0) && r.under && r.above == BigInt::from(0) { return String::from("-0.0"); }
+                if r.under && r.above == BigInt::from(0) && !r.past_numbers() { return String::from("-0.0"); }
                 let f = crate::data::nearest_binary(&r.above, &r.beneath);
                 if brief { return crate::data::decimal_roundtrip(f); }
                 match f { f if f.is_nan() => "nan".to_owned(), f if f.is_infinite() => if f.is_sign_negative() { "-inf" } else { "inf" }.to_owned(), f => format!("{f:?}") }
@@ -166,7 +166,8 @@ impl Value {
                 state.finish() as i64
             }
             Self::Octets { cell, changeable: false, .. } => {
-                cell.borrow().iter().fold(0i64, |total, octet| total.wrapping_mul(1_000_003) ^ i64::from(*octet))
+                let letters = cell.borrow().iter().copied().map(char::from).collect::<String>();
+                return Self::text(&letters).hash_number();
             }
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,

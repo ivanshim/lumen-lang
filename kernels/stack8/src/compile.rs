@@ -48,6 +48,8 @@ pub struct Registry {
     /// handed over to be weighed is: nothing may follow it. The mark is
     /// spent by that reading.
     pub value_only: bool,
+    pub allow_top_level_await: bool,
+    pub top_level_coroutine: bool,
     /// The names the outermost statements declared global, for text
     /// read into two dictionaries: a name so declared is written to the
     /// outer one.
@@ -214,6 +216,7 @@ pub struct Compiler<'a> {
     pattern_values: usize,
     pending_annotations: Vec<(String, usize)>,
     module_annotations: Vec<(String, usize)>,
+    syntax_try_nesting: usize,
     lang: &'a Lang,
     tokens: &'a [Token],
     spelled: &'a [Token],
@@ -222,6 +225,7 @@ pub struct Compiler<'a> {
     pieces: Vec<Piece>,
     counter: usize,
     yield_operand: bool,
+    forbids_await: bool,
     awkward_place: bool,
     for_binding: Option<(String, usize)>,
     writing_place: bool,
@@ -369,6 +373,7 @@ pub fn compile_within(
     let wants_value = std::mem::take(&mut table.value_only);
     if lang.closes_over {
         let mut survey = Registry::default();
+        survey.allow_top_level_await = table.allow_top_level_await;
         if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value) {
             table.stopped_at = survey.stopped_at;
             table.stopped_column = survey.stopped_column;
@@ -488,7 +493,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let mut top = Piece { asynchronous_walk: false, asynchronous: false, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+    let mut top = Piece { asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -531,7 +536,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { syntax_try_nesting: 0, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -653,7 +658,8 @@ fn compile_pass(
     }
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    a.registry.top_level_coroutine = unit.generator;
+    Ok(Rc::new(Routine { annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1500,7 +1506,7 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        let asynchronous = (name == "<comprehension>" || name.starts_with("#generator")) && self.piece().asynchronous;
+        let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
         self.pieces.push(Piece { asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
             outermost: false,
             ident: name.to_string(),
@@ -1769,6 +1775,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let Some(pair) = &lang.index_brackets else { return Ok(false); };
         if !lang.type_parameters || !self.at_symbol(&pair.open) { return Ok(false); }
+        let old_rule = std::mem::replace(&mut self.forbids_await, true);
         self.take();
         let mut ends = lang.tuple_marks.clone();
         ends.push(pair.close.clone());
@@ -1787,6 +1794,7 @@ impl<'a> Compiler<'a> {
             if self.at_symbol(&pair.close) { break; }
         }
         self.want_sign(&pair.close, "after type parameters")?;
+        self.forbids_await = old_rule;
         Ok(true)
     }
 
@@ -2038,6 +2046,28 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if !lang.syntax_members.is_empty() {
             let word = self.look().lexeme.clone();
+            if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {
+                let from = self.look_ahead(1).lexeme == "from";
+                let complaint = if self.in_class_body() { Some("inside classes") }
+                    else if !self.piece().outermost { Some("inside functions") }
+                    else if self.syntax_try_nesting > 0 { Some("inside try/except blocks") }
+                    else { None };
+                let statement = self.tokens[self.pos..].iter()
+                    .take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) && t.lexeme != ";")
+                    .collect::<Vec<_>>();
+                let last = statement.last().copied().unwrap_or(self.look());
+                let end = (last.end_row.max(last.row), if last.end_column == 0 { last.column + last.lexeme.chars().count() } else { last.end_column });
+                if let Some(place) = complaint {
+                    self.registry.stopped_end_row = end.0;
+                    self.registry.stopped_end = end.1;
+                    return Err(format!("SyntaxError: lazy {} not allowed {place}", if from { "from ... import" } else { "import" }));
+                }
+                if from && statement.windows(2).any(|pair| pair[0].lexeme == "import" && pair[1].lexeme == "*") {
+                    self.registry.stopped_end_row = end.0;
+                    self.registry.stopped_end = end.1;
+                    return Err("SyntaxError: lazy from ... import * is not allowed".into());
+                }
+            }
             let global = Lang::spells(&lang.global_words, &word);
             if !self.in_class_body() && (global || Lang::spells(&lang.nonlocal_words, &word)) {
                 let origin = self.pos;
@@ -2093,11 +2123,14 @@ impl<'a> Compiler<'a> {
             }
         }
         if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).shape == Shape::Instr {
+            let old_rule = std::mem::replace(&mut self.forbids_await, true);
             self.take();
             self.want_name("as the type alias")?;
             self.declaration_types()?;
             self.expect_assign("after the type alias")?;
-            return self.annotation_expression(&[]);
+            let result = self.annotation_expression(&[]);
+            self.forbids_await = old_rule;
+            return result;
         }
         if Lang::spells(&lang.ellipsis_words, &self.look().lexeme)
             && (matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Close | Shape::Finish)
@@ -2138,6 +2171,13 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.async_words, &w) {
                 self.take();
+                if self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words) {
+                    if !self.piece().asynchronous || self.in_class_body() {
+                        let keyword = if self.on_keyword(&lang.for_words) { "async for" } else { "async with" };
+                        return Err(format!("SyntaxError: '{keyword}' outside async function"));
+                    }
+                    if self.pieces.len() == 1 { self.piece().generator = true; }
+                }
                 if !(self.on_keyword(&lang.function_words) || self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words)) {
                     return Err(format!("Expected a function, for loop or with block after '{}', got '{}'", w, self.look().lexeme));
                 }
@@ -2146,7 +2186,7 @@ impl<'a> Compiler<'a> {
                 // asynchronous, and stands only within a coroutine.
                 self.coroutine_next = self.on_keyword(&lang.function_words);
                 self.asynchronous = self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words);
-                if self.asynchronous && !self.in_coroutine && !lang.syntax_members.is_empty() {
+                if self.asynchronous && !self.in_coroutine && !(self.pieces.len() == 1 && self.piece().asynchronous) && !lang.syntax_members.is_empty() {
                     return Err(format!("SyntaxError: '{} {}' outside async function", w, self.look().lexeme));
                 }
                 return self.stmt();
@@ -2373,7 +2413,7 @@ impl<'a> Compiler<'a> {
                     manager
                 };
                 let cell = self.cell_to_write(&watched);
-                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
+                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), async_context: false, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
                 watchers.push(mark);
             }
             if self.on_keyword(&lang.with_as_words) {
@@ -2807,6 +2847,9 @@ impl<'a> Compiler<'a> {
             }
             if !relative || !self.on_keyword(&lang.import_words) {
                 module.push_str(&self.import_name(true)?);
+            }
+            if !lang.syntax_members.is_empty() && self.look().lexeme == "lazy" {
+                return Err("SyntaxError: use 'lazy from ... ' instead of 'from ... lazy import'".into());
             }
             if !self.on_keyword(&lang.import_words) {
                 return Err(format!("Expected '{}' after the module name, got '{}'", lang.import_words.first().map_or("", String::as_str), self.look().lexeme));
@@ -4291,12 +4334,19 @@ impl<'a> Compiler<'a> {
         Ok((start, self.mark()))
     }
 
+    fn guarded_attempt_body(&mut self) -> Res<(usize, usize)> {
+        self.syntax_try_nesting += 1;
+        let result = self.attempt_body();
+        self.syntax_try_nesting -= 1;
+        result
+    }
+
     fn indented_attempt(&mut self) -> Res<()> {
         self.take();
         let mark = self.put(Instr::Attempt(Box::new(Attempt {
-            context: None, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
+            context: None, async_context: false, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
         })));
-        let body = self.attempt_body()?;
+        let body = self.guarded_attempt_body()?;
         let mut clauses: Vec<Taking> = Vec::new();
         let mut default_span: Option<(usize, usize)> = None;
         self.skip_seps();
@@ -4364,7 +4414,7 @@ impl<'a> Compiler<'a> {
                 self.claim(&name);
                 Some(self.cell_to_write(&name))
             } else { None };
-            let (start, _) = self.attempt_body()?;
+            let (start, _) = self.guarded_attempt_body()?;
             // A class body lets the caught value's name go once the
             // clause is done with it, as the language this follows lets
             // it go, so the class keeps no member of that name.
@@ -4389,18 +4439,18 @@ impl<'a> Compiler<'a> {
         }
         let otherwise = if lang.try_else && self.on_keyword(&lang.else_words) {
             self.take();
-            Some(self.attempt_body()?)
+            Some(self.guarded_attempt_body()?)
         } else { None };
         self.skip_seps();
         let last = if self.on_keyword(&lang.finally_words) {
             self.take();
-            Some(self.attempt_body()?)
+            Some(self.guarded_attempt_body()?)
         } else { None };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
             return Err("A try needs a catch or a last part".to_string());
         }
         let after = self.mark();
-        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, body, clauses, otherwise, last, after }));
+        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, async_context: false, body, clauses, otherwise, last, after }));
         Ok(())
     }
 
@@ -4704,6 +4754,7 @@ impl<'a> Compiler<'a> {
         for (from, to) in spans {
             self.give_places(from, to, &held)?;
         }
+        self.let_go(&held);
         self.pos = after;
         Ok(Some(bound))
     }
@@ -5370,6 +5421,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn class_type_parameters(&mut self) -> Res<()> {
+        let old_rule = std::mem::replace(&mut self.forbids_await, true);
         let lang = self.lang;
         let from = self.mark();
         self.take();
@@ -5386,6 +5438,7 @@ impl<'a> Compiler<'a> {
         }
         self.want_sign(&lang.type_params_close[0], "after the type parameters")?;
         self.piece().instrs.truncate(from);
+        self.forbids_await = old_rule;
         Ok(())
     }
 
@@ -5857,6 +5910,7 @@ impl<'a> Compiler<'a> {
                 || matches!(token.shape, Shape::Open | Shape::Close)) {
                 break;
             }
+            if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }
             if token.shape == Shape::Sign {
                 if let Some(pair) = pairs.iter().find(|pair| pair.open == token.lexeme) {
                     closing.push(pair.close.clone());
@@ -6518,6 +6572,7 @@ impl<'a> Compiler<'a> {
             self.give_places(left, sign, &held)?;
             left = sign + 1;
         }
+        self.let_go(&held);
         self.pos = after;
         Ok(true)
     }
@@ -6765,6 +6820,7 @@ impl<'a> Compiler<'a> {
             self.read(&saved);
             self.write(place);
         }
+        self.let_go(&saved);
         Ok(())
     }
 
@@ -6793,8 +6849,15 @@ impl<'a> Compiler<'a> {
     /// What a store answered with, put away: a write is not a value,
     /// so nothing of it stands where the store was written.
     fn put_away(&mut self) {
-        let held = self.gensym("stored");
-        self.write(&held);
+        self.discard();
+    }
+
+    /// A temporary done with is emptied, so that what it held goes when
+    /// the program lets go of it and not when the frame does: a value's
+    /// last holder may otherwise be a cell no name can reach.
+    fn let_go(&mut self, held: &str) {
+        let slot = self.cell_to_read(held, false);
+        self.put(Instr::Forget(slot));
     }
 
     fn kept(&mut self, keep: Option<&str>) {
@@ -6901,6 +6964,7 @@ impl<'a> Compiler<'a> {
             self.write(&value);
             self.waiting = Some(value);
         }
+        let worked_out = self.waiting.clone().filter(|_| was_waiting.is_none());
         let done = match target.as_slice() {
             // `b = &a`: b is fastened to a's cell, not given a copy.
             [Instr::Read(slot)]
@@ -7360,6 +7424,10 @@ impl<'a> Compiler<'a> {
             } else { "SyntaxError: cannot assign to expression here. Maybe you meant '==' instead of '='?".into() }),
             _ => Err(format!("Invalid assignment target before '{}'", assign)),
         };
+        // The value worked out ahead of the keys is let go once written.
+        if let (Some(value), true) = (worked_out, done.is_ok()) {
+            self.let_go(&value);
+        }
         self.waiting = was_waiting;
         if hushed || silenced {
             self.put(match silenced {
@@ -7401,6 +7469,11 @@ impl<'a> Compiler<'a> {
             self.write(&named);
             self.read(&named);
             return Ok(());
+        }
+        if floor == 0 && !lang.syntax_members.is_empty()
+            && ["pass", "break", "continue"].contains(&self.look().lexeme.as_str())
+            && self.look_ahead(1).lexeme == "if" {
+            return Err("SyntaxError: expected expression before 'if', but statement is given".into());
         }
         self.prefix()?;
         if floor == 0 && Lang::spells(&lang.expression_assign, &self.look().lexeme) {
@@ -7458,6 +7531,9 @@ impl<'a> Compiler<'a> {
                     return Err(format!("Expected '{}' in conditional expression", other));
                 }
                 self.take();
+                if !lang.syntax_members.is_empty() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {
+                    return Err("SyntaxError: expected expression after 'else', but statement is given".into());
+                }
                 self.expr(0)?;
                 self.land(done);
                 continue;
@@ -7627,6 +7703,10 @@ impl<'a> Compiler<'a> {
             for _ in 0..width { self.take(); }
             self.expr(tier + 1)?;
             self.write(&far);
+            // Each side is moved out of its temporary at its last use, so
+            // that the temporaries hold nothing once the link is judged:
+            // a value's last holder may be one of them, and it must go
+            // when the program lets it go.
             self.read(&near);
             self.read(&far);
             self.act(op, 2);
@@ -7641,6 +7721,8 @@ impl<'a> Compiler<'a> {
             width = words;
         }
         for exit in exits { self.land(exit); }
+        self.let_go(&near);
+        self.let_go(&far);
         self.read(&answer);
         Ok(())
     }
@@ -7798,7 +7880,16 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
+            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
+            if self.forbids_await || !self.piece().asynchronous || class_expression {
+                let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
+                return Err(format!("SyntaxError: 'await' {phrase}"));
+            }
             if self.piece().comprehension_kind.is_some() { self.piece().asynchronous_walk = true; }
+            if self.pieces.first().map_or(false, |outer| outer.asynchronous)
+                && self.pieces.iter().skip(1).all(|inner| inner.comprehension_kind.is_some()) {
+                self.pieces[0].generator = true;
+            }
             self.take();
             self.prefix()?;
             self.act(Action::Awaited, 1);
@@ -8966,6 +9057,7 @@ impl<'a> Compiler<'a> {
             self.take();
             let argc = self.arguments(&call)?;
             self.read(&callee);
+            self.let_go(&callee);
             self.act(Action::Invoke(Rc::from("the value the group came to")), argc + 1);
         }
         Ok(())
@@ -9073,6 +9165,7 @@ impl<'a> Compiler<'a> {
                     self.take();
                     let argc = self.arguments_of("the method", &call)?;
                     self.read(&held);
+                    self.let_go(&held);
                     self.act(Action::SummonNamed(argc), argc + 3);
                     continue;
                 }
@@ -9094,6 +9187,19 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+            if member && lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(named.as_str())) {
+                self.constant(Value::text(&named));
+                self.act(Action::Builtin(Builtin::ClassTool(3), Rc::from("getattr")), 2);
+                if let Some(brackets) = &call {
+                    let method = self.gensym("float_method");
+                    self.write(&method);
+                    self.take();
+                    let argc = self.arguments_of(&named, brackets)?;
+                    self.read(&method);
+                    self.act(Action::Invoke(Rc::from(named.as_str())), argc + 1);
+                }
+                continue;
+            }
             let mut beyond = self.pos;
             while lang.grouping.as_ref().map_or(false, |pair| self.tokens[beyond].is_lexeme(Shape::Sign, &pair.close)) {
                 beyond += 1;
@@ -9111,6 +9217,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::HasMember(named.as_str().into()), 1);
                 let fallback = self.skip();
                 self.read(&held);
+                self.let_go(&held);
                 if let Some(brackets) = &call {
                     self.act(Action::Grab(named.as_str().into()), 1);
                     let callee = self.gensym("method_value");
@@ -9118,6 +9225,7 @@ impl<'a> Compiler<'a> {
                     self.take();
                     let argc = self.arguments_of(&named, brackets)?;
                     self.read(&callee);
+                    self.let_go(&callee);
                     self.act(Action::Invoke(named.as_str().into()), argc + 1);
                 } else { self.act(Action::Grab(named.as_str().into()), 1); }
                 let finish = self.leap();
@@ -9125,6 +9233,7 @@ impl<'a> Compiler<'a> {
                 self.pos = resume;
                 if let Some(operation) = lang.value_methods.get(&named) {
                     self.read(&held);
+                    self.let_go(&held);
                     self.act(Action::BindValueMethod(Rc::from(operation.as_str())), 1);
                     if let Some(brackets) = &call {
                         let callable = self.gensym("value_member");
@@ -9132,6 +9241,7 @@ impl<'a> Compiler<'a> {
                         self.take();
                         let argc = self.arguments_of(&named, brackets)?;
                         self.read(&callable);
+                        self.let_go(&callable);
                         self.act(Action::Invoke(named.as_str().into()), argc + 1);
                     }
                     self.land(finish);
@@ -9139,7 +9249,7 @@ impl<'a> Compiler<'a> {
                 }
                 let native = lang.builtins.get(&named).copied();
                 let changes = matches!(native, Some(Builtin::Append | Builtin::Replace));
-                if !changes { self.read(&held); }
+                if !changes { self.read(&held); self.let_go(&held); }
                 let argc = if let Some(brackets) = &call {
                     self.take();
                     self.arguments(brackets)?
@@ -9149,6 +9259,7 @@ impl<'a> Compiler<'a> {
                     if let (Some(target), true) = (target, argc == needed) {
                         self.mutation(&named, &held, argc + 1)?;
                         self.read(&held);
+                        self.let_go(&held);
                         self.write(&target);
                     } else { self.class_cannot_run(); }
                 } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
@@ -9258,6 +9369,7 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let argc = self.arguments(&call)?;
                 self.read(&callee);
+                self.let_go(&callee);
                 self.act(Action::Invoke(Rc::from("the value a look came to")), argc + 1);
                 return self.indexing(from);
             }
@@ -9378,7 +9490,10 @@ impl<'a> Compiler<'a> {
         self.generator_source = prior;
         self.constant(Value::Routine(program));
         self.act(Action::Invoke(Rc::from(name)), 2);
-        if asynchronous { self.act(Action::AsyncGenerator, 1); }
+        if asynchronous {
+            self.act(Action::AsyncGenerator, 1);
+            if self.pieces.len() == 1 && self.pieces[0].asynchronous { self.piece().generator = true; }
+        }
         Ok(())
     }
 
@@ -9424,6 +9539,7 @@ impl<'a> Compiler<'a> {
                 Ok(())
             })?;
             self.generator_source = prior;
+            if self.pieces.len() == 1 && self.pieces[0].asynchronous && self.tokens[clause..self.pos].iter().any(|t| Lang::spells(&self.lang.comprehension_async, &t.lexeme) || Lang::spells(&self.lang.await_words, &t.lexeme)) { self.piece().generator = true; }
             self.constant(Value::Routine(program));
             self.act(Action::Invoke(Rc::from("<comprehension>")), 2);
             return Ok(());
@@ -9543,7 +9659,8 @@ impl<'a> Compiler<'a> {
             self.piece().asynchronous_walk = true;
             self.take();
             if !self.on_any(&self.lang.comprehension_for) { return Err("Expected a walk after the asynchronous word".to_string()); }
-            if !result.is_empty() && !self.piece().asynchronous {
+            let in_class = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
+            if !result.is_empty() && (!self.piece().asynchronous || in_class) {
                 return Err("SyntaxError: asynchronous comprehension outside of an asynchronous function".into());
             }
         }

@@ -239,6 +239,10 @@ pub struct CursorState {
     pub pending: Option<Value>,
     pub finished: bool,
     pub busy: bool,
+    /// The thing this walk was made from, where it is one of the
+    /// program's own: the walk keeps it, as the reference's does, so it
+    /// lives as long as the walk and no shorter.
+    pub origin: Option<Value>,
     /// The word the reference gives a walk of the very thing this one
     /// was made from. A walk gathered into a row of members has lost
     /// what it was gathered from, and this keeps that much of it.
@@ -342,6 +346,9 @@ pub enum Value {
     Routine(Rc<Routine>),
     Method(Rc<Instance>, Rc<Routine>),
     Descriptor(Rc<Descriptor>),
+    /// A weak hold on a value behind a pointer: it keeps nothing
+    /// alive, and answers the value only while it is still there.
+    Faint(Rc<crate::faint::Faint>),
     SortOf(Sort),
     /// A slot nothing was stored in.
     Blank,
@@ -1051,7 +1058,7 @@ impl Value {
             Value::Words(row, _) => !row.is_empty(),
             Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::TextMethod(..) | Value::Descriptor(_) | Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::TextMethod(..) | Value::Descriptor(_) | Value::Faint(_) | Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().is_true(),
             Value::Adapter(_) | Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -1077,7 +1084,7 @@ impl Value {
             Value::Words(..) | Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().as_big(),
-            Value::TextMethod(..) | Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::TextMethod(..) | Value::Descriptor(_) | Value::Faint(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
             Value::Bytes(..) | Value::ByteKind(..) | Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
@@ -1285,11 +1292,11 @@ impl Value {
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
             Value::Real(r) if sp.shortest_reals => real_roundtrip(if r.below && r.p.is_zero() && !r.outside() { -0.0 } else { as_binary(&r.p, &r.q) }),
-            Value::Real(r) if r.floating => format!("{:?}", if r.below && r.p.is_zero() && !r.q.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) }).to_lowercase(),
+            Value::Real(r) if r.floating => format!("{:?}", if r.below && r.p.is_zero() && !r.outside() { -0.0 } else { as_binary(&r.p, &r.q) }).to_lowercase(),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
-            Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
+            Value::Real(r) if r.below && r.p.is_zero() && !r.outside() => "-0".to_string(),
             Value::Real(r) if sp.real_digits.is_some() => written_out(as_binary(&r.p, &r.q), figures_now(false).unwrap_or(sp.real_digits)),
             Value::Real(r) if sp.binary_reals => expanded_real(as_binary(&r.p, &r.q), r.places),
             other => other.plain(),
@@ -1305,7 +1312,7 @@ impl Value {
         let mut shown = self.display(words);
         if let Value::Real(real) = self {
             if !words.shortest_reals {
-                let number = if real.below && real.p.is_zero() && !real.q.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
+                let number = if real.below && real.p.is_zero() && !real.outside() { -0.0 } else { as_binary(&real.p, &real.q) };
                 shown = format!("{number:?}").to_ascii_lowercase();
                 if let Some((mantissa, exponent)) = shown.split_once('e') {
                     let power = exponent.parse::<i32>().ok()?;
@@ -1441,6 +1448,7 @@ impl Value {
             },
             Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
             Value::Descriptor(_) => "<descriptor>".to_string(),
+            Value::Faint(_) => "<weak hold>".to_string(),
             Value::Trace(_) => "<traceback object>".to_string(),
             Value::Hashed(pair) => pair.0.plain(),
             Value::Fields(o) => format!("<attributes of {}>", o.class_now().name),
@@ -1861,7 +1869,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Real(Rc::new(Real { floating: false, p, q: BigInt::zero(), places, below: x.is_sign_negative(), point: false }))
+    Value::Real(Rc::new(Real { floating: false, p, q: BigInt::zero(), places, below: x.is_nan() && x.is_sign_negative(), point: false }))
 }
 
 /// A real brought to the nearest one of a width of bits, held exactly.
@@ -1870,6 +1878,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
 pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize, shortest: bool) -> Value {
     if shortest {
         if let Value::Real(r) = &v {
+            if r.outside() { return v; }
             let number = nearest_real(&r.p, &r.q);
             return real_of(if r.below && (number == 0.0 || number.is_nan()) { -number } else { number }, places).with_point(r.point);
         }
@@ -1883,6 +1892,7 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize, shortest: b
         Value::Frac(r) => (r.p.clone(), r.q.clone(), false),
         _ => return v,
     };
+    if q.is_zero() { return v; }
     let binary = as_binary(&p, &q);
     match from_binary(binary) {
         // A nought below nought keeps its minus at any width.
@@ -2203,4 +2213,32 @@ fn nearest_real(p: &BigInt, q: &BigInt) -> f64 {
     let magnitude = if bits < 1 << 52 { bits }
         else { ((order.max(-1022) + 1023) as u64) << 52 | (bits - (1 << 52)) };
     f64::from_bits(sign | magnitude)
+}
+
+/// An object going away tells the weak holds and, where its class has
+/// last words, is rebuilt so that the engine may say them.
+impl Drop for Instance {
+    fn drop(&mut self) {
+        crate::faint::departing(self);
+    }
+}
+
+/// A walk going away while asleep inside a try is rebuilt so that its
+/// last parts may run.
+impl Drop for Generator {
+    fn drop(&mut self) {
+        crate::faint::walk_departing(self);
+    }
+}
+
+impl Drop for Members {
+    fn drop(&mut self) {
+        crate::faint::plain_departing();
+    }
+}
+
+impl Drop for Class {
+    fn drop(&mut self) {
+        crate::faint::plain_departing();
+    }
 }

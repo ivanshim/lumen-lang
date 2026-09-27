@@ -1,1 +1,1 @@
-PythonError: Undefined variable: waiting
+PythonError: SyntaxError: 'await' outside async function

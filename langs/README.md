@@ -1381,7 +1381,11 @@ only. The extension labels so far, all from PHP:
   words), `ext.stmt.class.destructor` (the method run when an
   object is let go, at the latest when the run ends, every object still
   standing then being let go in the order they were made, before what the
-  run is still keeping goes out), `ext.stmt.class.reader` and
+  run is still keeping goes out), `ext.stmt.class.finaliser` (the method
+  run as the last hold on an object goes, between two statements, and
+  for every object in a round nothing reaches when the program asks for
+  such rounds to be collected; where the destructor waits for the end of
+  the run, this runs as each object goes), `ext.stmt.class.reader` and
   `ext.stmt.class.writer` (the method a class answers with for a property
   its things do not hold, given the name asked for, and the one that
   takes such a write, given the name and the value; a class written
@@ -2202,6 +2206,9 @@ only. The extension labels so far, all from PHP:
   own, called on its first argument. `ext.builtin.method.error.hex` and
   `.hex_overflow` give the complaints for a spelling that is no
   hexadecimal real and for one too large to hold.
+- `ext.builtin.method.from_number` spells `float.from_number`; it takes a
+  number or the float/index protocols, omits text conversion, and makes
+  an instance of a float subclass when read through that subclass.
 - `ext.builtin.method.error.arguments`, `.attribute`, `.separator`,
   `.substring`, `.pop`, `.index`, `.remove`, `.list_index` and `.fill`:
   lists holding the complaints for bad arguments, an absent member, an
@@ -3442,6 +3449,18 @@ only. The extension labels so far, all from PHP:
   innermost clause is holding, itself and whole, or nothing where no
   clause holds one; `ext.system.fault.current` above answers the same
   value's kind and words.
+- `ext.builtin.weak.make`, `ext.builtin.weak.get`, `ext.builtin.weak.refused`
+  and `ext.builtin.gc.collect`: the builtins a library builds weak
+  references on. The first makes a weak hold on a value living behind a
+  pointer -- an object, a class, a function, a set, a generator -- given
+  the reference object bearing the hold and a routine to call with that
+  object once the value goes, and refuses any other kind in the words of
+  `.refused` around the kind's name; the second answers the held value
+  while it is still there and nothing afterwards; the last finds the
+  rounds of values holding one another that nothing else reaches, runs
+  their finalisers, breaks them so that counting frees them, and answers
+  how many it found. A value's finaliser and the routines waiting on its
+  weak holds run between two statements, never in the middle of one.
 - `ext.system.recursion.limit` and `.exceeded`: the most calls a run may
   have under way at once, the outermost body not counted, and the words
   said by the call that would pass it. The words name a class among the
@@ -4363,11 +4382,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complex.unready` | - | - | `NotImplementedError: this complex operation is not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.zero` | - | - | `ZeroDivisionError: complex division by zero` | - | - | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
+| `ext.builtin.core.abs.type` | - | - | `TypeError: bad operand type for abs(): '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.exact` | - | - | `TypeError: ` ` expected ` ` arguments, got ` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.one` | - | - | `TypeError: ` `() takes exactly one argument (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string, not '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.core.bool.declined` | - | - | `TypeError: NotImplemented should not be used in a boolean context` | - | - | - | - | - | - | - |
+| `ext.builtin.core.bytes.like` | - | - | `TypeError: a bytes-like object is required, not '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.core.chr.range` | - | - | `ValueError: chr() arg not in range(0x110000)` | - | - | - | - | - | - | - |
 | `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.changed` | - | - | `RuntimeError: dictionary changed size during iteration` `RuntimeError: dictionary keys changed during iteration` `RuntimeError: dict mutated during update` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
@@ -4385,6 +4408,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` `TypeError: unsupported operand type(s) for ** or pow(): '` `', '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
+| `ext.builtin.core.translate.table` | - | - | `ValueError: translation table must be 256 characters long` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uncallable` | - | - | `TypeError: '` `' object is not callable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unindexable` | - | - | `TypeError: '` `' object is not subscriptable` | - | - | - | - | - | - | - |
@@ -4412,7 +4436,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `MemoryError` `BufferError` `StopAsyncIteration` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4448,6 +4472,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.frozenset` | - | - | `frozenset` | - | - | - | - | - | - | - |
+| `ext.builtin.gc.collect` | - | - | `__gc_collect` | - | - | - | - | - | - | - |
 | `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.globals` | - | - | `globals` | - | - | - | - | - | - | - |
 | `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
@@ -4528,6 +4553,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.extend` | - | - | `extend` | - | - | - | - | - | - | - |
 | `ext.builtin.method.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.method.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.method.from_number` | - | - | `float.from_number` | - | - | - | - | - | - | - |
 | `ext.builtin.method.fromhex` | - | - | `float.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.fromkeys` | - | - | `dict.fromkeys` `fromkeys` | - | - | - | - | - | - | - |
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
@@ -4788,6 +4814,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
 | `ext.builtin.vars` | - | - | `vars` | - | - | - | - | - | - | - |
 | `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
+| `ext.builtin.weak.get` | - | - | `__weak_get` | - | - | - | - | - | - | - |
+| `ext.builtin.weak.make` | - | - | `__weak_make` | - | - | - | - | - | - | - |
+| `ext.builtin.weak.refused` | - | - | `TypeError: cannot create weak reference to '` `' object` | - | - | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.builtin.zip` | - | - | `zip` | - | - | - | - | - | - | - |
 | `ext.builtin.zip.long` | - | - | `ValueError: zip() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
@@ -5133,6 +5162,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
+| `ext.stmt.class.finaliser` | - | - | `__del__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.format.amiss` | - | - | `TypeError: unsupported format string passed to ` `.__format__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.guarded` | - | - | - | - | `protected` | - | - | - | - | - |
 | `ext.stmt.class.hidden` | - | - | - | - | `private` | - | - | - | - | - |
@@ -5452,6 +5482,12 @@ Frames are allocated on demand when an exception first records its location.
 `ext.stmt.class.detail.prepare` names the metaclass namespace preparation method.
 
 `ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.
+`ext.builtin.core.abs.type` names an unsupported magnitude operand;
+`ext.builtin.core.bool.declined` refuses boolean use of the comparison sentinel.
+
+`ext.builtin.core.chr.range` rejects out-of-range character ordinals.
+`ext.builtin.core.translate.table` and `ext.builtin.core.bytes.like` describe
+invalid byte translation tables and operands, respectively.
 
 `ext.lexical.escape.named.amiss` supplies the malformed named-character escape
 complaint, with two `{}` slots for its first and last byte positions. The

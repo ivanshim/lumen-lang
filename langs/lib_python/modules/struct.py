@@ -53,6 +53,23 @@ def unpack(format, buffer):
         else:
             value = math.ldexp(fraction + 4503599627370496, exponent - 1075)
         return (-value if negative else value,)
+    if format == '<f' or format == '>f' or format == '!f':
+        if len(buffer) != 4:
+            raise error('unpack requires a buffer of 4 bytes')
+        import math
+        bits = int.from_bytes(buffer, 'little' if format == '<f' else 'big')
+        negative = bits >= 2147483648
+        if negative:
+            bits -= 2147483648
+        exponent = bits // 8388608
+        fraction = bits % 8388608
+        if exponent == 255:
+            value = math.inf if fraction == 0 else math.nan
+        elif exponent == 0:
+            value = math.ldexp(fraction, -149)
+        else:
+            value = math.ldexp(fraction + 8388608, exponent - 150)
+        return (-value if negative else value,)
     raise 'NotImplementedError: struct.unpack needs byte values'
 
 def calcsize(format):

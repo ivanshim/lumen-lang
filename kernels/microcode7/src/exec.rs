@@ -148,6 +148,7 @@ enum Owed {
 #[derive(Debug)]
 struct Warded {
     context: Option<Address>,
+    async_context: bool,
     clauses: Vec<Clause>,
     last: Option<Form>,
     otherwise: Option<Form>,
@@ -190,14 +191,86 @@ pub struct Suspension {
     /// was made from, where that walk is not a program's own: a map
     /// walked backwards, say. Nothing for a generator the program wrote.
     pub(crate) walked: Option<&'static str>,
+    /// The thing of the program's own whose members these are, kept so
+    /// that it lives as long as the walk over it, as the reference has it.
+    stepping_through: Option<Value>,
+    source_reading: Option<usize>,
 }
 
 impl Suspension {
+    /// Whether the body sleeps inside a try, so that shutting it is the
+    /// finalisation the language asks for when it is let go.
+    pub(crate) fn asleep(&self) -> bool {
+        self.begun && !self.ended && self.of.is_some()
+            && self.owed.iter().any(|owed| matches!(owed, Owed::Warding(..) | Owed::Lastly(..)))
+    }
+
+    /// Every knot the sleeping body holds: its frame first.
+    pub(crate) fn reaches(&self, out: &mut Vec<crate::ghost::Knot>) {
+        use crate::ghost::Knot;
+        out.push(Knot::Frame(self.frame.clone()));
+        if let Some(thing) = &self.trace_state { out.push(Knot::Held(Value::Thing(thing.clone()))); }
+        for v in &self.found { out.push(Knot::Held(v.clone())); }
+        out.push(Knot::Held(self.result.clone()));
+        if let Some(v) = &self.inner { out.push(Knot::Held(v.clone())); }
+        if let Some(members) = &self.members {
+            for v in members.as_slice() { out.push(Knot::Held(v.clone())); }
+        }
+        if let Some(v) = &self.ready { out.push(Knot::Held(v.clone())); }
+        if let Some((cell, _)) = &self.overseen { out.push(Knot::Held(Value::Shared(cell.clone()))); }
+        for v in &self.holding { out.push(Knot::Held(v.clone())); }
+        if let Some(v) = &self.stepping_through { out.push(Knot::Held(v.clone())); }
+        for owed in &self.owed {
+            if let Owed::Restore(outcome, _) = owed {
+                match &**outcome {
+                    Ok(v) | Err(Escape::Thrown(v)) | Err(Escape::Yield(v)) => out.push(Knot::Held(v.clone())),
+                    Err(_) => {}
+                }
+            }
+        }
+    }
+
+    /// Emptied of everything it holds, for a body nothing can reach.
+    pub(crate) fn sever(&mut self) -> Vec<Value> {
+        self.ended = true;
+        self.owed.clear();
+        let mut taken: Vec<Value> = self.found.drain(..).collect();
+        taken.push(std::mem::replace(&mut self.result, Value::Nil));
+        taken.extend(self.inner.take());
+        if let Some(members) = self.members.take() { taken.extend(members); }
+        taken.extend(self.ready.take());
+        self.overseen = None;
+        taken.extend(self.holding.drain(..));
+        taken.extend(self.stepping_through.take());
+        self.trace_state = None;
+        taken
+    }
+
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
         Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
-            holding: Vec::new(), walked: None }
+            holding: Vec::new(), walked: None, stepping_through: None, source_reading: None }
+    }
+}
+
+impl Drop for Suspension {
+    fn drop(&mut self) {
+        if self.asleep() && crate::ghost::bidding() {
+            let again = Suspension {
+                titles: self.titles.clone(), trace_state: self.trace_state.take(), frame: self.frame.clone(),
+                owed: std::mem::take(&mut self.owed), found: std::mem::take(&mut self.found),
+                begun: true, ended: false, receiving: self.receiving,
+                result: std::mem::replace(&mut self.result, Value::Nil),
+                inner: self.inner.take(), members: self.members.take(), ready: self.ready.take(),
+                overseen: self.overseen.take(), of: self.of.clone(),
+                holding: std::mem::take(&mut self.holding), walked: self.walked.take(),
+                stepping_through: self.stepping_through.take(), source_reading: self.source_reading,
+            };
+            self.ended = true;
+            crate::ghost::walk_departing(Rc::new(RefCell::new(again)));
+        }
+        crate::ghost::anything_departing();
     }
 }
 
@@ -1064,6 +1137,7 @@ impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         let outermost = Env::make(idents.len(), None);
+        crate::ghost::set_farewell_name(table.single("ext.stmt.class.finaliser").map(str::to_string));
         if table.has_any("ext.stmt.catch.as") {
             if let Some(at) = find("ext.system.fault.class.value") {
                 let blueprint = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
@@ -1794,12 +1868,14 @@ impl<'a> Machine<'a> {
     /// class names for that, in the order the things were made. One made
     /// while another is being let go is let go in its own turn.
     pub fn let_things_go(&mut self) {
+        self.attend_to_gone();
         let Some(named) = self.table.single("ext.stmt.class.destructor").map(str::to_string) else { return };
         let mut reached = 0;
         while let Some(loosely) = { let all = self.things.borrow(); all.get(reached).cloned() } {
             reached += 1;
             let Some(thing) = loosely.upgrade() else { continue };
             let Some(program) = thing.blueprint().program(&named).cloned() else { continue };
+            if !crate::ghost::first_farewell(&thing) { continue; }
             let _ = self.invoke(program, self.outermost.clone(), vec![Value::Thing(thing)]);
         }
         self.things.borrow_mut().clear();
@@ -1869,6 +1945,92 @@ impl<'a> Machine<'a> {
     /// The complaints still waiting go to the routine the program put in
     /// their way, oldest first. One that answers false is left to be
     /// written out as it would have been.
+    /// Whatever went since the last step is attended to: farewells are
+    /// bidden, sleeping walks shut, listeners told. What any of them
+    /// raises is written on the error channel and let go, since no
+    /// clause of the program stands where it could be taken.
+    fn attend_to_gone(&mut self) {
+        loop {
+            let (farewells, walks, notices) = crate::ghost::gather();
+            if farewells.is_empty() && walks.is_empty() && notices.is_empty() { return; }
+            for (thing, farewell) in farewells {
+                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
+            }
+            for walk in walks {
+                if let Err(away) = self.shut_generator(&walk) {
+                    self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
+                }
+            }
+            for (notify, bearer) in notices {
+                self.call_unheard(notify, vec![bearer], "callback");
+            }
+        }
+    }
+
+    /// A call the run makes on its own account, whose raised value no
+    /// clause can take: it is reported and dropped.
+    fn call_unheard(&mut self, callee: Value, arguments: Vec<Value>, reason: &str) {
+        let about = callee.clone();
+        if let Err(away) = self.apply_held(callee, arguments) {
+            self.report_unraisable(away, &about, reason);
+        }
+    }
+
+    fn report_unraisable(&mut self, away: Escape, about: &Value, reason: &str) {
+        let raised = match away {
+            Escape::Thrown(value) => value,
+            Escape::Error(words) | Escape::Stopped(words) => match self.as_raised(&words) {
+                Some(value) => value,
+                None => { eprintln!("{words}"); return; }
+            },
+            _ => return,
+        };
+        let traceback = self.traceback_of(&raised);
+        let Ok(sys) = self.namespace_for("sys") else { return };
+        let Some(report) = self.attribute(&sys, "_report_unraisable") else { return };
+        let _ = self.apply_held(report, vec![raised, traceback, about.clone(), Value::text(reason)]);
+    }
+
+    /// The program asked for the rounds nothing reaches to be found and
+    /// cut. Their things bid farewell first and the web is woven again,
+    /// since a farewell may keep a thing about; then every knot still
+    /// unreachable is emptied, counting frees the rest, and the
+    /// listeners are told.
+    fn reap_rounds(&mut self) -> usize {
+        use crate::ghost::{Knot, Web};
+        loop {
+            let mut web = Web::from_notable();
+            let lost = web.unreachable();
+            let mut bade = false;
+            for knot in &lost {
+                match knot {
+                    Knot::Held(Value::Thing(thing)) => {
+                        let Some(farewell) = crate::ghost::farewell_of(&thing.of) else { continue };
+                        if crate::ghost::first_farewell(thing) {
+                            bade = true;
+                            self.call_unheard(farewell, vec![Value::Thing(thing.clone())], "deallocator");
+                        }
+                    }
+                    Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |w| w.asleep()) => {
+                        bade = true;
+                        if let Err(away) = self.shut_generator(walk) {
+                            self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if bade { continue; }
+            let found = lost.len();
+            let taken = Web::cut(&lost);
+            drop(lost);
+            drop(web);
+            drop(taken);
+            self.attend_to_gone();
+            return found;
+        }
+    }
+
     fn hand_over_unheard(&mut self) -> Res<()> {
         self.any_unheard.set(false);
         loop {
@@ -2949,6 +3111,8 @@ impl<'a> Machine<'a> {
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: Some(members.into_iter()), ready: None, overseen, of: None,
             walked: None,
+            stepping_through: matches!(source, Value::Thing(_)).then(|| source.clone()),
+            source_reading: None,
         })))
     }
 
@@ -3053,6 +3217,12 @@ impl<'a> Machine<'a> {
         let source = Self::underlying(&source.settled()).unwrap_or_else(|| source.clone());
         let stopped = match source.settled() {
             Value::Dict(entries) => { pairs.extend(entries.iter().cloned()); None }
+            Value::Text(text) if text.is_empty() => None,
+            Value::Text(_) => {
+                let wording = self.table.strings("ext.builtin.core.dict.pair");
+                Some(format!("{}0{}1{}", wording[0], wording[1], wording[2]))
+            }
+            Value::Nil => Some("TypeError: 'NoneType' object is not iterable".to_owned()),
             Value::Vector(items) | Value::Tuple(items) => {
                 let mut fault = None;
                 for (at, item) in items.iter().enumerate() {
@@ -3079,6 +3249,8 @@ impl<'a> Machine<'a> {
         let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
         if let Some(walk) = state.inner.take() { self.end_delegate(&walk)?; }
         state.ended = true;
+        state.trace_state = None;
+        state.frame = Env::make(0, None);
         state.ready = None;
         state.owed.clear();
         state.found.clear();
@@ -3210,7 +3382,15 @@ impl<'a> Machine<'a> {
     /// A step back into a sleeping body, either handing it a value or
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown at them is raised on the spot.
-    fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
+    fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
+        let previous = self.reading_now;
+        if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) { self.reading_now = Some(book); }
+        let result = self.step_into_body(generator, sent, hurled, given);
+        self.reading_now = previous;
+        result
+    }
+
+    fn step_into_body(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
         // what comes back out of that reaches the body itself.
@@ -3276,6 +3456,8 @@ impl<'a> Machine<'a> {
         if let Some(value) = hurled.clone() {
             if state.ended || !state.begun || state.of.is_none() {
                 state.ended = true;
+                state.trace_state = None;
+                state.frame = Env::make(0, None);
                 state.result = Value::Nil;
                 state.owed.clear();
                 state.found.clear();
@@ -3357,6 +3539,10 @@ impl<'a> Machine<'a> {
         };
         if outcome.is_err() || matches!(outcome, Ok(None)) {
             state.ended = true;
+            // A finished generator no longer owns its activation. A
+            // frame retained by the program still owns the old environment.
+            state.trace_state = None;
+            state.frame = Env::make(0, None);
             state.owed.clear();
             state.found.clear();
             state.holding.clear();
@@ -3475,7 +3661,7 @@ impl<'a> Machine<'a> {
                         let form = |input| match input { Input::Form(f) => *f, Input::Address(a) => Form::Read(a), Input::Const(v) => Form::Const(v) };
                         state.owed.push(Owed::Find(Form::Apply(Callee::Prim(op, name), vec![form(a), form(b)])));
                     }
-                    Form::Attempt { context, body, clauses, last, otherwise } => {
+                    Form::Attempt { context, async_context, body, clauses, last, otherwise } => {
                         // A try with no suspension anywhere inside it, and
                         // a gathered clause, are left to the plain
                         // reckoning; the rest is taken on piece by piece.
@@ -3484,10 +3670,10 @@ impl<'a> Machine<'a> {
                                 || last.as_deref().map_or(false, suspension_within)
                                 || otherwise.as_deref().map_or(false, suspension_within));
                         if plain {
-                            let whole = Form::Attempt { context, body, clauses, last, otherwise };
+                            let whole = Form::Attempt { context, async_context, body, clauses, last, otherwise };
                             state.found.push(self.value_of(&whole, &frame)?);
                         } else {
-                            let plan = Rc::new(Warded { context, clauses, last: last.map(|form| *form), otherwise: otherwise.map(|form| *form) });
+                            let plan = Rc::new(Warded { context, async_context, clauses, last: last.map(|form| *form), otherwise: otherwise.map(|form| *form) });
                             let floor = state.found.len();
                             // Counted from the caller's own held faults,
                             // since a later step back in may stand at
@@ -3598,7 +3784,7 @@ impl<'a> Machine<'a> {
                     // Nothing was raised: a manager is told the body is
                     // done with, and an else part runs in the body's place.
                     if let Some(address) = &plan.context {
-                        self.leaving(&frame, address, None)?;
+                        self.leaving(&frame, address, None, plan.async_context)?;
                     } else if let Some(otherwise) = plan.otherwise.clone() {
                         state.owed.push(Owed::Find(otherwise));
                         state.owed.push(Owed::Drop);
@@ -3681,7 +3867,7 @@ impl<'a> Machine<'a> {
                     let raised = raised.clone();
                     self.save_traceback(&raised, false);
                     if let Some(address) = &plan.context {
-                        match self.leaving(&frame, address, Some(&raised)) {
+                        match self.leaving(&frame, address, Some(&raised), plan.async_context) {
                             Ok(true) => { state.found.push(Value::Nil); return Ok(()); }
                             Ok(false) => continue,
                             Err(met) => { escape = met; continue; }
@@ -3723,7 +3909,16 @@ impl<'a> Machine<'a> {
 
     /// The manager of a watched body is told the body is done with. It
     /// answers whether a value raised there is to be let go.
-    fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>) -> Result<bool, Escape> {
+    fn context_await(&mut self, value: Value) -> Res {
+        match value.settled() {
+            Value::Generator(state) => loop {
+                if self.resume(&state, Value::Nil)?.is_none() { break Ok(state.borrow().result.clone()); }
+            },
+            other => Ok(other),
+        }
+    }
+
+    fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>, async_context: bool) -> Result<bool, Escape> {
         let manager = self.fetch(address, frame)?;
         if !matches!(&manager, Value::Thing(_) | Value::Bound(..) | Value::Method(..) | Value::Routine(_)) { return Ok(false); }
         let unready = self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned();
@@ -3742,6 +3937,7 @@ impl<'a> Machine<'a> {
         let asked = self.raised_if_error(asked);
         self.holding_fault.truncate(preceding);
         let answer = asked?.ok_or_else(|| self.bad_answer())?;
+        let answer = if async_context { self.context_await(answer)? } else { answer };
         Ok(raised.is_some() && self.object_truth(&answer)?)
     }
 
@@ -3945,6 +4141,12 @@ impl<'a> Machine<'a> {
         if let Value::Backtrace(link) = &following {
             if !repeat && Rc::ptr_eq(&link.activation, &activation) { return; }
         }
+        // The first link can make an exception and its activation own one
+        // another. Include that round even when its listener is only a
+        // thing held by the activation, with no path back to the exception.
+        if matches!(following, Value::Nil) {
+            crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(raised)));
+        }
         let link = crate::data::TraceLink { extent: self.extent, location: self.row, activation, following };
         let mut fields = raised.holds.borrow_mut();
         if let Some((_, field)) = fields.iter_mut().find(|(key, _)| key == &slot) { *field = Value::Backtrace(Rc::new(link)); }
@@ -3961,6 +4163,9 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
+        if crate::ghost::stirred() {
+            self.attend_to_gone();
+        }
         match node {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
             Form::Const(Value::OctetKind { changeable, .. }) if !self.wildcard_names.is_empty() => {
@@ -3970,6 +4175,13 @@ impl<'a> Machine<'a> {
             Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
             Form::Take(slot) => Ok(self.take(slot, frame)?),
+            Form::Release(slot) => {
+                let value = self.fetch(slot, frame)?;
+                // Only the private slot goes away, not the shared value
+                // it may contain (a frame's locals dictionary, for example).
+                ascend(frame, slot.up).cells.borrow_mut()[slot.at] = Value::Unset;
+                Ok(value)
+            }
             Form::Glance(slot) => {
                 let f = ascend(frame, slot.up);
                 let held = f.cells.borrow()[slot.at].clone();
@@ -4529,7 +4741,7 @@ impl<'a> Machine<'a> {
                 self.keep_context(&raised);
                 Err(Escape::Thrown(raised))
             }
-            Form::Attempt { context, body, clauses, last, otherwise } => {
+            Form::Attempt { context, async_context, body, clauses, last, otherwise } => {
                 let context_line = self.row;
                 let context_extent = self.extent;
                 if self.table.has_any("ext.stmt.catch.group.unsupported") && clauses.iter().any(|part| part.grouped) {
@@ -4582,6 +4794,7 @@ impl<'a> Machine<'a> {
                     let asked = self.raised_if_error(asked);
                     self.holding_fault.truncate(preceding);
                     let answer = asked?.ok_or_else(|| self.bad_answer())?;
+                    let answer = if *async_context { self.context_await(answer)? } else { answer };
                     return match body_result {
                         Err(Escape::Thrown(_)) if self.object_truth(&answer)? => Ok(Value::Nil),
                         outcome => outcome,
@@ -5087,7 +5300,10 @@ impl<'a> Machine<'a> {
                         return self.fault_from_call(class, values);
                     }
                     self.made += 1;
-                    let thing = Rc::new(Thing {reclassified: RefCell::new(None),  of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
+                    let thing = Rc::new(Thing {reclassified: RefCell::new(None), of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
+                    if crate::ghost::bidding() && crate::ghost::farewell_of(&class).is_some() {
+                        crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(&thing)));
+                    }
                     if self.table.single("ext.stmt.class.destructor").is_some() {
                         self.things.borrow_mut().push(Rc::downgrade(&thing));
                     }
@@ -5142,7 +5358,14 @@ impl<'a> Machine<'a> {
                             return Ok(Value::text(&filled));
                         }
                     }
-                    if self.has_class_order() && matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..)){let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
+                    if self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(called.as_str())) {
+                        let class = subject.settled();
+                        if matches!(class, Value::Blueprint(_) | Value::Intrinsic(Prim::AsReal, _)) {
+                            let member = self.read_class_member(class, &called, false)?;
+                            return self.apply_class_member(member, values);
+                        }
+                    }
+                    if self.has_class_order() && (matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.table.flag("ext.op.member.pipes") {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -5400,7 +5623,14 @@ impl<'a> Machine<'a> {
                         }
                     }
                     if let Some(Value::Span(bounds)) = &key {
-                        let value = collection_read(&value);
+                        let mut value = collection_read(&value);
+                        let is_vector = matches!(f.cells.borrow()[i].settled(), Value::Vector(_));
+                        if is_vector && !matches!(value, Value::Vector(_) | Value::Tuple(_) | Value::Set(_) | Value::Progression(_) | Value::Text(_) | Value::Dict(_)) {
+                            let members = self.object_members(&value).map_err(|words| {
+                                if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
+                            })?;
+                            value = Value::Vector(Rc::new(members));
+                        }
                         let old = f.cells.borrow()[i].clone();
                         match old {
                             Value::Shared(cell) => {
@@ -5865,7 +6095,7 @@ impl<'a> Machine<'a> {
     pub(super) fn kind_member_names(&self, word: &str) -> Vec<String> {
         let Some(sample) = self.kind_stand_in(word) else { return Vec::new() };
         let mut gathered = Vec::new();
-        if matches!(sample, Value::Set(_)) {
+        if matches!(sample, Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
         }
         for name in self.table.strings("ext.stmt.class.special") {
@@ -5921,7 +6151,7 @@ impl<'a> Machine<'a> {
         if let Value::Span(_) = sample { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
         let mut gathered = Vec::new();
-        if matches!(sample, Value::Set(_)) {
+        if matches!(sample, Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
         }
         for name in self.table.strings("ext.stmt.class.special") {
@@ -5974,6 +6204,7 @@ impl<'a> Machine<'a> {
         let mut held = value.clone();
         while let Value::Mutable(cell, _) | Value::Shared(cell) = held { let inner = cell.borrow().clone(); held = inner; }
         Some(match held {
+            Value::Nil => '0',
             Value::Iterator(_) | Value::Generator(_) => 'w',
             Value::Window(_, portion) => if portion == 'v' { 'V' } else { 'W' },
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) => 'n',
@@ -5999,6 +6230,7 @@ impl<'a> Machine<'a> {
     /// kind that stands by itself answers for how it reads, how it
     /// compares, and the signs its own kind is written with.
     fn mark_answers(mark: char, at: usize) -> bool {
+        if mark == '0' { return (2..=3).contains(&at); }
         let counts = "nrqc".contains(mark);
         let lined = "sbBltp".contains(mark);
         let holds = lined || "deE".contains(mark);
@@ -6091,8 +6323,9 @@ impl<'a> Machine<'a> {
     /// value of a native kind answers to it as a member of its own.
     pub(super) fn native_place(&self, value: &Value, name: &str) -> Option<usize> {
         let mark = Self::native_mark(value)?;
-        if matches!(mark, 'e' | 'E') && self.table.single("ext.stmt.class.constructor") == Some(name) {
-            return Some(usize::MAX);
+        if self.table.single("ext.stmt.class.constructor") == Some(name) {
+            if matches!(mark, 'e' | 'E' | 'd') { return Some(usize::MAX); }
+            if mark == 'l' { return Some(usize::MAX - 1); }
         }
         let at = self.table.strings("ext.stmt.class.special").iter().position(|word| word == name)?;
         Self::mark_answers(mark, at).then_some(at)
@@ -6126,8 +6359,29 @@ impl<'a> Machine<'a> {
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' own.
     fn native_member_run(&mut self, receiver: &Value, name: &str, at: usize, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if at == usize::MAX - 1 {
+            if !keywords.is_empty() || arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
+            let holder = Self::native_cell(receiver);
+            let source_is_self = arguments.first().map_or(false, |input| {
+                holder.as_ref().map_or(false, |cell| Self::native_cell(input).map_or(false, |other| Rc::ptr_eq(cell, &other)))
+                    || matches!((input.settled(), receiver.settled()), (Value::Vector(left), Value::Vector(right)) if Rc::ptr_eq(&left, &right))
+            });
+            if let Some(cell) = &holder { *cell.borrow_mut() = Value::Vector(Rc::new(Vec::new())); }
+            let values = if source_is_self { Vec::new() } else { match arguments.first() { Some(input) => self.object_members(input)?, None => Vec::new() } };
+            if let Some(cell) = holder { *cell.borrow_mut() = Value::Vector(Rc::new(values)); }
+            return Ok(Value::Nil);
+        }
         if at == usize::MAX {
             match receiver.settled() {
+                Value::Dict(previous) => {
+                    let (positions,mut names)=self.open_arguments(arguments)?;
+                    names.extend(keywords);
+                    let Value::Dict(additions)=self.dictionary(&positions,names).map_err(Escape::from)? else { return Err(self.bad_answer().into()); };
+                    let mut merged=previous.to_vec();
+                    for (key,value) in additions.iter().cloned() { self.map_enter(&mut merged,key,value).map_err(Escape::from)?; }
+                    if let Some(cell)=Self::dict_cell(receiver) { cell.replace(Value::Dict(Rc::new(merged.into()))); }
+                    return Ok(Value::Nil);
+                }
                 Value::Set(store) => {
                     if store.borrow().sealed { return Ok(Value::Nil); }
                     if !keywords.is_empty() || arguments.len() > 1 { return Err(self.set_complaint("arguments", "").into()); }
@@ -6236,9 +6490,16 @@ impl<'a> Machine<'a> {
         // it stands, as it does for a span written to by its sign.
         if at == 12 {
             if let Value::Span(bounds) = arguments[0].clone() {
+                let mut incoming = arguments[1].clone();
+                if Self::native_mark(receiver) == Some('l') && !matches!(incoming.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Set(_) | Value::Progression(_) | Value::Text(_) | Value::Dict(_)) {
+                    let members = self.object_members(&incoming).map_err(|words| {
+                        if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
+                    })?;
+                    incoming = Value::Vector(Rc::new(members));
+                }
                 match Self::native_cell(receiver) {
-                    Some(cell) => self.span_written(&mut cell.borrow_mut(), &bounds, &arguments[1])?,
-                    None => self.span_written(&mut receiver.settled(), &bounds, &arguments[1])?,
+                    Some(cell) => self.span_written(&mut cell.borrow_mut(), &bounds, &incoming)?,
+                    None => self.span_written(&mut receiver.settled(), &bounds, &incoming)?,
                 }
                 return Ok(Value::Nil);
             }
@@ -6334,10 +6595,29 @@ impl<'a> Machine<'a> {
             .any(|part| self.table.spells(&format!("ext.stmt.yield.{part}"), name)) {
             return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
         }
+        if name == self.table.single("ext.stmt.class.detail.namespace").unwrap_or("") {
+            let actual=value.settled();
+            let named=match &actual {
+                Value::Intrinsic(op, word) if Self::names_a_kind(op) => Some(word.clone()),
+                other => self.kind_spelling(other),
+            };
+            if let Some(word)=named {
+                let mut methods=self.kind_member_names(&word);
+                methods.push(name.to_owned());
+                let entries:Vec<(Value,Value)>=methods.into_iter().map(|member| {
+                    let detail=format!("<attribute '{member}' of '{word}' objects>");
+                    (Value::text(&member),Value::text(&detail))
+                }).collect();
+                return Some(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))),'m'));
+            }
+        }
         if let Some(answer) = self.integer_attribute(value, name) { return Some(answer); }
         if matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_))
             && self.table.spells("ext.builtin.bytes.from_int", name) {
             return Some(Value::Member(Rc::new(value.clone()), "integer_bytes".into()));
+        }
+        if matches!(value, Value::Intrinsic(Prim::AsReal, _)) && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
+            return Some(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
         }
         if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
         // A walk over a routine's own body answers whether it is on the
@@ -6474,6 +6754,9 @@ impl<'a> Machine<'a> {
     }
 
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator")) {
+            return Err(format!("TypeError: cannot create '{}' instances", class.name).into());
+        }
         // A blueprint holding a program for being called answers the call
         // in place of a new thing.
         if let Some(answering) = self.table.single("ext.stmt.class.called").and_then(|word| self.inherited_entry(&class, word)) {
@@ -6837,6 +7120,34 @@ impl<'a> Machine<'a> {
             return self.value_of(&call, &self.outermost.clone());
         }
 
+        if name == "from_number" {
+            if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            let actual = Self::underlying(receiver).unwrap_or_else(|| receiver.settled());
+            if matches!(actual, Value::Text(_) | Value::Octets { .. } | Value::Complex(_)) {
+                return Err(format!("TypeError: float.from_number() argument must be a real number, not '{}'", receiver.kind_word()).into());
+            }
+            if let Some(index) = self.stood_for_whole(receiver)? {
+                return self.native_working(Prim::AsReal, "float", vec![index]);
+            }
+            return self.native_working(Prim::AsReal, "float", vec![receiver.clone()]);
+        }
+        if name == "float_from_number" {
+            if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+            let converted = self.value_member(&arguments[0], "from_number", Vec::new(), Vec::new())?;
+            return match receiver {
+                Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![converted]),
+                Value::Intrinsic(Prim::AsReal, _) => Ok(converted),
+                _ => Err(self.method_fault("arguments").into()),
+            };
+        }
+        if name == "float_fromhex" {
+            if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+            let number = self.value_member(&arguments[0], "fromhex", Vec::new(), Vec::new())?;
+            return match receiver {
+                Value::Blueprint(class) => self.construct_ordered(class.clone(), vec![number]),
+                _ => Err(self.method_fault("arguments").into()),
+            };
+        }
         if name == "integer_size" {
             let loose = matches!(receiver, Value::Blueprint(_) | Value::Intrinsic(..));
             if !keywords.is_empty() || arguments.len() != usize::from(loose) { return Err(self.method_fault("arguments").into()); }
@@ -6988,14 +7299,6 @@ impl<'a> Machine<'a> {
                     while values.len() < slot { values.push(Value::text("utf-8")); }
                     values.push(value);
                 }
-                // A row lengthened by a walk takes the walk's members
-                // for its bytes, so the walk is drawn out into a row
-                // first, as the maker of a row of bytes draws one out.
-                if operation == 53 && values.len() == 2
-                    && !matches!(values[1].settled(), Value::Octets { .. } | Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_)) {
-                    let source = values[1].settled();
-                    if let Ok(members) = self.core_collect(&source) { values[1] = Value::Vector(Rc::new(members)); }
-                }
                 return self.octet_routine(operation, &values).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)));
             }
         }
@@ -7029,8 +7332,8 @@ impl<'a> Machine<'a> {
         if let Value::Progression(walk) = &actual {
             if matches!(name, "index" | "count") {
                 if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
-                let along = Self::walk_position(walk, &arguments[0]);
-                if name == "count" { return Ok(Value::Small(if along.is_some() { 1 } else { 0 })); }
+                let (along, matches) = self.find_in_walk(walk, &arguments[0], name == "index")?;
+                if name == "count" { return Ok(Value::from_big(matches)); }
                 return match along {
                     Some(position) => Ok(Value::from_big(position)),
                     None => Err(self.walk_fault("ext.builtin.range.missing", Some(&arguments[0].quoted(false))).into()),
@@ -7258,12 +7561,37 @@ impl<'a> Machine<'a> {
     /// A worth that is no whole number lies nowhere, and so does one
     /// the stride passes over.
     fn walk_position(walk: &crate::data::Progression, worth: &Value) -> Option<BigInt> {
-        let whole = worth.as_big().ok().filter(|n| worth.equals(&Value::from_big(n.clone())))?;
+        let whole = match worth {
+            Value::Flag(bit) => BigInt::from(if *bit { 1 } else { 0 }),
+            Value::Small(n) => BigInt::from(*n),
+            Value::Huge(n) => (**n).clone(),
+            _ => return None,
+        };
         let forward = walk.stride > BigInt::from(0);
         let reached = if forward { whole >= walk.first && whole < walk.limit } else { whole <= walk.first && whole > walk.limit };
         let along = &whole - &walk.first;
         if !reached || &along % &walk.stride != BigInt::from(0) { return None; }
         Some(along / &walk.stride)
+    }
+
+    fn find_in_walk(&mut self, walk: &crate::data::Progression, item: &Value, stop_early: bool) -> Result<(Option<BigInt>, BigInt), String> {
+        if matches!(item, Value::Flag(_) | Value::Small(_) | Value::Huge(_)) {
+            let place = Self::walk_position(walk, item);
+            let amount = if place.is_some() { 1 } else { 0 };
+            return Ok((place, BigInt::from(amount)));
+        }
+        let mut place = BigInt::from(0);
+        let mut earliest = None;
+        let mut amount = BigInt::from(0);
+        while let Some(member) = walk.item(&place) {
+            if self.member_agrees(&member, item)? {
+                if earliest.is_none() { earliest = Some(place.clone()); }
+                amount += 1;
+                if stop_early { break; }
+            }
+            place += 1;
+        }
+        Ok((earliest, amount))
     }
 
     /// Which bound a name reads, where the table names the three.
@@ -8259,6 +8587,7 @@ impl<'a> Machine<'a> {
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
         if program.generator && self.table.flag("ext.stmt.yield.suspends") {
             let mut suspension = Suspension::body(&program, frame.clone());
+            suspension.source_reading = self.reading_now;
             suspension.trace_state = self.activation(&program, &frame, None);
             return Ok(Value::Generator(Rc::new(RefCell::new(suspension))));
         }
@@ -8722,13 +9051,20 @@ impl<'a> Machine<'a> {
     /// The bytes a value gives up to a row being lengthened: another
     /// row hands over its own, and a row of numbers or a text hands
     /// over one byte for each of its members.
-    fn octet_lengthening(&self, source: &Value) -> Result<Vec<u8>, String> {
+    fn octet_lengthening(&mut self, source: &Value) -> Result<Vec<u8>, String> {
         match &source.settled() {
             Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
             Value::Vector(items) | Value::Tuple(items) | Value::Row(items) =>
                 items.iter().map(|item| self.octet_item(item, false)).collect(),
             Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
-            other => Err(self.core_complaint("core.uniterable", &other.kind_word())),
+            other => {
+                let source = self.iterated_value(other)?;
+                let mut collected = Vec::new();
+                loop {
+                    let Some(next) = self.next_value(&source)? else { return Ok(collected); };
+                    collected.push(self.octet_item(&next, false)?);
+                }
+            },
         }
     }
 
@@ -9131,9 +9467,17 @@ impl<'a> Machine<'a> {
             39 if (1..=2).contains(&arguments.len()) => {
                 let mapping = match &arguments[0] {
                     Value::Nil => None,
-                    value => { let table = self.octet_contents(value, false)?; if table.len() != 256 { return Err(wrong()); } Some(table) }
+                    value => {
+                        if !matches!(value, Value::Octets { .. }) { return Err(self.core_complaint("core.bytes.like", &value.kind_word())); }
+                        let table = self.octet_contents(value, false)?;
+                        if table.len() == 256 { Some(table) } else { return Err(self.core_complaint("core.translate.table", "")); }
+                    }
                 };
-                let away = match arguments.get(1) { Some(v) => self.octet_contents(v, false)?, None => Vec::new() };
+                let away = match arguments.get(1) {
+                    None => Vec::new(),
+                    Some(value @ Value::Octets { .. }) => self.octet_contents(value, false)?,
+                    Some(invalid) => return Err(self.core_complaint("core.bytes.like", &invalid.kind_word())),
+                };
                 let mut turned = Vec::with_capacity(content.len());
                 for number in content.iter().filter(|n| !away.contains(n)) {
                     turned.push(match &mapping { Some(table) => table[usize::from(*number)], None => *number });
@@ -9423,8 +9767,8 @@ impl<'a> Machine<'a> {
             17 => {
                 let [Value::Octets { cell, changeable, .. }] = values else { return Err(refusal()); };
                 if *changeable { return Err(self.octet_error("unhashable")); }
-                let number = cell.borrow().iter().fold(0i64, |n, &b| n.wrapping_mul(1_000_003) ^ i64::from(b));
-                return Ok(Value::Small(if number == -1 { -2 } else { number }));
+                let letters = cell.borrow().iter().map(|octet| char::from(*octet)).collect::<String>();
+                return Ok(Value::Small(Value::text(&letters).hash_number().unwrap()));
             }
             _ => {}
         }
@@ -9465,7 +9809,7 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Vector(Rc::new(chunks.into_iter().map(|chunk| self.octets(chunk, *changeable)).collect())));
             }
             9 if args.len() == 1 => {
-                let Value::Vector(items) = &args[0] else { return Err(refusal()); };
+                let items = self.core_collect(&args[0])?;
                 let pieces = items.iter().map(|item| self.octet_contents(item, false)).collect::<Result<Vec<_>, _>>()?;
                 result = pieces.join(content.as_slice());
             }
@@ -9562,9 +9906,12 @@ impl<'a> Machine<'a> {
         let b = near(&base)?;
         let e = near(&exponent)?;
         let fault = |label| self.table.single(label).unwrap_or_default().to_string();
-        if b == 0.0 && e < 0.0 { return Err(fault("ext.op.pow.zero")); }
+        if b == 0.0 && e < 0.0 && e.is_finite() { return Err(fault("ext.op.pow.zero")); }
         if b < 0.0 && b.is_finite() && e.is_finite() && e.trunc() != e {
-            return Err(fault("ext.op.pow.nonreal"));
+            let magnitude = b.abs().powf(e);
+            if magnitude.is_infinite() { return Err(fault("ext.op.pow.overflow")); }
+            let phase = e * std::f64::consts::PI;
+            return Ok(Some(crate::complex::pair(self.table, magnitude * phase.cos(), magnitude * phase.sin())));
         }
         let result = b.powf(e);
         if b.is_finite() && e.is_finite() && result.is_infinite() {
@@ -9880,6 +10227,13 @@ impl<'a> Machine<'a> {
         }
         match self.appointment(subject, index) {
             None => Ok(None),
+            Some(Value::Wrapped(4, contents)) => {
+                match self.apply_class_member(contents[0].clone(), tail.to_vec()) {
+                    Ok(answer) => Ok(Some(answer)),
+                    Err(Escape::Error(message)) => Err(message),
+                    Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
+                }
+            }
             Some(Value::Routine(_) | Value::Bound(..)) => {
                 let (body, scope) = self.appointed_within(subject, index).expect("the method just found");
                 let arguments = std::iter::once(subject.clone()).chain(tail.iter().cloned()).collect();
@@ -9912,46 +10266,46 @@ impl<'a> Machine<'a> {
     }
 
     fn carries_instance(value: &Value) -> bool {
-        Self::carries_instance_past(value, &mut Vec::new(), true)
+        Self::carries_instance_past(value, true)
     }
 
-    /// Whether an operand must go the thing-aware road of a working.
-    /// A set holding things is written out through each thing's own
-    /// words, but its workings (`&`, `|`, `<=` and the rest) already
-    /// ask each thing for its hash and its equality on the plain road,
-    /// the only one that also takes a set's subclass by its worth; so
-    /// a working does not look into a set's members.
+    /// Set workings already ask their members for hash and equality on the
+    /// plain road, including a set subclass held by its own worth.
     fn operand_carries_instance(value: &Value) -> bool {
-        Self::carries_instance_past(value, &mut Vec::new(), false)
+        Self::carries_instance_past(value, false)
     }
 
-    /// The scan proper, remembering the cells passed through so that a
-    /// collection reaching itself is not looked into without end.
-    fn carries_instance_past(value: &Value, passed: &mut Vec<usize>, into_sets: bool) -> bool {
-        match value {
-            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => true,
-            Value::Shared(cell) | Value::Mutable(cell, _) => {
-                let address = Rc::as_ptr(cell) as usize;
-                if passed.contains(&address) { return false; }
-                passed.push(address);
-                Self::carries_instance_past(&cell.borrow(), passed, into_sets)
+    /// Walk cells once without following a deep row through the call stack.
+    /// A nested list can still hold a custom object whose repr must run.
+    fn carries_instance_past(value: &Value, into_sets: bool) -> bool {
+        let mut passed = std::collections::HashSet::new();
+        let mut pending = vec![value.clone()];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => return true,
+                Value::Shared(cell) | Value::Mutable(cell, _) => {
+                    if passed.insert(Rc::as_ptr(&cell) as usize) {
+                        pending.push(cell.borrow().clone());
+                    }
+                }
+                Value::Row(items) | Value::Tuple(items) | Value::Vector(items) => pending.extend(items.iter().cloned()),
+                Value::Dict(items) => {
+                    for (key, held) in items.iter() {
+                        pending.push(key.clone());
+                        pending.push(held.clone());
+                    }
+                }
+                Value::Set(store) if into_sets => {
+                    if passed.insert(Rc::as_ptr(&store) as *const () as usize) {
+                        if let Ok(held) = store.try_borrow() {
+                            pending.extend(held.entries.iter().map(|(_, item)| item.clone()));
+                        }
+                    }
+                }
+                _ => {}
             }
-            Value::Row(v) | Value::Tuple(v) | Value::Vector(v) => v.iter().any(|item| Self::carries_instance_past(item, passed, into_sets)),
-            Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(|item| Self::carries_instance_past(item, passed, into_sets)),
-            // A set cannot hold itself (nothing that may be altered is
-            // hashable), but one set can stand inside many others, a
-            // frozen set of frozen sets most of all; one already looked
-            // into held no thing (the walk would have stopped there), so
-            // it is passed over the next time rather than walked again.
-            Value::Set(store) => {
-                if !into_sets { return false; }
-                let address = Rc::as_ptr(store) as *const () as usize;
-                if passed.contains(&address) { return false; }
-                passed.push(address);
-                store.try_borrow().map_or(false, |held| held.entries.iter().any(|(_, item)| Self::carries_instance_past(item, passed, into_sets)))
-            }
-            _ => false,
         }
+        false
     }
 
     /// Whether the table asks that a collection written as text read as
@@ -10040,6 +10394,31 @@ impl<'a> Machine<'a> {
                 let whole = Value::Mutable(place, false);
                 if self.collections_read_alike() { return Ok(whole.repr(&self.wording())); }
                 return Ok(self.show(std::slice::from_ref(&whole)));
+            }
+            if matches!(&inner, Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) {
+                let ceiling = self.table.count("ext.system.recursion.limit");
+                if ceiling.is_some_and(|limit| self.standing >= limit) {
+                    if let Some(words) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{words}")); }
+                }
+                self.standing += 1;
+                let shown = (|| {
+                    let among = Among::members(&inner);
+                    if let Some(marks) = among.instead { return Ok(marks.to_string()); }
+                    let mut pieces = Vec::new();
+                    let mut offset = 0;
+                    loop {
+                        let member = match place.borrow().settled() {
+                            Value::Vector(row) => row.get(offset).cloned(),
+                            _ => None,
+                        };
+                        let Some(value) = member else { break };
+                        pieces.push(self.object_words(&value, true)?);
+                        offset += 1;
+                    }
+                    Ok(format!("[{}]", pieces.join(", ")))
+                })();
+                self.standing -= 1;
+                return shown;
             }
             return self.object_words(&inner, quoted || represented);
         }
@@ -10156,7 +10535,7 @@ impl<'a> Machine<'a> {
 
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
         if let Value::Attributes(t) = subject { return Ok(t.holds.borrow().iter().any(|(name, x)| !matches!(x, Value::Unset) && !name.starts_with('\0'))); }
-        if matches!(subject, Value::Refusal(_)) { return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_string()); }
+        if matches!(subject, Value::Refusal(_)) { return Err(self.core_complaint("core.bool.declined", "")); }
         match self.ask_special(subject, 9, &[])? {
             Some(Value::Flag(b)) => return Ok(b),
             Some(other) => return Err(match self.table.single("ext.builtin.bool.result") {
@@ -10389,6 +10768,9 @@ impl<'a> Machine<'a> {
     fn async_walk(&mut self, v: &[Value]) -> Result<Value, Escape> {
         let [subject] = v else { return Err(Escape::Error(format!("an asynchronous walk expects 1 argument, got {}", v.len()))) };
         let subject = subject.settled();
+        if matches!(&subject, Value::Generator(state) if state.borrow().of.as_ref().map_or(false, |program| program.flags & 512 != 0)) {
+            return Ok(Value::Wrapped(61, Rc::new(vec![subject])));
+        }
         let asked = self.ask_special(&subject, 83, &[]).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)))?;
         let Some(walker) = asked else {
             let kind = match &subject { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
@@ -10411,6 +10793,9 @@ impl<'a> Machine<'a> {
     }
 
     fn awaited_step(&mut self, walker: &Value) -> Result<Option<Value>, String> {
+        if matches!(walker, Value::Generator(state) if state.borrow().of.as_ref().map_or(false, |program| program.flags & 512 != 0)) {
+            return self.next_value(walker);
+        }
         let (routine, scope) = self.appointed_within(walker, 84).ok_or_else(|| self.bad_answer())?;
         let result = self.invoke(routine, scope, vec![walker.clone()]).and_then(|value| self.await_completion(value));
         let stepped = match result {
@@ -10654,6 +11039,19 @@ impl<'a> Machine<'a> {
             if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
                 let outcome = self.prim(operation, &word, &settled);
+                // A walk over a thing's underlying members keeps the thing,
+                // as the reference's does, for as long as the walk lasts.
+                let outcome = match (operation, outcome, operands.first()) {
+                    (Prim::Iterator, Ok(Value::Generator(walk)), Some(thing @ Value::Thing(_))) => {
+                        walk.borrow_mut().stepping_through = Some(thing.clone());
+                        Ok(Value::Generator(walk))
+                    }
+                    (Prim::Iterator, Ok(Value::Iterator(state)), Some(thing @ Value::Thing(_))) => {
+                        state.borrow_mut().from_thing = Some(thing.clone());
+                        Ok(Value::Iterator(state))
+                    }
+                    (_, outcome, _) => outcome,
+                };
                 if let Ok(Value::Tuple(values)) = &outcome {
                     let inherited_tuple = operation == Prim::Times && operands.iter().any(|value| {
                         match Self::underlying(value).map(|worth| worth.settled()) {
@@ -11045,7 +11443,10 @@ impl<'a> Machine<'a> {
             }
             (Prim::Hashed, [one]) => match self.ask_special(one, 8, &[])? {
                 Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
-                Some(_) => return Err(self.bad_answer()),
+                Some(answer) => match Self::underlying(&answer).map(|v| v.settled()) {
+                    Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
+                    _ => return Err(self.bad_answer()),
+                },
                 None => match one {
                     Value::Thing(t) if self.appointed(one, 2).is_none() => Value::Small(t.turn as i64),
                     Value::Small(_) | Value::Huge(_) => one.clone(),
@@ -11366,6 +11767,12 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Contains | Prim::Absent) {
+            if let [needle, Value::Progression(walk)] = v {
+                let present = self.find_in_walk(walk, needle, true)?.0.is_some();
+                return Ok(Value::Flag(present == (op == Prim::Contains)));
+            }
+        }
         if matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
             if let [first, second] = v {
                 let shape = Self::sequence_shape(first);
@@ -11511,6 +11918,8 @@ impl<'a> Machine<'a> {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
             } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
                 self.prim_values(op, name, v)?
+            } else if op == Prim::Quoted && v.first().map_or(false, |item| matches!(item, Value::Shared(_) | Value::Mutable(..)) && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_))))) {
+                self.prim_values(op, name, v)?
             } else if (self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences())
                 && matches!(v.first(), Some(Value::Shared(_) | Value::Mutable(..))) {
                 // A row written over keeps its cell: the write is made
@@ -11634,7 +12043,10 @@ impl<'a> Machine<'a> {
                         match value {
                             Value::Dict(pairs) => Some(pairs.to_vec()),
                             Value::Window(owner, 'm') => match owner.settled() { Value::Dict(pairs) => Some(pairs.to_vec()), _ => None },
-                            _ => None,
+                            held => {
+                                let plain=Self::underlying(held).unwrap_or_else(|| held.clone()).settled();
+                                if let Value::Dict(pairs)=plain { Some(pairs.to_vec()) } else { None }
+                            },
                         }
                     };
                     let equal = match (pairs_of(a), pairs_of(b)) {
@@ -11831,7 +12243,12 @@ impl<'a> Machine<'a> {
         }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
-            if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
         };
         if v.len() == 2 && v.iter().any(|item| matches!(item, Value::Set(_))) {
             let rule = match op { Prim::BitsEither => Some(0), Prim::BitsBoth => Some(1), Prim::Minus => Some(2), Prim::BitsOne => Some(3), _ => None };
@@ -11963,6 +12380,15 @@ impl<'a> Machine<'a> {
             }
             Prim::SetAssign(operation) => {
                 n(2)?;
+                if operation == 0 && self.table.flag("ext.op.bit.or.maps") {
+                    if let Value::Dict(original) = v[0].settled() {
+                        let (offered, stopped) = self.pairs_offered(&v[1]);
+                        let mut joined = original.to_vec();
+                        for (key, value) in offered { self.map_enter(&mut joined, key, value)?; }
+                        if let Some(words) = stopped { return Err(words); }
+                        return Ok(Value::Dict(Rc::new(joined.into())));
+                    }
+                }
                 let ordinary = [Prim::BitsEither, Prim::BitsBoth, Prim::Minus, Prim::BitsOne][operation as usize];
                 let answer = self.prim(ordinary, name, v)?;
                 match (&v[0], &answer) {
@@ -11979,7 +12405,7 @@ impl<'a> Machine<'a> {
             }
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
-            Prim::StartContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
+            Prim::StartContext | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
             Prim::Textual(work) => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
                 if work == crate::text::Work::MAKETRANS && values.len() == 1 {
@@ -12935,6 +13361,29 @@ impl<'a> Machine<'a> {
                 let w = self.wording();
                 Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
             }
+            Prim::WeakMake => {
+                n(3)?;
+                let Some(ghost) = crate::ghost::ghost_of(&v[0]) else {
+                    let refusal = self.table.strings("ext.builtin.weak.refused");
+                    let kind = v[0].settled().kind_word();
+                    let (head, tail) = (refusal.first().map_or("", String::as_str), refusal.get(1).map_or("", String::as_str));
+                    return Err(format!("{head}{kind}{tail}"));
+                };
+                let bearer = match &v[1] { Value::Thing(thing) => Rc::downgrade(thing), _ => std::rc::Weak::new() };
+                let notify = match &v[2] { Value::Nil => None, told => Some(told.clone()) };
+                crate::ghost::dim(ghost, bearer, notify)
+            }
+            Prim::WeakGet => {
+                n(1)?;
+                match &v[0] {
+                    Value::Dim(dim) => dim.ghost.revive().unwrap_or(Value::Nil),
+                    _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                }
+            }
+            Prim::Collect => {
+                n(0)?;
+                Value::Small(self.reap_rounds() as i64)
+            }
             Prim::FaultWhole => {
                 n(0)?;
                 self.holding_fault.last().cloned().unwrap_or(Value::Nil)
@@ -13710,17 +14159,7 @@ impl<'a> Machine<'a> {
                     other => other.clone(),
                 };
                 let present = match (&sought, &v[1]) {
-                    (needle, Value::Progression(sequence)) => {
-                        match needle.as_big().ok().filter(|whole| contained_equal(needle, &Value::from_big(whole.clone()))) {
-                            None => false,
-                            Some(whole) => {
-                                let offset = &whole - &sequence.first;
-                                let position = &offset / &sequence.stride;
-                                (&offset % &sequence.stride) == BigInt::from(0)
-                                    && position >= BigInt::from(0) && position < sequence.count()
-                            }
-                        }
-                    },
+                    (needle, Value::Progression(sequence)) => self.find_in_walk(sequence, needle, true)?.0.is_some(),
                     (needle, Value::Vector(hay) | Value::Tuple(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
                     (key, Value::Dict(entries)) => {
                         let placed = match key.hash_address() {
@@ -14239,21 +14678,15 @@ impl<'a> Machine<'a> {
             }
             Prim::SomeTrue => {
                 n(1)?;
-                if matches!(v[0], Value::Iterator(_)) {
-                    while let Some(item) = self.next_value(&v[0])? { if self.stands_true(&item) { return Ok(Value::Flag(true)); } }
-                    return Ok(Value::Flag(false));
-                } else if self.table.flag("ext.stmt.yield.suspends") {
-                    let Value::Generator(walk) = self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? else { unreachable!() };
-                    loop {
-                        match self.resume(&walk, Value::Nil).map_err(|fault| self.suspension_fault(fault))? {
-                            None => return Ok(Value::Flag(false)),
-                            Some(item) if self.stands_true(&item) => return Ok(Value::Flag(true)),
-                            _ => {}
+                let source = self.iterated_value(&v[0])?;
+                loop {
+                    match self.next_value(&source)? {
+                        None => break Value::Flag(false),
+                        Some(value) => {
+                            if self.object_truth(&value)? { break Value::Flag(true); }
                         }
                     }
                 }
-                let members = self.gathered_members(&v[0])?;
-                Value::Flag(members.iter().any(|item| self.stands_true(item)))
             }
             Prim::Total => {
                 if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
@@ -14302,8 +14735,8 @@ impl<'a> Machine<'a> {
                 total
             }
             Prim::Span if self.table.flag("ext.builtin.range.value") => {
-                let wrong = || self.argument_fault("ext.syntax.call.amiss", None);
-                if !(1..=3).contains(&v.len()) { return Err(wrong()); }
+                if v.is_empty() { return Err("TypeError: range expected at least 1 argument, got 0".to_string()); }
+                if v.len() > 3 { return Err(format!("TypeError: range expected at most 3 arguments, got {}", v.len())); }
                 let integer = |item: &Value| match item {
                     Value::Huge(big) => Ok((**big).clone()),
                     Value::Small(small) => Ok(BigInt::from(*small)),
@@ -14436,12 +14869,21 @@ impl<'a> Machine<'a> {
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
                 self.at_width(math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?)
             }
+            Prim::AsReal if matches!(v, [Value::Octets { .. }]) => {
+                let original = v[0].representation(self.wording());
+                let Value::Octets { cell, .. } = &v[0] else { unreachable!() };
+                let bytes = cell.borrow();
+                let source = std::str::from_utf8(&bytes).ok().filter(|s| s.is_ascii())
+                    .ok_or_else(|| format!("ValueError: could not convert string to float: {original}"))?;
+                return self.prim(Prim::AsReal, name, &[Value::text(source)])
+                    .map_err(|_| format!("ValueError: could not convert string to float: {original}"));
+            }
             Prim::AsReal => {
                 n(1)?;
                 match &v[0] {
                     x @ Value::Frac(e) if e.places.is_some() => x.clone(),
                     x => {
-                        let exact = math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                        let exact = math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("TypeError: float() argument must be a string or a real number, not '{}'", x.kind_word()))?;
                         if let Value::Frac(e) = &exact {
                             if !e.above.is_zero() && crate::data::nearest_binary(&e.above, &e.beneath).is_infinite() {
                                 return Err("OverflowError: int too large to convert to float".to_string());
@@ -14462,7 +14904,11 @@ impl<'a> Machine<'a> {
                     Value::Set(members) => Value::Small(members.borrow().keys.len() as i64),
                     Value::TextRow(words, _) => Value::Small(words.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
-                    Value::Progression(p) => Value::from_big(p.count()),
+                    Value::Progression(p) => {
+                        let size = p.count();
+                        if size > BigInt::from(i64::MAX) { return Err("OverflowError: Python int too large to convert to C ssize_t".to_string()); }
+                        Value::from_big(size)
+                    }
                     measureless => return Err(match self.table.strings("ext.builtin.core.unsized") {
                         [before, after] => format!("{}{}{}", before, measureless.kind_word(), after),
                         _ => format!("{}() requires a string or array argument", name),
@@ -14493,16 +14939,30 @@ impl<'a> Machine<'a> {
             }
             Prim::CharOf => {
                 n(1)?;
-                let code = match &v[0] {
-                    Value::Small(i) => u32::try_from(*i).ok(),
-                    Value::Huge(_) => None,
-                    _ => return Err(format!("{}() requires an integer argument", name)),
-                }
-                .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
-                match char::from_u32(code) {
-                    Some(c) => Value::text(&c.to_string()),
-                    None if code >= 0xd800 && code <= 0xdfff && self.table.has_any("ext.system.bytes.encodings") => Value::characters(vec![code]),
-                    None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
+                if self.table.has_any("ext.builtin.core.chr.range") {
+                    let point = match &v[0] {
+                        value @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => value.as_big()?.to_u32(),
+                        other => return Err(self.core_complaint("core.integer", &other.kind_word())),
+                    };
+                    match point {
+                        Some(number @ 0..=0x10ffff) => match char::from_u32(number) {
+                            None => Value::characters(vec![number]),
+                            Some(letter) => Value::text(&letter.to_string()),
+                        },
+                        _ => return Err(self.core_complaint("core.chr.range", "")),
+                    }
+                } else {
+                    let code = match &v[0] {
+                        Value::Small(i) => u32::try_from(*i).ok(),
+                        Value::Huge(_) => None,
+                        _ => return Err(format!("{}() requires an integer argument", name)),
+                    }
+                    .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
+                    match char::from_u32(code) {
+                        Some(c) => Value::text(&c.to_string()),
+                        None if code >= 0xd800 && code <= 0xdfff && self.table.has_any("ext.system.bytes.encodings") => Value::characters(vec![code]),
+                        None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
+                    }
                 }
             }
             // Saying the run is over is done where the call is made,
@@ -15154,7 +15614,7 @@ impl<'a> Machine<'a> {
         Ok((begin..end, picked, unit))
     }
 
-    fn span_written(&self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
+    fn span_written(&mut self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
         if let Value::Shared(cell) = handed {
             let contents = cell.borrow().clone();
             return self.span_written(held, bounds, &contents);
@@ -15191,7 +15651,11 @@ impl<'a> Machine<'a> {
             Value::Text(letters) => letters.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
             Value::Vector(values) | Value::Tuple(values) => values.iter().cloned().collect(),
-            _ => return Err(self.span_complaint("assign")),
+            _ => self.object_members(handed).map_err(|words| {
+                if words.contains("not iterable") || words.contains("not an iterable") {
+                    self.span_complaint("assign")
+                } else { words }
+            })?,
         };
         if !unit && picked.len() != coming.len() {
             let wording = self.table.strings("ext.op.index.slice.length");
@@ -17338,25 +17802,29 @@ impl<'a> Machine<'a> {
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
             _ => return Err(self.source_refused()),
         };
-        let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err(self.source_refused()) };
-        // Flags and inheritance are read and let be; optimisation beyond
-        // the ordinary setting is not honoured.
-        if v.get(5).map_or(false, |worth| !matches!(worth, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(self.source_refused()); }
+        let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
+        let flags = match v.get(3).map(Value::settled) {
+            None | Some(Value::Nil) => 0,
+            Some(Value::Small(bits)) => bits,
+            _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
+        };
+        if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        if v.get(5).map_or(false, |value| !matches!(value.settled(), Value::Nil | Value::Small(-1..=2))) {
+            return Err("ValueError: compile(): invalid optimize value".into());
+        }
+        let top_await = flags & 8192 != 0;
         self.report_escape_notices(&source, &file)?;
         let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[])?;
+        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await)?;
         for (message, row, column) in &built.warnings {
             self.syntax_warning(mode, message, &file, *row, *column, &source)?;
         }
         let kind = self.code_blueprint();
-        // `co_flags` names its bits the reference does; nothing here
-        // ever sets the coroutine bit, since top-level `await` is not
-        // run, so a reading of it is always nought, which is enough for
-        // a program only asking whether that one bit is clear.
-        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64)), ("co_flags".to_owned(), Value::Small(0))];
+        let flags = if built.program.generator { 128 } else { 0 };
+        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64)), ("co_flags".to_owned(), Value::Small(flags))];
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -17396,13 +17864,14 @@ impl<'a> Machine<'a> {
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
         let Some(first) = v.first().map(Value::settled) else { return Err(self.core_complaint("core.arity", name)) };
-        let (source, file, mode) = match first {
-            Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
-            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing)),
+        let (source, file, mode, top_await) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
+            Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false),
             Value::Thing(code) if self.table.single("ext.builtin.compile.kind") == Some(code.blueprint().name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
-                (holds[0].1.bare(), Some(holds[1].1.bare()), mode)
+                let async_code = holds.iter().any(|(name, worth)| name == "co_flags" && matches!(worth, Value::Small(flags) if flags & 128 != 0));
+                (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code)
             }
             _ => return Err(self.core_complaint("core.arity", name)),
         };
@@ -17425,8 +17894,8 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine),
-                None => self.perform_here(&source, file, mode),
+                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await),
+                None => self.perform_here(&source, file, mode, top_await),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -17457,17 +17926,17 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        self.perform_booked(&source, file, mode, outer, near)
+        self.perform_booked(&source, file, mode, outer, near, top_await)
     }
 
     /// Text run where the call stands: within the reading under way, in
     /// its dictionaries; else among the outermost names.
-    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize) -> Result<Value, String> {
+    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool) -> Result<Value, String> {
         if let Some(which) = self.reading_now {
             let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
             return match outer {
-                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near)),
-                None => self.perform_booked(source, file, mode, near, None),
+                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await),
+                None => self.perform_booked(source, file, mode, near, None, top_await),
             };
         }
         let file = file.unwrap_or_else(|| "<string>".to_owned());
@@ -17476,7 +17945,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[])?;
+        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await)?;
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         self.text_concluded(&built, &file, mode, shown)
@@ -17488,7 +17957,7 @@ impl<'a> Machine<'a> {
     /// writes to a frame of its own, standing apart from the routine's,
     /// so the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>) -> Result<Value, String> {
+    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool) -> Result<Value, String> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
@@ -17533,7 +18002,7 @@ impl<'a> Machine<'a> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
-    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Result<Value, String> {
+    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool) -> Result<Value, String> {
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -17549,7 +18018,7 @@ impl<'a> Machine<'a> {
             _ => false,
         };
         let shadowed: Vec<String> = if own_natives { self.table.prims.keys().cloned().collect() } else { Vec::new() };
-        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed)?;
+        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await)?;
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -17565,12 +18034,12 @@ impl<'a> Machine<'a> {
     /// statement shown as it runs, which is an expression written out
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
-    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String]) -> Result<(crate::build::Built, bool), String> {
+    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
         if mode == 2 {
-            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), true, shadowed) { return Ok((built, true)); }
+            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), true, shadowed, top_await) { return Ok((built, true)); }
         }
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, mode == 1, shadowed)
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, mode == 1, shadowed, top_await)
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
@@ -17582,7 +18051,7 @@ impl<'a> Machine<'a> {
         let top = self.outermost.clone();
         let prior = self.active_trace.take();
         self.frames_named.push(built.program.clone());
-        let ran = self.value_of(&built.program.body, &top);
+        let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
         self.frames_named.pop();
         self.active_trace = prior;
         self.written_in = was_in;
@@ -17598,7 +18067,7 @@ impl<'a> Machine<'a> {
             self.utter(&format!("{}\n", quoted.bare()));
             return Ok(Value::Nil);
         }
-        Ok(if mode == 1 { answer } else { Value::Nil })
+        Ok(if mode == 1 || built.program.generator { answer } else { Value::Nil })
     }
 }
 
@@ -17633,7 +18102,7 @@ impl Machine<'_> {
     }
 
     fn cursor_value(kind: IteratorKind) -> Value {
-        Value::Iterator(Rc::new(RefCell::new(IteratorState { kind, peek: None, done: false, walks: None })))
+        Value::Iterator(Rc::new(RefCell::new(IteratorState { kind, peek: None, done: false, from_thing: None, walks: None })))
     }
 
     fn cursor_value_walked(kind: IteratorKind, walks: Option<Rc<str>>) -> Value {
@@ -18306,6 +18775,8 @@ impl Machine<'_> {
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
                 if op == Prim::Belongs && matches!(item, Value::Window(..)) { continue; }
+                if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
+                    && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
                 *item = item.settled();
             }
         }
@@ -18329,10 +18800,12 @@ impl Machine<'_> {
                     let outcome = self.work_on_class(job, input);
                     return outcome.map_err(|escape| match escape {
                         Escape::Error(text) => text,
-                        other => {
-                            self.got_away = Some(other);
-                            self.bad_answer()
+                                            Escape::Thrown(value) => {
+                            let description = self.suspension_fault(Escape::Thrown(value.clone()));
+                            self.got_away = Some(Escape::Thrown(value));
+                            description
                         }
+                        other => { self.got_away = Some(other); self.bad_answer() },
                     });
                 }
             }
@@ -18453,7 +18926,11 @@ impl Machine<'_> {
                 let quoted = self.core_primitive(Prim::Quoted, &word, input.clone(), Vec::new())?;
                 Ok(Value::text(&crate::text::ascii_escaped(&quoted.bare())))
             }
-            Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
+            Truthful => {
+                require(0, 1)?;
+                let answer = if input.is_empty() { false } else { self.object_truth(&input[0])? };
+                Ok(Value::Flag(answer))
+            }
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::OctetKind { .. } | Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
                 require(1, 1)?;
@@ -18695,7 +19172,7 @@ impl Machine<'_> {
                 let iterator = self.iterated_value(&input[0])?;
                 loop {
                     match self.next_value(&iterator)? {
-                        Some(item) if !self.stands_true(&item) => return Ok(Value::Flag(false)),
+                        Some(item) if !self.object_truth(&item)? => return Ok(Value::Flag(false)),
                         None => return Ok(Value::Flag(true)),
                         _ => (),
                     }
@@ -18752,7 +19229,7 @@ impl Machine<'_> {
                     if pair.0.is_finite() && pair.1.is_finite() && !norm.is_finite() { return Err(self.core_complaint("core.power.overflow", "")); }
                     return Ok(crate::complex::decimal_value(norm));
                 }
-                let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.abs.type", &input[0].kind_word()))?;
                 Ok(math::make_number(parts.above.abs(), parts.beneath, parts.places))
             }
             Hexadecimal | Octal | Binary => {

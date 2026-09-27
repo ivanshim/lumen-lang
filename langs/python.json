@@ -50,6 +50,19 @@
   "ext.builtin.file.kind": [
     "__file_kind"
   ],
+  "ext.builtin.weak.make": [
+    "__weak_make"
+  ],
+  "ext.builtin.weak.get": [
+    "__weak_get"
+  ],
+  "ext.builtin.weak.refused": [
+    "TypeError: cannot create weak reference to '",
+    "' object"
+  ],
+  "ext.builtin.gc.collect": [
+    "__gc_collect"
+  ],
   "ext.builtin.file.read": [
     "__file_read"
   ],
@@ -91,6 +104,9 @@
   ],
   "ext.builtin.method.fromhex": [
     "float.fromhex"
+  ],
+  "ext.builtin.method.from_number": [
+    "float.from_number"
   ],
   "ext.builtin.method.conjugate": [
     "conjugate"
@@ -708,6 +724,23 @@
     "TypeError: '",
     "' object is not reversible"
   ],
+  "ext.builtin.core.chr.range": [
+    "ValueError: chr() arg not in range(0x110000)"
+  ],
+  "ext.builtin.core.translate.table": [
+    "ValueError: translation table must be 256 characters long"
+  ],
+  "ext.builtin.core.bytes.like": [
+    "TypeError: a bytes-like object is required, not '",
+    "'"
+  ],
+  "ext.builtin.core.abs.type": [
+    "TypeError: bad operand type for abs(): '",
+    "'"
+  ],
+  "ext.builtin.core.bool.declined": [
+    "TypeError: NotImplemented should not be used in a boolean context"
+  ],
   "ext.builtin.core.unready": [
     "NotImplementedError: ",
     "() is not supported for these values"
@@ -812,6 +845,7 @@
     "UnicodeTranslateError",
     "IndentationError",
     "TabError",
+    "ReferenceError",
     "MemoryError",
     "BufferError",
     "StopAsyncIteration"
@@ -2539,6 +2573,9 @@
   ],
   "ext.stmt.class.constructor": [
     "__init__"
+  ],
+  "ext.stmt.class.finaliser": [
+    "__del__"
   ],
   "ext.stmt.class.detail.allocate": [
     "__new__"

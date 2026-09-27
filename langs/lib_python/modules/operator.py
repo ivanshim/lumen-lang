@@ -18,7 +18,7 @@ def floordiv(a, b):
     return quotient
 
 def mod(a, b):
-    if isinstance(a, complex) or isinstance(b, complex):
+    if isinstance(a, (float, complex)) or isinstance(b, (float, complex)):
         return a % b
     return a - floordiv(a, b) * b
 
