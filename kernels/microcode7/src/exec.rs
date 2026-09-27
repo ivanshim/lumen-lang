@@ -3146,7 +3146,7 @@ impl<'a> Machine<'a> {
     /// over take nothing in: what is thrown at them is raised on the spot.
     fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
         let previous = self.reading_now;
-        if let Some(book) = generator.borrow().source_reading { self.reading_now = Some(book); }
+        if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) { self.reading_now = Some(book); }
         let result = self.step_into_body(generator, sent, hurled, given);
         self.reading_now = previous;
         result
