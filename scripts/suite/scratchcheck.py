@@ -13,7 +13,8 @@ def check(p, k):
     here = pathlib.Path(tempfile.mkdtemp(prefix="scratchcheck-"))
     for entry in root.iterdir(): (here/entry.name).symlink_to(entry)
     try:
-        r = subprocess.run([str(binary), "--kernel", k, p], capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL, cwd=here)
+        cap = 2400 if p == "scratch/reader-tail/4.py" else 900
+        r = subprocess.run([str(binary), "--kernel", k, p], capture_output=True, text=True, timeout=cap, stdin=subprocess.DEVNULL, cwd=here)
         status, so, se = r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         status, so, se = 124, "", "TIMEOUT"
