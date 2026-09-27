@@ -3854,6 +3854,12 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn routine_code(&mut self, program: &Rc<Routine>) -> Value {
+        if !program.enclosed.is_empty() || !program.held.is_empty() {
+            let mut body = (**program).clone();
+            body.held.clear();
+            body.enclosed.clear();
+            return Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]);
+        }
         let key = Rc::as_ptr(&program.instrs) as usize;
         self.frame_codes.entry(key).or_insert_with(|| {
             let mut body = (**program).clone();
