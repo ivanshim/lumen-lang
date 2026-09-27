@@ -123,7 +123,12 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
     // native/, spelling what only the full kernels read; the others are
     // given the ported library alone.
     let full = FULL_KERNELS.contains(&kernel);
-    let files: Vec<_> = files.iter().filter(|(path, _)| full || !path.contains("/native/")).collect();
+    // The full Python kernels supply round as a builtin with an optional
+    // places argument; the ported two-argument routine would shadow it.
+    let files: Vec<_> = files.iter().filter(|(path, _)| {
+        (full || !path.contains("/native/"))
+            && !(full && language == "python" && *path == "langs/lib_python/round.py")
+    }).collect();
     if files.is_empty() {
         return source;
     }
