@@ -1027,6 +1027,9 @@ impl<'a> Engine<'a> {
                 if *op == Builtin::AsReal && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
                 }
+                if *op == Builtin::Complex && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), "complex_from_number".to_string()))));
+                }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
@@ -1063,6 +1066,9 @@ impl<'a> Engine<'a> {
             }
                 if (Self::own_kind(c).as_deref() == Some("float") || Self::kind_beneath(c).as_deref() == Some("float")) && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
+                }
+                if (Self::own_kind(c).as_deref() == Some("complex") || Self::kind_beneath(c).as_deref() == Some("complex")) && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), "complex_from_number".to_string()))));
                 }
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "fromhex" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_fromhex".to_string()))));

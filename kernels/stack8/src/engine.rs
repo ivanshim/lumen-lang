@@ -5826,6 +5826,107 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// The two coordinates one argument of the complex constructor
+    /// names, with whether it stood as a complex number. The "real"
+    /// side asks an object's `__complex__`; the "imag" side refuses an
+    /// object that is only complex, as the reference does.
+    fn complex_slot(&mut self, value: &Value, which: &str, consult_complex: bool) -> Res<(f64, f64, bool)> {
+        let refused = format!("TypeError: complex() argument '{}' must be a real number, not {}", which, Self::shown_kind(value));
+        if let Value::Complex(z) = value { return Ok((z.real, z.imag, true)); }
+        if matches!(value, Value::Object(_)) {
+            if consult_complex {
+                match self.special_call(value, 74, Vec::new())? {
+                    Some(Value::Complex(z)) => return Ok((z.real, z.imag, true)),
+                    Some(_) => return Err(self.special_fault()),
+                    None => {}
+                }
+            }
+            if let Some(Value::Complex(z)) = Self::worth_of(value) { return Ok((z.real, z.imag, true)); }
+            match self.special_call(value, 39, Vec::new())? {
+                Some(v @ Value::Real(_)) => return Ok((crate::complex::parts(&v).expect("real").0, 0.0, false)),
+                Some(_) => return Err(self.special_fault()),
+                None => {}
+            }
+            if let Some(whole) = self.special_index(value)? {
+                let Some((real, _)) = crate::complex::parts(&whole) else {
+                    return Err(crate::complex::fault(self.lang, "integer.overflow"));
+                };
+                return Ok((real, 0.0, false));
+            }
+            return Err(refused);
+        }
+        if let Some((real, imag)) = crate::complex::parts(value) { return Ok((real, imag, false)); }
+        Err(refused)
+    }
+
+    /// Whether a value answers to `__float__` or `__index__`, the two
+    /// number protocols that keep the complex constructor's "real"
+    /// deprecation quiet.
+    fn number_protocols(&self, value: &Value) -> bool {
+        self.special_value(value, 39).is_some() || self.special_value(value, 43).is_some()
+    }
+
+    /// The complex constructor's two-part road (two arguments, or the
+    /// `real` and `imag` keywords), where a complex standing for either
+    /// part is deprecated and warned, and each object is read by the
+    /// protocols it answers to.
+    fn complex_pair(&mut self, real: &Value, imag: &Value) -> Res<Value> {
+        let (rr, ri, real_complex) = self.complex_slot(real, "real", true)?;
+        let (ir, ii, imag_complex) = self.complex_slot(imag, "imag", false)?;
+        if real_complex && !self.number_protocols(real) {
+            self.deprecation_warning(&format!("complex() argument 'real' must be a real number, not {}", Self::shown_kind(real)))?;
+        }
+        if imag_complex {
+            self.deprecation_warning(&format!("complex() argument 'imag' must be a real number, not {}", Self::shown_kind(imag)))?;
+        }
+        let mut out_real = rr;
+        let mut out_imag = ir;
+        if imag_complex { out_real -= ii; }
+        if real_complex { out_imag += ri; }
+        Ok(crate::complex::made(self.lang, out_real, out_imag))
+    }
+
+    /// A DeprecationWarning said through the reference's warnings
+    /// module, so a filter the program set is honoured; one turning
+    /// the warning into an error raises it, as in the reference.
+    fn deprecation_warning(&mut self, message: &str) -> Res<()> {
+        let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
+        let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
+        let Some(kind_name) = self.lang.exceptions.get(26).cloned() else { return Ok(()) };
+        let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
+        let module = match self.import_module(&module_name) {
+            Ok(module) => module,
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        let teller = match self.class_get(module, &teller_name, false) {
+            Ok(teller) => teller.contents(),
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        let handed = vec![Value::text(message), category, Value::text("<string>"), Value::Small(1)];
+        match self.class_apply(teller, handed) {
+            Ok(_) => Ok(()),
+            Err(Fault::Note(told)) => Err(told),
+            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+        }
+    }
+
+    /// The complex constructor's road for calls that carry no keyword:
+    /// no argument is nought, two is the warned pair road, and one
+    /// parses a string, keeps a complex as itself, reads a number, and
+    /// refuses anything else by name.
+    fn complex_make(&mut self, values: &[Value]) -> Res<Value> {
+        if values.is_empty() { return Ok(crate::complex::made(self.lang, 0.0, 0.0)); }
+        if values.len() > 2 { return Err(crate::complex::fault(self.lang, "arguments")); }
+        if values.len() == 2 { return self.complex_pair(&values[0], &values[1]); }
+        if matches!(&values[0], Value::Text(_) | Value::Huge(_)) { return crate::complex::construct(self.lang, values); }
+        if let Some((real, imag)) = crate::complex::parts(&values[0]) {
+            return Ok(if matches!(&values[0], Value::Complex(_)) { values[0].clone() } else { crate::complex::made(self.lang, real, imag) });
+        }
+        Err(format!("TypeError: complex() argument must be a string or a number, not {}", Self::shown_kind(&values[0])))
+    }
+
     /// A thing written to a format specification: by its own method,
     /// by the worth it keeps, or as its text where nothing was asked.
     fn special_format(&mut self, value: &Value, spec: &str) -> Res<String> {
@@ -6573,7 +6674,14 @@ impl<'a> Engine<'a> {
             Builtin::Complex if args.len() == 1 && matches!(&args[0], Value::Object(_)) => {
                 match self.special_call(&args[0], 74, Vec::new())? {
                     Some(answer @ Value::Complex(_)) => answer,
-                    Some(_) => return Err(self.special_fault()),
+                    Some(answer) => match Self::worth_of(&answer) {
+                        Some(Value::Complex(z)) => {
+                            let told = format!("__complex__ returned non-complex (type {}).  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python.", Self::shown_kind(&answer));
+                            self.deprecation_warning(&told)?;
+                            Value::Complex(z)
+                        }
+                        _ => return Err(self.special_fault()),
+                    },
                     None => match Self::worth_of(&args[0]).filter(|v| matches!(v, Value::Complex(_))) {
                         Some(value) => value,
                         None => {
@@ -10141,6 +10249,7 @@ impl<'a> Engine<'a> {
                     (Value::Small(x), Value::Small(y)) => x == y,
                     (Value::Huge(x), Value::Huge(y)) => Rc::ptr_eq(x, y),
                     (Value::Real(x), Value::Real(y)) => Rc::ptr_eq(x, y),
+                    (Value::Complex(x), Value::Complex(y)) => Rc::ptr_eq(x, y),
                     (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
                     (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
                     (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
@@ -11798,8 +11907,7 @@ impl<'a> Engine<'a> {
                 args[slot] = value;
                 present[slot] = true;
             }
-            if !present[1] { args.pop(); }
-            return crate::complex::construct(self.lang, &args);
+            return self.complex_pair(&args[0], &args[1]);
         }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let routed = self.lang.print_route.len() == 3;
@@ -11952,6 +12060,24 @@ impl<'a> Engine<'a> {
                     raised => { self.carried = Some(raised); String::new() },
                 }),
                 Value::Native(Builtin::AsReal, _) => Ok(converted),
+                _ => Err(self.lang.method_errors["arguments"].clone()),
+            };
+        }
+        if operation == "complex_from_number" {
+            if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let number = &args[0];
+            let converted = if matches!(receiver, Value::Native(Builtin::Complex, _)) && matches!(number.contents(), Value::Complex(_)) {
+                number.contents()
+            } else {
+                let (real, imag, _) = self.complex_slot(number, "number", true)?;
+                crate::complex::made(self.lang, real, imag)
+            };
+            return match receiver {
+                Value::Class(class) => self.class_make(class.clone(), vec![converted]).map_err(|fault| match fault {
+                    Fault::Note(message) => message,
+                    raised => { self.carried = Some(raised); String::new() },
+                }),
+                Value::Native(Builtin::Complex, _) => Ok(converted),
                 _ => Err(self.lang.method_errors["arguments"].clone()),
             };
         }
@@ -13567,7 +13693,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
-            Builtin::Complex => crate::complex::construct(self.lang, args)?,
+            Builtin::Complex => self.complex_make(args)?,
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
             // A method spelled with its class before it (float.fromhex,
             // int.__truediv__) is called on its first argument, as the
