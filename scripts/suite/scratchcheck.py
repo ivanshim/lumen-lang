@@ -1,5 +1,6 @@
 import os, sys, shutil, subprocess, pathlib, tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from stderr_record import measured_line
 # usage: scratchcheck.py <repo> <program.py>...   applies ci.yml's rule to each program on both kernels
 # One process per core (SUITE_JOBS to change), each in its own directory of links to the tree's
 # top level, so relative paths read as they do from the root in CI and files a program writes
@@ -20,9 +21,9 @@ def check(p, k):
         status, so, se = 124, "", "TIMEOUT"
     left = sorted(e.name for e in here.iterdir() if not e.is_symlink())
     shutil.rmtree(here)
-    first = se.splitlines()[0] if se.strip() else ""
+    first = measured_line(se)
     if out.exists(): ok = status == 0 and so == out.read_text()
-    elif err.exists(): ok = status != 0 and first == (err.read_text().splitlines() or [""])[0]
+    elif err.exists(): ok = status != 0 and first == measured_line(err.read_text())
     else: ok = False
     return ok, status, first, left
 
