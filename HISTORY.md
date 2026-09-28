@@ -2037,3 +2037,35 @@ Merged, the fifty files count 2411 on both stack8 and microcode7, up from
 2351 and 2349, with no passing test lost and the kernels agreeing on
 every file; microcode7's test_math and test_str were run whole on the
 build machine (79 and 125).
+
+### 1aj. Batch 20h merged as #515; batch 20i: ten branches, integrated by DeepSeek V4 Pro
+
+Pull request #515 merged into main as it stood.
+
+Batch 20i folds ten branches and is the first integration by a DeepSeek V4
+Pro worker, which resolved the merge conflicts and moved one record:
+small-misc makes assertWarns hand the warnings it does not claim back to the
+enclosing context, as CPython's main branch does since gh-143231 (the suite
+here is taken from main), so scratch/reader-tail/3 now opens with the
+SyntaxWarning that test_grammar's bare compile() calls raise. Two branches
+were written by GPT-6 Sol workers: fix/listcomps-source (test_listcomps 56
+to 68) and fix/builtin-exec (exec and eval keywords; test_builtin 85 to 90).
+Five were written by DeepSeek workers, V4 Pro and Flash: fix/syntax-rest
+(test_syntax 86 to 92), fix/small-misc (the 3.14 complex constructor and
+from_number; test_complex complete, test_opcodes, test_format, test_compare),
+fix/float-last (test_float 41 to 44), fix/dict-last (test_dict 115 to 129 on
+stack8 and 130 on microcode7) and fix/decorators-funcattrs (test_decorators
+13 to 16, test_funcattrs 33 to 38). Three were written by Kimi workers:
+fix/genexps-doctest, fix/small-compare-set (test_set complete, so
+scratch/reader-tail/4 becomes an empty .out) and fix/fs-dirs.
+
+The coordinator's count against 20h, not against the branches' older base,
+found one test lost in the merge: small-misc's complex constructor refused a
+string holding a lone surrogate and str subclasses, so test_str's
+test_codecs_errors failed on both kernels; fix/complex-str (a Sol worker)
+reads such strings through the string road again.
+
+Merged, the fifty files count 2470 on stack8 and 2471 on microcode7, up from
+2411 on both, with no passing test lost; the kernels differ only inside
+test_dict, which neither passes whole. microcode7's test_math and test_str
+were run whole on the build machine (79 and 125).
