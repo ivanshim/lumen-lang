@@ -5320,7 +5320,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |
-| `ext.syntax.map.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.map.unhashable` | - | - | `TypeError: cannot use '` `' as a dict key (unhashable type: '` `')` | - | - | - | - | - | - | - |
 | `ext.syntax.map.value_keys` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.names.shadow_builtins` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.set` | - | - | `true` | - | - | - | - | - | - | - |

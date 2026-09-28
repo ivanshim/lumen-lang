@@ -1172,6 +1172,17 @@ impl<'a> Engine<'a> {
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
+                // A class standing on a builtin kind reads that kind's
+                // own class method too, bound to the class itself, so
+                // that `dictlike.fromkeys` reaches `dict.fromkeys` and
+                // hands back a dictlike.
+                if self.lang.value_methods.get(name).map(String::as_str) == Some("fromkeys") {
+                    if let Some(base) = c.lineage.iter().find(|base| Self::own_kind(base).is_some()) {
+                        if self.loose_kind_member(&Value::Class(base.clone()), name).is_some() {
+                            return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                        }
+                    }
+                }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
                 // a thing's method is bound to the thing.
@@ -1211,8 +1222,17 @@ impl<'a> Engine<'a> {
                 let replaced = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, value)| value.clone());
                 if let Some(dictionary) = replaced {
                     let raw = Self::worth_of(&dictionary).unwrap_or(dictionary).contents();
-                    if let Value::Map(entries) = raw {
-                        if let Some((_, value)) = entries.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == name)) { return Ok(value.clone()); }
+                    // A namespace may be another thing's own fields,
+                    // shared by handing one `__dict__` to another; the
+                    // name is then read from those very fields.
+                    match raw {
+                        Value::Map(entries) => {
+                            if let Some((_, value)) = entries.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == name)) { return Ok(value.clone()); }
+                        }
+                        Value::Fields(view) => {
+                            if let Some((_, value)) = view.fields.borrow().iter().find(|(key, _)| key.as_str() == name) { return Ok(value.clone()); }
+                        }
+                        _ => {}
                     }
                 }
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
@@ -1236,6 +1256,12 @@ impl<'a> Engine<'a> {
                             if let Value::Complex(z)=worth.contents() {
                                 return Ok(crate::complex::real(if op=="real" {z.real} else {z.imag}));
                             }
+                        }
+                        // `fromkeys` belongs to the class, so a thing of
+                        // a mapping kind is handed over itself and not
+                        // its worth, that its own class may make it.
+                        if op == "fromkeys" {
+                            return Ok(Value::ValueMethod(Rc::new((subject.clone(), op))));
                         }
                         return Ok(Value::ValueMethod(Rc::new((worth,op))));
                     }
@@ -2217,10 +2243,28 @@ impl<'a> Engine<'a> {
                     }
                     return Ok(Value::Null);
                 }
+                // A value working is taken only when the worth the
+                // thing keeps answers to it: `__hash__`, for one, names
+                // a working a slice answers and a text does not, so a
+                // text asked through its base falls to the kind's own
+                // member below rather than to a working it refuses.
                 if let (Some(worth),Some(op))=(Self::worth_of(&subject),self.lang.value_methods.get(name).cloned()) {
-                    let mut positional=Vec::new();let mut named=Vec::new();
-                    for (key,v) in self.call_items(args)? {match key{Some(k)=>named.push((k,v)),None=>positional.push(v)}}
-                    return Ok(self.value_method(&worth,&op,positional,named)?);
+                    if crate::methods::answered(&worth,&op) {
+                        let mut positional=Vec::new();let mut named=Vec::new();
+                        for (key,v) in self.call_items(args)? {match key{Some(k)=>named.push((k,v)),None=>positional.push(v)}}
+                        return Ok(self.value_method(&worth,&op,positional,named)?);
+                    }
+                }
+                // A member the kind carries that no value working goes
+                // by, such as `__hash__` or `__eq__`, is the kind's own
+                // and is worked upon the worth the thing keeps -- the
+                // very reading `super().__hash__()` asks of the base.
+                if let Some(worth)=Self::worth_of(&subject) {
+                    if let Some(Value::ValueMethod(method))=self.builtin_member(&worth,name)? {
+                        let mut positional=Vec::new();let mut named=Vec::new();
+                        for (key,v) in self.call_items(args)? {match key{Some(k)=>named.push((k,v)),None=>positional.push(v)}}
+                        return Ok(self.value_method(&method.0,&method.1,positional,named)?);
+                    }
                 }
                 continue;
             }

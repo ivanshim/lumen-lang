@@ -1,1 +1,1 @@
-TypeError: unhashable type: 'list'
+TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')

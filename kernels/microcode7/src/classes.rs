@@ -1258,6 +1258,16 @@ impl<'a> Machine<'a> {
                         if let Some(entry) = Self::own_entry(base, key) {
                             return self.member_binding(entry, Some(instance.clone()), actual.clone());
                         }
+                        // A member a native forebear carries without
+                        // keeping an entry of its own, `__hash__` or
+                        // `__eq__` among them, is answered off the worth
+                        // the thing holds, which is what the base's own
+                        // reading of that name gives.
+                        if Self::native_beneath(base).is_some() {
+                            if let Some(worth) = Self::underlying(&instance) {
+                                if let Some(member) = self.attribute(&worth, key) { return Ok(member); }
+                            }
+                        }
                     }
                     passed |= Rc::ptr_eq(base, defining);
                 }
@@ -1395,6 +1405,17 @@ impl<'a> Machine<'a> {
             if self.table.single("ext.stmt.class.annotations")==Some(key){return self.blueprint_annotations(b);}
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
+            // A blueprint standing on a native kind reads that kind's
+            // own class method too, bound to the blueprint, so that
+            // `dictlike.fromkeys` reaches `dict.fromkeys` and hands
+            // back a dictlike.
+            if self.table.spells("ext.builtin.method.fromkeys", key) {
+                if let Some(base) = std::iter::once(b).chain(b.ancestry.iter()).find(|base| Self::native_word(base).is_some()) {
+                    if self.carried_by_kind(&Value::Blueprint(base.clone()), key).is_some() {
+                        return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+                    }
+                }
+            }
             if let Some(entry)=self.carried_by_kind(&value,key){return Ok(entry);}
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
@@ -1426,6 +1447,12 @@ impl<'a> Machine<'a> {
             if from_class.as_ref().map_or(false,|e|self.writes_too(e)){return self.member_binding(from_class.unwrap(),Some(value.clone()),t.blueprint().clone());}
             let dictionary = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
             if let Some(mapping) = dictionary {
+                // The namespace may be another thing's own holds, shared
+                // by handing one `__dict__` to another; the name is read
+                // out of those holds then.
+                if let Value::Attributes(view) = mapping.settled() {
+                    if let Some((_, held)) = view.holds.borrow().iter().find(|(name, _)| name.as_str() == key) { return Ok(held.clone()); }
+                }
                 let native = Self::underlying(&mapping).unwrap_or(mapping);
                 if let Value::Dict(entries) = native.settled() {
                     for (word, item) in entries.iter() {
@@ -1467,6 +1494,12 @@ impl<'a> Machine<'a> {
                         if let Value::Complex(pair)=under.settled() {
                             return Ok(crate::complex::decimal_value(if operation=="real"{pair.0}else{pair.1}));
                         }
+                    }
+                    // `fromkeys` belongs to the class, so a thing of a
+                    // mapping kind is handed over itself and not its
+                    // worth, that its own class may make it.
+                    if operation == "fromkeys" {
+                        return Ok(Value::Member(Rc::new(value.clone()),operation));
                     }
                     return Ok(Value::Member(Rc::new(under),operation));
                 }
@@ -2292,9 +2325,25 @@ impl<'a> Machine<'a> {
                         _ => Ok(Value::Nil),
                     };
                 }
+                // A value working is taken only where the worth answers
+                // to it: `__hash__`, for one, spells the working a slice
+                // answers and a text does not, so a text asked through
+                // its forebear falls to the kind's own member below
+                // rather than to a working that would refuse it.
                 if let (Some(under),Some(operation))=(Self::underlying(&receiver),Self::kind_method_named(self.table,key)) {
-                    let (given,named)=self.open_arguments(args)?;
-                    return self.value_member(&under,&operation,given,named);
+                    if crate::members::answers_to(&under,&operation) {
+                        let (given,named)=self.open_arguments(args)?;
+                        return self.value_member(&under,&operation,given,named);
+                    }
+                }
+                // A member the kind carries that no value working names,
+                // such as `__hash__` or `__len__`, is read off the worth
+                // the thing holds and worked there, as the base's own
+                // reading of the name gives it.
+                if let Some(under)=Self::underlying(&receiver) {
+                    if let Some(member)=self.attribute(&under,key) {
+                        return self.apply_class_member(member,args);
+                    }
                 }
                 continue;
             }
