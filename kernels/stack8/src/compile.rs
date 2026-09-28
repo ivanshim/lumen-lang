@@ -6270,12 +6270,17 @@ impl<'a> Compiler<'a> {
         let mut closing: Vec<String> = Vec::new();
         let began = self.pos;
         while !self.exhausted() {
+            let outside_function = self.piece().outermost || self.in_class_body();
             let token = self.look();
             if closing.is_empty() && (self.on_sep() || self.on_any(ends)
                 || matches!(token.shape, Shape::Open | Shape::Close)) {
                 break;
             }
             if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }
+            if !lang.syntax_members.is_empty() && outside_function && token.shape == Shape::Instr && Lang::spells(&lang.yield_words, &token.lexeme) {
+                let operation = if self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.yield_from_words, &self.look_ahead(1).lexeme) { "yield from" } else { "yield" };
+                return Err(format!("SyntaxError: '{operation}' outside function"));
+            }
             if token.shape == Shape::Sign {
                 if let Some(pair) = pairs.iter().find(|pair| pair.open == token.lexeme) {
                     closing.push(pair.close.clone());
@@ -6494,7 +6499,14 @@ impl<'a> Compiler<'a> {
                     rest = Some(formals.len());
                 }
                 let name = self.want_name("as a lambda parameter")?;
-                if formals.contains(&name) { return Err("Duplicate lambda parameter".to_string()); }
+                if formals.contains(&name) {
+                    let twice = &lang.parameters_duplicate;
+                    if !twice.is_empty() && !lang.syntax_members.is_empty() {
+                        self.pos -= 1;
+                        return Err(format!("{}{}{}", twice[0], name, twice.get(1).map_or("", String::as_str)));
+                    }
+                    return Err("Duplicate lambda parameter".to_string());
+                }
                 formals.push(name);
                 modes.push(mode);
                 if self.on_assign() {
@@ -6762,6 +6774,11 @@ impl<'a> Compiler<'a> {
                 .any(|p| self.at_symbol(&p.close));
             if closes || self.on_sep() || self.exhausted() || self.look().shape == Shape::Close
                 || self.on_any(&self.lang.block_intros) { break; }
+            // A yield expression joined by a comma it did not open is
+            // no element: the reference wants it parenthesised there.
+            if !self.lang.syntax_members.is_empty() && self.on_keyword(&self.lang.yield_words) {
+                return Err("SyntaxError: invalid syntax".into());
+            }
             if !self.tuple_piece(writable)? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
@@ -8366,6 +8383,9 @@ impl<'a> Compiler<'a> {
             self.piece().generator = true;
             let delegated = self.on_keyword(&lang.yield_from_words);
             if delegated { self.take(); }
+            if delegated && !lang.syntax_members.is_empty() && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest) {
+                return Err("SyntaxError: invalid syntax".into());
+            }
             let begin = self.mark();
             let outer_operand = std::mem::replace(&mut self.yield_operand, true);
             let ended = |r: &Self| r.on_sep() || r.exhausted() || r.look().shape == Shape::Close
@@ -8373,18 +8393,55 @@ impl<'a> Compiler<'a> {
                 || r.lang.array_brackets.as_ref().map_or(false, |g| r.at_symbol(&g.close));
             let mut count = 0;
             let mut tuple = false;
+            // A spread unpacks into the tuple a yield of several values
+            // yields, as it does into any display; a spread standing
+            // alone as the whole answer is refused below, as the
+            // reference refuses it.
+            let mut spread_seen = false;
+            let mut star_at = self.pos;
             if delegated || !ended(self) {
-                loop {
-                    self.expr(0)?;
-                    count += 1;
-                    if delegated || !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                let spread = !delegated && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
+                if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                self.expr(0)?;
+                if spread {
+                    self.act(Action::Unpack(1, Some(0)), 1);
+                    self.constant(Value::Small(0));
+                    self.act(Action::Apart, 2);
+                }
+                count += 1;
+                if !delegated && lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) {
                     tuple = true;
-                    self.take();
-                    if ended(self) { break; }
+                    if !spread { self.act(Action::MakeArray, 1); }
+                    loop {
+                        self.take();
+                        if ended(self) { break; }
+                        let spread = !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
+                        if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                        self.expr(0)?;
+                        count += 1;
+                        if spread {
+                            self.act(Action::Unpack(1, Some(0)), 1);
+                            self.constant(Value::Small(0));
+                            self.act(Action::Apart, 2);
+                        } else {
+                            self.act(Action::MakeArray, 1);
+                        }
+                        self.act(Action::TupleJoin, 2);
+                        if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    }
                 }
             }
             self.yield_operand = outer_operand;
             if !lang.syntax_members.is_empty() {
+                // A delegated yield answers one expression only: a comma
+                // past it parts no tuple of its, as a plain yield's does.
+                if delegated && lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) {
+                    return Err("SyntaxError: invalid syntax".into());
+                }
+                if spread_seen && !tuple {
+                    self.pos = star_at;
+                    return Err("SyntaxError: can't use starred expression here".into());
+                }
                 if let Some(message) = invalid {
                     let end = &self.tokens[self.pos - 1];
                     self.registry.stopped_end = end.column + end.lexeme.chars().count();
@@ -8394,7 +8451,10 @@ impl<'a> Compiler<'a> {
                 }
             }
             if lang.yield_suspends {
-                if tuple { self.act(Action::MakeTuple, count); }
+                if tuple {
+                    if spread_seen && lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1); }
+                    else { self.act(Action::MakeTuple, count); }
+                }
                 else if count == 0 { self.constant(Value::Null); }
                 self.act(if delegated { Action::Delegate } else { Action::Suspend }, 1);
             } else {
@@ -10400,6 +10460,13 @@ impl<'a> Compiler<'a> {
             } else if spread {
                 self.constant(Value::Flag(Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme)));
                 self.take();
+            }
+            if !self.lang.syntax_members.is_empty() && !spread {
+                let value_at = if labelled { self.pos + 2 } else { self.pos };
+                if self.tokens.get(value_at).map_or(false, |t| t.shape == Shape::Instr && Lang::spells(&self.lang.yield_words, &t.lexeme)) {
+                    self.pos = value_at;
+                    return Err("SyntaxError: invalid syntax".into());
+                }
             }
             if labelled { self.pos += 2; }
             self.expr(0)?;
