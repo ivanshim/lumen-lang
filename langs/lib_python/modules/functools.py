@@ -113,7 +113,20 @@ def singledispatch(func):
     raise 'NotImplementedError: singledispatch needs callable objects with attributes'
 
 def cmp_to_key(mycmp):
-    raise 'NotImplementedError: cmp_to_key needs object ordering methods'
+    class K:
+        def __init__(self, obj):
+            self.obj = obj
+        def __lt__(self, other):
+            return mycmp(self.obj, other.obj) < 0
+        def __gt__(self, other):
+            return mycmp(self.obj, other.obj) > 0
+        def __eq__(self, other):
+            return mycmp(self.obj, other.obj) == 0
+        def __le__(self, other):
+            return mycmp(self.obj, other.obj) <= 0
+        def __ge__(self, other):
+            return mycmp(self.obj, other.obj) >= 0
+    return K
 
 def _gt_from_lt(self, other):
     result = type(self).__lt__(self, other)

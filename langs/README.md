@@ -2339,7 +2339,8 @@ only. The extension labels so far, all from PHP:
   nothing where it opens with none.
 - `ext.builtin.core.integer`, `.not_iterator` and `.dict.sequence`
   hold words about a kind that cannot give an integer, a value that is
-  no cursor, and the numbered dictionary row that cannot give a pair.
+  no cursor, and the note left on a fault when a numbered dictionary
+  row cannot be read as a pair.
   `ext.builtin.core.power.integer` says that a modular power needs whole
   numbers. `ext.builtin.core.attribute.name` surrounds the kind of a
   field name which is not text.
@@ -4394,7 +4395,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.changed` | - | - | `RuntimeError: dictionary changed size during iteration` `RuntimeError: dictionary keys changed during iteration` `RuntimeError: dict mutated during update` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
-| `ext.builtin.core.dict.sequence` | - | - | `TypeError: cannot convert dictionary update sequence element #` ` to a sequence` | - | - | - | - | - | - | - |
+| `ext.builtin.core.dict.sequence` | - | - | `Cannot convert dictionary update sequence element #` ` to a sequence` | - | - | - | - | - | - | - |
 | `ext.builtin.core.empty` | - | - | `ValueError: ` `() iterable argument is empty` | - | - | - | - | - | - | - |
 | `ext.builtin.core.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.builtin.core.immutable` | - | - | `TypeError: '` `' object does not support item assignment` | - | - | - | - | - | - | - |
