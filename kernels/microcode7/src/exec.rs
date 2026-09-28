@@ -13537,6 +13537,24 @@ impl<'a> Machine<'a> {
                             // between the names, not in the value.
                             Some(Value::Shared(cell)) => cell.borrow().clone(),
                             Some(x) => x,
+                            // A namespace asked for its annotations
+                            // answers with a dictionary of its own,
+                            // worked out by its own __annotate__ where
+                            // it has one and empty where it has not, and
+                            // kept from then on.
+                            None if self.table.strings("ext.stmt.class.annotations").first().map_or(false, |word| word == &called) && self.namespace_holding(&Value::Thing(thing.clone())).is_some() => {
+                                let annotator_word = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
+                                let annotator = if annotator_word.is_empty() { None } else {
+                                    thing.holds.borrow().iter().find(|(n, _)| *n == annotator_word)
+                                        .map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() })
+                                };
+                                let made = match annotator {
+                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::Small(1)]).map_err(|fault| self.suspension_fault(fault))?,
+                                    _ => Value::Dict(Rc::new(Vec::new().into())),
+                                };
+                                thing.holds.borrow_mut().push((called.clone(), made.clone()));
+                                made
+                            }
                             // A namespace may answer for a name it has not,
                             // through the routine the table names for it.
                             None if self.table.single("ext.system.module.getattr").map_or(false, |word| thing.holds.borrow().iter().any(|(n, _)| n == word)) => {

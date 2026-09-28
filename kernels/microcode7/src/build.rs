@@ -2646,13 +2646,20 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
                 let earlier = std::mem::replace(&mut self.forbids_await, true);
                 self.advance();
-                self.need_word("as the type alias")?;
+                let alias = self.need_word("as the type alias")?;
                 self.type_names()?;
                 self.pending_types.clear();
                 self.need_assign("after the type alias")?;
-                self.put_by_annotation(&[])?;
+                // What the alias stands for is worked out only when it
+                // is asked for, since names in it need not mean anything
+                // yet: the name is bound to a routine answering it.
+                let made = self.routine(&alias, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
+                    let worth = if b.table.has_any("ext.op.tuple") { b.comma_value()? } else { b.expr(0)? };
+                    Ok(prim_call(Prim::Yield, vec![worth]))
+                });
                 self.forbids_await = earlier;
-                return Ok(constant(Value::Nil));
+                let thunk = made?;
+                return Ok(self.write(&alias, thunk));
             }
             if self.key("stmt.return") {
                 self.note_finally_word("return");
@@ -4236,11 +4243,16 @@ impl<'a> Builder<'a> {
         }
         let Some(sign_at) = sign_at else { return false; };
         // Bare names at the outer level of the target, before the sign.
+        // What stands between an annotation's mark and the sign is the
+        // annotation itself: its names bind nothing, as the reference
+        // reads them.
+        let mut annotated = false;
         depth.clear();
         for at in start..sign_at.min(end) {
             let word = &self.tokens[at];
+            if depth.is_empty() && word.shape == Shape::Sign && table.spells("ext.stmt.annotation", &word.lexeme) { annotated = true; }
             let after_mark = at > start && table.spells("op.pipe", &self.tokens[at - 1].lexeme);
-            if depth.is_empty() && word.shape == Shape::Bare && !table.keywords.contains(&word.lexeme) && !after_mark {
+            if depth.is_empty() && word.shape == Shape::Bare && !annotated && !table.keywords.contains(&word.lexeme) && !after_mark {
                 let next = &self.tokens[at + 1];
                 let within = table.spells("op.pipe", &next.lexeme)
                     || (next.shape == Shape::Sign && ["syntax.group.open", "syntax.array.open", "syntax.call.open"].iter().any(|label| table.spells(label, &next.lexeme)));
@@ -5986,7 +5998,10 @@ impl<'a> Builder<'a> {
                 match (self.on_assign(), manner) {
                     (true, 'v' | 'k') => return Err(wrong()),
                     (true, 'b') => optional = true,
-                    (false, 'b') if optional => return Err(wrong()),
+                    (false, 'b') if optional => {
+                        if table.has_any("ext.builtin.exceptions.syntax") { return Err("SyntaxError: parameter without a default follows parameter with a default".to_string()); }
+                        return Err(wrong());
+                    }
                     _ => {}
                 }
                 manners.push(manner);
@@ -6337,7 +6352,10 @@ impl<'a> Builder<'a> {
                     let hidden = self.gensym("spare");
                     before.push(Form::Write(hidden.clone(), Box::new(worth)));
                     spares.push((names.len() - 1, hidden));
-                } else if way == 'b' && default_seen { return Err(bad()); }
+                } else if way == 'b' && default_seen {
+                    if table.has_any("ext.builtin.exceptions.syntax") { return Err("SyntaxError: parameter without a default follows parameter with a default".to_string()); }
+                    return Err(bad());
+                }
             }
             if !self.sign(colon) { self.need_sign(comma, "between lambda parameters")?; }
         }
