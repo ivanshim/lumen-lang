@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+UnicodeDecodeError: 'utf-8' codec can't decode bytes in position 0-1: unexpected end of data

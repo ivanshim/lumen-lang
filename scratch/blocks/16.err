@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+TypeError: 'list' object does not support the context manager protocol (missed __exit__ method)

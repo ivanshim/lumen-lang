@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+TypeError: multiple values for argument 'x'

@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+TypeError: unsupported operand type(s) for +: 'A' and 'B'

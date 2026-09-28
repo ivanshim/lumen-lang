@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+AttributeError: property 'x' of 'C' object has no setter

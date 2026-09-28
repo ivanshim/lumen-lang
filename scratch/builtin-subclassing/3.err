@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+TypeError: multiple bases have instance lay-out conflict

@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+TypeError: abs() takes exactly one argument (0 given)

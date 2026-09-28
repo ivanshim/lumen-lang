@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+TypeError: cannot create weak reference to 'list' object

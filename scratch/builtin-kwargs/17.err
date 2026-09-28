@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+TypeError: sep must be None or a string
