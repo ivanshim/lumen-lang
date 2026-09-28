@@ -2806,6 +2806,10 @@ impl<'a> Builder<'a> {
                     false => self.tokens[named_at].lexeme.clone(),
                     true => {
                         self.advance();
+                        if self.table.has_any("ext.builtin.exceptions.syntax")
+                            && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
+                            return Err(String::from("SyntaxError: cannot use literal as import target"));
+                        }
                         let binding = self.look().lexeme.clone();
                         self.module_path(false)?;
                         binding

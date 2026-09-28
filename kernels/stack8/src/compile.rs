@@ -2992,6 +2992,9 @@ impl<'a> Compiler<'a> {
                 let aliased = self.on_keyword(&lang.import_as_words);
                 if self.on_keyword(&lang.import_as_words) {
                     self.take();
+                    if !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) {
+                        return Err("SyntaxError: cannot use literal as import target".into());
+                    }
                     bound = self.look().lexeme.clone();
                     self.import_name(false)?;
                 }
