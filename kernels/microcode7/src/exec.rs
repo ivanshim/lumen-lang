@@ -7776,18 +7776,38 @@ impl<'a> Machine<'a> {
             let mark = match using { Value::Nil => item.clone(), work => self.core_run(work, vec![item.clone()])? };
             weighed.push((mark, item));
         }
-        let mut placed: Vec<(Value, Value)> = Vec::with_capacity(weighed.len());
-        for pair in weighed {
-            let mut at = placed.len();
-            while at != 0 {
-                let both = if reverse { [placed[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), placed[at-1].0.clone()] };
-                let below = self.prim(Prim::Lt, "", &both)?;
-                if !self.object_truth(&below)? { break; }
-                at -= 1;
+        self.arrange_sort(&mut weighed, reverse)?;
+        Ok(weighed.into_iter().map(|entry| entry.1).collect())
+    }
+
+    /// A steady merge sort: members are split, each half ordered, and
+    /// then merged back so that equal weights keep the order they had.
+    /// The comparison asks whether the element that should move forward
+    /// is below the other, matching the order the old insertion sort
+    /// used and the messages CPython gives for incomparable keys.
+    fn arrange_sort(&mut self, weighed: &mut [(Value, Value)], reverse: bool) -> Result<(), String> {
+        let len = weighed.len();
+        if len <= 1 { return Ok(()); }
+        let mid = len / 2;
+        self.arrange_sort(&mut weighed[..mid], reverse)?;
+        self.arrange_sort(&mut weighed[mid..], reverse)?;
+        let mut merged = Vec::with_capacity(len);
+        let (mut i, mut j) = (0, mid);
+        while i < mid && j < len {
+            let both = if reverse { [weighed[i].0.clone(), weighed[j].0.clone()] } else { [weighed[j].0.clone(), weighed[i].0.clone()] };
+            let below = self.prim(Prim::Lt, "", &both)?;
+            if self.object_truth(&below)? {
+                merged.push(weighed[j].clone());
+                j += 1;
+            } else {
+                merged.push(weighed[i].clone());
+                i += 1;
             }
-            placed.insert(at, pair);
         }
-        Ok(placed.into_iter().map(|entry| entry.1).collect())
+        while i < mid { merged.push(weighed[i].clone()); i += 1; }
+        while j < len { merged.push(weighed[j].clone()); j += 1; }
+        for (at, pair) in merged.into_iter().enumerate() { weighed[at] = pair; }
+        Ok(())
     }
 
     /// Which of a stepped walk's three numbers this word asks for,
@@ -14416,7 +14436,7 @@ impl<'a> Machine<'a> {
                 let mut here = of;
                 while let Some(class) = here {
                     let names: Vec<String> = match op {
-                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).chain(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Bound(..) | Value::Adorned(_) | Value::Wrapped(..))).map(|(n,_)| n.clone())).collect(),
+                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).chain(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Bound(..) | Value::Adorned(_) | Value::Wrapped(..) | Value::Method(..))).map(|(n,_)| n.clone())).collect(),
                         _ => class.fields.iter().map(|(called, _)| crate::data::holder_of(called).0.to_string()).collect(),
                     };
                     for called in names {
@@ -15111,6 +15131,22 @@ impl<'a> Machine<'a> {
                 if !self.table.has_any("op.concat") && (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_))) =>
             {
                 Value::text(&format!("{}{}", v[0].render(w), v[1].render(w)))
+            }
+            Prim::Times if self.table.flag("ext.builtin.text.repeat") && v.iter().any(|x| matches!(x,Value::Unpaired(_))) => {
+                let (numbers, multiplier) = match (&v[0],&v[1]) { (Value::Unpaired(t),x)|(x,Value::Unpaired(t)) => (t,x), _ => unreachable!() };
+                let number = match multiplier {
+                    Value::Flag(b) => if *b { 1 } else { 0 }, Value::Small(i) => *i,
+                    Value::Huge(i) => i.to_i64().unwrap_or_else(|| if **i < BigInt::from(0) { i64::MIN } else { i64::MAX }),
+                    _ => return Err(crate::text::complaint(self.table,"integer").into()),
+                };
+                if number == 1 { return Ok(Value::Unpaired(numbers.clone())); }
+                let mut repeated = Vec::new();
+                if number > 0 && !numbers.is_empty() {
+                    let length = (number as usize).checked_mul(numbers.len()).ok_or_else(||crate::text::complaint(self.table,"room"))?;
+                    repeated.try_reserve(length).map_err(|_|String::from("MemoryError: "))?;
+                    for _ in 0..number { repeated.extend(numbers.iter().copied()); }
+                }
+                Value::characters(repeated)
             }
             Prim::Times if self.table.flag("ext.builtin.text.repeat") && v.iter().any(|x| matches!(x,Value::Text(_))) => {
                 let (word, multiplier) = match (&v[0],&v[1]) { (Value::Text(t),x)|(x,Value::Text(t)) => (t,x), _ => unreachable!() };

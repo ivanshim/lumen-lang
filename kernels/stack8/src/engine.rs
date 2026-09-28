@@ -10655,6 +10655,18 @@ impl<'a> Engine<'a> {
                 };
                 Value::Flag(found != matches!(op, Action::Lacks))
             }
+            Action::Mul if self.lang.text_repeat && (matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_))) => {
+                let (codes, times) = match (a, b) { (Value::Codepoints(s), n) | (n, Value::Codepoints(s)) => (s, n), _ => unreachable!() };
+                let times = match times { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().unwrap_or(if n.sign() == num_bigint::Sign::Minus { i64::MIN } else { i64::MAX }), _ => return Err(crate::strings::fault(self.lang,"integer")) };
+                if times == 1 { return Ok(Value::Codepoints(codes.clone())); }
+                let mut result = Vec::new();
+                if times > 0 && !codes.is_empty() {
+                    let size = codes.len().checked_mul(times as usize).ok_or_else(|| crate::strings::fault(self.lang,"room"))?;
+                    result.try_reserve(size).map_err(|_| "MemoryError: ".to_string())?;
+                    for _ in 0..times { result.extend(codes.iter().copied()); }
+                }
+                Value::Codepoints(Rc::new(result))
+            }
             Action::Mul if self.lang.text_repeat && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_))) => {
                 let (text, times) = match (a,b) { (Value::Text(s), n) | (n,Value::Text(s)) => (s,n), _ => unreachable!() };
                 let times = match times { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().unwrap_or(if n.sign() == num_bigint::Sign::Minus { i64::MIN } else { i64::MAX }), _ => return Err(crate::strings::fault(self.lang,"integer")) };
@@ -12898,17 +12910,38 @@ impl<'a> Engine<'a> {
             let rank = if matches!(key, Value::Null) { item.clone() } else { self.core_apply(key, vec![item.clone()])? };
             ranked.push((rank, item));
         }
-        for at in 1..ranked.len() {
-            let mut place = at;
-            while place > 0 {
-                let (left, right) = if backwards { (ranked[place-1].0.clone(), ranked[place].0.clone()) } else { (ranked[place].0.clone(), ranked[place-1].0.clone()) };
-                let below = self.special_dyad(&Action::Lt, &left, &right)?;
-                if !self.special_truth(&below)? { break; }
-                ranked.swap(place, place - 1);
-                place -= 1;
+        self.steady_sort(&mut ranked, backwards)?;
+        Ok(ranked.into_iter().map(|(_, item)| item).collect())
+    }
+
+    /// A steady merge sort: members are split, each half ordered, and
+    /// then merged back so that equal weights keep the order they had.
+    /// The comparison asks whether the element that should move forward
+    /// is below the other, matching the order the old insertion sort
+    /// used and the messages CPython gives for incomparable keys.
+    fn steady_sort(&mut self, ranked: &mut [(Value, Value)], backwards: bool) -> Res<()> {
+        let len = ranked.len();
+        if len <= 1 { return Ok(()); }
+        let mid = len / 2;
+        self.steady_sort(&mut ranked[..mid], backwards)?;
+        self.steady_sort(&mut ranked[mid..], backwards)?;
+        let mut merged = Vec::with_capacity(len);
+        let (mut i, mut j) = (0, mid);
+        while i < mid && j < len {
+            let (left, right) = if backwards { (&ranked[i].0, &ranked[j].0) } else { (&ranked[j].0, &ranked[i].0) };
+            let below = self.special_dyad(&Action::Lt, left, right)?;
+            if self.special_truth(&below)? {
+                merged.push(ranked[j].clone());
+                j += 1;
+            } else {
+                merged.push(ranked[i].clone());
+                i += 1;
             }
         }
-        Ok(ranked.into_iter().map(|(_, item)| item).collect())
+        while i < mid { merged.push(ranked[i].clone()); i += 1; }
+        while j < len { merged.push(ranked[j].clone()); j += 1; }
+        for (at, pair) in merged.into_iter().enumerate() { ranked[at] = pair; }
+        Ok(())
     }
 
     fn integer_call(&mut self, args: &[Value]) -> Res<Value> {
@@ -15085,7 +15118,7 @@ impl<'a> Engine<'a> {
                 let mut here = of;
                 while let Some(class) = here {
                     match builtin {
-                        Builtin::ClassMethods => { named.extend(class.methods.iter().map(|(n, _)| n.clone())); named.extend(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Descriptor(_) | Value::Adapter(_))).map(|(n,_)| n.clone())); },
+                        Builtin::ClassMethods => { named.extend(class.methods.iter().map(|(n, _)| n.clone())); named.extend(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Descriptor(_) | Value::Adapter(_) | Value::Method(..))).map(|(n,_)| n.clone())); },
                         _ => named.extend(class.fields.iter().map(|(n, _)| crate::value::who_keeps(n).0.to_string())),
                     }
                     here = class.base.clone();
