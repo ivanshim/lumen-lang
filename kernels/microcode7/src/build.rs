@@ -2979,6 +2979,9 @@ impl<'a> Builder<'a> {
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
+            if !enclosed && table.has_any("ext.builtin.exceptions.syntax") && self.on_any("block.intro") {
+                return Err("SyntaxError: the last 'with' item has a trailing comma".to_owned());
+            }
             if enclosed && self.sign(close) { break; }
         }
         if enclosed { self.need_sign(close, "after the with items")?; }

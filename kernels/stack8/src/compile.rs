@@ -2492,6 +2492,9 @@ impl<'a> Compiler<'a> {
             } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
             self.take();
+            if !bracketed && !lang.syntax_members.is_empty() && self.on_any(&lang.block_intros) {
+                return Err("SyntaxError: the last 'with' item has a trailing comma".into());
+            }
             if bracketed && self.at_symbol(&group.close) { break; }
         }
         if bracketed { self.want_sign(&group.close, "after the with items")?; }
