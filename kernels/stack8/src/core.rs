@@ -70,6 +70,8 @@ impl Value {
             },
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
+            Value::Adapter(w) if w.0 == 4 => "staticmethod",
+            Value::Adapter(w) if w.0 == 5 => "classmethod",
             Value::Adapter(w) if w.0 == 31 => "cell",
             Value::Adapter(w) if w.0 == 7 => "code",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",

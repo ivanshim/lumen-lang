@@ -4424,8 +4424,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.delattr` | - | - | `delattr` | - | - | - | - | - | - | - |
 | `ext.builtin.dict` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.dir` | - | - | `dir` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.change` | - | - | `__change_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.list` | - | - | `__list_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.make` | - | - | `__make_dir` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.make_one` | - | - | `__make_dir_one` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.remove_tree` | - | - | `__remove_tree` | - | - | - | - | - | - | - |
 | `ext.builtin.divmod` | - | - | `divmod` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
@@ -5001,13 +5003,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.pow.real_exponent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.pow.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
 | `ext.op.quot.real_zero` | - | - | `ZeroDivisionError: float floor division by zero` | - | - | - | - | - | - | - |
-| `ext.op.quot.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
+| `ext.op.quot.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | `Only variable references should be returned by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.byte` | - | - | `TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '` `'` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.byte` | - | - | `TypeError: format argument` `: %b requires a bytes-like object, or an object that implements __bytes__, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character` | - | - | `TypeError: format argument` `: %c requires ` `, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character.range` | - | - | `OverflowError: format argument` `: %c argument not in range(` `)` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.code` | - | - | `ValueError: unsupported format %` ` at position ` | - | - | - | - | - | - | - |
@@ -5110,6 +5112,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.delete` | - | - | `__delete__` | - | - | - | - | - | - | - |
@@ -5161,6 +5164,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.slots` | - | - | `__slots__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.subclass` | - | - | `__init_subclass__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.text.amiss` | - | - | `TypeError: ` ` must be set to a string object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.type_params` | - | - | `__type_params__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
@@ -5320,7 +5324,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |
-| `ext.syntax.map.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.map.unhashable` | - | - | `TypeError: cannot use '` `' as a dict key (unhashable type: '` `')` | - | - | - | - | - | - | - |
 | `ext.syntax.map.value_keys` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.names.shadow_builtins` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.set` | - | - | `true` | - | - | - | - | - | - | - |

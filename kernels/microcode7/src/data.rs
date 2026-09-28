@@ -1385,6 +1385,10 @@ impl Value {
                 },
                 _ => "<member wrapper>".into(),
             },
+            // Both wrapper kinds are written as the wrapping builtin
+            // around the routine they hold, as CPython writes them.
+            Value::Wrapped(4, parts) => format!("<staticmethod({})>", parts[0].bare()),
+            Value::Wrapped(5, parts) => format!("<classmethod({})>", parts[0].bare()),
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);
@@ -1653,10 +1657,16 @@ impl Thing {
     /// The entries a program can see, as the dictionary of them: none
     /// that is unset, and none under a name no program can spell.
     pub fn entries_shown(&self) -> Value {
-        let pairs = self.holds.borrow().iter()
+        let holds = self.holds.borrow();
+        let mut pairs: Vec<(Value, Value)> = holds.iter()
             .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0'))
             .map(|(name, v)| (Value::text(name), v.clone())).collect();
-        Value::Dict(Rc::new(pairs))
+        // Keys of any other kind are kept beside the names under the
+        // hidden name `\0keys` and shown with them.
+        if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
+            pairs.extend(extra.iter().cloned());
+        }
+        Value::Dict(Rc::new(pairs.into()))
     }
 }
 

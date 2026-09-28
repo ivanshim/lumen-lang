@@ -596,6 +596,9 @@ impl Writer<'_> {
             let result = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
                 let shown = match asked(value, code, false)? {
                     Answer::Said(said) => said,
+                    Answer::Unsaid if of_bytes && matches!(code, 'b' | 's') => {
+                        return Err(self.fault("ext.op.rem.format.byte", &[&location, self.kind(value)]));
+                    }
                     Answer::Unsaid if code == 's' && matches!(value, Value::Text(_)) => self.representation_plain(value)?,
                     Answer::Unsaid => self.representation(value, code == 'a')?,
                     _ => unreachable!(),

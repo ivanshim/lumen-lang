@@ -145,7 +145,7 @@ vars = vars
 # the answer falls back on what the reader would have seeded: there is
 # no switch in this runtime that turns the checks off, so it is always
 # true.
-__debug__ = globals().get('__debug__', True)
+setattr(__load_module('builtins'), '__debug__', globals().get('__debug__', True))
 
 # True, False, None, Ellipsis, bytes and bytearray are words the reader
 # knows rather than names it can be asked for, so none of them can stand
@@ -190,10 +190,29 @@ class sentinel:
         if shown is not None and not isinstance(shown, str):
             raise TypeError("sentinel() argument 'repr' must be str or None, not " + type(shown).__name__)
         made = super().__new__(cls)
-        made.__name__ = given[0]
-        made.__module__ = 'builtins'
-        made._shown = shown
+        object.__setattr__(made, '__name__', given[0])
+        object.__setattr__(made, '__module__', 'builtins')
+        object.__setattr__(made, '_shown', shown)
         return made
+
+    def __getattribute__(self, name):
+        if name == '__module__':
+            missing = object()
+            value = object.__getattribute__(self, '__dict__').get(name, missing)
+            if value is missing:
+                raise AttributeError(name)
+            return value
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name, value):
+        if name != '__module__':
+            raise AttributeError(name)
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        if name != '__module__':
+            raise AttributeError(name)
+        object.__delattr__(self, name)
 
     def __init__(self, *given, **named):
         pass
@@ -232,6 +251,18 @@ class sentinel:
 # short of changing it. Nothing stops a program writing into the
 # dictionary it holds by reaching for the member it is kept under, so
 # this is an immutable mapping by manner rather than by construction.
+def _frozen_key(key):
+    # A key the mapping cannot hold is refused with the words the
+    # reference gives it, naming the kind of the key and the kind of the
+    # mapping; anything else the key's own hash raises is left as it is.
+    try:
+        hash(key)
+    except TypeError:
+        name = type(key).__name__
+        raise TypeError("cannot use '%s' as a frozendict key (unhashable type: '%s')" % (name, name))
+    return key
+
+
 class frozendict:
     def __reduce_ex__(self, protocol):
         if protocol < 2:
@@ -267,7 +298,7 @@ class frozendict:
         pass
 
     def __getitem__(self, key):
-        return self._rows[key]
+        return self._rows[_frozen_key(key)]
 
     def __len__(self):
         return len(self._rows)
@@ -276,7 +307,7 @@ class frozendict:
         return iter(self._rows)
 
     def __contains__(self, key):
-        return key in self._rows
+        return _frozen_key(key) in self._rows
 
     def __eq__(self, other):
         if isinstance(other, frozendict):
@@ -286,13 +317,15 @@ class frozendict:
         return NotImplemented
 
     # The rows are gathered in whatever order they were written in, so
-    # the hash is made by mixing each pair on its own and folding the
-    # results together in a way that does not mind the order.
+    # the hash is that of the set of pairs, which does not mind the
+    # order and gives the reference's own answer.
     def __hash__(self):
-        folded = 0
+        # A pair that will not hash is told of by its own parts first,
+        # so the kind named is the one within the pair and not the pair
+        # itself; the set of pairs then gives the reference's own answer.
         for key in self._rows:
-            folded ^= hash(key) * 1000003 ^ hash(self._rows[key])
-        return folded
+            hash((key, self._rows[key]))
+        return hash(frozenset(self._rows.items()))
 
     def __repr__(self):
         if not self._rows:
@@ -300,12 +333,17 @@ class frozendict:
         return type(self).__name__ + "(" + repr(self._rows) + ")"
 
     def __or__(self, other):
+        source = other
         if isinstance(other, frozendict):
             other = other._rows
         elif not isinstance(other, dict):
             return NotImplemented
         if not other and type(self) is frozendict:
             return self
+        # An empty frozendict on the left leaves the right one standing,
+        # so `frozendict() | fd` is `fd` itself.
+        if not self._rows and type(self) is frozendict and type(source) is frozendict:
+            return source
         return frozendict(self._rows | other)
 
     def __ror__(self, other):
@@ -325,7 +363,7 @@ class frozendict:
         return self._rows.items()
 
     def get(self, key, otherwise=None):
-        return self._rows.get(key, otherwise)
+        return self._rows.get(_frozen_key(key), otherwise)
 
     # One already frozen needs no copy; anything standing on it does.
     def copy(self):
@@ -335,7 +373,17 @@ class frozendict:
 
     @classmethod
     def fromkeys(cls, keys, value=None):
+        # The class's own making with no arguments may answer with a
+        # value of another kind; its rows start the answer, the keys
+        # given join them, and the answer is built by the class asked.
         rows = {}
+        seed = cls()
+        if isinstance(seed, frozendict):
+            for key in seed._rows:
+                rows[key] = seed._rows[key]
+        elif isinstance(seed, dict):
+            for key in seed:
+                rows[key] = seed[key]
         for key in keys:
             rows[key] = value
         return cls(rows)
@@ -562,10 +610,27 @@ def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None,
     return _HostFile(file, mode, encoding, errors)
 
 
+# A view over a row of bytes. CPython's memoryview speaks the buffer
+# protocol and keeps no __bytes__ of its own; here the same answer is
+# reached through an ordinary __bytes__ method, which is what the bytes
+# formatting below and int.from_bytes both ask a thing for first.
+class memoryview:
+    def __init__(self, object):
+        if not isinstance(object, bytes) and not isinstance(object, bytearray):
+            raise TypeError("memoryview: a bytes-like object is required, not " + type(object).__name__)
+        self._object = object
+
+    def __bytes__(self):
+        return bytes(self._object)
+
+    def __repr__(self):
+        return "<memory at 0x%x>" % id(self)
+
+
 # What CPython's builtins holds and this one does not, so that a reader
 # looking for a missing name learns it is missing rather than broken.
 # There is no object behind any of these here: aiter, anext, ascii,
-# copyright, credits, exit, help, license, memoryview,
+# copyright, credits, exit, help, license,
 # quit, __build_class__, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
 # IndentationError, TabError, and the OSError kinds

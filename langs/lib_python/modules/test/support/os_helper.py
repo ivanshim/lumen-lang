@@ -1,13 +1,102 @@
 import os
+import warnings
+from contextlib import contextmanager
+from shutil import rmtree as _rmtree
 
 # The name CPython's tests give the one scratch file they write.
 TESTFN = '@test'
 
-def temp_dir(path=None, quiet=False):
-    raise 'NotImplementedError: temporary directories are not supported'
+def rmtree(path):
+    try:
+        _rmtree(path)
+    except FileNotFoundError:
+        pass
 
+@contextmanager
+def temp_dir(path=None, quiet=False):
+    """Return a context manager that creates a temporary directory.
+
+    Arguments:
+
+      path: the directory to create temporarily.  If omitted or None,
+        defaults to creating a temporary directory using tempfile.mkdtemp.
+
+      quiet: if False (the default), the context manager raises an exception
+        on error.  Otherwise, if the path is specified and cannot be
+        created, only a warning is issued.
+
+    """
+    import tempfile
+    dir_created = False
+    if path is None:
+        path = tempfile.mkdtemp()
+        dir_created = True
+        path = os.path.realpath(path)
+    else:
+        try:
+            os.mkdir(path)
+            dir_created = True
+        except OSError as exc:
+            if not quiet:
+                raise
+            warnings.warn('tests may fail, unable to create '
+                          'temporary directory %r: %s' % (path, exc),
+                          RuntimeWarning, stacklevel=3)
+    if dir_created:
+        pid = os.getpid()
+    try:
+        yield path
+    finally:
+        # In case the process forks, let only the parent remove the
+        # directory. The child has a different process id. (bpo-30028)
+        if dir_created and pid == os.getpid():
+            rmtree(path)
+
+@contextmanager
+def change_cwd(path, quiet=False):
+    """Return a context manager that changes the current working directory.
+
+    Arguments:
+
+      path: the directory to use as the temporary current working directory.
+
+      quiet: if False (the default), the context manager raises an exception
+        on error.  Otherwise, it issues only a warning and keeps the current
+        working directory the same.
+
+    """
+    saved_dir = os.getcwd()
+    try:
+        os.chdir(os.path.realpath(path))
+    except OSError as exc:
+        if not quiet:
+            raise
+        warnings.warn('tests may fail, unable to change the current working '
+                      'directory to %r: %s' % (path, exc),
+                      RuntimeWarning, stacklevel=3)
+    try:
+        yield os.getcwd()
+    finally:
+        os.chdir(saved_dir)
+
+@contextmanager
 def temp_cwd(name='tempcwd', quiet=False):
-    raise 'NotImplementedError: changing directory is not supported'
+    """
+    Context manager that temporarily creates and changes the CWD.
+
+    The function temporarily changes the current working directory
+    after creating a temporary directory in the current directory with
+    name *name*.  If *name* is None, the temporary directory is
+    created using tempfile.mkdtemp.
+
+    If *quiet* is False (default) and it is not possible to
+    create or change the CWD, an error is raised.  If *quiet* is True,
+    only a warning is raised and the original CWD is used.
+
+    """
+    with temp_dir(path=name, quiet=quiet) as temp_path:
+        with change_cwd(temp_path, quiet=quiet) as cwd_dir:
+            yield cwd_dir
 
 def unlink(filename):
     try:

@@ -3,4 +3,4 @@
 True
 unhashable type: 'list'
 unhashable type: 'list'
-unhashable type: 'list'
+cannot use 'tuple' as a dict key (unhashable type: 'list')

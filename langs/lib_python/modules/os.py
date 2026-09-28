@@ -5,6 +5,7 @@ _host_file_kind = __file_kind
 # The path rules below are POSIX rules. Host facts are read afresh.
 name = 'posix'
 sep = '/'
+extsep = '.'
 altsep = None
 linesep = '\n'
 curdir = '.'
@@ -20,6 +21,12 @@ def getcwd():
     if directory is None:
         raise 'OSError: working directory is unavailable'
     return directory
+
+def chdir(path):
+    if not __change_dir(path):
+        if not _host_file_exists(path):
+            raise FileNotFoundError(2, 'No such file or directory', path)
+        raise OSError(20, 'Not a directory', path)
 
 def getpid():
     # Stub: no real process identity is promised.
@@ -38,7 +45,12 @@ def listdir(path='.'):
     return entries
 
 def mkdir(path, mode=511, *, dir_fd=None):
-    raise 'NotImplementedError: os.mkdir is not supported'
+    if dir_fd is not None:
+        raise 'NotImplementedError: os.mkdir directory descriptors are not supported'
+    if not __make_dir_one(path):
+        if _host_file_exists(path):
+            raise OSError(17, 'File exists', path)
+        raise FileNotFoundError(2, 'No such file or directory', path)
 
 def remove(path, *, dir_fd=None):
     if dir_fd is not None:
@@ -125,5 +137,11 @@ class _Path:
         for part in parts:
             answer += '/' + part
         return answer if answer else '/'
+
+    def realpath(self, path):
+        # The host gives no way to follow a link, so the answer is
+        # the path made absolute and tidy, which is the whole of it
+        # for a file a run has made itself.
+        return self.abspath(path)
 
 path = _Path()

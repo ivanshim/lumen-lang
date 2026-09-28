@@ -580,6 +580,12 @@ pub enum Builtin {
     DirList,
     DirMake,
     DirGone,
+    /// One directory made to stand where the path given says, with
+    /// none made along the way to it (ext.builtin.dir.make_one).
+    DirMakeOne,
+    /// The directory this run works inside moved to the one the path
+    /// given names (ext.builtin.dir.change).
+    DirChange,
     /// The fault being handled, as its kind's name and its words.
     FaultInHand,
     /// The raised value the innermost clause is holding, itself and
@@ -883,6 +889,18 @@ pub struct Routine {
     /// inside one: what a class keeps to itself is reached from here and
     /// nowhere else.
     pub within: Option<Rc<str>>,
+    /// The names a declaration wrote between brackets for its type
+    /// parameters, in the order they were written. Empty where it
+    /// wrote none, from which the row of type parameters is made
+    /// the first time it is asked for.
+    pub type_params: Vec<String>,
+    /// The dictionary of outermost names a routine built by hand was
+    /// handed, where one was. Nothing for every routine the program
+    /// wrote out under a name, whose names stand where it was read.
+    pub globe: Option<Value>,
+    /// The builtins in force where such a routine was built, kept for
+    /// the case that its own dictionary names none of its own.
+    pub born: Option<Value>,
     /// The line the program was written on, which a fault raised on the
     /// way into it names: such a fault belongs where the program is
     /// written and not where the call stood.

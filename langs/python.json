@@ -78,6 +78,12 @@
   "ext.builtin.dir.make": [
     "__make_dir"
   ],
+  "ext.builtin.dir.make_one": [
+    "__make_dir_one"
+  ],
+  "ext.builtin.dir.change": [
+    "__change_dir"
+  ],
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
@@ -2345,14 +2351,14 @@
     "ZeroDivisionError: float floor division by zero"
   ],
   "ext.op.quot.zero": [
-    "ZeroDivisionError: integer division or modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"
   ],
   "ext.op.rem.format.byte": [
-    "TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '",
-    "'"
+    "TypeError: format argument",
+    ": %b requires a bytes-like object, or an object that implements __bytes__, not "
   ],
   "ext.op.rem.format.character": [
     "TypeError: format argument",
@@ -2613,6 +2619,9 @@
   "ext.stmt.class.detail.defaults": [
     "__defaults__"
   ],
+  "ext.stmt.class.detail.type_params": [
+    "__type_params__"
+  ],
   "ext.stmt.class.detail.doc": [
     "__doc__"
   ],
@@ -2766,6 +2775,9 @@
   ],
   "ext.stmt.class.detail.code.amiss": [
     "TypeError: __code__ must be set to a code object"
+  ],
+  "ext.stmt.class.detail.code.mismatch": [
+    "code object of non-matching type"
   ],
   "ext.stmt.class.detail.code.free": [
     "ValueError: ",
@@ -3330,8 +3342,9 @@
     "RuntimeError: dictionary changed size during iteration"
   ],
   "ext.syntax.map.unhashable": [
-    "TypeError: unhashable type: '",
-    "'"
+    "TypeError: cannot use '",
+    "' as a dict key (unhashable type: '",
+    "')"
   ],
   "ext.syntax.map.value_keys": true,
   "ext.syntax.names.shadow_builtins": true,
