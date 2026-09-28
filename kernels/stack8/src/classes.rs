@@ -128,6 +128,21 @@ impl<'a> Engine<'a> {
         } {
             return if args.is_empty() { Ok(singleton) } else { Err(format!("TypeError: {shown} takes no arguments").into()) };
         }
+        // A routine built by hand out of a code value and a
+        // dictionary of names: the reference's way of making a
+        // function, which keeps the dictionary it was handed.
+        if word == "function" {
+            let (Some(Value::Adapter(code)), Some(globe)) = (args.first(), args.get(1)) else { return Err(self.class_refusal()); };
+            if code.0 != 7 { return Err(self.class_refusal()); }
+            let Some(Value::Routine(template)) = code.1.first() else { return Err(self.class_refusal()); };
+            let born = self.ambient_builtins();
+            let mut made = (**template).clone();
+            made.globe = Some(globe.clone());
+            made.born = Some(born);
+            made.revised = RefCell::new(None);
+            self.made += 1;
+            return Ok(Value::Routine(Rc::new(made)));
+        }
         let Some(op) = self.lang.builtins.get(word).copied() else { return Err(self.class_refusal()); };
         let items = self.call_items(args)?;
         let made = self.builtin_call(op, word, items)?;
@@ -657,6 +672,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
+                5 => Err(self.core_fault("core.uncallable", "classmethod").into()),
                 13 if args.len() == 1 => {
                     let Value::Adapter(property) = &w.1[0] else { return Err(self.class_refusal()); };
                     let mut members = property.1.clone();
@@ -1107,6 +1123,11 @@ impl<'a> Engine<'a> {
                 if *op == Builtin::Complex && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "complex_from_number".to_string()))));
                 }
+                if *op == Builtin::AsReal && name == "__getformat__" {
+                    return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
+                }
+                if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
+                if name==self.class_word("qualified") { return Ok(Value::text(word)); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
@@ -1136,6 +1157,13 @@ impl<'a> Engine<'a> {
                 if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
             }
             Value::Class(c) => {
+                if let Some(word) = Self::own_kind(c) {
+                    if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
+                    if name==self.class_word("qualified") { return Ok(Value::text(&word)); }
+                    if name == "__getformat__" && word == "float" {
+                        return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
+                    }
+                }
                 if name == self.class_word("flags") {
                     let dictionary = self.slots_allow(c, self.class_word("namespace"));
                     let inline = dictionary && Self::kind_beneath(c).is_none();
@@ -1300,6 +1328,17 @@ impl<'a> Engine<'a> {
             Value::Routine(f) => {
                 let f=&Self::routine_now(f);
                 if let Some(v)=self.routine_member(&subject,name) {return Ok(v);}
+                // The row of type parameters the declaration wrote, made
+                // the first asking and kept, so every asking answers the
+                // selfsame row.
+                if name==self.class_word("type_params") {
+                    let at=self.function_storage(&subject);
+                    let own=format!("\0{name}");
+                    if let Some(held)=self.function_members[at].1.fields.borrow().iter().find(|(n,_)|*n==own).map(|(_,v)|v.clone()) {return Ok(held);}
+                    let held=self.routine_type_values(f)?;
+                    self.function_members[at].1.fields.borrow_mut().push((own,held.clone()));
+                    return Ok(held);
+                }
                 let annotation_name = self.lang.class_annotations.first().map(String::as_str).unwrap_or("");
                 let annotate_name = self.lang.class_details.get("code.fields").and_then(|v| v.get(10)).map(String::as_str).unwrap_or("");
                 if !annotation_name.is_empty() && name == annotation_name {
@@ -1312,11 +1351,20 @@ impl<'a> Engine<'a> {
                     return Ok(result);
                 }
                 if !annotate_name.is_empty() && name == annotate_name { return Ok(f.annotation.clone().map_or(Value::Null, Value::Routine)); }
+                // A routine built by hand keeps the dictionary it was
+                // handed and answers with that, however it came to be.
+                if name==self.class_word("globals") {
+                    if let Some(globe)=&f.globe { return Ok(globe.clone()); }
+                }
                 if name==self.class_word("globals") && f.written_in.is_none() { return Ok(Value::Bond(self.constructor_book(f).unwrap_or_else(|| self.outer_book_made()))); }
-                if name==self.class_word("name") {return Ok(Value::text(&f.ident));}
-                if name==self.class_word("qualified") {return Ok(Value::text(&f.qualified));}
+                // The builtins a routine reads its unbound names from.
+                if self.lang.module_builtins.iter().any(|word| word == name) {
+                    return self.routine_builtins(f);
+                }
+                if name==self.class_word("name") {return Ok(self.routine_held(&subject,name,Value::text(&f.ident)));}
+                if name==self.class_word("qualified") {return Ok(self.routine_held(&subject,name,Value::text(&f.qualified)));}
                 if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
-                if name==self.class_word("module") {return Ok(Value::text(self.class_word("main")));}
+                if name==self.class_word("module") {let place=self.routine_home(f);return Ok(self.routine_held(&subject,name,Value::text(&place)));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
                     if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
@@ -1383,9 +1431,25 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==4 || w.0==5 => {
                 if name==self.class_word("function"){return Ok(w.1[0].clone());}
+                // CPython 3.10 and after hand the wrapper the routine
+                // it holds under `__wrapped__`, and read the routine's
+                // own metadata through the wrapper unchanged.
+                if name=="__wrapped__" { return Ok(w.1[0].clone()); }
+                let inner=w.1[0].clone();
+                let carried=[self.class_word("module"),self.class_word("qualified"),self.class_word("name"),self.class_word("doc")];
+                let copied=carried.iter().any(|word|!word.is_empty()&&*word==name)
+                    || self.lang.class_annotations.first().map_or(false,|word|word==name);
+                if copied { return self.class_get(inner,name,true); }
             }
             Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
                 return Self::cell_held(w).ok_or_else(||self.class_word("cell.empty").to_string().into());
+            }
+            Value::Adapter(w) if w.0==29 => {
+                if name==self.class_word("qualified") { return Ok(Value::text(&format!("{}.{}", w.1[0].plain(), w.1[1].plain()))); }
+                if name==self.class_word("name") { return Ok(w.1[1].clone()); }
+                if name=="__objclass__" {
+                    if let Some(kind)=self.spelled_kind(&w.1[0].plain()) { return Ok(kind); }
+                }
             }
             Value::Adapter(w) if w.0==3 => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
@@ -1403,6 +1467,51 @@ impl<'a> Engine<'a> {
     }
     /// A routine as it now stands, its spare arguments or code written
     /// over by the program or not.
+    /// The name of the module a routine was written in: the module the
+    /// file it came from was read as, or the run's own name where the
+    /// routine is the program itself.
+    fn routine_home(&self, f: &Routine) -> String {
+        f.written_in.as_ref()
+            .and_then(|place| self.module_slots.get(place))
+            .map_or_else(|| self.class_word("main").to_string(), |(_, path)| path.clone())
+    }
+    /// The word the definition gives the module the builtin names live in.
+    pub(super) fn home_module_word(&self) -> &str {
+        self.lang.names_module.first().map_or("builtins", String::as_str)
+    }
+    /// A builtin kind read by the word that spells it, where that word
+    /// names a kind: the value `int`, not the class standing for it.
+    pub(super) fn spelled_kind(&self, word: &str) -> Option<Value> {
+        self.lang.builtins.get(word).copied().filter(|op| Self::kind_builtin(op)).map(|op| Value::Native(op, Rc::from(word)))
+    }
+    /// The row of type parameters a routine was declared with: for each
+    /// name written between the brackets, a holder made by the hinting
+    /// module's own maker, in the order the names were written. No
+    /// names written, an empty row.
+    fn routine_type_values(&mut self, f: &Routine) -> Flow<Value> {
+        let mut items = Vec::new();
+        if !f.type_params.is_empty() {
+            let maker = self.type_holder()?;
+            for name in &f.type_params {
+                items.push(self.class_apply(maker.clone(), vec![Value::text(name)])?);
+            }
+        }
+        Ok(Value::Tuple(Rc::new(items)))
+    }
+    /// The maker of type-parameter names: the hinting module's own
+    /// maker, from the module the program already holds where it holds
+    /// one, and read in from the library where it does not.
+    fn type_holder(&mut self) -> Flow<Value> {
+        let module = match self.modules.get("typing") {
+            Some(held) => held.clone(),
+            None => self.import_module("typing")?,
+        };
+        let maker = match &module {
+            Value::Object(space) => space.fields.borrow().iter().find(|(n,_)| n=="TypeVar").map(|(_,v)| match v { Value::Bond(cell)=>cell.borrow().clone(), other=>other.clone() }),
+            _ => None,
+        };
+        maker.ok_or_else(|| self.class_refusal())
+    }
     fn routine_now(f: &Rc<Routine>) -> Rc<Routine> {
         f.revised.borrow().clone().unwrap_or_else(|| f.clone())
     }
@@ -1443,6 +1552,14 @@ impl<'a> Engine<'a> {
         made.least = wanted;
         made.parameter_rules = Some(rules);
         made
+    }
+    /// Whether a code object written over a routine's own was made of
+    /// another kind of program: the flags the two carry differ, which
+    /// CPython now says is going away.
+    fn code_kind_differs(f: &Rc<Routine>, value: Option<&Value>) -> bool {
+        let Some(Value::Adapter(code)) = value.map(Value::contents) else { return false };
+        let (7, Some(Value::Routine(source))) = (code.0, code.1.first()) else { return false };
+        Self::routine_now(source).code_flags != Self::routine_now(f).code_flags
     }
     /// The routine as it stands once the program writes its spare
     /// arguments, its keyword-only spare arguments or its code over, or
@@ -1488,6 +1605,27 @@ impl<'a> Engine<'a> {
     /// Where a routine keeps the namespace the program handed it in
     /// place of the one it was made with.
     const HANDED_BOOK: &'static str = "\0 namespace";
+    /// The builtins a routine answers with: what its own dictionary
+    /// keeps under that name where it holds one, else the builtins in
+    /// force where it was built, else the module's own dictionary. A
+    /// module handed there stands for the dictionary it keeps.
+    fn routine_builtins(&mut self, program: &Rc<Routine>) -> Flow<Value> {
+        let word = match self.lang.module_builtins.first() { Some(word) => word.clone(), None => return Ok(self.native_dict()) };
+        if let Some(globe) = &program.globe {
+            if let Some(held) = self.dyn_lookup(globe, &word)? { return self.as_builtins_dictionary(held); }
+        }
+        if let Some(born) = &program.born { return self.as_builtins_dictionary(born.clone()); }
+        Ok(self.native_dict())
+    }
+    /// A module handed over where a dictionary of builtins is wanted
+    /// stands for the dictionary it keeps, as the reference reads it.
+    pub(super) fn as_builtins_dictionary(&mut self, held: Value) -> Flow<Value> {
+        if self.module_holding(&held).is_some() {
+            let word = self.class_word("namespace").to_string();
+            return self.class_get(held, &word, false);
+        }
+        Ok(held)
+    }
     /// A member a routine holds of its own: its name, full name or
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
@@ -1548,6 +1686,17 @@ impl<'a> Engine<'a> {
             (None,None) => return false,
         }
         true
+    }
+    /// One of a routine's own readings that must answer the selfsame
+    /// object on every asking -- its name, full name and module -- kept
+    /// where the program's own writes to them are kept, so a later read
+    /// finds it and a later write writes over it.
+    fn routine_held(&mut self, subject: &Value, name: &str, fresh: Value) -> Value {
+        let at=self.function_storage(subject);
+        let own=format!("\0{name}");
+        if let Some(held)=self.function_members[at].1.fields.borrow().iter().find(|(n,_)|*n==own).map(|(_,v)|v.clone()){return held;}
+        self.function_members[at].1.fields.borrow_mut().push((own,fresh.clone()));
+        fresh
     }
     fn function_storage(&mut self, function: &Value) -> usize {
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
@@ -1768,8 +1917,15 @@ impl<'a> Engine<'a> {
                     return self.routine_namespace_write(at, value);
                 }
                 if ["globals","closure"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_word("property.readonly").to_string().into());}
+                // The builtins a routine reaches its unbound names
+                // through are read off it, never written over.
+                if self.lang.module_builtins.iter().any(|word| word == name) {return Err(self.class_word("property.readonly").to_string().into());}
                 if name==self.class_word("defaults") || name==self.class_word("keywords") || name==self.class_word("code") {
                     let Value::Routine(f)=&subject else {return Err(self.class_refusal())};
+                    if name==self.class_word("code") && Self::code_kind_differs(f, value.as_ref()) {
+                        let told=self.lang.class_details.get("code.mismatch").and_then(|w| w.first()).cloned().unwrap_or_default();
+                        self.warn_like(26,&told)?;
+                    }
                     let now=self.routine_rewritten(f,name,value)?;
                     *f.revised.borrow_mut()=Some(Rc::new(now));
                     return Ok(Value::Null);
@@ -1784,6 +1940,16 @@ impl<'a> Engine<'a> {
                     Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(), &format!("\0{name}"), Some(given), false).map_err(|_| absent)?;
                     return Ok(Value::Null);
                 }
+                if name==self.class_word("type_params") {
+                    // The row of type parameters takes a row and nothing
+                    // else, and cannot be taken away at all.
+                    if !matches!(value.as_ref().map(Value::contents), Some(Value::Tuple(_))) {
+                        return Err(self.class_word("defaults.amiss").to_string().into());
+                    }
+                    let at=self.function_storage(&subject);
+                    Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(), &format!("\0{name}"), value, false).map_err(|_| absent)?;
+                    return Ok(Value::Null);
+                }
                 let at=self.function_storage(&subject);
                 // Its name and full name take text alone, and its account
                 // of itself anything at all; the three stand apart from
@@ -1794,7 +1960,7 @@ impl<'a> Engine<'a> {
                         return Err(if pieces.len()==2 {format!("{}{name}{}",pieces[0],pieces[1]).into()} else {self.class_refusal()});
                     };
                 }
-                if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") || self.lang.class_annotations.first().map_or(false, |s| s == name) {
+                if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") || name==self.class_word("module") || self.lang.class_annotations.first().map_or(false, |s| s == name) {
                     let own=format!("\0{name}");
                     Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),&own,Some(value.unwrap_or(Value::Null)),false).map_err(|_|absent)?;
                     return Ok(Value::Null);

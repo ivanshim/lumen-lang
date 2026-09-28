@@ -1472,6 +1472,11 @@ impl Value {
                 },
                 _ => "<member wrapper>".to_string(),
             },
+            // A routine wrapped as a static or class method reads as the
+            // wrapping builtin around the routine it holds, as CPython
+            // writes it.
+            Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
+            Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => format!("<object {}>", o.class_now().name),
             Value::SortOf(k) => k.tag().to_string(),

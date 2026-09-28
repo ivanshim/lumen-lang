@@ -2613,6 +2613,9 @@
   "ext.stmt.class.detail.defaults": [
     "__defaults__"
   ],
+  "ext.stmt.class.detail.type_params": [
+    "__type_params__"
+  ],
   "ext.stmt.class.detail.doc": [
     "__doc__"
   ],
@@ -2766,6 +2769,9 @@
   ],
   "ext.stmt.class.detail.code.amiss": [
     "TypeError: __code__ must be set to a code object"
+  ],
+  "ext.stmt.class.detail.code.mismatch": [
+    "code object of non-matching type"
   ],
   "ext.stmt.class.detail.code.free": [
     "ValueError: ",

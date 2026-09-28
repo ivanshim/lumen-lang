@@ -61,6 +61,10 @@ pub struct Engine<'a> {
     /// The dictionary of builtin words, and the class of a code value,
     /// each made once a program asks for it.
     natives: Option<Rc<RefCell<Value>>>,
+    /// The module-like stand-in a program asking for `__builtins__`
+    /// itself is handed, with the dictionary of builtin words kept
+    /// under its own namespace, made the first time it is asked for.
+    builtins_view: Option<Value>,
     code_class: Option<Rc<Class>>,
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
@@ -1146,6 +1150,7 @@ impl<'a> Engine<'a> {
             reading_in: None,
             text_within: None,
             natives: None,
+            builtins_view: None,
             code_class: None,
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
@@ -2406,16 +2411,14 @@ impl<'a> Engine<'a> {
     /// and a name it does not hold is missing as it was.
     fn kept_by_module(&mut self, name: &str) -> Option<Value> {
         if self.fetching_names { return None; }
-        let path = self.lang.names_module.first()?.clone();
-        let module = match self.modules.get(&path) {
-            Some(held) => held.clone(),
-            None => {
-                self.fetching_names = true;
-                let brought = self.import_module(&path);
-                self.fetching_names = false;
-                brought.ok()?
-            }
-        };
+        // The name of the builtins dictionary itself is read as the
+        // module-shaped stand-in the reference keeps it as, so that a
+        // program asking that name is handed something it can ask for
+        // a dictionary of its own.
+        if self.lang.module_builtins.iter().any(|word| word == name) {
+            return self.builtins_view().ok();
+        }
+        let module = self.names_module_value().ok()?;
         let Value::Object(object) = module else { return None };
         let held = object.fields.borrow().iter().find(|(word, _)| word == name)
             .map(|(_, held)| match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() })?;
@@ -4906,6 +4909,14 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// The module a builtin word belongs to: the definition's own
+    /// module for a plain builtin, nothing for one spelled under a kind,
+    /// and that same module for the bytes table-maker, whose own home
+    /// the reference gives back for it.
+    fn callable_home(&self, op: &Builtin, word: &str) -> Value {
+        if !word.contains('.') { return Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)); }
+        match op { Builtin::Bytes(40) => Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)), _ => Value::Null }
+    }
     /// The members a value of a builtin kind answers to by name: the
     /// special names its family answers, and the methods of its kind,
     /// each spelled as the definition spells it. A spelling that names
@@ -4934,6 +4945,10 @@ impl<'a> Engine<'a> {
         // A counted row keeps its bounds beside the places it answers
         // through the methods above.
         if matches!(family, Kindred::Counted) { names.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
+        // A whole number answers besides for the member that writes it
+        // into a row of bytes, which belongs to the kind and not to a
+        // value of it, so it is reached through the kind's own word.
+        if matches!(family, Kindred::Whole) { names.extend(self.lang.byte_words["ext.builtin.bytes.from_int"].iter().cloned()); }
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
@@ -5083,6 +5098,17 @@ impl<'a> Engine<'a> {
             }
         }
         if let Some(size) = self.integer_member(&held, name) { return Ok(Some(size)); }
+        if let Value::Native(op, word) = &held {
+            if !Self::kind_builtin(op) {
+                if name == self.class_word("qualified") { return Ok(Some(Value::text(word))); }
+                if name == self.class_word("module") { return Ok(Some(self.callable_home(op, word))); }
+                if name == self.class_word("receiver") {
+                    if let Some((kind, _)) = word.split_once('.') {
+                        if let Some(owner) = self.spelled_kind(kind) { return Ok(Some(owner)); }
+                    }
+                }
+            }
+        }
         if matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_))
             && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) {
             return Ok(Some(Value::ValueMethod(Rc::new((held, "integer_bytes".to_string())))));
@@ -5796,6 +5822,14 @@ impl<'a> Engine<'a> {
                 self.set_text(cell, &name, wrapped)
             }
             Value::Text(text) if representation => Ok(crate::strings::quoted(text)),
+            // A routine wrapped as a static or class method reads as the
+            // wrapping builtin around the routine it holds, as CPython
+            // writes it.
+            Value::Adapter(w) if w.0==4 || w.0==5 => {
+                let wrapping=if w.0==4 { self.lang.class_static.first() } else { self.lang.class_method.first() };
+                let inner=self.special_text(&w.1[0],true)?;
+                Ok(wrapping.map_or_else(|| "<member wrapper>".to_string(),|word|format!("<{word}({inner})>")))
+            }
             _ => Ok(value.display(&self.wording())),
         }
     }
@@ -8541,6 +8575,22 @@ impl<'a> Engine<'a> {
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
+                // A builtin word answers besides for the members that say
+                // where it was written and what it is called, and a kind
+                // for those very ones, the maker of floats for the reader
+                // of its own format among them.
+                // A routine answers for the row of type parameters its
+                // declaration wrote, empty where it wrote none.
+                let routine_typed = matches!(&held, Value::Routine(_)) && name.as_ref() == self.class_word("type_params");
+                let kind_stamp = match &held {
+                    Value::Native(op, word) if !Self::kind_builtin(op) => name.as_ref() == self.class_word("module")
+                        || name.as_ref() == self.class_word("qualified")
+                        || (name.as_ref() == self.class_word("receiver") && word.contains('.')),
+                    Value::Native(op, _) if Self::kind_builtin(op) => name.as_ref() == self.class_word("module")
+                        || name.as_ref() == self.class_word("qualified")
+                        || (name.as_ref() == "__getformat__" && *op == Builtin::AsReal),
+                    _ => false,
+                };
                 // A builtin kind also carries the members its own values answer to.
                 let kind_carries = self.loose_kind_member(&held, name).is_some();
                 // A walk over a routine's own body answers whether it is
@@ -8548,7 +8598,7 @@ impl<'a> Engine<'a> {
                 let generator_running = matches!(&held, Value::Generator(_)) && (self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref())
                     || name.as_ref() == self.class_word("name") || name.as_ref() == self.class_word("qualified")
                     || [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)));
-                Value::Flag(matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || kind_named || kind_maker || kind_doc || kind_namespace || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -8580,6 +8630,8 @@ impl<'a> Engine<'a> {
                     else if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], name) { crate::complex::real(z.imag) }
                     else { return Err(crate::complex::fault(self.lang, "unready").into()); }
                 }
+                Value::ValueMethod(bound) if name.as_ref() == self.class_word("qualified") => Value::text(&format!("{}.{}", bound.0.core_kind(), bound.1)),
+                Value::ValueMethod(bound) if name.as_ref() == self.class_word("name") => Value::text(&bound.1),
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 // An exception answers its own few methods itself.
                 Value::Object(o) if self.exception_class(&o.class_now()) && (self.exception_method_named(name) || ((self.stands_on(&o.class_now(), 36) || self.stands_on(&o.class_now(), 19)) && self.lang.constructor.as_deref() == Some(name))) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
@@ -8601,7 +8653,11 @@ impl<'a> Engine<'a> {
                 Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
                 Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class_now().clone()),
                 Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {
-                    Value::Fields(o)
+                    // A thing that keeps a namespace of its own hands
+                    // that over; one that keeps only fields stands as
+                    // its own namespace, as it always has.
+                    let kept = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, held)| held.clone());
+                    match kept { Some(held) => held, None => Value::Fields(o) }
                 }
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
@@ -17999,6 +18055,17 @@ impl Engine<'_> {
         match kept {
             Kept::Outer => {
                 let book = self.outer_book.clone()?;
+                // The name of the builtins dictionary is read as the
+                // module-shaped stand-in the reference keeps it as,
+                // where the dictionary holds the kernel's own builtins;
+                // one a program put there itself reads as it wrote it.
+                if self.lang.module_builtins.iter().any(|word| word == name)
+                    && self.our_native_dict(&book_entry(&book, name).unwrap_or(Value::Null)) {
+                    return Some(match self.builtins_view() {
+                        Ok(held) => Ok(held),
+                        Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+                    });
+                }
                 if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
                 if self.left_out(name, &self.world[far]) { return None; }
                 if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
@@ -18091,6 +18158,61 @@ impl Engine<'_> {
         let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.natives = Some(book.clone());
         book
+    }
+
+    /// The dictionary of builtin words itself, as a value a program may
+    /// hold and ask after.
+    fn native_dict(&mut self) -> Value {
+        self.natives_book().borrow().clone()
+    }
+
+    /// Whether a value is that very dictionary, rather than some other
+    /// dictionary a program handed over for its own names.
+    fn our_native_dict(&self, held: &Value) -> bool {
+        matches!(held, Value::Bond(cell) if self.natives.as_ref().map_or(false, |ours| Rc::ptr_eq(cell, ours)))
+    }
+
+    /// The module a program asking for the builtins by name is handed:
+    /// a thing of the module's own kind that keeps the dictionary of
+    /// builtin words as its namespace, made once and kept, so that the
+    /// name and every routine answering for their builtins give one and
+    /// the same dictionary every time.
+    fn builtins_view(&mut self) -> Flow<Value> {
+        if let Some(held) = &self.builtins_view { return Ok(held.clone()); }
+        let module = self.names_module_value()?;
+        let class = match &module { Value::Object(o) => o.class_now(), _ => self.root_class() };
+        let dictionary = self.native_dict();
+        self.made += 1;
+        let object = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
+            fields: RefCell::new(vec![("\0namespace".to_string(), dictionary)]), mark: self.made }));
+        self.builtins_view = Some(object.clone());
+        Ok(object)
+    }
+
+    /// The builtins in force where the run now stands: what the
+    /// dictionary being read keeps them under, where the run stands in
+    /// text handed a dictionary of its own, else the module's own.
+    fn ambient_builtins(&mut self) -> Value {
+        let word = match self.lang.module_builtins.first() { Some(word) => word.clone(), None => return self.native_dict() };
+        if self.reading_in.is_none() { return self.native_dict(); }
+        let book = self.book_here(true);
+        if let Ok(Some(held)) = self.book_get(&book, &word) {
+            if !self.our_native_dict(&held) {
+                if let Ok(dictionary) = self.as_builtins_dictionary(held) { return dictionary; }
+            }
+        }
+        self.native_dict()
+    }
+
+    /// The module the unbound names stand in, read in the first time it
+    /// is asked for and kept from then on.
+    fn names_module_value(&mut self) -> Flow<Value> {
+        let path = match self.lang.names_module.first() { Some(path) => path.clone(), None => return Ok(Value::Null) };
+        if let Some(held) = self.modules.get(&path) { return Ok(held.clone()); }
+        self.fetching_names = true;
+        let brought = self.import_module(&path);
+        self.fetching_names = false;
+        brought
     }
 
     /// The dictionary of the outermost names, made the first time it
@@ -18622,6 +18744,36 @@ impl Engine<'_> {
         }
     }
 
+    /// Say a warning of the kind the language's roster names at that
+    /// place, through the reference's warnings module, so that a filter
+    /// the program set is honoured and what the program hears is the
+    /// message written here.
+    fn warn_like(&mut self, category_at: usize, message: &str) -> Res<()> {
+        let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
+        let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
+        let Some(kind_name) = self.lang.exceptions.get(category_at).cloned() else { return Ok(()) };
+        let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
+        let module = match self.import_module(&module_name) {
+            Ok(module) => module,
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        // A module carries its names in cells; the function is what the cell holds.
+        let teller = match self.class_get(module, &teller_name, false) {
+            Ok(teller) => teller.contents(),
+            Err(Fault::Note(told)) => return Err(told),
+            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+        };
+        let file = Value::text(&self.source);
+        let line = Value::Small(self.line as i64);
+        let handed = vec![Value::text(message), category, file, line];
+        match self.class_apply(teller, handed) {
+            Ok(_) => Ok(()),
+            Err(Fault::Note(told)) => Err(told),
+            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+        }
+    }
+
     /// Text, or a code value, run: as one expression where it was asked
     /// to be weighed, else as statements; in the dictionaries handed
     /// over, else where the call stands.
@@ -18835,6 +18987,21 @@ impl Engine<'_> {
         };
         if own_natives {
             for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
+        }
+        // A routine written by text handed a dictionary of its own
+        // keeps that dictionary and the builtins in force there, so
+        // that it may answer for both later.
+        if let Some(word) = self.lang.module_builtins.first().cloned() {
+            let globe = outer.borrow().clone();
+            let born = match self.book_get(&outer, &word) {
+                Ok(Some(held)) if !self.our_native_dict(&held) => match self.as_builtins_dictionary(held) {
+                    Ok(dictionary) => dictionary,
+                    Err(_) => self.native_dict(),
+                },
+                _ => self.native_dict(),
+            };
+            local.globe = Some(globe);
+            local.born = Some(born);
         }
         let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await)?;
         let names: Vec<String> = local.idents[offset..].to_vec();

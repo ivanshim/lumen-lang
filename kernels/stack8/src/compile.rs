@@ -54,6 +54,11 @@ pub struct Registry {
     /// read into two dictionaries: a name so declared is written to the
     /// outer one.
     pub declared_outer: Vec<String>,
+    /// The dictionary of outermost names, and the builtins in force,
+    /// where the text now being read was handed a dictionary of its
+    /// own: every routine read from it keeps the two.
+    pub globe: Option<Value>,
+    pub born: Option<Value>,
     /// The global names the program's own lines have bound, as against
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
@@ -266,6 +271,9 @@ pub struct Compiler<'a> {
     /// The slots the routine being put together fills from what it
     /// carried away, while its parameters are being read.
     carrying: Vec<usize>,
+    /// The type parameters the declaration just read wrote between
+    /// brackets, taken by the routine that declaration is making.
+    pending_types: Vec<String>,
     /// How many lines stand before the program's own text.
     before: u32,
     /// Whether the reading has come to the program's own lines, past
@@ -538,7 +546,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -675,7 +683,7 @@ fn compile_pass(
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
     a.registry.top_level_coroutine = unit.generator;
-    Ok(Rc::new(Routine { annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1494,6 +1502,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+        let type_params = std::mem::take(&mut self.pending_types);
         let annotation = self.annotation_routine()?;
         let source = self.pos;
         let expression = self.lang.lambda_name.first().map_or(false, |n| n == name) || name.starts_with("#generator");
@@ -1613,7 +1622,7 @@ impl<'a> Compiler<'a> {
         }
         code_flags |= if unit.asynchronous { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names);
-        Ok(Rc::new(Routine { annotation, code_constants, code_names, local_names, code_flags, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
+        Ok(Rc::new(Routine { annotation, code_constants, code_names, local_names, code_flags, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
     fn annotation_routine(&mut self) -> Res<Option<Rc<Routine>>> {
@@ -1798,9 +1807,12 @@ impl<'a> Compiler<'a> {
         self.take();
         let mut ends = lang.tuple_marks.clone();
         ends.push(pair.close.clone());
+        let mut written: Vec<String> = Vec::new();
         loop {
             if self.on_any(&lang.carries_words) || self.on_any(&lang.carries_pairs) { self.take(); }
+            let parameter = self.look().lexeme.clone();
             self.want_name("as a type parameter")?;
+            written.push(parameter);
             if self.on_any(&lang.annotation_marks) {
                 self.take();
                 let mut bound_ends = ends.clone();
@@ -1814,6 +1826,7 @@ impl<'a> Compiler<'a> {
         }
         self.want_sign(&pair.close, "after type parameters")?;
         self.forbids_await = old_rule;
+        self.pending_types = written;
         Ok(true)
     }
 
@@ -2157,6 +2170,7 @@ impl<'a> Compiler<'a> {
             self.take();
             self.want_name("as the type alias")?;
             self.declaration_types()?;
+            self.pending_types.clear();
             self.expect_assign("after the type alias")?;
             let result = self.annotation_expression(&[]);
             self.forbids_await = old_rule;
@@ -2772,6 +2786,20 @@ impl<'a> Compiler<'a> {
         self.put(Instr::Write(slot));
     }
 
+    /// Whether the word at hand may stand at the head of the expression
+    /// a decorator must be. A word the language keeps for statements --
+    /// `pass`, a loop word, a word that only opens a statement -- cannot
+    /// begin a value; the handful that can, the literals and the prefix
+    /// operators, are the reader's answer here.
+    fn may_adorn(&self) -> bool {
+        let lang = self.lang;
+        let word = &self.look().lexeme;
+        if !lang.keywords.contains(word) { return true; }
+        [&lang.true_words, &lang.false_words, &lang.null_words, &lang.ellipsis_words, &lang.lambda_words, &lang.await_words]
+            .into_iter().any(|spellings| Lang::spells(spellings, word))
+            || lang.monadic.contains_key(word)
+    }
+
     /// Keep each value before binding the routine, then pass the bound
     /// routine through them from the last written to the first.
     fn decorated_function(&mut self) -> Res<()> {
@@ -2781,7 +2809,8 @@ impl<'a> Compiler<'a> {
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
-            self.expr(0)?;
+            if !self.may_adorn() { return Err(amiss()); }
+            self.expr_at(0, false)?;
             if self.look().shape != Shape::LineEnd {
                 return Err(amiss());
             }
@@ -5012,7 +5041,9 @@ impl<'a> Compiler<'a> {
         }
         let mut decorators = Vec::new();
         while lang.class_details.get("root").map_or(false,|v|!v.is_empty()) && self.on_any(&lang.decorator_words) {
-            self.take();self.expr(0)?;
+            self.take();
+            if !self.may_adorn() { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
+            self.expr_at(0,false)?;
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }
@@ -6129,6 +6160,10 @@ impl<'a> Compiler<'a> {
             .map(|t| t.lexeme.clone()).unwrap_or_else(|| name.to_string());
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
         self.declaration_types()?;
+        // The type parameters read here are kept aside while the
+        // parameters and their defaults are read, so that a routine
+        // written within one of those is not handed them instead.
+        let typed = std::mem::take(&mut self.pending_types);
         let lang = self.lang;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -6153,6 +6188,7 @@ impl<'a> Compiler<'a> {
             }
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
+        self.pending_types = typed;
         let program = self.routine(&original, formals, least, true, |a| {
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
