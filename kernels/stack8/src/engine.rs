@@ -3926,12 +3926,18 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn routine_code(&mut self, program: &Rc<Routine>) -> Value {
+        if !program.enclosed.is_empty() {
+            let mut body = (**program).clone();
+            body.held.clear();
+            body.enclosed.clear();
+            return Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]);
+        }
         let key = Rc::as_ptr(&program.instrs) as usize;
         self.frame_codes.entry(key).or_insert_with(|| {
             let mut body = (**program).clone();
             body.held.clear();
             body.enclosed.clear();
-            Self::adapter(7, vec![Value::Routine(Rc::new(body))])
+            Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())])
         }).clone()
     }
 
@@ -16969,6 +16975,9 @@ impl Engine<'_> {
             Builtin::Iter => {
                 arity(1, 2)?;
                 if args.len() == 2 || iter_stop_exception.is_some() {
+                    if args.len() == 2 && !matches!(args[0], Value::ByteKind(..) | Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..) | Value::Object(_)) {
+                        return Err("TypeError: iter(v, w): v must be callable".into());
+                    }
                     let sentinel = args.get(1).cloned().unwrap_or(Value::Null);
                     return Ok(Self::core_cursor(CursorSource::Called(args[0].clone(), sentinel, iter_stop_exception.clone())));
                 }
@@ -18045,10 +18054,11 @@ impl Engine<'_> {
             match key { Some(key) => named.push((key, value)), None => args.push(value) }
         }
         for (key, value) in named {
-            let at = if builtin == Builtin::ReadyText { self.lang.compile_parameters.iter().position(|word| word == &key) }
-                else if matches!(builtin, Builtin::RunText | Builtin::Eval) { ["source", "globals", "locals"].iter().position(|word| *word == key) }
-                else { None }
-                .ok_or_else(|| Self::named_fault(&self.lang.call_unknown, &key))?;
+            let at = if builtin == Builtin::ReadyText {
+                self.lang.compile_parameters.iter().position(|word| word == &key)
+            } else if matches!(builtin, Builtin::RunText | Builtin::Eval) {
+                match key.as_str() { "source" => Some(0), "globals" => Some(1), "locals" => Some(2), "closure" if builtin == Builtin::RunText => Some(3), _ => None }
+            } else { None }.ok_or_else(|| Self::named_fault(&self.lang.call_unknown, &key))?;
             if at < args.len() && !matches!(args[at], Value::Gap) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
             if args.len() <= at { args.resize(at + 1, Value::Gap); }
             args[at] = value;
@@ -18234,6 +18244,47 @@ impl Engine<'_> {
         // The names about the call are only for a reading handed no
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
+        if !weighing {
+            if let Some(Value::Adapter(code)) = args.first().map(Value::contents) {
+                if code.0 == 7 {
+                    if args.len() > 4 { return Err(self.core_fault("core.arity", name)); }
+                    if let Some(Value::Routine(original)) = code.1.get(1) {
+                        let mut ordered: Vec<usize> = (0..original.enclosed.len()).collect();
+                        ordered.sort_by(|a, b| {
+                            let left = original.idents.get(original.enclosed[*a].0).map(String::as_str).unwrap_or("");
+                            let right = original.idents.get(original.enclosed[*b].0).map(String::as_str).unwrap_or("");
+                            left.cmp(right)
+                        });
+                        let supplied = args.get(3).map(Value::contents);
+                        if ordered.is_empty() {
+                            if !matches!(supplied, None | Some(Value::Null)) {
+                                return Err("TypeError: cannot use a closure with this code object".into());
+                            }
+                        } else {
+                            let Some(Value::Tuple(cells)) = supplied else {
+                                return Err(format!("TypeError: code object requires a closure of exactly length {}", ordered.len()));
+                            };
+                            if cells.len() != ordered.len() { return Err(format!("TypeError: code object requires a closure of exactly length {}", ordered.len())); }
+                            let mut working = (**original).clone();
+                            for (position, item) in cells.iter().enumerate() {
+                                let cell = match item.contents() {
+                                    Value::Adapter(wrapper) if wrapper.0 == 31 => wrapper.1.first().cloned(),
+                                    value @ Value::Object(_) => self.class_get(value, "cell_contents", false).ok()
+                                        .map(|held| Value::Binding(Rc::new(RefCell::new(held)))),
+                                    _ => None,
+                                };
+                                let Some(cell) = cell else { return Err(format!("TypeError: code object requires a closure of exactly length {}", ordered.len())); };
+                                working.enclosed[ordered[position]].1 = cell;
+                            }
+                            self.call_held(Value::Routine(Rc::new(working)), Vec::new())?;
+                            return Ok(Value::Null);
+                        }
+                        self.call_held(Value::Routine(original.clone()), Vec::new())?;
+                        return Ok(Value::Null);
+                    }
+                }
+            }
+        }
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
         let (source, file, mode, top_await) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false),
@@ -18246,7 +18297,10 @@ impl Engine<'_> {
             }
             _ => return Err(self.core_fault("core.arity", name)),
         };
-        if args.len() > 3 { return Err(self.core_fault("core.arity", name)); }
+        if args.len() > 4 || (weighing && args.len() > 3) { return Err(self.core_fault("core.arity", name)); }
+        if args.len() == 4 && !matches!(args[3], Value::Null) {
+            return Err(if file.is_some() { "TypeError: cannot use a closure with this code object" } else { "TypeError: closure can only be used when source is a code object" }.into());
+        }
         if file.is_none() { self.source_escape_warnings(&source, "<string>")?; }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_string() } else { source };
@@ -18282,6 +18336,12 @@ impl Engine<'_> {
                 Ok(v) => v,
                 Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
             };
+            if let Some(held) = &existing {
+                let kept = held.contents();
+                if !matches!(kept, Value::Map(_) | Value::Object(_)) {
+                    return Err(format!("TypeError: '{}' object is not subscriptable", kept.core_kind()));
+                }
+            }
             if existing.is_none() {
                 let natives = self.natives_book();
                 if self.book_put(&outer, word, Some(Value::Bond(natives))).is_err() {
