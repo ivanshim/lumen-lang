@@ -6152,7 +6152,14 @@ impl<'a> Engine<'a> {
         if values.is_empty() { return Ok(crate::complex::made(self.lang, 0.0, 0.0)); }
         if values.len() > 2 { return Err(crate::complex::fault(self.lang, "arguments")); }
         if values.len() == 2 { return self.complex_pair(&values[0], &values[1]); }
-        if matches!(&values[0], Value::Text(_) | Value::Huge(_)) { return crate::complex::construct(self.lang, values); }
+        if matches!(&values[0], Value::Text(_) | Value::Codepoints(_) | Value::Huge(_)) { return crate::complex::construct(self.lang, values); }
+        if let Value::Object(object) = &values[0] {
+            if Self::kind_beneath(&object.class_now()).as_deref() == Some("str") {
+                if let Some(text) = Self::worth_of(&values[0]) {
+                    return crate::complex::construct(self.lang, &[text.contents()]);
+                }
+            }
+        }
         if let Some((real, imag)) = crate::complex::parts(&values[0]) {
             return Ok(if matches!(&values[0], Value::Complex(_)) { values[0].clone() } else { crate::complex::made(self.lang, real, imag) });
         }
@@ -6961,7 +6968,7 @@ impl<'a> Engine<'a> {
             }
             // A thing may say what complex number it stands for, and
             // must answer with one.
-            Builtin::Complex if args.len() == 1 && matches!(&args[0], Value::Object(_)) => {
+            Builtin::Complex if args.len() == 1 && matches!(&args[0], Value::Object(object) if Self::kind_beneath(&object.class_now()).as_deref() != Some("str")) => {
                 match self.special_call(&args[0], 74, Vec::new())? {
                     Some(answer @ Value::Complex(_)) => answer,
                     Some(answer) => match Self::worth_of(&answer) {

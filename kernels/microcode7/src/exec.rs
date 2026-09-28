@@ -11281,7 +11281,14 @@ impl<'a> Machine<'a> {
         if values.is_empty() { return Ok(crate::complex::pair(self.table, 0.0, 0.0)); }
         if values.len() > 2 { return Err(crate::complex::complaint(self.table, "arguments")); }
         if values.len() == 2 { return self.complex_pair(&values[0], &values[1]); }
-        if matches!(&values[0], Value::Text(_) | Value::Huge(_)) { return crate::complex::create(self.table, values); }
+        if matches!(&values[0], Value::Text(_) | Value::Unpaired(_) | Value::Huge(_)) { return crate::complex::create(self.table, values); }
+        if let Value::Thing(thing) = &values[0] {
+            if Self::native_beneath(&thing.blueprint()).as_deref() == Some("str") {
+                if let Some(held) = Self::underlying(&values[0]) {
+                    return crate::complex::create(self.table, &[held]);
+                }
+            }
+        }
         if let Some((real, imag)) = crate::complex::coordinates(&values[0]) {
             return Ok(if matches!(&values[0], Value::Complex(_)) { values[0].clone() } else { crate::complex::pair(self.table, real, imag) });
         }
@@ -11680,7 +11687,7 @@ impl<'a> Machine<'a> {
             }
             // A thing may say what complex number it stands for, and must
             // answer with one.
-            (Prim::ComplexMade, [item @ Value::Thing(_)]) => match self.ask_special(item, 74, &[])? {
+            (Prim::ComplexMade, [item @ Value::Thing(thing)]) if Self::native_beneath(&thing.blueprint()).as_deref() != Some("str") => match self.ask_special(item, 74, &[])? {
                 Some(answer @ Value::Complex(_)) => answer,
                 Some(answer) => match Self::underlying(&answer) {
                     Some(Value::Complex(pair)) => {
