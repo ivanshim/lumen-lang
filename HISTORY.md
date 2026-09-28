@@ -2096,3 +2096,26 @@ Merged, the fifty files count 2555 on stack8 and 2556 on microcode7, up from
 2470 and 2471, with no passing test lost; more tests are collected now (2802
 ran on stack8, from 2738). microcode7's test_math, test_str and test_long
 were run whole on the build machine (80, 125 and 33).
+
+### 1al. Batch 20j merged as #517; batch 20k: CPython's support data, generators, generic aliases
+
+Batch 20k folds five branches, integrated by a GPT-6 Sol worker.
+fix/cpython-data adds the support data CPython's tests read — mathdata's
+five .txt files and test_import/data/syntax_warnings.py — byte for byte
+from the suite's CPython commit, so test_float and test_fractions no longer
+stop at "No such file"; HANDOVER.md now says test files are never edited
+and such data may be added this way. fix/small-last (DeepSeek V4 Pro;
+test_class +1, and five leftovers traced to the documented truncating `//`
+and `%` or to missing signal delivery), fix/float-format (Sol; array('B'),
+test_long +1, after a review removed an open() that answered /mathdata/
+paths from built-in copies and an array.__float__ CPython does not have),
+fix/generators-last (Sol; delegated generator frames in tracebacks,
+frame.clear, and a Mersenne Twister Random seeded as CPython seeds it;
+test_generators 50 to 54) and fix/generic-alias (Sol; list[int]-style
+aliases, a mutable builtins.__dict__, iterator __reduce__; test_iter
+complete). The integrator also made an unseeded Random draw its seed from
+os.urandom, or the time, instead of 0.
+
+Merged, the fifty files count 2565 on stack8 and 2566 on microcode7, up from
+2555 and 2556, with no passing test lost; microcode7's test_math, test_str
+and test_long were run whole on the build machine (80, 125 and 34).

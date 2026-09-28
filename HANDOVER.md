@@ -192,7 +192,9 @@ independence check, before merging.
   `Claude-Session` lines; worker commits keep their own. Pull-request
   bodies end with the Claude Code line and the session URL. No model or
   AI names anywhere else.
-- Never weaken a test or a fixture; `tests/python/` is never edited.
+- Never weaken a test or a fixture; `tests/python/`'s test files are never edited. CPython's own
+  support data that they read (`mathdata/*.txt`, `test_import/data/…`) may be added there, byte for
+  byte from the suite's CPython commit (`tests/README.md`), where the tests look for it.
 - One open pull request at a time; batch verified fixes into it.
 - Wait on long runs by running them in the background, not in polling
   loops; check in at most every 40 minutes.

@@ -113,3 +113,96 @@ def getrandbits(k):
     for i in range(k):
         result = result * 2 + _next() % 2
     return result
+
+
+_unseeded_sequence = 0
+
+
+class Random:
+    """Mersenne Twister stream for independently seeded Random instances."""
+
+    def __init__(self, seed=None):
+        self.seed(seed)
+
+    def seed(self, value=None):
+        if value is None:
+            try:
+                import os
+                value = int.from_bytes(os.urandom(16), 'big')
+            except Exception:
+                import time
+                global _unseeded_sequence
+                _unseeded_sequence += 1
+                value = int(time.time() * 1000000000) + _unseeded_sequence
+        value = abs(int(value))
+        key = []
+        while value:
+            key.append(value & 0xffffffff)
+            value >>= 32
+        if not key:
+            key = [0]
+        mt = [0] * 624
+        mt[0] = 19650218
+        for i in range(1, 624):
+            mt[i] = (1812433253 * (mt[i - 1] ^ (mt[i - 1] >> 30)) + i) & 0xffffffff
+        i = 1
+        j = 0
+        for _ in range(max(624, len(key))):
+            mt[i] = ((mt[i] ^ ((mt[i - 1] ^ (mt[i - 1] >> 30)) * 1664525)) + key[j] + j) & 0xffffffff
+            i += 1
+            j += 1
+            if i >= 624:
+                mt[0] = mt[623]
+                i = 1
+            if j >= len(key):
+                j = 0
+        for _ in range(623):
+            mt[i] = ((mt[i] ^ ((mt[i - 1] ^ (mt[i - 1] >> 30)) * 1566083941)) - i) & 0xffffffff
+            i += 1
+            if i >= 624:
+                mt[0] = mt[623]
+                i = 1
+        mt[0] = 0x80000000
+        self._mt = mt
+        self._index = 624
+
+    def _word(self):
+        if self._index >= 624:
+            mt = self._mt
+            for i in range(624):
+                y = (mt[i] & 0x80000000) | (mt[(i + 1) % 624] & 0x7fffffff)
+                mt[i] = mt[(i + 397) % 624] ^ (y >> 1)
+                if y & 1:
+                    mt[i] ^= 0x9908b0df
+            self._index = 0
+        y = self._mt[self._index]
+        self._index += 1
+        y ^= y >> 11
+        y ^= (y << 7) & 0x9d2c5680
+        y ^= (y << 15) & 0xefc60000
+        y ^= y >> 18
+        return y & 0xffffffff
+
+    def getrandbits(self, k):
+        if k < 0:
+            raise ValueError('number of bits must be non-negative')
+        if k == 0:
+            return 0
+        result = 0
+        shift = 0
+        while k > 0:
+            take = min(k, 32)
+            result |= (self._word() >> (32 - take)) << shift
+            shift += take
+            k -= take
+        return result
+
+    def choice(self, sequence):
+        n = len(sequence)
+        if n == 0:
+            raise IndexError('Cannot choose from an empty sequence')
+        k = n.bit_length()
+        index = self.getrandbits(k)
+        while index >= n:
+            index = self.getrandbits(k)
+        return sequence[index]

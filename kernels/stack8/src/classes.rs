@@ -1098,13 +1098,15 @@ impl<'a> Engine<'a> {
         }
         if let Value::Generator(generator) = &subject {
             let index = self.lang.trace_fields.iter().position(|key| key == name);
-            if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24)) {
+            if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 25)) {
+                if index == Some(25) && generator.try_borrow().is_err() { return Ok(Value::text("GEN_RUNNING")); }
                 let kept = generator.try_borrow().map_err(|_| self.class_refusal())?;
                 match index {
                     Some(14 | 19 | 20) => return Ok(if kept.closed { Value::Null } else { kept.trace_frame.clone().map_or(Value::Null, Value::Object) }),
                     Some(21 | 22) => return Ok(Value::Flag(kept.started && !kept.closed)),
                     Some(23) => return Ok(Value::Flag(false)),
                     Some(24) => return Ok(kept.delegate.clone().unwrap_or(Value::Null)),
+                    Some(25) => return Ok(Value::text(if kept.closed { "GEN_CLOSED" } else if kept.started { "GEN_SUSPENDED" } else { "GEN_CREATED" })),
                     _ => if let Some(program) = &kept.program { return Ok(self.routine_code(program)); },
                 }
             }
@@ -2220,7 +2222,7 @@ impl<'a> Engine<'a> {
             Builtin::AsReal=>matches!(value,Value::Real(_)),
             Builtin::List=>matches!(value,Value::Array(_)),
             Builtin::SortOf=>matches!(value,Value::Class(_)|Value::Native(..)|Value::ByteKind(..)|Value::SortOf(_))||self.kind_spelled(value).is_some(),
-            Builtin::Dict=>matches!(value,Value::Map(_)),
+            Builtin::Dict=>matches!(value,Value::Map(_)|Value::Fields(_)),
             Builtin::Tuple=>matches!(value,Value::Tuple(_)),
             Builtin::Set=>matches!(value,Value::Set(_))&&!value.set_fixed(),
             Builtin::Frozen=>value.set_fixed(),
@@ -2241,6 +2243,9 @@ impl<'a> Engine<'a> {
         if told.is_empty(){self.class_refusal()}else{told.into()}
     }
     fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
+        if matches!(wanted, Value::Object(o) if o.class_now().name == "GenericAlias") {
+            return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());
+        }
         if let Some(told)=self.maker_answers(wanted,value,subclass)? { return Ok(told); }
         // The bytes kinds stand as values of their own rather than as
         // builtin words, so each is asked about under its own word.
@@ -2373,8 +2378,8 @@ impl<'a> Engine<'a> {
                     for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
                         if let Some(w)=words.first() { names.push(w.clone()); }
                     }
-                    for word in [self.lang.trace_fields.get(14).cloned(), self.lang.trace_fields.get(15).cloned()] {
-                        if let Some(w)=word { if !w.is_empty() { names.push(w); } }
+                    for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()) {
+                        if !word.is_empty() { names.push(word); }
                     }
                     names.sort();names.dedup();
                     return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));

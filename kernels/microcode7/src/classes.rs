@@ -2262,7 +2262,7 @@ impl<'a> Machine<'a> {
             Prim::AsReal=>matches!(value,Value::Frac(r) if r.places.is_some()),
             Prim::Listed=>matches!(value,Value::Vector(_)),
             Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
-            Prim::Dictionary=>matches!(value,Value::Dict(_)),
+            Prim::Dictionary=>matches!(value,Value::Dict(_)|Value::Attributes(_)),
             Prim::Tupling=>matches!(value,Value::Tuple(_)),
             Prim::Uniques=>matches!(value,Value::Set(_))&&!value.set_sealed(),
             Prim::Unchanging=>value.set_sealed(),
@@ -2283,6 +2283,9 @@ impl<'a> Machine<'a> {
         if told.is_empty(){self.class_unready()}else{told.into()}
     }
     fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+        if matches!(choice, Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
+            return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
+        }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
         // The byte kinds are values in their own right rather than
         // intrinsic words, so each is asked after under its own word.
@@ -2447,8 +2450,8 @@ impl<'a> Machine<'a> {
                 for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
                     if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
                 }
-                for word in [self.table.strings("ext.builtin.exceptions.traceback").get(14).cloned(), self.table.strings("ext.builtin.exceptions.traceback").get(15).cloned()] {
-                    if let Some(w)=word { if !w.is_empty() { names.push(w); } }
+                for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
+                    if !word.is_empty() { names.push(word); }
                 }
                 names.sort();names.dedup();
                 return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
