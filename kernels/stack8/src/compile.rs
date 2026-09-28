@@ -7719,6 +7719,31 @@ impl<'a> Compiler<'a> {
         instrs.len() == from + 1 && operand_of(&instrs[from]).is_some()
     }
 
+    fn display_assignment(&self, start: usize) -> bool {
+        let mut groups = Vec::new();
+        let mut lambda_formals = Vec::new();
+        for at in start..self.tokens.len() {
+            let word = &self.tokens[at];
+            if groups.is_empty() && matches!(word.shape, Shape::LineEnd | Shape::Close | Shape::Finish) { break; }
+            if word.lexeme == "lambda" { if let Some(formals) = lambda_formals.last_mut() { *formals = true; } }
+            if word.shape != Shape::Sign { continue; }
+            match word.lexeme.as_str() {
+                "(" => {
+                    let call = at > start && self.tokens[at - 1].shape == Shape::Instr;
+                    groups.push(call);
+                    lambda_formals.push(false);
+                }
+                "[" | "{" => { groups.push(false); lambda_formals.push(false); }
+                ")" | "]" | "}" => { groups.pop(); lambda_formals.pop(); }
+                ":" => { if let Some(formals) = lambda_formals.last_mut() { *formals = false; } }
+                "=" if groups.last() == Some(&false) && lambda_formals.last() != Some(&true)
+                    && at > start && self.tokens[at - 1].shape == Shape::Instr => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// An expression. Where a language counts an assignment as one, a
     /// target followed by a sign that writes is read as an assignment
     /// whose value is what was written — but not where the assignment
@@ -7727,6 +7752,10 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let begins = self.pos;
         let from = self.mark();
+        if floor == 0 && !lang.syntax_members.is_empty() && ["(", "[", "{"].contains(&self.look().lexeme.as_str())
+            && self.display_assignment(begins) {
+            return Err("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into());
+        }
         if floor == 0 && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
             let at = self.look().clone();
             let named = self.take().lexeme;

@@ -7475,6 +7475,32 @@ impl<'a> Builder<'a> {
         self.expr_at(floor, true)
     }
 
+    fn written_inside_display(&self, start: usize) -> bool {
+        let mut scopes = Vec::new();
+        let mut taking = Vec::new();
+        for index in start..self.tokens.len() {
+            let token = &self.tokens[index];
+            if scopes.is_empty() && matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) { break; }
+            if token.lexeme == "lambda" { if let Some(formals) = taking.last_mut() { *formals = true; } }
+            if token.shape != Shape::Sign { continue; }
+            if token.lexeme == "(" {
+                scopes.push(index > start && self.tokens[index - 1].shape == Shape::Bare);
+                taking.push(false);
+            } else if token.lexeme == "[" || token.lexeme == "{" {
+                scopes.push(false);
+                taking.push(false);
+            } else if [")", "]", "}"].contains(&token.lexeme.as_str()) {
+                scopes.pop(); taking.pop();
+            } else if token.lexeme == ":" {
+                if let Some(formals) = taking.last_mut() { *formals = false; }
+            } else if token.lexeme == "=" && index > start && self.tokens[index - 1].shape == Shape::Bare
+                && scopes.last() == Some(&false) && taking.last() != Some(&true) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// An expression. Where a language counts a write as one, a target
     /// followed by a sign that writes is read as a write whose value is
     /// what was written — but not where the write is the whole
@@ -7482,6 +7508,10 @@ impl<'a> Builder<'a> {
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
         let origin = self.pos;
+        if floor == 0 && table.has_any("ext.builtin.exceptions.syntax")
+            && matches!(self.look().lexeme.as_str(), "(" | "[" | "{") && self.written_inside_display(origin) {
+            return Err(String::from("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?"));
+        }
         if floor == 0 && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
             let word = self.advance().lexeme;
             if table.has_any("ext.builtin.exceptions.syntax") {
