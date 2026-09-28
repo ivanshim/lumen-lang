@@ -10674,7 +10674,11 @@ impl<'a> Engine<'a> {
             let (x, y) = (self.bits_said(a)?, self.bits_said(b)?);
             return self.dyadic_numbers(op, &Value::Small(x), &Value::Small(y));
         }
-        if self.lang.real_bits.is_some() && (real_here(a) || real_here(b)) {
+        // Python orders an integer and a float by their exact values,
+        // including integers too large to become floats.
+        let exact_order = self.lang.order_unsupported.len() == 4
+            && matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge);
+        if self.lang.real_bits.is_some() && (real_here(a) || real_here(b)) && !exact_order {
             let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
             // A value not already real is carried to the width here,
             // the same carrying `float()` itself does, and is stopped

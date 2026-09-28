@@ -14672,11 +14672,14 @@ impl<'a> Machine<'a> {
                 self.at_width(worked)
             }
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
-                // Two numbers are set against each other at the width
-                // the language holds them in, as they are worked at it.
-                let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
-                    true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
-                    false => (v[0].clone(), v[1].clone()),
+                // Python keeps the integer exact when it meets a float
+                // for ordering, even if the integer exceeds float range.
+                let (left, right) = if self.table.strings("ext.op.order.unsupported").len() == 4 {
+                    (v[0].clone(), v[1].clone())
+                } else if self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
+                    (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1])))
+                } else {
+                    (v[0].clone(), v[1].clone())
                 };
                 let below = |a: &Value, b: &Value| -> Result<bool, String> {
                     match math::below(a, b) {
