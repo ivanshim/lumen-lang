@@ -1,1 +1,1 @@
-TypeError: cannot use 'dict' as a dict key (unhashable type: 'dict')
+Traceback (most recent call last):

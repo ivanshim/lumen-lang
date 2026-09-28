@@ -1,1 +1,1 @@
-TypeError: unsupported format string passed to A.__format__
+Traceback (most recent call last):

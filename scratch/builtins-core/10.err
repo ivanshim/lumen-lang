@@ -1,1 +1,1 @@
-PythonError: TypeError: unhashable type: 'list'
+Traceback (most recent call last):

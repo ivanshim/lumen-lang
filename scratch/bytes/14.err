@@ -1,1 +1,1 @@
-TypeError: unhashable type: 'bytearray'
+Traceback (most recent call last):
