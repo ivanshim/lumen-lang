@@ -13850,6 +13850,15 @@ impl<'a> Engine<'a> {
         let part = |at: usize| words.get(at).cloned().unwrap_or_default();
         let row = match &args[0] {
             Value::Bytes(row, ..) => row.borrow().clone(),
+            Value::Object(obj) if obj.class_now().name == "memoryview" => {
+                let method = self.class_value(&obj.class_now(), "__bytes__").ok_or_else(|| self.byte_fault("arguments"))?;
+                let source = match self.class_apply(method, vec![args[0].clone()]) {
+                    Ok(bytes) => bytes,
+                    Err(Fault::Note(message)) => return Err(message),
+                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                };
+                self.byte_row(&source, false)?
+            }
             Value::Text(_) => return Err(part(0)),
             other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
         };
