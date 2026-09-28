@@ -2648,6 +2648,12 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.assert") {
                 self.advance();
+                if self.table.has_any("ext.builtin.exceptions.syntax") {
+                    let equals = self.divided_at(self.pos, self.tokens.len(), "stmt.assign");
+                    if equals.first().is_some_and(|at| *at > self.pos && self.tokens[*at - 1].shape == Shape::Bare) {
+                        return Err(String::from("SyntaxError: cannot assign to name here. Maybe you meant '==' instead of '='?"));
+                    }
+                }
                 let condition = Box::new(self.expr(0)?);
                 let message = if self.on_any("syntax.call.separator") {
                     self.advance();
@@ -7508,7 +7514,7 @@ impl<'a> Builder<'a> {
             if token.lexeme == "lambda" { if let Some(formals) = taking.last_mut() { *formals = true; } }
             if token.shape != Shape::Sign { continue; }
             if token.lexeme == "(" {
-                scopes.push(index > start && self.tokens[index - 1].shape == Shape::Bare);
+                scopes.push(index > 0 && self.tokens[index - 1].lexeme != "assert" && (self.tokens[index - 1].shape == Shape::Bare || [")", "]"].contains(&self.tokens[index - 1].lexeme.as_str())));
                 taking.push(false);
             } else if token.lexeme == "[" || token.lexeme == "{" {
                 scopes.push(false);

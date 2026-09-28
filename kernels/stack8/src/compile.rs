@@ -2374,6 +2374,12 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.assert_words, &w) {
                 self.take();
+                if !lang.syntax_members.is_empty() {
+                    let (signs, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.assign_words);
+                    if signs.first().is_some_and(|at| *at > self.pos && self.tokens[*at - 1].shape == Shape::Instr) {
+                        return Err("SyntaxError: cannot assign to name here. Maybe you meant '==' instead of '='?".into());
+                    }
+                }
                 self.expr(0)?;
                 self.act(Action::Not, 1);
                 let passed = self.skip();
@@ -7748,7 +7754,7 @@ impl<'a> Compiler<'a> {
             if word.shape != Shape::Sign { continue; }
             match word.lexeme.as_str() {
                 "(" => {
-                    let call = at > start && self.tokens[at - 1].shape == Shape::Instr;
+                    let call = at > 0 && self.tokens[at - 1].lexeme != "assert" && (self.tokens[at - 1].shape == Shape::Instr || [")", "]"].contains(&self.tokens[at - 1].lexeme.as_str()));
                     groups.push(call);
                     lambda_formals.push(false);
                 }
