@@ -1374,7 +1374,7 @@ impl<'a> Builder<'a> {
                 }
                 Shape::LineEnd if inline && depth == 0 => break,
                 Shape::Sign if inline && depth == 0 && self.table.spells("stmt.terminator", &token.lexeme) => break,
-                Shape::Bare if token.lexeme == "locals" || token.lexeme == "vars" => return true,
+                Shape::Bare if token.lexeme == "locals" || token.lexeme == "vars" || token.lexeme == "__classdict__" && self.table.has_any("ext.stmt.class.detail.kind") => return true,
                 _ => {}
             }
         }
@@ -7808,6 +7808,12 @@ impl<'a> Builder<'a> {
                     }
                     _ => self.class_not_ready(),
                 }
+            }
+            Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
+                && t.lexeme == "__classdict__" && table.has_any("ext.stmt.class.detail.kind") => {
+                self.advance();
+                let book = self.parts().book.clone().expect("class namespace prepared");
+                self.read(&book.ident.to_string())
             }
             Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
                 && table.spells("ext.stmt.class.detail.kind", &t.lexeme)

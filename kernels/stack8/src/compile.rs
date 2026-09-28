@@ -1196,7 +1196,7 @@ impl<'a> Compiler<'a> {
                 }
                 Shape::LineEnd if inline && depth == 0 => break,
                 Shape::Sign if inline && depth == 0 && self.lang.ends_stmt(&token.lexeme) => break,
-                Shape::Instr if token.lexeme == "locals" || token.lexeme == "vars" => return true,
+                Shape::Instr if token.lexeme == "locals" || token.lexeme == "vars" || token.lexeme == "__classdict__" && !self.lang.class_details.is_empty() => return true,
                 _ => {}
             }
         }
@@ -8176,6 +8176,12 @@ impl<'a> Compiler<'a> {
                 } else {
                     self.class_cannot_run();
                 }
+            }
+            Shape::Instr if !self.in_class_body() && !self.gathered.is_empty()
+                && !lang.class_details.is_empty() && tok.lexeme == "__classdict__" => {
+                self.take();
+                let book = self.gathering().book.clone().expect("class namespace prepared");
+                self.read(&book);
             }
             Shape::Instr if !self.in_class_body() && !self.gathered.is_empty()
                 && lang.class_details.get("kind").map_or(false, |words| words.contains(&tok.lexeme))

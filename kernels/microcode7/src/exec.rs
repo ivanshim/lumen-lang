@@ -276,6 +276,7 @@ impl Drop for Suspension {
 
 pub struct Machine<'a> {
     active_trace: Option<Rc<Thing>>,
+    gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
     code_handles: HashMap<usize, (Rc<Routine>, Value)>,
@@ -1219,6 +1220,7 @@ impl<'a> Machine<'a> {
             made: 0,
             row: 0,
             active_trace: None,
+            gathering_locals: None,
             extent: None,
             activation_kind: None,
             code_handles: HashMap::new(),
@@ -4126,6 +4128,17 @@ impl<'a> Machine<'a> {
         for (word, value) in body.idents.iter().zip(environment.cells.borrow().iter()) {
             let value = value.settled();
             if Self::visible_name(word) && !matches!(value, Value::Unset) { entries.push((Value::text(word), value)); }
+        }
+        if let Some((owner, names, frame)) = &self.gathering_locals {
+            if *owner == Rc::as_ptr(item) as usize {
+                for (name, held) in names.iter().zip(frame.cells.borrow().iter()) {
+                    let worth = held.settled();
+                    if Self::visible_name(name) && !matches!(worth, Value::Unset) {
+                        entries.retain(|(key, _)| key.bare() != *name);
+                        entries.push((Value::text(name), worth));
+                    }
+                }
+            }
         }
         let updated = Value::Dict(Rc::new(entries.into()));
         let book = kept[3].1.clone();
@@ -8762,6 +8775,9 @@ impl<'a> Machine<'a> {
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
         if mine { self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) }; }
+        let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
+            caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
+        } else { None });
         let outcome: Res = loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
@@ -8867,6 +8883,8 @@ impl<'a> Machine<'a> {
         let outcome = self.traced_result(outcome);
         self.update_watched_locals();
         if mine { self.active_trace = caller_trace; self.extent = parent_extent; }
+        self.gathering_locals = earlier_gathering;
+        self.update_watched_locals();
         if self.table.has_any("ext.builtin.exceptions.traceback") { self.row = was_on_row; }
         self.standing -= counted;
         if mine {
@@ -18048,7 +18066,7 @@ impl<'a> Machine<'a> {
         for place in 1..3 {
             books.push(match v.get(place) {
                 None | Some(Value::Nil) => None,
-                Some(Value::Shared(cell)) if matches!(&*cell.borrow(), Value::Dict(_)) => Some(cell.clone()),
+                Some(Value::Shared(cell) | Value::Mutable(cell, _)) if matches!(&*cell.borrow(), Value::Dict(_)) => Some(cell.clone()),
                 // A program's own value, standing in for a dictionary of
                 // its own through the blueprint it answers to: kept in
                 // a cell of its own so the rest of a reading works with
