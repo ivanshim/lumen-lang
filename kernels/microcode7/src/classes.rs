@@ -1782,9 +1782,10 @@ impl<'a> Machine<'a> {
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
     }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
-        let Some(slots)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
+        let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
+        let slots=declared.settled();
         let matching=|x:&Value|matches!(x,Value::Text(s) if s.as_ref()==key||s.as_ref()==self.detail("namespace"));
-        if match slots{Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching),v=>matching(&v)}{return true;}
+        if match &slots{Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching),v=>matching(v)}{return true;}
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.allowed_slot(p,key))
     }
     pub(super) fn change_entry(entries:&mut Vec<(String,Value)>,key:&str,replacement:Option<Value>)->bool {

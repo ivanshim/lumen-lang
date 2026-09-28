@@ -2021,9 +2021,10 @@ impl<'a> Engine<'a> {
     }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
         let own=Self::own_class_value(c,self.class_word("slots"));
-        let Some(slots)=own else{return Self::own_kind(c).is_none();};
+        let Some(own)=own else{return Self::own_kind(c).is_none();};
+        let slots=own.contents();
         let allows=|v:&Value|match v {Value::Text(s)=>s.as_ref()==name||s.as_ref()==self.class_word("namespace"),_=>false};
-        let fits=match slots {Value::Array(v)|Value::Tuple(v)=>v.iter().any(allows),v=>allows(&v)};
+        let fits=match &slots {Value::Array(v)|Value::Tuple(v)=>v.iter().any(allows),v=>allows(v)};
         fits||c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_allow(b,name))
     }
     fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
