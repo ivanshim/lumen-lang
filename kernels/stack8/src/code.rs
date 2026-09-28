@@ -580,6 +580,12 @@ pub enum Builtin {
     DirList,
     DirMake,
     DirGone,
+    /// One directory made to stand where the path given says, with
+    /// none made along the way to it (ext.builtin.dir.make_one).
+    DirMakeOne,
+    /// The directory this run works inside moved to the one the path
+    /// given names (ext.builtin.dir.change).
+    DirChange,
     /// The fault being handled, as its kind's name and its words.
     FaultInHand,
     /// The raised value the innermost clause is holding, itself and

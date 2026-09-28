@@ -4424,8 +4424,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.delattr` | - | - | `delattr` | - | - | - | - | - | - | - |
 | `ext.builtin.dict` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.dir` | - | - | `dir` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.change` | - | - | `__change_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.list` | - | - | `__list_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.make` | - | - | `__make_dir` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.make_one` | - | - | `__make_dir_one` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.remove_tree` | - | - | `__remove_tree` | - | - | - | - | - | - | - |
 | `ext.builtin.divmod` | - | - | `divmod` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |

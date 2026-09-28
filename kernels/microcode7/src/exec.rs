@@ -13907,6 +13907,22 @@ impl<'a> Machine<'a> {
                 let w = self.wording();
                 Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
             }
+            // A single directory raised at the place named: true
+            // when it stands there afterwards, false when it stood
+            // already or the way to it is broken.
+            Prim::DirOne => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::create_dir(v[0].render(w)).is_ok())
+            }
+            // The run takes itself over to the directory named, so
+            // that a path given short opens from there. False where
+            // no such directory stands.
+            Prim::DirStep => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::env::set_current_dir(v[0].render(w)).is_ok())
+            }
             Prim::WeakMake => {
                 n(3)?;
                 let Some(ghost) = crate::ghost::ghost_of(&v[0]) else {

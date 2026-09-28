@@ -14477,6 +14477,22 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 Value::Flag(std::fs::remove_dir_all(args[0].display(&sp)).is_ok())
             }
+            // One directory made to stand at the path given: true
+            // when it stands afterwards, false when it stood there
+            // already or the way to it does not stand.
+            Builtin::DirMakeOne => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::create_dir(args[0].display(&sp)).is_ok())
+            }
+            // The directory this run works inside becomes the one
+            // named, so a path given short opens from there: false
+            // where the name is not a standing directory's.
+            Builtin::DirChange => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::env::set_current_dir(args[0].display(&sp)).is_ok())
+            }
             // The fault in hand: its kind's name and its words, or the
             // pair of nothing when none is being handled. Given a fault,
             // that one is told of instead.
