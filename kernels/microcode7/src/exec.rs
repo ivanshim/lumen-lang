@@ -7025,7 +7025,7 @@ impl<'a> Machine<'a> {
     /// kind at all.
     fn kind_word_of(&self, value: &Value) -> Option<String> {
         match value {
-            Value::Blueprint(class) => Some(self.full_class_name(class)),
+            Value::Blueprint(class) => Some(class.name.clone()),
             Value::KindOf(kind) => Some(Value::word_for_kind(*kind).to_string()),
             Value::OctetKind { changeable, .. } => Some(self.octet_kind_word(*changeable).to_string()),
             Value::Intrinsic(op, word) if op.names_a_kind() => Some(word.to_string()),

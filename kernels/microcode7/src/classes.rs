@@ -864,7 +864,7 @@ impl<'a> Machine<'a> {
         if !named.is_empty(){return named.into();}
         // A thing and a blueprint go by their own name; anything else
         // by the name its kind goes under.
-        let name=match value{Value::Thing(t)=>self.full_class_name(&t.blueprint()),Value::Blueprint(b)=>self.full_class_name(b),other=>other.kind_word()};
+        let name=match value{Value::Thing(t)=>t.blueprint().name.clone(),Value::Blueprint(b)=>b.name.clone(),other=>other.kind_word()};
         let parts=self.table.strings("ext.stmt.class.detail.attribute.amiss");
         if parts.len()<3{return self.class_unready();}
         format!("{}{name}{}{member}{}",parts[0],parts[1],parts[2]).into()

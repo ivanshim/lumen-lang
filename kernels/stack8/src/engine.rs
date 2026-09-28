@@ -4905,7 +4905,7 @@ impl<'a> Engine<'a> {
     /// does not stand for a kind at all.
     fn kind_word_of(&self, value: &Value) -> Option<String> {
         match value {
-            Value::Class(c) => Some(self.qualified_class(c)),
+            Value::Class(c) => Some(c.name.clone()),
             Value::SortOf(sort) => Some(Value::sort_called(*sort).to_string()),
             Value::ByteKind(mutable, _) => Some(self.byte_kind_word(*mutable).to_string()),
             Value::Native(b, word) if Self::kind_builtin(b) => Some(word.to_string()),

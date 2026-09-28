@@ -957,7 +957,7 @@ impl<'a> Engine<'a> {
         if !named.is_empty() { return named.into(); }
         // A thing and a class are named by their own name; anything
         // else by the name its kind goes under.
-        let class = match subject { Value::Object(o)=>self.qualified_class(&o.class_now()), Value::Class(c)=>self.qualified_class(c), other=>other.contents().core_kind() };
+        let class = match subject { Value::Object(o)=>o.class_now().name.clone(), Value::Class(c)=>c.name.clone(), other=>other.contents().core_kind() };
         let pieces = self.lang.class_details.get("attribute.amiss").cloned().unwrap_or_default();
         if pieces.len()!=3 { return self.class_refusal(); }
         format!("{}{class}{}{name}{}",pieces[0],pieces[1],pieces[2]).into()
