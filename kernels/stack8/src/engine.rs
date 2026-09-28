@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use num_bigint::BigInt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use num_traits::{ToPrimitive, Signed, Zero};
 
@@ -31,6 +31,7 @@ pub struct Engine<'a> {
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
+    generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     frame_codes: HashMap<usize, Value>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
@@ -1112,6 +1113,7 @@ impl<'a> Engine<'a> {
             inline_comp: None,
             location: None,
             frame_class: None,
+            generator_frames: HashMap::new(),
             frame_codes: HashMap::new(),
             source: Rc::from(""),
             root_source: Rc::from(""),
@@ -3107,7 +3109,11 @@ impl<'a> Engine<'a> {
             generator.name = self.class_get(function.clone(), &self.class_word("name").to_string(), true)?.plain();
             generator.qualified = self.class_get(function, &self.class_word("qualified").to_string(), true)?.plain();
             generator.trace_frame = self.make_frame(program, &generator.frame, None);
-            self.data.push(Value::Generator(Rc::new(RefCell::new(generator))));
+            let walk = Rc::new(RefCell::new(generator));
+            if let Some(frame) = &walk.borrow().trace_frame {
+                self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
+            }
+            self.data.push(Value::Generator(walk));
             return Ok(());
         }
         let base = self.data.len();
@@ -3786,7 +3792,10 @@ impl<'a> Engine<'a> {
             };
             match waited {
                 Some(Value::Generator(inner)) => {
+                    let parent = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.trace_frame.clone();
+                    let before = std::mem::replace(&mut self.trace_frame, parent);
                     let stepped = self.step_generator(&inner, Value::Null, Some(value), given);
+                    self.trace_frame = before;
                     let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
                     match stepped {
                         Ok(Some(item)) => return Ok(Some(item)),
@@ -3807,13 +3816,19 @@ impl<'a> Engine<'a> {
                         // The walk is shown what the throw was given,
                         // not the value the kernel made of it, since
                         // that is what the reference hands it.
-                        (Some(thing), Some(method)) => match self.invoke(&method, std::iter::once(thing).chain(if given.is_empty() { vec![value] } else { given.to_vec() }).collect()) {
+                        (Some(thing), Some(method)) => {
+                            let parent = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.trace_frame.clone();
+                            let before = std::mem::replace(&mut self.trace_frame, parent);
+                            let invoked = self.invoke(&method, std::iter::once(thing).chain(if given.is_empty() { vec![value] } else { given.to_vec() }).collect());
+                            self.trace_frame = before;
+                            match invoked {
                             Ok(()) => return Ok(Some(self.drop_top()?)),
                             Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if self.stop_class(&o.class_now())) => {
                                 Self::finish_walk(&walk);
                                 hurled = None;
                             }
                             Err(other) => { Self::finish_walk(&walk); return Err(other); }
+                            }
                         },
                         _ => {
                             self.shut_delegate(&walk)?;
@@ -3960,7 +3975,7 @@ impl<'a> Engine<'a> {
         let class = match &self.frame_class {
             Some(class) => class.clone(),
             None => {
-                let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
+                let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
                     reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
                 self.frame_class = Some(class.clone());
@@ -3982,6 +3997,9 @@ impl<'a> Engine<'a> {
 
     pub(super) fn frame_member(&mut self, object: &Rc<Instance>, name: &str) -> Option<Value> {
         if !self.frame_class.as_ref().map_or(false, |class| Rc::ptr_eq(class, &object.class_now())) { return None; }
+        if name == "clear" {
+            return Some(Value::ValueMethod(Rc::new((Value::Object(object.clone()), name.to_string()))));
+        }
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
         if index == 13 {
             return Some(Value::Bond(self.book_here(true)));
@@ -5125,13 +5143,18 @@ impl<'a> Engine<'a> {
                 let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
                 return Ok(Some(Value::text(if name == self.class_word("name") { &state.name } else { &state.qualified })));
             }
-            if let Some(index @ (14 | 15 | 19..=24)) = self.lang.trace_fields.iter().position(|key| key == name) {
+            if let Some(index @ (14 | 15 | 19..=25)) = self.lang.trace_fields.iter().position(|key| key == name) {
+                if index == 25 && held.try_borrow().is_err() { return Ok(Some(Value::text("GEN_RUNNING"))); }
                 if index == 23 { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
                 if index == 24 && held.try_borrow().is_err() { return Ok(Some(Value::Null)); }
                 let state = held.try_borrow().map_err(|_| self.lang.class_unready.first().cloned().unwrap_or_default())?;
                 if matches!(index, 14 | 19 | 20) { return Ok(Some(if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) })); }
                 if matches!(index, 21 | 22) { return Ok(Some(Value::Flag(state.started && !state.closed))); }
                 if index == 24 { return Ok(Some(state.delegate.clone().unwrap_or(Value::Null))); }
+                if index == 25 {
+                    let status = if state.closed { "GEN_CLOSED" } else if state.started { "GEN_SUSPENDED" } else { "GEN_CREATED" };
+                    return Ok(Some(Value::text(status)));
+                }
                 if let Some(program) = &state.program { return Ok(Some(self.routine_code(program))); }
             }
             if self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
@@ -8549,7 +8572,7 @@ impl<'a> Engine<'a> {
                 };
                 let field = match &held {
                     Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18)),
-                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=24)),
+                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=25)),
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     Value::Slice(_) => self.slice_bound_named(name).is_some(),
@@ -12422,6 +12445,31 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "clear" {
+            if let Value::Object(frame) = receiver.contents() {
+                if self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) {
+                    if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&frame) as usize)).and_then(Weak::upgrade) {
+                        let outcome = self.close_generator(&walk);
+                        if let Err(fault) = outcome {
+                            self.carried = Some(fault);
+                            return Err(self.special_fault());
+                        }
+                        return Ok(Value::Null);
+                    }
+                    let mut fields = frame.fields.borrow_mut();
+                    if let Value::Tuple(slots) = &fields[5].1 {
+                        for slot in slots.iter() {
+                            if let Value::Binding(cell) = slot { *cell.borrow_mut() = Value::Blank; }
+                        }
+                    }
+                    fields[5].1 = Value::Tuple(Rc::new(Vec::new()));
+                    fields[3].1 = Value::Null;
+                    fields[7].1 = Value::Null;
+                    return Ok(Value::Null);
+                }
+            }
+        }
         if let Value::Fields(object) = receiver.contents() {
             let entries = Self::fields_entries(&object);
             let map = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);

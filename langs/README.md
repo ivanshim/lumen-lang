@@ -4460,7 +4460,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.setstate` | - | - | `__setstate__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `gi_state` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |

@@ -2398,8 +2398,8 @@ impl<'a> Machine<'a> {
                 for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
                     if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
                 }
-                for word in [self.table.strings("ext.builtin.exceptions.traceback").get(14).cloned(), self.table.strings("ext.builtin.exceptions.traceback").get(15).cloned()] {
-                    if let Some(w)=word { if !w.is_empty() { names.push(w); } }
+                for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
+                    if !word.is_empty() { names.push(word); }
                 }
                 names.sort();names.dedup();
                 return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));

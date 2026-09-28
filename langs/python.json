@@ -925,7 +925,7 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom"
+    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "gi_state"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
