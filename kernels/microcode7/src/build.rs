@@ -9190,7 +9190,7 @@ impl<'a> Builder<'a> {
         if !self.table.flag("ext.stmt.yield.suspends") { return self.gather_comprehension(clause, end, false); }
         let head = self.pos;
         self.pos = clause;
-        self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or("Expected a comprehension source")? + 1;
+        self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })? + 1;
         let begins = self.pos;
         let source = self.expr(1)?;
         let ends = self.pos;
@@ -9234,7 +9234,7 @@ impl<'a> Builder<'a> {
         if self.table.flag("ext.stmt.function.closes_over") && (self.table.has_any("ext.builtin.exceptions.syntax") || self.in_class_body()) {
             let entry = self.pos;
             self.pos = first_for;
-            self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or("Expected a comprehension source")? + 1;
+            self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })? + 1;
             let begins = self.pos;
             let source = self.expr(1)?;
             let bounds = self.span_since(begins);
@@ -9346,7 +9346,7 @@ impl<'a> Builder<'a> {
             if word.shape == Shape::Finish { break; }
             if closing.is_empty() && word.shape == Shape::Bare && self.table.spells("ext.op.comprehension.for", &word.lexeme) {
                 let end = self.divided_at(cursor + 1, self.tokens.len(), "ext.op.comprehension.in")
-                    .into_iter().next().ok_or("Expected a comprehension source")?;
+                    .into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })?;
                 self.gathering_bindings(cursor + 1..end, own)?;
                 cursor = end + 1;
                 continue;
@@ -9406,7 +9406,7 @@ impl<'a> Builder<'a> {
         self.advance();
         let target_begin = self.pos;
         let target_stop = self.divided_at(target_begin, self.tokens.len(), "ext.op.comprehension.in")
-            .into_iter().next().ok_or("Expected the word before a comprehension source")?;
+            .into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected the word before a comprehension source" })?;
         if self.table.has_any("ext.builtin.exceptions.syntax") && self.has_added_target(target_begin..target_stop) {
             return Err(String::from("SyntaxError: cannot assign to expression"));
         }

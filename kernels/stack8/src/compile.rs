@@ -9799,7 +9799,7 @@ impl<'a> Compiler<'a> {
         if !self.lang.yield_suspends { return self.comprehension(pair, clause, false); }
         let head = self.pos;
         self.pos = clause;
-        self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or("Expected a comprehension source")? + 1;
+        self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })? + 1;
         let source_at = self.pos;
         self.expr(1)?;
         let source_end = self.pos;
@@ -9850,7 +9850,7 @@ impl<'a> Compiler<'a> {
         if self.lang.closes_over && (self.in_class_body() || !self.lang.syntax_members.is_empty()) {
             let entry = self.pos;
             self.pos = clause;
-            self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or("Expected a comprehension source")? + 1;
+            self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })? + 1;
             let source_at = self.pos;
             let start = self.mark();
             self.expr(1)?;
@@ -9970,7 +9970,7 @@ impl<'a> Compiler<'a> {
             if token.shape == Shape::Finish { break; }
             if nesting == 0 && token.shape == Shape::Instr && Lang::spells(&self.lang.comprehension_for, &token.lexeme) {
                 let (joins, _) = self.outer_marks(at + 1, self.tokens.len(), &self.lang.comprehension_in);
-                let end = *joins.first().ok_or("Expected a comprehension source")?;
+                let end = *joins.first().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })?;
                 self.comprehension_locals(at + 1, end, floor)?;
                 at = end + 1;
                 continue;
@@ -10003,7 +10003,7 @@ impl<'a> Compiler<'a> {
             self.take();
             let target_start = self.pos;
             let (joins, _) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in);
-            let target_end = *joins.first().ok_or("Expected the comprehension's collection word")?;
+            let target_end = *joins.first().ok_or(if self.lang.syntax_members.is_empty() { "Expected the comprehension's collection word" } else { "SyntaxError: 'in' expected after for-loop variables" })?;
             if !self.lang.syntax_members.is_empty() && self.added_target_expression(target_start, target_end) {
                 return Err("SyntaxError: cannot assign to expression".into());
             }
