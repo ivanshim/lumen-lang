@@ -6704,8 +6704,14 @@ impl<'a> Compiler<'a> {
     fn give_places(&mut self, mut begin: usize, mut end: usize, held: &str) -> Res<()> {
         let amiss = self.lang.unpack_amiss.clone().unwrap_or_else(|| "Invalid assignment target".to_string());
         if begin == end { return Err(amiss.clone()); }
-        if !self.lang.syntax_members.is_empty() && end == begin + 1 && self.tokens[begin].lexeme == "__debug__" {
-            return Err("SyntaxError: cannot assign to __debug__".into());
+        if !self.lang.syntax_members.is_empty() && end == begin + 1 {
+            let word = &self.tokens[begin];
+            let kind = if word.lexeme == "__debug__" { Some("__debug__") }
+                else if [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words]
+                    .iter().any(|words| Lang::spells(words, &word.lexeme)) { Some(word.lexeme.as_str()) }
+                else if matches!(word.shape, Shape::Quote | Shape::Numeral | Shape::Bytes) { Some("literal") }
+                else { None };
+            if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind}")); }
         }
         let mut listed = false;
         loop {
@@ -10251,8 +10257,10 @@ impl<'a> Compiler<'a> {
             after_pairs |= named_spread && self.lang.bind_names;
             if tagged {
                 let word = self.spelled[self.pos].lexeme.clone();
-                if !self.lang.syntax_members.is_empty() && word == "__debug__" {
-                    return Err("SyntaxError: cannot assign to __debug__".into());
+                if !self.lang.syntax_members.is_empty() {
+                    let reserved = word == "__debug__" || [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words]
+                        .iter().any(|words| Lang::spells(words, &word));
+                    if reserved { return Err(format!("SyntaxError: cannot assign to {word}")); }
                 }
                 let twice = &self.lang.call_keyword_repeated;
                 if spelled.contains(&word) && !twice.is_empty() {

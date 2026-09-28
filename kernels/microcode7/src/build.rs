@@ -6557,8 +6557,16 @@ impl<'a> Builder<'a> {
         let bad = self.table.single("ext.stmt.unpack.amiss").unwrap_or("Invalid assignment target").to_string();
         let (mut lo, mut hi) = (span.start, span.end);
         if lo >= hi { return Err(bad); }
-        if self.table.has_any("ext.builtin.exceptions.syntax") && hi == lo + 1 && self.tokens[lo].lexeme == "__debug__" {
-            return Err(String::from("SyntaxError: cannot assign to __debug__"));
+        if self.table.has_any("ext.builtin.exceptions.syntax") && hi == lo + 1 {
+            let entry = &self.tokens[lo];
+            let reserved = entry.lexeme == "__debug__" || ["literal.true", "literal.false", "literal.null"]
+                .iter().any(|label| self.table.spells(label, &entry.lexeme));
+            let description = if reserved { Some(entry.lexeme.as_str()) }
+                else if matches!(entry.shape, Shape::Quote | Shape::ByteQuote | Shape::Numeral) { Some("literal") }
+                else { None };
+            if let Some(description) = description {
+                return Err(format!("SyntaxError: cannot assign to {description}"));
+            }
         }
         let mut array = false;
         while lo < hi {
@@ -9598,8 +9606,10 @@ impl<'a> Builder<'a> {
                     if spelled.contains(&word) && !twice.is_empty() {
                         return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
                     }
-                    if self.table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" {
-                        return Err(String::from("SyntaxError: cannot assign to __debug__"));
+                    if self.table.has_any("ext.builtin.exceptions.syntax")
+                        && (word == "__debug__" || ["literal.true", "literal.false", "literal.null"]
+                            .iter().any(|key| self.table.spells(key, &word))) {
+                        return Err(format!("SyntaxError: cannot assign to {word}"));
                     }
                     spelled.push(word.clone());
                     tag = Some(Value::text(&word));
