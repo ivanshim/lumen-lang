@@ -11050,14 +11050,16 @@ impl<'a> Engine<'a> {
             let (x, y) = (self.bits_said(a)?, self.bits_said(b)?);
             return self.dyadic_numbers(op, &Value::Small(x), &Value::Small(y));
         }
-        // A whole number asked whether it stands in order beside a
-        // real is answered exactly, not carried to the width first:
-        // a whole too great for any real of the width still stands
-        // in order, and is not refused as one that cannot be carried.
-        // Only the working of two numbers carries a whole to the
-        // width, as float() itself does.
+        // A language that compares loosely carries a whole number to
+        // the width before it stands it in order beside a real, the way
+        // it carries a value to the bits it works on; a language that
+        // keeps its reals exact answers the order of a whole and a real
+        // exactly instead, so a whole too great for any real of the
+        // width still stands in order and is not refused as one that
+        // cannot be carried. Only the working of two numbers carries a
+        // whole to the width, as float() itself does.
         if self.lang.real_bits.is_some() && (real_here(a) || real_here(b))
-            && !matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+            && !(matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) && !self.lang.loose_equality) {
             let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
             // A value not already real is carried to the width here,
             // the same carrying `float()` itself does, and is stopped
