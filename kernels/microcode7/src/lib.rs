@@ -109,7 +109,7 @@ const REQUEST_PARTS: [(&str, &str); 8] = [
 /// and the row the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written and the fault goes back as
 /// it came, for the host to tell in its own way.
-fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool) -> String {
+fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str) -> String {
     let mut message = said.to_owned();
     if before != 0 && table.has_any("ext.builtin.exceptions.syntax") {
         let marker = " (detected at line ";
@@ -119,6 +119,15 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
                 message.push_str(&format!("{})", number.saturating_sub(before)));
             }
         }
+    }
+    if said == "SyntaxError: 'return' outside function" && table.has_any("ext.builtin.exceptions.syntax") {
+        let file = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file")
+            .map(|(.., path, _)| path.as_str()).unwrap_or("");
+        let line = row.saturating_sub(before);
+        let shown = source.lines().nth(row.saturating_sub(1) as usize).unwrap_or("").trim_start();
+        let count = shown.chars().take_while(|ch| *ch != '#').count();
+        eprintln!("  File \"{}\", line {}\n    {}\n    {}\n{}", file, line, shown, "^".repeat(count), said);
+        return String::from("\0");
     }
     let said = message.as_str();
     let key = match fatally {
@@ -232,8 +241,8 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let ahead = lines_before(request);
     let joined = import_rejoined(source, table, ahead);
     let source = joined.as_deref().unwrap_or(source);
-    let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
-    let shaped = indent::indent(read?, table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
+    let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false, source));
+    let shaped = indent::indent(read?, table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false, source));
     let tokens = shaped?;
     let system = ["system.args", "ext.system.args.list", "ext.system.args.count", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null",
@@ -254,7 +263,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         .unwrap_or(0);
     let reduced = if !table.rpn {
         build::build_at(&tokens, table, &seeded, HashMap::new(), true, before)
-            .map_err(|(said, row, hard)| cannot_read(table, &said, row, request, ahead, hard))?
+            .map_err(|(said, row, hard)| cannot_read(table, &said, row, request, ahead, hard, source))?
     } else {
         // Read leniently until the named programs' arities settle, then strictly.
         let mut assumed: HashMap<String, build::Signature> = HashMap::new();

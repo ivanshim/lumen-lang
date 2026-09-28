@@ -131,7 +131,7 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
     // Keep the ported routine for the earlier kernels, while the full
     // Python kernels retain their builtin's optional places argument.
     let library = if full && language == "python" {
-        format!("__native_round = round\n{}\nround = __native_round\ndel __native_round", library)
+        format!("__native_round = round\n{}\nround = __native_round\ndel __native_round\nimport sys", library)
     } else { library };
     let lead = source.len() - source.trim_start().len();
     if !prologue.is_empty() && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
@@ -207,11 +207,21 @@ fn honours_extensions(kernel: &str) -> bool {
     matches!(kernel, "stack8" | "microcode7")
 }
 
-/// What was written in a file, as the kernel is to hold it. Where text
-/// is bytes, each byte stands as the character of its own number, so
-/// that nothing of what was written is lost and the count of characters
-/// is the count of bytes. Where it is letters, the bytes are read as
-/// the letters they spell, and a byte spelling none is passed over.
+/// Read a Python file according to its first two lines, discarding an
+/// optional UTF-8 signature before it reaches the lexer.
+fn python_file_source(written: Vec<u8>) -> String {
+    let bytes = written.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&written);
+    let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
+        .copied().map(char::from).collect::<String>().to_ascii_lowercase();
+    if header.contains("coding: latin1") || header.contains("coding: latin-1") {
+        bytes.iter().copied().map(char::from).collect()
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+/// Hold source in the form its language asks for: byte values as
+/// characters when text is bytes, decoded characters otherwise.
 fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
     match as_bytes {
         true => written.into_iter().map(char::from).collect(),
@@ -307,7 +317,11 @@ fn run_all() {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
     });
-    let source = source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
+    let source = if inv.language.name() == "python" && honours_extensions(&inv.kernel) {
+        python_file_source(written)
+    } else {
+        source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel))
+    };
     let source = without_shebang(source);
 
     // Every program runs on top of its language's library.
@@ -446,7 +460,7 @@ fn run_all() {
     };
 
     if let Err(message) = result {
-        eprintln!("{}", message);
+        if !message.is_empty() { eprintln!("{}", message); }
         process::exit(1);
     }
 }

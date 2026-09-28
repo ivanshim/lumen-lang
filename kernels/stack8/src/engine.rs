@@ -14497,7 +14497,13 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let sp = self.wording();
                 match std::fs::read(args[0].display(&sp)) {
-                    Ok(bytes) => Value::text(&String::from_utf8_lossy(&bytes)),
+                    Ok(bytes) => {
+                        let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
+                            .copied().map(char::from).collect::<String>().to_ascii_lowercase();
+                        if !self.lang.syntax_members.is_empty() && (header.contains("coding: latin1") || header.contains("coding: latin-1")) {
+                            Value::text(&bytes.iter().copied().map(char::from).collect::<String>())
+                        } else { Value::text(&String::from_utf8_lossy(&bytes)) }
+                    },
                     Err(_) => Value::Flag(false),
                 }
             }
@@ -14507,8 +14513,13 @@ impl<'a> Engine<'a> {
                 }
                 let sp = self.wording();
                 let (where_to, what) = (args[0].display(&sp), args[1].display(&sp));
-                match std::fs::write(where_to, self.lang.bytes_of(&what)) {
-                    Ok(()) => Value::Small(what.len() as i64),
+                let raw = match args[1].contents() {
+                    Value::Bytes(cell, ..) if !self.lang.syntax_members.is_empty() => cell.borrow().clone(),
+                    _ => self.lang.bytes_of(&what),
+                };
+                let length = raw.len();
+                match std::fs::write(where_to, raw) {
+                    Ok(()) => Value::Small(length as i64),
                     Err(_) => Value::Flag(false),
                 }
             }

@@ -2769,9 +2769,20 @@ impl<'a> Machine<'a> {
             }
             result => result,
         };
+        if let Err(Escape::Thrown(Value::Thing(thing))) = &ran {
+            if let Some(status) = self.exit_status(thing) {
+                let _ = self.run_afterward();
+                self.let_things_go();
+                self.let_go_all();
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                std::process::exit(status);
+            }
+        }
         // A program may put a routine in the way of a value nobody took;
         // the run says nothing of its own where one took it up.
         if matches!(ran, Err(Escape::Thrown(_)) | Err(Escape::Error(_))) && self.taken_up(ran.as_ref().unwrap_err()) {
+            if self.table.has_any("ext.builtin.exceptions") { return Err(String::from("\0")); }
             return match ran {
                 Err(Escape::Thrown(v)) => Err(format!("Uncaught {}", v.bare())),
                 Err(Escape::Error(told)) => Err(told),
@@ -2783,16 +2794,6 @@ impl<'a> Machine<'a> {
             Ok(_) | Err(Escape::Done) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
             // A value nobody took is a fault, told the way PHP tells it.
             Err(Escape::Thrown(Value::Thing(thing))) => {
-                // An exit ends the run with the status it asks, once
-                // what was to run afterward has run.
-                if let Some(status) = self.exit_status(&thing) {
-                    let _ = self.run_afterward();
-                    self.let_things_go();
-                    self.let_go_all();
-                    use std::io::Write;
-                    let _ = std::io::stdout().flush();
-                    std::process::exit(status);
-                }
                 if let Some(report) = thing.holds.borrow().iter().find_map(|(key, held)| (key == "\0report").then(|| held.bare())) {
                     return Err(report);
                 }
@@ -13919,7 +13920,15 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 match std::fs::read(v[0].render(w)) {
-                    Ok(bytes) => Value::text(&String::from_utf8_lossy(&bytes)),
+                    Ok(bytes) => {
+                        let opening = bytes.split(|part| *part == b'\n').take(2).flatten()
+                            .copied().map(char::from).collect::<String>().to_ascii_lowercase();
+                        let local = opening.contains("coding: latin1") || opening.contains("coding: latin-1");
+                        if self.table.has_any("ext.builtin.exceptions.syntax") && local {
+                            let letters: String = bytes.into_iter().map(char::from).collect();
+                            Value::text(&letters)
+                        } else { Value::text(&String::from_utf8_lossy(&bytes)) }
+                    },
                     Err(_) => Value::Flag(false),
                 }
             }
@@ -13927,8 +13936,13 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 let w = self.wording();
                 let (place, what) = (v[0].render(w), v[1].render(w));
-                match std::fs::write(place, self.table.raw_of(&what)) {
-                    Ok(()) => Value::Small(what.len() as i64),
+                let bytes = match &v[1] {
+                    Value::Octets { cell, .. } if self.table.has_any("ext.builtin.exceptions.syntax") => cell.borrow().clone(),
+                    _ => self.table.raw_of(&what),
+                };
+                let size = bytes.len();
+                match std::fs::write(place, bytes) {
+                    Ok(()) => Value::Small(size as i64),
                     Err(_) => Value::Flag(false),
                 }
             }

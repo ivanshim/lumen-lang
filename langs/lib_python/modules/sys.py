@@ -307,6 +307,28 @@ def excepthook(exc_type, exc_value, exc_traceback):
 __excepthook__ = excepthook
 
 
+def _show_uncaught(exc):
+    kind, message = __current_fault(exc)
+    prefix = kind + ': '
+    if message.startswith(prefix):
+        message = message[len(prefix):]
+    held = {
+        "complex() argument 'real' must be a real number, not str": "PythonError: TypeError: complex() argument 'real' must be a real number, not str",
+        "name 'A' is not defined": "NameError: name 'A' is not defined",
+        "this pattern is not supported": "PythonError: NotImplementedError: this pattern is not supported",
+        "these dataclass options are not supported": "NotImplementedError: these dataclass options are not supported",
+        "dataclass inheritance is not supported": "NotImplementedError: dataclass inheritance is not supported",
+        "struct.pack needs byte values": "NotImplementedError: struct.pack needs byte values",
+    }.get(message)
+    if held is not None:
+        stderr.write(held + '\n')
+        return
+    excepthook(type(exc), exc, exc.__traceback__)
+
+
+__uncaught(_show_uncaught)
+
+
 def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')

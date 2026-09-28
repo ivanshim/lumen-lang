@@ -1,4 +1,4 @@
-def format_tb(tb, limit=None):
+def format_tb(tb, limit=None, exc=None):
     frames = []
     while tb is not None:
         frames.append(tb)
@@ -17,10 +17,28 @@ def format_tb(tb, limit=None):
         try:
             import builtins
             with builtins.open(filename) as source:
-                text = source.read().splitlines()[line - 1].strip()
-            if text:
-                entry += '    ' + text + '\n'
-        except (OSError, IndexError):
+                contents = source.read()
+            if contents[:1] == '\ufeff':
+                contents = contents[1:]
+            lines = contents.splitlines()
+            shown = lines[line - 1].strip()
+            mark = None
+            if isinstance(exc, AssertionError) and shown.startswith('assert '):
+                expression = shown[7:].split(',', 1)[0]
+                if expression == '(' and line < len(lines):
+                    following = lines[line].strip()
+                    shown = following
+                    if following.endswith('and') and line + 1 < len(lines):
+                        shown += '\n    ' + lines[line + 1].strip()
+                    elif ')' in following:
+                        mark = following.index(')')
+                else:
+                    mark = len(expression)
+            if shown:
+                entry += '    ' + shown + '\n'
+                if mark is not None and mark > 0:
+                    entry += '    ' + ' ' * (7 if shown.startswith('assert ') else 0) + '^' * mark + '\n'
+        except (OSError, IndexError, UnicodeError):
             pass
         result.append(entry)
     return result
@@ -88,7 +106,7 @@ def _format_exception(exc, tb, limit, chain, seen):
             result.extend(_format_exception(context, context.__traceback__, limit, chain, seen))
             result.append('\nDuring handling of the above exception, another exception occurred:\n\n')
     if tb is not None:
-        frames = format_tb(tb, limit)
+        frames = format_tb(tb, limit, exc)
         if frames:
             result.append('Traceback (most recent call last):\n')
             result.extend(frames)
