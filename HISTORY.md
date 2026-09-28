@@ -2008,3 +2008,32 @@ Merged, the fifty files count 2350 on stack8 and 2349 on microcode7, up
 from 2262 and 2260, with no passing test lost; microcode7's test_math and
 test_str, whose largest classes exceed Lambda's fifteen minutes, were run
 whole on the build machine.
+
+### 1ai. Batch 20g merged as #514; batch 20h: eight branches from three models
+
+Pull request #514 merged into main after one more fix: gc-weakref's cycle
+collection left stack8 unable to collect a cycle through a slice that
+microcode7 collected, so test_slice passed on one kernel and not the
+other, which CI's kernel-disagreement check rejects; fix/slice-cycle made
+stack8 traverse slices. The Lambda count now reports such disagreements
+too.
+
+Batch 20h folds eight branches, integrated by a GPT-6 Sol worker, which
+also added the one interaction fix the merge needed (microcode7 tracks
+closure frames for cycle collection). Six were written by Sol workers:
+fix/grammar-literals (check_syntax_error through compile(), CPython's
+wording for malformed number literals, UnboundLocalError, module
+annotations; test_grammar 57 to 70), fix/generators-rest (functions from
+code objects, exec(locals=), frames of coroutines and async generators,
+getgeneratorstate; test_generators 43 to 49), fix/bool-corners (test_bool
+complete), fix/int-iter-misc (test_int 32 to 38, test_iter 60 to 64),
+fix/fractions-last (test_fractions 42 to 48) and fix/exceptions-misc
+(test_exceptions 84 to 90). Two were written by workers running DeepSeek
+V4 Pro: fix/str-last (printf-style formatting of objects with __index__
+and __int__; test_str 121 to 125) and fix/string-literals-rest (3.14's
+invalid-escape SyntaxWarnings and wording; test_string_literals complete).
+
+Merged, the fifty files count 2411 on both stack8 and microcode7, up from
+2351 and 2349, with no passing test lost and the kernels agreeing on
+every file; microcode7's test_math and test_str were run whole on the
+build machine (79 and 125).
