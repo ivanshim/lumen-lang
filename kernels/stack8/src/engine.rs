@@ -1929,7 +1929,16 @@ impl<'a> Engine<'a> {
     fn exception_words(&self, told: &str, class: &str) -> String {
         let told = told.trim_start_matches('\0');
         if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
-        if let Some(rest) = told.strip_prefix(&format!("{class}: ")) { return rest.to_string(); }
+        if let Some(rest) = told.strip_prefix(&format!("{class}: ")) {
+            // Native key faults carry a displayed key; the exception's
+            // argument holds the key itself so its string form quotes it once.
+            if self.lang.fault_key.as_deref() == Some(class) {
+                if let Some(key) = rest.strip_prefix("'").and_then(|s| s.strip_suffix("'")) {
+                    return key.to_string();
+                }
+            }
+            return rest.to_string();
+        }
         if self.lang.fault_division.as_deref() == Some(class) { return self.lang.division_words.clone().unwrap_or_else(|| told.into()); }
         if self.lang.fault_index.as_deref() == Some(class) { return self.lang.index_words.clone().unwrap_or_else(|| told.into()); }
         if self.lang.fault_kind.as_deref() == Some(class) { return self.lang.kind_words.clone().unwrap_or_else(|| told.into()); }

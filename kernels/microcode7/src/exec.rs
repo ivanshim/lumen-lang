@@ -2370,7 +2370,15 @@ impl<'a> Machine<'a> {
         let raw = raw.trim_start_matches('\0');
         if self.table.single("ext.stmt.catch.invalid") == Some(raw) { return raw.into(); }
         let prefix = format!("{kind}: ");
-        if let Some(words) = raw.strip_prefix(&prefix) { return words.to_string(); }
+        if let Some(words) = raw.strip_prefix(&prefix) {
+            // The native fault has already displayed a string key. Store
+            // its value as the argument and let KeyError render it itself.
+            let key_fault = self.table.single("ext.system.fault.class.key") == Some(kind);
+            let value = if key_fault && words.starts_with("'") && words.ends_with("'") && words.len() >= 2 {
+                &words[1..words.len() - 1]
+            } else { words };
+            return value.to_string();
+        }
         for (class_key, words_key) in [("ext.system.fault.class.division", "ext.system.fault.division"),
             ("ext.system.fault.class.index", "ext.system.fault.index"),
             ("ext.system.fault.class.kind", "ext.system.fault.kind")] {
