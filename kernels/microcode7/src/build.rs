@@ -3455,6 +3455,10 @@ impl<'a> Builder<'a> {
                 if bracketed {
                     self.need_sign(table.single("ext.stmt.catch.tuple.close").unwrap_or(")"), "after the classes caught")?;
                 }
+                if table.has_any("ext.builtin.exceptions.syntax") && !bracketed && selectors.len() > 1
+                    && self.key("ext.stmt.catch.as") {
+                    return Err(String::from("SyntaxError: multiple exception types must be parenthesized when using 'as'"));
+                }
                 held = if self.key("ext.stmt.catch.as") {
                     self.advance();
                     let start = self.pos;

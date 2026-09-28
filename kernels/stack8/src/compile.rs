@@ -4584,6 +4584,9 @@ impl<'a> Compiler<'a> {
             if tuple {
                 self.want_sign(lang.catch_tuple_close.as_deref().unwrap_or(")"), "after the classes caught")?;
             }
+            if !lang.syntax_members.is_empty() && !tuple && kinds.len() > 1 && self.on_keyword(&lang.catch_as) {
+                return Err("SyntaxError: multiple exception types must be parenthesized when using 'as'".into());
+            }
             let held = if self.on_keyword(&lang.catch_as) {
                 self.take();
                 let binding_at = self.pos;
