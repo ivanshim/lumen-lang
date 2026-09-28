@@ -2122,6 +2122,10 @@
   "ext.lexical.string.prefix.format.unready": [
     "NotImplementedError: formatted strings are not supported"
   ],
+  "ext.lexical.string.prefix.template": [
+    "t",
+    "T"
+  ],
   "ext.lexical.string.prefix.incompatible": [
     "SyntaxError: '",
     "' and '",

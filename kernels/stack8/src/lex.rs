@@ -248,6 +248,9 @@ struct Cursor<'a> {
     out: Vec<Token>,
     final_crlf: bool,
     unpaired: Vec<(usize, u32)>,
+    /// The template letter the string being read opened with, so the
+    /// beginnings pushed for it name it: none for any other string.
+    template: Option<char>,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -486,7 +489,7 @@ impl<'a> Cursor<'a> {
             if lang.raw_prefixes.contains(&c) && !raw { raw = true; }
             else if lang.byte_prefixes.contains(&c) && !bytes { bytes = true; }
             else if lang.plain_prefixes.contains(&c) && !plain { plain = true; }
-            else if lang.format_prefixes.contains(&c) && !format { format = true; }
+            else if (lang.format_prefixes.contains(&c) || lang.template_prefixes.contains(&c)) && !format { format = true; }
             else { return None; }
             count += 1;
         }
@@ -521,7 +524,7 @@ impl<'a> Cursor<'a> {
             let kind = if lang.raw_prefixes.contains(&c) { 0 }
                 else if lang.byte_prefixes.contains(&c) { 1 }
                 else if lang.plain_prefixes.contains(&c) { 2 }
-                else if lang.format_prefixes.contains(&c) { 3 }
+                else if lang.format_prefixes.contains(&c) || lang.template_prefixes.contains(&c) { 3 }
                 else { return None; };
             let bit = 1u8 << kind;
             if flags & bit != 0 { repeated = true; }
@@ -588,8 +591,9 @@ impl<'a> Cursor<'a> {
         let outcome = (|| -> Result<(), String> {
             let (line, col) = (self.row, self.column);
             let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
+            self.template = if format { self.text[self.at..self.at + prefix].iter().find(|c| self.lang.template_prefixes.contains(c)).copied() } else { None };
             for _ in 0..prefix + mark.chars().count() { self.step(); }
-            if format { self.push(Shape::StringBegin, String::new(), 0, line, col); }
+            if format { self.push(Shape::StringBegin, self.template.map(|c| c.to_string()).unwrap_or_default(), 0, line, col); }
             let mut warned = false;
             let (mut text, mut fault) = (String::new(), false);
             loop {
@@ -880,11 +884,11 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringField, conversion, 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false };
+        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
         inner.run(false)?;
         self.out.extend(inner.out.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd)));
         self.push(Shape::Sign, group.close.clone(), 0, line, col);
-        self.push(Shape::StringBegin, String::new(), 0, line, col);
+        self.push(Shape::StringBegin, self.template.map(|c| c.to_string()).unwrap_or_default(), 0, line, col);
         let (mut text, mut fault) = (String::new(), false);
         let mut warned = false;
         if self.look(0) == Some(':') {
@@ -1131,7 +1135,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false };
+            let mut inner = Cursor { lang, text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1451,7 +1455,7 @@ pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
     let source = normalized.as_deref().unwrap_or(source);
     if lang.template || (!lang.syntax_members.is_empty() && source.contains('\0')) { return Vec::new(); }
     let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-    let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf };
+    let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
     let _ = cur.run(true);
     cur.out.into_iter().filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
 }
@@ -1466,7 +1470,7 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf };
+            let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
             if let Err(said) = cur.run(true) {
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
@@ -1868,7 +1872,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false };
+        let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }

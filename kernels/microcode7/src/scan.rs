@@ -780,7 +780,8 @@ fn quoted_start(src: &[char], offset: usize, table: &Table) -> Option<(usize, Ve
         if begin - offset >= 2 { return None; }
         let letter = src[begin].to_string();
         let kind = ["raw", "bytes", "plain", "format"].iter().position(|part|
-            table.spells(&format!("ext.lexical.string.prefix.{part}"), &letter))?;
+            table.spells(&format!("ext.lexical.string.prefix.{part}"), &letter))
+            .or_else(|| table.spells("ext.lexical.string.prefix.template", &letter).then_some(3))?;
         let bit = 1 << kind;
         if flags & bit != 0 { return None; }
         flags |= bit;
@@ -815,7 +816,8 @@ fn prefix_conflict(src: &[char], offset: usize, table: &Table) -> Option<String>
         if quotes.contains(&c) { break; }
         let letter = c.to_string();
         let kind = ["raw", "bytes", "plain", "format"].iter().position(|part|
-            table.spells(&format!("ext.lexical.string.prefix.{part}"), &letter))?;
+            table.spells(&format!("ext.lexical.string.prefix.{part}"), &letter))
+            .or_else(|| table.spells("ext.lexical.string.prefix.template", &letter).then_some(3))?;
         let bit = 1u8 << kind;
         if flags & bit != 0 { repeated = true; }
         flags |= bit;
@@ -897,8 +899,12 @@ impl Quotation<'_> {
         if fields && depth >= 150 { return Err(self.table.single("ext.builtin.source.syntax").unwrap_or("Invalid string literal").to_owned()); }
         let bytes = self.source[self.next..body - end.len()].iter().any(|c|
             self.table.spells("ext.lexical.string.prefix.bytes", &c.to_string()));
+        let template = if fields {
+            self.source[self.next..body].iter().take_while(|c| c.is_ascii_alphabetic())
+                .find(|c| self.table.spells("ext.lexical.string.prefix.template", &c.to_string())).copied()
+        } else { None };
         self.forward(body - self.next);
-        if fields { self.token(Shape::Woven, String::new()); }
+        if fields { self.token(Shape::Woven, template.map(|c| c.to_string()).unwrap_or_default()); }
         let mut noticed = false;
         let mut saved = String::new();
         let mut missing = false;
@@ -935,7 +941,7 @@ impl Quotation<'_> {
                     } else {
                         if ch == '}' { return Err(self.field_fault(1, &[])); }
                         self.flush(&mut saved, &mut missing);
-                        self.field(raw, depth, end, 0)?;
+                        self.field(raw, depth, end, 0, template)?;
                         noticed = false;
                     }
                 }
@@ -1099,7 +1105,7 @@ impl Quotation<'_> {
         for insert in inserts { words = words.replacen("{}", insert, 1); }
         words
     }
-    fn field(&mut self, raw: bool, depth: u32, delimiter: &[char], levels: usize) -> Result<(), String> {
+    fn field(&mut self, raw: bool, depth: u32, delimiter: &[char], levels: usize, template: Option<char>) -> Result<(), String> {
         if levels >= 3 { return Err(self.field_fault(18, &[])); }
         self.forward(1);
         let origin = self.next;
@@ -1222,7 +1228,7 @@ impl Quotation<'_> {
         let tokens = scan_code(&code, self.table)?;
         self.made.extend(tokens.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)));
         self.token(Shape::Sign, right);
-        self.token(Shape::Woven, String::new());
+        self.token(Shape::Woven, template.map(|c| c.to_string()).unwrap_or_default());
         let mut noticed = false;
         let mut specification = String::new();
         let mut missing = false;
@@ -1232,7 +1238,7 @@ impl Quotation<'_> {
                 if self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[])); }
                 match self.here().ok_or_else(|| self.field_fault(0, &[]))? {
                     '\n' | '\r' if delimiter.len() == 1 => return Err(self.field_fault(17, &[])),
-                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw, depth, delimiter, levels + 1)?; noticed = false; }
+                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw, depth, delimiter, levels + 1, template)?; noticed = false; }
                     '\\' => self.slash(raw, true, false, &mut specification, &mut missing, &mut noticed)?,
                     c => { specification.push(c); self.forward(1); }
                 }

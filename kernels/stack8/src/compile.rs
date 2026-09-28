@@ -1932,14 +1932,37 @@ impl<'a> Compiler<'a> {
                 Some(("str", past))
             }
             Shape::Bytes => Some(("bytes", at + 1)),
+            Shape::StringBegin => {
+                // A format string reads as text wherever it stands; a
+                // field within it opens a string of its own, so the
+                // ends and beginnings are counted through.
+                let mut deep = 1usize;
+                let mut past = at + 1;
+                while past < end && deep > 0 {
+                    match self.tokens[past].shape {
+                        Shape::StringBegin => deep += 1,
+                        Shape::StringEnd => deep -= 1,
+                        _ => {}
+                    }
+                    past += 1;
+                }
+                if deep > 0 { return None; }
+                let template = token.lexeme.chars().next().map_or(false, |c| self.lang.template_prefixes.contains(&c));
+                Some((if template { "string.templatelib.Template" } else { "str" }, past))
+            }
+
             Shape::Sign if ["(", "[", "{"].contains(&token.lexeme.as_str()) => {
                 let close = self.bracket_close(at, end)?;
                 let kind = match token.lexeme.as_str() {
                     "[" => "list",
                     "{" => if close == at + 1 || self.bracket_holds(at, close, &[":"]) { "dict" } else { "set" },
+                    // A lambda in parentheses stands for a function.
+                    _ if self.tokens.get(at + 1).map_or(false, |t| t.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &t.lexeme)) => "function",
                     _ if self.bracket_holds(at, close, &[","]) => "tuple",
                     // One literal in parentheses is that literal.
                     _ if close == at + 2 => self.literal_kind(at + 1, close)?.0,
+                    // Parentheses walking a comprehension hold a generator.
+                    _ if token.lexeme == "(" && self.bracket_walks(at, close) => "generator",
                     _ => return None,
                 };
                 Some((kind, close + 1))
@@ -1948,11 +1971,60 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Whether the bracketed stretch walks a comprehension: the word
+    /// for the walk standing at the bracket's own depth.
+    fn bracket_walks(&self, open: usize, close: usize) -> bool {
+        let fors = &self.lang.comprehension_for;
+        if fors.is_empty() { return false; }
+        let mut depth = 0usize;
+        for at in open + 1..close {
+            let token = &self.tokens[at];
+            if token.shape == Shape::Sign {
+                if ["(", "[", "{"].contains(&token.lexeme.as_str()) { depth += 1; }
+                else if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth = depth.saturating_sub(1); }
+            } else if depth == 0 && token.shape == Shape::Instr && Lang::spells(fors, &token.lexeme) { return true; }
+        }
+        false
+    }
+
     /// The reference's name for the kind of a number as it is spelled.
     fn number_kind(lexeme: &str) -> &'static str {
         let text = lexeme.to_ascii_lowercase();
         let based = text.starts_with("0x") || text.starts_with("0o") || text.starts_with("0b");
         if text.ends_with('j') { "complex" } else if !based && (text.contains('.') || text.contains('e')) { "float" } else { "int" }
+    }
+
+    /// The kind of the one expression between the index marks, as the
+    /// reference names it: a comma parting them makes a tuple, a cut
+    /// mark a slice that indexes fine, and an integer indexes fine. A
+    /// name or a larger expression says nothing.
+    fn index_kind(&self, open: usize, close: usize) -> Option<&'static str> {
+        if self.bracket_holds(open, close, &[","]) { return Some("tuple"); }
+        if self.bracket_holds(open, close, &[":"]) { return None; }
+        if open + 1 >= close { return None; }
+        if open + 2 == close {
+            let only = &self.tokens[open + 1];
+            if only.shape == Shape::Instr {
+                if Lang::spells(&self.lang.null_words, &only.lexeme) { return Some("NoneType"); }
+                if Lang::spells(&self.lang.true_words, &only.lexeme) || Lang::spells(&self.lang.false_words, &only.lexeme) { return Some("bool"); }
+            }
+            if only.shape == Shape::Sign && Lang::spells(&self.lang.ellipsis_words, &only.lexeme) { return Some("ellipsis"); }
+        }
+        let (kind, ends) = self.literal_kind(open + 1, close)?;
+        if ends != close { return None; }
+        Some(kind)
+    }
+
+    /// The kind a named constant is of, where one is written just
+    /// before the call's opening mark at `at`: a call upon it warns as
+    /// a call upon that kind.
+    fn constant_kind_called(&self, at: usize) -> Option<&'static str> {
+        let before = &self.tokens[at - 1];
+        if before.shape == Shape::Sign && Lang::spells(&self.lang.ellipsis_words, &before.lexeme) { return Some("ellipsis"); }
+        if before.shape != Shape::Instr { return None; }
+        if Lang::spells(&self.lang.null_words, &before.lexeme) { return Some("NoneType"); }
+        if Lang::spells(&self.lang.true_words, &before.lexeme) || Lang::spells(&self.lang.false_words, &before.lexeme) { return Some("bool"); }
+        None
     }
 
     /// The kind of the literal that ends just before `past`, if the
@@ -1974,6 +2046,23 @@ impl<'a> Compiler<'a> {
             open
         } else {
             let mut start = last;
+            if matches!(token.shape, Shape::StringEnd | Shape::StringField) {
+                // Fields open strings of their own within the string:
+                // walk back over each to the beginning of the whole.
+                let mut deep = 0usize;
+                while start > began {
+                    match self.tokens[start].shape {
+                        Shape::StringEnd => deep += 1,
+                        Shape::StringBegin => {
+                            if deep == 0 { break; }
+                            deep -= 1;
+                            if deep == 0 { break; }
+                        }
+                        _ => {}
+                    }
+                    start -= 1;
+                }
+            }
             while start > began && token.shape == Shape::Quote && self.tokens[start - 1].shape == Shape::Quote { start -= 1; }
             // A number reached through arithmetic signs from other numbers
             // is one folded number, back to the first of them.
@@ -2039,8 +2128,26 @@ impl<'a> Compiler<'a> {
                 }
             }
             if token.is_lexeme(Shape::Sign, "(") && at > began {
-                if let Some(kind) = self.literal_kind_before(at, began) {
+                // A function made on the spot is called on purpose: the
+                // reference warns of no call upon one, only of indexing.
+                let kind = self.literal_kind_before(at, began).or_else(|| self.constant_kind_called(at));
+                if let Some(kind) = kind.filter(|k| *k != "function") {
                     found.push((format!("'{kind}' object is not callable; perhaps you missed a comma?"), token.row, token.column));
+                }
+            }
+            // A set, a generator, a function or a template indexed right
+            // after it stands warns too, as does indexing a number or a
+            // named constant; text, tuples, lists and maps index fine.
+            if token.is_lexeme(Shape::Sign, "[") && at > began {
+                let kind = self.literal_kind_before(at, began).or_else(|| self.constant_kind_called(at));
+                if let Some(kind) = kind.filter(|k| !matches!(*k, "str" | "bytes" | "tuple" | "list" | "dict")) {
+                    found.push((format!("'{kind}' object is not subscriptable; perhaps you missed a comma?"), token.row, token.column));
+                } else if let Some(value_kind) = kind.filter(|k| matches!(*k, "str" | "bytes" | "tuple" | "list")) {
+                    // Text, tuples and lists index fine with an integer
+                    // or a slice; indexing one with anything else warns.
+                    if let Some(index) = self.bracket_close(at, end).and_then(|close| self.index_kind(at, close)).filter(|k| !matches!(*k, "int" | "bool")) {
+                        found.push((format!("{value_kind} indices must be integers or slices, not {index}; perhaps you missed a comma?"), token.row, token.column));
+                    }
                 }
             }
         }

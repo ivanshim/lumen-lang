@@ -625,6 +625,12 @@ only. The extension labels so far, all from PHP:
   binary, octal and hexadecimal integer formats are supported. Reals
   retain a decimal point or an exponent with at least two digits.
   Unsupported presentations are evaluated and then refused.
+- `ext.lexical.string.prefix.template`: letters before a quote that ask
+  for text with expressions between braces, making a template rather
+  than text. The letters read as format letters everywhere a prefix is
+  classified; the string's opening token keeps the letter it opened
+  with, so a reader can tell a template's pieces apart from a format
+  string's. Nothing here yet makes the value a template of its own kind.
 - `ext.lexical.string.prefix.incompatible`: what the language says of a
   run of prefix letters that names two kinds that cannot stand
   together (raw and plain, byte and plain, byte and format), a word on
@@ -4894,6 +4900,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.incompatible` | - | - | `SyntaxError: '` `' and '` `' prefixes are incompatible` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.template` | - | - | `t` `T` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unterminated` | - | - | `SyntaxError: unterminated string literal` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unterminated.triple` | - | - | `SyntaxError: unterminated triple-quoted string literal` | - | - | - | - | - | - | - |

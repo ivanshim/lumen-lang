@@ -2061,19 +2061,61 @@ impl<'a> Builder<'a> {
                 Some(("str", past))
             }
             Shape::ByteQuote => Some(("bytes", at + 1)),
+            Shape::Woven => {
+                // A woven string reads as text wherever it stands; a
+                // field in it opens a string of its own, so the ends
+                // and openings of one are counted through.
+                let mut depth = 1usize;
+                let mut past = at + 1;
+                while past < limit && depth > 0 {
+                    match self.tokens[past].shape {
+                        Shape::Woven => depth += 1,
+                        Shape::WovenEnd => depth -= 1,
+                        _ => {}
+                    }
+                    past += 1;
+                }
+                if depth > 0 { return None; }
+                let woven_template = token.lexeme.chars().next().map_or(false, |c| self.table.spells("ext.lexical.string.prefix.template", &c.to_string()));
+                Some((if woven_template { "string.templatelib.Template" } else { "str" }, past))
+            }
+
             Shape::Sign => {
                 let opener = token.lexeme.as_str();
                 if !["(", "[", "{"].contains(&opener) { return None; }
                 let close = self.pair_close(at, limit)?;
                 let kind = if opener == "[" { "list" }
                     else if opener == "{" { if close == at + 1 || self.pair_holds(at, close, &[":"]) { "dict" } else { "set" } }
+                    else if opener == "(" && self.tokens.get(at + 1).map_or(false, |t| t.shape == Shape::Bare && self.table.spells("ext.op.lambda", &t.lexeme)) { "function" }
                     else if self.pair_holds(at, close, &[","]) { "tuple" }
                     else if close == at + 2 { self.literal_at(at + 1, close)?.0 }
+                    else if opener == "(" && self.pair_gathers(at, close) { "generator" }
                     else { return None };
                 Some((kind, close + 1))
             }
             _ => None,
         }
+    }
+
+    /// Whether the paired stretch gathers: the walk word standing at
+    /// the pair's own depth.
+    fn pair_gathers(&self, open: usize, close: usize) -> bool {
+        let walks = self.table.strings("ext.op.comprehension.for");
+        if walks.is_empty() { return false; }
+        let mut nesting = 0usize;
+        for here in open + 1..close {
+            let token = &self.tokens[here];
+            match token.shape {
+                Shape::Sign => match token.lexeme.as_str() {
+                    "(" | "[" | "{" => nesting += 1,
+                    ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
+                    _ => {}
+                },
+                Shape::Bare if nesting == 0 && walks.iter().any(|word| word == &token.lexeme) => return true,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// The reference's name for a number's kind, from its spelling.
@@ -2104,6 +2146,23 @@ impl<'a> Builder<'a> {
             open
         } else {
             let mut begin = last;
+            if matches!(token.shape, Shape::WovenEnd | Shape::Field) {
+                // Fields open strings of their own within the string:
+                // walk back over each to the beginning of the whole.
+                let mut depth = 0usize;
+                while begin > opened {
+                    match self.tokens[begin].shape {
+                        Shape::WovenEnd => depth += 1,
+                        Shape::Woven => {
+                            if depth == 0 { break; }
+                            depth -= 1;
+                            if depth == 0 { break; }
+                        }
+                        _ => {}
+                    }
+                    begin -= 1;
+                }
+            }
             while token.shape == Shape::Quote && begin > opened && self.tokens[begin - 1].shape == Shape::Quote { begin -= 1; }
             // Numbers reached through arithmetic signs from a number are
             // the one folded number, back to the first of them.
@@ -2121,6 +2180,39 @@ impl<'a> Builder<'a> {
     /// of a wider expression rather than an operand on its own.
     fn joins_operands(token: &Token) -> bool {
         token.shape == Shape::Sign && ["+", "-", "*", "/", "//", "%", "**", "@", "&", "|", "^", "<<", ">>", "."].contains(&token.lexeme.as_str())
+    }
+
+    /// The kind of the one expression between the index marks, as the
+    /// reference names it: a comma parting them makes a tuple, a cut
+    /// mark a slice that indexes fine, and an integer indexes fine. A
+    /// name or a larger expression says nothing.
+    fn index_kind(&self, open: usize, close: usize) -> Option<&'static str> {
+        if self.pair_holds(open, close, &[","]) { return Some("tuple"); }
+        if self.pair_holds(open, close, &[":"]) { return None; }
+        if open + 1 >= close { return None; }
+        if open + 2 == close {
+            let only = &self.tokens[open + 1];
+            if only.shape == Shape::Bare {
+                if self.table.spells("literal.null", &only.lexeme) { return Some("NoneType"); }
+                if self.table.spells("literal.true", &only.lexeme) || self.table.spells("literal.false", &only.lexeme) { return Some("bool"); }
+            }
+            if only.shape == Shape::Sign && self.table.spells("ext.literal.ellipsis", &only.lexeme) { return Some("ellipsis"); }
+        }
+        let (kind, ends) = self.literal_at(open + 1, close)?;
+        if ends != close { return None; }
+        Some(kind)
+    }
+
+    /// The kind a named constant is of, where one stands just before
+    /// the call's opening mark at `here`: a call upon it warns as a
+    /// call upon that kind.
+    fn constant_kind_called(&self, here: usize) -> Option<&'static str> {
+        let before = &self.tokens[here - 1];
+        if before.shape == Shape::Sign && self.table.spells("ext.literal.ellipsis", &before.lexeme) { return Some("ellipsis"); }
+        if before.shape != Shape::Bare { return None; }
+        if self.table.spells("literal.null", &before.lexeme) { return Some("NoneType"); }
+        if self.table.spells("literal.true", &before.lexeme) || self.table.spells("literal.false", &before.lexeme) { return Some("bool"); }
+        None
     }
 
     /// What the reference warns of in the statement opened at `opened`,
@@ -2170,8 +2262,26 @@ impl<'a> Builder<'a> {
                 }
             }
             if here > opened && token.shape == Shape::Sign && token.lexeme == "(" {
-                if let Some(kind) = self.literal_ending(here, opened) {
+                // A function made on the spot is called on purpose: the
+                // reference warns of no call upon one, only of indexing.
+                let kind = self.literal_ending(here, opened).or_else(|| self.constant_kind_called(here));
+                if let Some(kind) = kind.filter(|k| *k != "function") {
                     noted.push((format!("'{kind}' object is not callable; perhaps you missed a comma?"), token.row, token.column));
+                }
+            }
+            // A set, a generator, a function or a template indexed right
+            // after it stands warns too, as does indexing a number or a
+            // named constant; text, tuples, lists and maps index fine.
+            if here > opened && token.shape == Shape::Sign && token.lexeme == "[" {
+                let kind = self.literal_ending(here, opened).or_else(|| self.constant_kind_called(here));
+                if let Some(kind) = kind.filter(|k| !matches!(*k, "str" | "bytes" | "tuple" | "list" | "dict")) {
+                    noted.push((format!("'{kind}' object is not subscriptable; perhaps you missed a comma?"), token.row, token.column));
+                } else if let Some(value_kind) = kind.filter(|k| matches!(*k, "str" | "bytes" | "tuple" | "list")) {
+                    // Text, tuples and lists index fine with an integer
+                    // or a slice; indexing one with anything else warns.
+                    if let Some(index) = self.pair_close(here, limit).and_then(|close| self.index_kind(here, close)).filter(|k| !matches!(*k, "int" | "bool")) {
+                        noted.push((format!("{value_kind} indices must be integers or slices, not {index}; perhaps you missed a comma?"), token.row, token.column));
+                    }
                 }
             }
         }
