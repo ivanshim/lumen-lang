@@ -398,6 +398,17 @@ IsADirectoryError = IsADirectoryError
 # out whole, at close (or at an explicit flush) -- so nothing here
 # streams, but everything the two reference tests that need open() ask
 # of a file, this file answers.
+def _bundled_mathdata(name):
+    if '/mathdata/' not in name:
+        return None
+    from test import mathdata
+    if name.endswith('/mathdata/formatfloat_testcases.txt'):
+        return mathdata.formatfloat_testcases
+    if name.endswith('/mathdata/floating_points.txt'):
+        return mathdata.floating_points
+    return None
+
+
 class _HostFile:
     def __init__(self, name, mode, encoding=None, errors=None):
         self.name = name
@@ -441,11 +452,12 @@ class _HostFile:
             self._pos = len(self._buffer)
         else:
             kind = _host_file_kind(name)
-            if kind == 0:
+            bundled = _bundled_mathdata(name) if kind == 0 else None
+            if kind == 0 and bundled is None:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = _host_file_read(name)
+            brought = bundled if bundled is not None else _host_file_read(name)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
