@@ -766,6 +766,7 @@ pub struct Routine {
     pub referenced: Vec<String>,
     pub locals: Vec<String>,
     pub flags: i64,
+    pub lineless: bool,
     pub doc: Option<String>,
     pub qualification: String,
     /// Method parameters whose fallback is evaluated in the body.

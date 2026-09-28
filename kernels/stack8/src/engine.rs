@@ -2963,6 +2963,17 @@ impl<'a> Engine<'a> {
         self.invoke_top(program, n)
     }
 
+    fn recursion_ceiling(&self) -> Option<usize> {
+        let fallback = self.lang.recursion_limit;
+        let [module, binding] = self.lang.recursion_variable.as_slice() else { return fallback };
+        let Some(Value::Object(space)) = self.modules.get(module) else { return fallback };
+        let fields = space.fields.borrow();
+        fields.iter().find(|(key, _)| key == binding).and_then(|(_, value)| match value.contents() {
+            Value::Small(number) => usize::try_from(number).ok(),
+            _ => None,
+        }).or(fallback)
+    }
+
     /// One step further into a call a thing answers with its own call
     /// member: counted as a frame would be counted, and refused in the
     /// words the language gives once the calls standing reach the
@@ -2970,7 +2981,7 @@ impl<'a> Engine<'a> {
     /// routine calling itself for ever raises. What is counted here is
     /// let go again by `answered`.
     pub(super) fn reaching_further(&mut self) -> Flow<()> {
-        if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
             if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
         }
         self.reaching += 1;
@@ -3014,7 +3025,7 @@ impl<'a> Engine<'a> {
         // beneath the limit. The outermost body is no call and is not
         // counted.
         if !program.body_of_all {
-            if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+            if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
                 if self.calls.len() >= limit { return Err(format!("\0{}", words).into()); }
             }
         }
@@ -3985,6 +3996,9 @@ impl<'a> Engine<'a> {
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
         if index == 13 {
             return Some(Value::Bond(self.book_here(true)));
+        }
+        if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
+            return Some(Value::Null);
         }
         if index != 12 { return None; }
         self.refresh_frame(object);
@@ -5664,7 +5678,7 @@ impl<'a> Engine<'a> {
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
         let container = matches!(value, Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Set(_));
         if container {
-            if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+            if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
                 if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
             }
             self.reaching += 1;
@@ -5695,7 +5709,7 @@ impl<'a> Engine<'a> {
                 return Ok(if alike { whole.representation(&words) } else { self.render(std::slice::from_ref(&whole)) });
             }
             if matches!(&held, Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) {
-                if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+                if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
                     if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
                 }
                 self.reaching += 1;
@@ -6278,7 +6292,7 @@ impl<'a> Engine<'a> {
     }
 
     fn sequence_comparison(&mut self, op: &Action, left: &Value, right: &Value) -> Res<Value> {
-        if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
             if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
         }
         self.reaching += 1;
@@ -8778,6 +8792,9 @@ impl<'a> Engine<'a> {
                     // is reached through the cell the class holds, which
                     // is the very holding that reading the name gives.
                     Value::Class(c) if self.lang.member_pipes => Value::Bond(Self::own_cell(&c, name)),
+                    Value::Object(o) if name.as_ref() == self.class_word("namespace") => {
+                        Value::Bond(Rc::new(RefCell::new(Value::Fields(o))))
+                    }
                     Value::Object(o) => {
                         let mut held = o.fields.borrow_mut();
                         let found = self.member_at(&held, name);
@@ -12429,6 +12446,30 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "code_replace" {
+            let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
+            let Some(Value::Routine(original)) = handle.1.first() else { return Err(self.special_fault()) };
+            if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
+            let line_key = self.lang.class_details.get("code.replace").and_then(|parts| parts.get(1)).map(String::as_str).unwrap_or("");
+            let mut changed = (**original).clone();
+            for (key, value) in named {
+                if key == line_key {
+                    if !matches!(value.contents(), Value::Bytes(..)) { return Err("TypeError: co_linetable must be bytes".into()); }
+                    changed.lineless = true;
+                } else {
+                    match (key.as_str(), value.contents()) {
+                        ("co_name", Value::Text(text)) => changed.ident = text.to_string(),
+                        ("co_qualname", Value::Text(text)) => changed.qualified = text.to_string(),
+                        ("co_filename", Value::Text(text)) => changed.written_in = Some(text),
+                        ("co_firstlineno", Value::Small(line)) if line > 0 => changed.declared_on = line as u32,
+                        ("co_flags", Value::Small(flags)) => changed.code_flags = flags,
+                        _ => return Err(format!("TypeError: code.replace() got an unexpected keyword argument '{key}'")),
+                    }
+                }
+            }
+            changed.revised = RefCell::new(None);
+            return Ok(Self::adapter(7, vec![Value::Routine(Rc::new(changed))]));
+        }
         if let Value::Fields(object) = receiver.contents() {
             let entries = Self::fields_entries(&object);
             let map = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);

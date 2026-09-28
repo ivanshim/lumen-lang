@@ -28,7 +28,6 @@ implementation = _Implementation()
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
-# Stub: this is the advertised limit; the kernel does not yet count calls.
 _recursion_limit = 1000
 
 # Stub: startup flags describe the fixed library environment.
@@ -97,8 +96,20 @@ def getrecursionlimit():
     return _recursion_limit
 
 def setrecursionlimit(limit):
-    # A stored limit would pretend to govern calls which it cannot govern.
-    raise 'NotImplementedError: setting the recursion limit is not supported'
+    global _recursion_limit
+    if not isinstance(limit, int):
+        raise TypeError("'" + type(limit).__name__ + "' object cannot be interpreted as an integer")
+    if limit < 1:
+        raise ValueError('recursion limit must be greater or equal than 1')
+    frame = _getframe()
+    depth = 0
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    if limit <= depth:
+        raise RecursionError('cannot set the recursion limit to ' + str(limit) +
+                             ' at the recursion depth ' + str(depth) + ': the limit is too low')
+    _recursion_limit = limit
 
 # The limit CPython puts on the digits an integer may be written with
 # or read from. The conversion builtins read this field before doing

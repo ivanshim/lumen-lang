@@ -857,6 +857,7 @@ pub struct Routine {
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
     pub code_flags: i64,
+    pub lineless: bool,
     pub generator: bool,
     pub doc: Option<String>,
     pub qualified: String,

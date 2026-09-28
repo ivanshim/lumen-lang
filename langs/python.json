@@ -2594,6 +2594,7 @@
     "__new__"
   ],
   "ext.stmt.class.detail.code.fields": ["co_name", "co_qualname", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_names", "co_consts", "co_flags", "co_filename", "co_firstlineno", "__annotate__"],
+  "ext.stmt.class.detail.code.replace": ["replace", "co_linetable"],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"
   ],
@@ -3503,6 +3504,7 @@
     "RecursionError: maximum recursion depth exceeded"
   ],
   "ext.system.recursion.limit": 1000,
+  "ext.system.recursion.variable": ["sys", "_recursion_limit"],
   "ext.system.module.doc": [
     "__doc__"
   ],
