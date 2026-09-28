@@ -237,6 +237,9 @@ fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
             output.push(t.clone());
             continue;
         }
+        if t.lexeme == "not" && matches!(tail.as_str(), "+" | "-" | "*" | "**" | "~" | "<<" | ">>" | "/" | "//" | "%" | "&" | "|" | "^") {
+            return Err(("SyntaxError: 'not' after an operator must be parenthesized".to_owned(), t.row, t.column));
+        }
         if t.shape == Shape::Sign {
             let spelling = t.lexeme.as_str();
             if ["(", "[", "{"].contains(&spelling) { opened.push((t.lexeme.clone(), t.row, t.column)); }

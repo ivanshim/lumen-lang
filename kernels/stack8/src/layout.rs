@@ -238,6 +238,9 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                 result.push(token.clone());
             }
             _ => {
+                if token.lexeme == "not" && last.is_some_and(|earlier| earlier.shape == Shape::Sign && matches!(earlier.lexeme.as_str(), "+" | "-" | "*" | "**" | "~" | "<<" | ">>" | "/" | "//" | "%" | "&" | "|" | "^")) {
+                    return Err(("SyntaxError: 'not' after an operator must be parenthesized".into(), token.row, token.column));
+                }
                 if token.shape == Shape::Sign {
                     match token.lexeme.as_str() {
                         "(" | "[" | "{" => brackets.push(token),
