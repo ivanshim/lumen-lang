@@ -173,10 +173,8 @@ __stderr__ = stderr
 __stdin__ = stdin
 
 def _input(prompt=''):
-    # The prompt is written with the stream's own writer and never
-    # flushed: a stream that is not a terminal is written to and left
-    # alone, and one with no writer of its own is asked for none. A
-    # missing sys.stdin or sys.stdout is a lost stream, not a name.
+    # Flush stderr before the prompt, then flush stdout before reading.
+    # CPython ignores errors from either flush, including a missing method.
     import sys as _streams
     _source = getattr(_streams, 'stdin', None)
     if _source is None:
@@ -184,8 +182,16 @@ def _input(prompt=''):
     _sink = getattr(_streams, 'stdout', None)
     if _sink is None:
         raise RuntimeError('lost sys.stdout')
+    try:
+        _streams.stderr.flush()
+    except BaseException:
+        pass
     if prompt:
         _sink.write(str(prompt))
+    try:
+        _sink.flush()
+    except BaseException:
+        pass
     line = _source.readline()
     if line == '':
         raise EOFError('EOF when reading a line')
