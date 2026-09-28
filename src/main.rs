@@ -220,54 +220,60 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
 }
 
 /// A one-line script that runs this very binary again with the kernel
-/// and the language a program was started with. It is written among the
-/// system's own temporary files, once for each binary and kernel, so a
-/// program that names its own executable and starts it again gets a
-/// second interpreter like itself rather than a host with no language
-/// behind it. When the host was itself started through the dynamic
-/// loader, the launcher starts the binary through that loader again,
-/// with the loader's own directory as the place its libraries stand.
-/// The script is written over only where it does not already say the
-/// same thing, so a copy of the binary run from another place leaves no
-/// stale one behind.
+/// and the language a program was started with, for the one case the
+/// binary is not its own start: a host begun through the dynamic
+/// loader, whose libraries stand in the loader's own directory and
+/// must be named again on every start. The script is written into a
+/// directory made fresh for this one process -- private (mode 0700) and
+/// named with the process's own number -- so that nothing else can
+/// plant a script where a program would run it. No such directory is
+/// made on an ordinary start, which names the binary itself.
 fn launcher_for(started: &Path, binary: &Path, kernel: &str, language: &str) -> String {
-    let mut dir = std::env::temp_dir();
-    dir.push("lumen-lang");
-    let _ = std::fs::create_dir_all(&dir);
-    let stem = binary.file_name().and_then(|n| n.to_str()).unwrap_or("lumen");
-    dir.push(format!("{stem}-{kernel}-{language}"));
-    let quoted = |word: &str| word.replace('\'', r#"'\''"#);
-    let through_loader = std::fs::canonicalize(started)
-        .ok()
-        .zip(std::fs::canonicalize(binary).ok())
-        .map_or(false, |(one, other)| one != other);
-    let script = if through_loader {
-        let libraries = started.parent().map_or_else(String::new, |p| p.to_string_lossy().into_owned());
-        format!(
-            "#!/bin/sh\nexec '{}' --library-path '{}' '{}' --kernel '{}' --lang '{}' \"$@\"\n",
-            quoted(&started.to_string_lossy()),
-            quoted(&libraries),
-            quoted(&binary.to_string_lossy()),
-            kernel,
-            language,
-        )
-    } else {
-        format!(
-            "#!/bin/sh\nexec '{}' --kernel '{}' --lang '{}' \"$@\"\n",
-            quoted(&binary.to_string_lossy()),
-            kernel,
-            language,
-        )
+    let mut dir = match fresh_private_dir() {
+        Some(dir) => dir,
+        None => return String::new(),
     };
-    if std::fs::read_to_string(&dir).ok().as_deref() != Some(script.as_str()) {
-        let mut fresh = dir.clone();
-        fresh.set_extension("tmp");
-        let _ = std::fs::write(&fresh, &script);
-        use std::os::unix::fs::PermissionsExt as _;
-        let _ = std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755));
-        let _ = std::fs::rename(&fresh, &dir);
-    }
+    let libraries = started.parent().map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+    let quoted = |word: &str| word.replace('\'', r#"'\''"#);
+    let script = format!(
+        "#!/bin/sh\nexec '{}' --library-path '{}' '{}' --kernel '{}' --lang '{}' \"$@\"\n",
+        quoted(&started.to_string_lossy()),
+        quoted(&libraries),
+        quoted(&binary.to_string_lossy()),
+        kernel,
+        language,
+    );
+    dir.push("lumen");
+    let _ = std::fs::write(&dir, &script);
+    use std::os::unix::fs::PermissionsExt as _;
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
     dir.to_string_lossy().into_owned()
+}
+
+/// A directory of the process's own, made fresh and private (mode
+/// 0700), named with the process's number and a count when that name
+/// is already taken. A name already standing is never reused: the
+/// next name is tried instead, so nothing planted there can be run.
+fn fresh_private_dir() -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let pid = std::process::id();
+    let mut count: u32 = 0;
+    loop {
+        let mut dir = std::env::temp_dir();
+        if count == 0 {
+            dir.push(format!("lumen-lang-{pid}"));
+        } else {
+            dir.push(format!("lumen-lang-{pid}-{count}"));
+        }
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                return Some(dir);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && count < 1000 => count += 1,
+            Err(_) => return None,
+        }
+    }
 }
 
 fn main() {
@@ -288,6 +294,14 @@ fn main() {
 fn run_all() {
     let args: Vec<OsString> = env::args_os().collect();
     let inv = parse_args(&args);
+
+    // The kernel and the language this run was started with are put
+    // where the environment can carry them to a child process, so a
+    // program that starts this binary again without naming them itself
+    // still starts a second interpreter like itself. Nothing is written
+    // to a file to say this: the words travel with the run.
+    std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
+    std::env::set_var("LUMEN_LANG", inv.language.name());
 
     let written = fs::read(&inv.file).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
@@ -352,16 +366,19 @@ fn run_all() {
     request.push(("SELF".to_string(), "directory".to_string(), held, false));
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
-    // A full kernel names a small launcher instead of the bare binary,
-    // one that starts this very binary again with the same kernel and
-    // language, so that a program that runs the interpreter it names is
-    // running a second interpreter like itself.
+    // A full Python kernel names the binary itself, so a program that
+    // runs the interpreter it names is running a second interpreter
+    // like itself; the kernel and the language travel in the
+    // environment. Only a host begun through the dynamic loader names a
+    // launcher instead, since its binary cannot be run bare.
     if let Ok(runner) = std::env::current_exe() {
         let runner = if FULL_KERNELS.contains(&inv.kernel.as_str()) && inv.language.name() == "python" {
             // The host may be started through the dynamic loader, in
             // which case the system names the loader as the running
             // program; the first word of the arguments names the binary
-            // itself, and that is what the launcher must start again.
+            // itself. Only that start needs a launcher, written into a
+            // private directory of the run's own; an ordinary start
+            // names the binary itself.
             let binary = match args.first() {
                 Some(word) => {
                     let path = std::path::PathBuf::from(word);
@@ -369,7 +386,15 @@ fn run_all() {
                 }
                 None => runner.clone(),
             };
-            launcher_for(&runner, &binary, &inv.kernel, inv.language.name())
+            let through_loader = std::fs::canonicalize(&runner)
+                .ok()
+                .zip(std::fs::canonicalize(&binary).ok())
+                .map_or(false, |(one, other)| one != other);
+            if through_loader {
+                launcher_for(&runner, &binary, &inv.kernel, inv.language.name())
+            } else {
+                binary.to_string_lossy().into_owned()
+            }
         } else {
             runner.to_string_lossy().into_owned()
         };
@@ -569,7 +594,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let program = held.as_str();
     let mut rest: &[OsString] = &args[1..];
 
-    let mut kernel = DEFAULT_KERNEL.to_string();
+    let mut kernel: Option<String> = None;
     let mut serve: Option<String> = None;
     let mut language: Option<Language> = None;
     let mut emit: Option<Language> = None;
@@ -589,11 +614,12 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 if rest.len() < 2 {
                     usage(program);
                 }
-                kernel = said(&rest[1]).to_lowercase();
-                if !KERNELS.contains(&kernel.as_str()) {
-                    eprintln!("Error: Unknown kernel '{}'. Use one of: {}", kernel, KERNELS.join(", "));
+                let held = said(&rest[1]).to_lowercase();
+                if !KERNELS.contains(&held.as_str()) {
+                    eprintln!("Error: Unknown kernel '{}'. Use one of: {}", held, KERNELS.join(", "));
                     process::exit(1);
                 }
+                kernel = Some(held);
                 rest = &rest[2..];
             }
             Some("--lang") | Some("--language") => {
@@ -660,6 +686,22 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     }
 
+    // A kernel not named on the command line may be carried in the
+    // environment, by a host that started this binary again without
+    // naming it; a flag always wins over either. Where neither names
+    // one, the default stands.
+    let kernel = kernel.unwrap_or_else(|| {
+        let held = env::var("LUMEN_KERNEL").unwrap_or_default().to_lowercase();
+        if held.is_empty() {
+            DEFAULT_KERNEL.to_string()
+        } else if KERNELS.contains(&held.as_str()) {
+            held
+        } else {
+            eprintln!("Error: Unknown kernel '{}'. Use one of: {}", held, KERNELS.join(", "));
+            process::exit(1);
+        }
+    });
+
     // Whatever the run was told to load beside itself is reached for
     // here, before anything else it was told to do, as the reference
     // reaches for one at its own start.
@@ -671,7 +713,14 @@ fn parse_args(args: &[OsString]) -> Invocation {
 
     let file = file.unwrap_or_else(|| usage(program));
     let language = language.unwrap_or_else(|| {
-        Language::Named(language_from_extension(&file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string()))
+        // A language not named on the command line may be carried in
+        // the environment, by a host that started this binary again
+        // without naming it; a flag always wins. Where neither names
+        // one, the file's own extension, and then the default, stand.
+        match env::var("LUMEN_LANG") {
+            Ok(held) if !held.trim().is_empty() => language_from_flag(&held),
+            _ => Language::Named(language_from_extension(&file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string())),
+        }
     });
 
     Invocation { kernel, file, serve, language, emit, program_args: rest.iter().map(said).collect() }
