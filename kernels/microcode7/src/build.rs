@@ -2248,6 +2248,7 @@ impl<'a> Builder<'a> {
     fn class_scope(&mut self) -> Res<Form> {
         self.advance();
         let name = self.need_word("as the class name")?;
+        if self.table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         if self.table.flag("ext.stmt.function.closes_over") { self.address_to_write(&name); }
         if self.on_any("ext.stmt.class.bases.open") {
@@ -2591,6 +2592,9 @@ impl<'a> Builder<'a> {
                 return self.bag_decl();
             }
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
+                if self.table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).lexeme == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".to_owned());
+                }
                 if !self.table.flag("ext.stmt.class.this.explicit") && self.table.has_any("ext.stmt.class.bases.open") { return self.class_scope(); }
                 return self.class_decl();
             }
@@ -2785,6 +2789,7 @@ impl<'a> Builder<'a> {
                         binding
                     }
                 };
+                if self.table.has_any("ext.builtin.exceptions.syntax") && local == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
                 if future && !matches!(original.as_str(), "nested_scopes" | "generators" | "division" | "absolute_import" | "with_statement" | "print_function" | "unicode_literals" | "barry_as_FLUFL" | "generator_stop" | "annotations") {
                     let ending = &self.tokens[self.pos - 1];
                     self.range_end = Some((ending.column + ending.lexeme.chars().count(), ending.row));
@@ -4435,6 +4440,7 @@ impl<'a> Builder<'a> {
         loop {
             if ["ext.stmt.function.carries", "ext.stmt.function.carries.pairs"].iter().any(|key| self.on_any(key)) { self.advance(); }
             let parameter = self.need_word("among the type parameters")?;
+            if table.has_any("ext.builtin.exceptions.syntax") && parameter == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
             if declared.contains(&parameter) { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
             declared.push(parameter);
             if self.on_any("ext.stmt.annotation") { self.advance(); self.expr_at(0, false)?; }
@@ -4455,6 +4461,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let word = self.advance().lexeme;
         let name = self.need_word("as the class name")?;
+        if table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         // A class of method names only may be built on several at once;
         // a class is built on one and answers to any number.
@@ -5852,6 +5859,7 @@ impl<'a> Builder<'a> {
                 }
                 self.formal_kinds.push(kind);
                 params.push(self.need_word("as a parameter name")?);
+                if table.has_any("ext.builtin.exceptions.syntax") && params.last().is_some_and(|word| word == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
                 if !short && self.on_any("ext.stmt.annotation") {
                     self.advance();
                     self.annotation_sites.push((params.last().unwrap().to_owned(), self.pos));
@@ -6049,6 +6057,7 @@ impl<'a> Builder<'a> {
     }
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
+        if bound && self.table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
         let title = match self.pos.checked_sub(1).and_then(|at| self.original_words.get(at)) {
             Some(word) if word.shape == Shape::Bare && self.tokens[self.pos - 1].lexeme == name => word.lexeme.clone(),
             _ => name.clone(),

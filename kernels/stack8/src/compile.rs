@@ -2969,6 +2969,7 @@ impl<'a> Compiler<'a> {
                     bound = self.look().lexeme.clone();
                     self.import_name(false)?;
                 }
+                if !lang.syntax_members.is_empty() && bound == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
                 if future && !["nested_scopes", "generators", "division", "absolute_import", "with_statement", "print_function", "unicode_literals", "barry_as_FLUFL", "generator_stop", "annotations"].contains(&original.as_str()) {
                     let last = &self.tokens[self.pos - 1];
                     self.registry.stopped_end = last.column + last.lexeme.chars().count();
@@ -5368,6 +5369,7 @@ impl<'a> Compiler<'a> {
         self.take();
         let original_name = self.spelled[self.pos].lexeme.clone();
         let name = self.want_name("as the class name")?;
+        if !lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
         let mut further = Vec::new();
@@ -5588,6 +5590,7 @@ impl<'a> Compiler<'a> {
         loop {
             if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) { self.take(); }
             let name = self.want_name("as a type parameter")?;
+            if !lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
             if !names.insert(name) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
             if self.on_any(&lang.annotation_marks) { self.take(); self.expr_at(0, false)?; }
             if self.on_assign() { self.take(); self.expr(0)?; }
@@ -5945,6 +5948,7 @@ impl<'a> Compiler<'a> {
                 self.formal_kinds.push(kind.clone());
                 kinded.push(kind);
                 formals.push(self.want_name("as a parameter name")?);
+                if !lang.syntax_members.is_empty() && formals.last().is_some_and(|name| name == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".into()); }
                 if call.close != lang.short_function.as_ref().map_or("", |(_, mark)| mark.as_str()) && self.on_any(&lang.annotation_marks) {
                     self.take();
                     let mut ends = lang.assign_words.clone();
@@ -6126,6 +6130,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
+        if !self.lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         self.declaration_types()?;
         if matches!(self.lang.builtins.get(&name), Some(Builtin::Bytes(_))) {
             self.arg_names.entry(name.clone()).or_default();
