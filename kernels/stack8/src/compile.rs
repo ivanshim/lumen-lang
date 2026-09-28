@@ -8462,11 +8462,11 @@ impl<'a> Compiler<'a> {
                 }
             }
             if lang.yield_suspends {
-                if tuple {
-                    if spread_seen && lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1); }
-                    else { self.act(Action::MakeTuple, count); }
-                }
-                else if count == 0 { self.constant(Value::Null); }
+                // The elements joined into one array as they were read;
+                // a language with a tuple word makes the tuple of it, as
+                // a display does, and any other keeps the array.
+                if tuple && lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1); }
+                if !tuple && count == 0 { self.constant(Value::Null); }
                 self.act(if delegated { Action::Delegate } else { Action::Suspend }, 1);
             } else {
                 self.piece().instrs.truncate(begin);
