@@ -217,6 +217,8 @@ pub struct Compiler<'a> {
     pending_annotations: Vec<(String, usize)>,
     module_annotations: Vec<(String, usize)>,
     syntax_try_nesting: usize,
+    syntax_finally_nesting: usize,
+    in_lazy_from: bool,
     lang: &'a Lang,
     tokens: &'a [Token],
     spelled: &'a [Token],
@@ -536,7 +538,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { syntax_try_nesting: 0, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1559,7 +1561,10 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Null);
             self.write(RESULT_CELL);
         }
-        body(self)?;
+        let finally_around = std::mem::replace(&mut self.syntax_finally_nesting, 0);
+        let body_result = body(self);
+        self.syntax_finally_nesting = finally_around;
+        body_result?;
         self.comprehension_names = surrounding_names;
         // A function whose value only ever comes from a return
         // drops the result slot: its prologue goes, and a fall off the
@@ -2192,7 +2197,10 @@ impl<'a> Compiler<'a> {
                 && self.look_ahead(1).shape == Shape::Instr
                 && (Lang::spells(&lang.import_words, &self.look_ahead(1).lexeme) || Lang::spells(&lang.import_from_words, &self.look_ahead(1).lexeme)) {
                 self.take();
-                return self.stmt();
+                self.in_lazy_from = true;
+                let result = self.stmt();
+                self.in_lazy_from = false;
+                return result;
             }
             if Lang::spells(&lang.async_words, &w) {
                 self.take();
@@ -2268,15 +2276,18 @@ impl<'a> Compiler<'a> {
                 return self.for_stmt();
             }
             if Lang::spells(&lang.return_words, &w) {
+                self.warn_in_finally("return");
                 return self.return_stmt();
             }
             if Lang::spells(&lang.break_words, &w) {
+                self.warn_in_finally("break");
                 self.take();
                 let levels = self.levels()?;
                 self.leaving_lasts()?;
                 return self.leave(levels);
             }
             if Lang::spells(&lang.continue_words, &w) {
+                self.warn_in_finally("continue");
                 self.take();
                 let levels = self.levels()?;
                 self.leaving_lasts()?;
@@ -2866,9 +2877,26 @@ impl<'a> Compiler<'a> {
         let mut module = String::new();
         if from {
             let mut relative = false;
+            let mut last_dot: Option<Token> = None;
             while self.on_any(&lang.pipe_words) || self.on_any(&lang.slice_ellipsis) {
                 relative = true;
-                module.push_str(&self.take().lexeme);
+                last_dot = Some(self.take());
+                module.push_str(&last_dot.as_ref().unwrap().lexeme);
+            }
+            // A relative import written `from . lazy import` -- the lazy
+            // word after the dots, set off by a space or a line break --
+            // is the older order of a lazy import; the reference warns of
+            // it and reads the same import without the word.
+            if !lang.syntax_members.is_empty() && !self.in_lazy_from && relative && self.look().lexeme == "lazy"
+                && self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.import_words, &self.look_ahead(1).lexeme)
+                && last_dot.as_ref().map_or(false, |dot| {
+                    let flush = dot.column + dot.lexeme.chars().count();
+                    self.look().row != dot.row || self.look().column != flush
+                }) {
+                let at = self.look().clone();
+                let warning = (format!("did you mean 'lazy from {module} import'?"), at.row, at.column);
+                if !self.registry.warnings.contains(&warning) { self.registry.warnings.push(warning); }
+                self.take();
             }
             if !relative || !self.on_keyword(&lang.import_words) {
                 module.push_str(&self.import_name(true)?);
@@ -3658,10 +3686,70 @@ impl<'a> Compiler<'a> {
         let mut pattern = if choices.len() == 1 { choices.pop().unwrap() } else { Pattern::Alternatives(choices) };
         if self.on_keyword(&self.lang.match_as) {
             self.take();
-            let Pattern::Capture(name) = self.pattern_capture()? else { return Err(self.pattern_fault()); };
+            let at = self.pos;
+            if self.lang.match_wildcards.iter().any(|w| self.at_lexeme(w)) {
+                self.pos = at;
+                return Err("SyntaxError: cannot use '_' as a target".into());
+            }
+            let name = match self.pattern_capture() {
+                Ok(Pattern::Capture(name)) => name,
+                _ => { self.pos = at; return Err(self.pattern_target_amiss()); }
+            };
+            // A capture must be a bare name: a member, a call or an
+            // index after it makes the target something other than a name.
+            if self.on_any(&self.lang.pipe_words) {
+                let (end, end_row) = self.pattern_chain_end(at);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = end_row;
+                self.pos = at;
+                return Err("SyntaxError: cannot use attribute as pattern target".into());
+            }
+            if self.lang.calling.as_ref().map_or(false, |call| self.at_symbol(&call.open)) {
+                return Err("SyntaxError: cannot use function call as pattern target".into());
+            }
+            if self.lang.array_brackets.as_ref().map_or(false, |arr| self.at_symbol(&arr.open)) {
+                return Err("SyntaxError: cannot use subscript as pattern target".into());
+            }
             pattern = Pattern::Bound(Box::new(pattern), name);
         }
         Ok(pattern)
+    }
+
+    /// The column and row just past the dotted name that begins at `at`,
+    /// a name and its members run name . name . name ... as far as they go.
+    fn pattern_chain_end(&self, at: usize) -> (usize, usize) {
+        let lang = self.lang;
+        let mut i = at;
+        while i + 2 < self.tokens.len()
+            && self.tokens[i].shape == Shape::Instr
+            && self.tokens[i + 1].shape == Shape::Sign && lang.pipe_words.contains(&self.tokens[i + 1].lexeme)
+            && self.tokens[i + 2].shape == Shape::Instr {
+            i += 2;
+        }
+        let last = &self.tokens[i];
+        let end = if last.end_column != 0 { last.end_column } else { last.column + last.lexeme.chars().count() };
+        (end, if last.end_row != 0 { last.end_row } else { last.row })
+    }
+
+    /// The reference's refusal of an `as` pattern whose target is not a
+    /// plain name: what kind of thing the target is, told precisely.
+    fn pattern_target_amiss(&self) -> String {
+        let lang = self.lang;
+        if let Some(group) = &lang.grouping {
+            if self.at_symbol(&group.open) {
+                if let Some(close) = self.bracket_close(self.pos, self.tokens.len()) {
+                    let empty = self.pos + 1 == close;
+                    if empty || self.bracket_holds(self.pos, close, &[","]) {
+                        return "SyntaxError: cannot use tuple as pattern target".into();
+                    }
+                    return "SyntaxError: cannot use expression as pattern target".into();
+                }
+            }
+        }
+        if lang.array_brackets.as_ref().map_or(false, |arr| self.at_symbol(&arr.open)) {
+            return "SyntaxError: cannot use list as pattern target".into();
+        }
+        "SyntaxError: cannot use expression as pattern target".into()
     }
 
     fn pattern_atom(&mut self) -> Res<crate::code::Pattern> {
@@ -4230,6 +4318,16 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// The reference's warning that a return, break or continue stands
+    /// inside a `finally` block, noted for the caller that compiled the
+    /// text. Each such word is noted once where it stands.
+    fn warn_in_finally(&mut self, word: &str) {
+        if self.syntax_finally_nesting == 0 { return; }
+        let at = self.look();
+        let warning = (format!("'{word}' in a 'finally' block"), at.row, at.column);
+        if !self.registry.warnings.contains(&warning) { self.registry.warnings.push(warning); }
+    }
+
     fn return_stmt(&mut self) -> Res<()> {
         self.take();
         // A routine that gives back a cell answers with the cell of
@@ -4469,7 +4567,10 @@ impl<'a> Compiler<'a> {
         self.skip_seps();
         let last = if self.on_keyword(&lang.finally_words) {
             self.take();
-            Some(self.guarded_attempt_body()?)
+            self.syntax_finally_nesting += 1;
+            let body = self.guarded_attempt_body()?;
+            self.syntax_finally_nesting -= 1;
+            Some(body)
         } else { None };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
             return Err("A try needs a catch or a last part".to_string());
@@ -6653,9 +6754,16 @@ impl<'a> Compiler<'a> {
                 let mut start = self.pos;
                 let mut end = equal;
                 while start + 1 < end && self.tokens[start].is_lexeme(Shape::Sign, "(") && self.tokens[end - 1].is_lexeme(Shape::Sign, ")") { start += 1; end -= 1; }
-                let word = self.tokens[start].lexeme.as_str();
-                let message = if self.lang.short_function.as_ref().map_or(false, |(name, _)| name == word) { Some("cannot assign to lambda") }
-                    else if Lang::spells(&self.lang.yield_words, word) { Some("cannot assign to yield expression here. Maybe you meant '==' instead of '='?") } else { None };
+                let single = start + 1 == end;
+                let token = &self.tokens[start];
+                let word = token.lexeme.as_str();
+                let message: Option<String> = if self.lang.short_function.as_ref().map_or(false, |(name, _)| name == word) { Some("cannot assign to lambda".to_string()) }
+                    else if Lang::spells(&self.lang.yield_words, word) { Some(if single { "assignment to yield expression not possible".to_string() } else { "cannot assign to yield expression here. Maybe you meant '==' instead of '='?".to_string() }) }
+                    else if single && matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("cannot assign to literal here. Maybe you meant '==' instead of '='?".to_string()) }
+                    else if single && Lang::spells(&self.lang.ellipsis_words, word) { Some("cannot assign to ellipsis here. Maybe you meant '==' instead of '='?".to_string()) }
+                    else if single && token.shape == Shape::Instr && (Lang::spells(&self.lang.null_words, word) || Lang::spells(&self.lang.true_words, word) || Lang::spells(&self.lang.false_words, word)) { Some(format!("cannot assign to {word}")) }
+                    else if single && token.shape == Shape::Instr && word == "__debug__" && token.row as u32 > self.before { Some("cannot assign to __debug__".to_string()) }
+                    else { None };
                 if let Some(message) = message {
                     let last = &self.tokens[end - 1];
                     self.registry.stopped_end = last.column + last.lexeme.chars().count();
@@ -7486,7 +7594,20 @@ impl<'a> Compiler<'a> {
         let begins = self.pos;
         let from = self.mark();
         if floor == 0 && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
+            let at = self.look().clone();
             let named = self.take().lexeme;
+            if !lang.syntax_members.is_empty() {
+                if lang.true_words.contains(&named) || lang.false_words.contains(&named) || lang.null_words.contains(&named) {
+                    self.registry.stopped_end = at.column + at.lexeme.chars().count();
+                    self.registry.stopped_end_row = at.row;
+                    return Err(format!("SyntaxError: cannot use assignment expressions with {named}"));
+                }
+                if named == "__debug__" {
+                    self.registry.stopped_end = at.column + at.lexeme.chars().count();
+                    self.registry.stopped_end_row = at.row;
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
+            }
             if self.piece().comprehension_kind.is_some() { self.piece().named_expressions.push(named.clone()); }
             self.take();
             self.cell_to_write(&named);
@@ -8513,6 +8634,7 @@ impl<'a> Compiler<'a> {
                 let word = self.look().lexeme.as_str();
                 let kind = if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("literal") }
                     else if ["None", "True", "False"].contains(&word) { Some(word) }
+                    else if word == "__debug__" { Some("__debug__") }
                     else if word == "*" { Some("starred") }
                     else if ["+", "-", "~", "not"].contains(&word) { Some("expression") } else { None };
                 if let Some(kind) = kind { return Err(format!("SyntaxError: cannot delete {kind}")); }

@@ -121,6 +121,8 @@ pub struct Builder<'a> {
     survey: bool,
     kind_mark: Option<usize>,
     syntax_try_nesting: usize,
+    finally_nesting: usize,
+    in_lazy_from: bool,
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -520,7 +522,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { syntax_try_nesting: 0, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1665,9 +1667,11 @@ impl<'a> Builder<'a> {
         if holds == Holds::Every { self.generator_seen = false; }
         let outer_declarations = std::mem::take(&mut self.declarations);
         let previous_loops = self.loop_depth;
-        if holds == Holds::Every { self.loop_depth = 0; }
+        let previous_finally = self.finally_nesting;
+        if holds == Holds::Every { self.loop_depth = 0; self.finally_nesting = 0; }
         let mut body = body(self)?;
         self.loop_depth = previous_loops;
+        self.finally_nesting = previous_finally;
         self.declarations = outer_declarations;
         self.gather_names = earlier_gathering;
         let generator = holds == Holds::Every && self.generator_seen && self.table.flag("ext.stmt.yield.suspends");
@@ -2170,6 +2174,16 @@ impl<'a> Builder<'a> {
     /// end, a separator, or the edge of the block. What else stands
     /// there is refused; a lone `print` or `exec` with an expression
     /// after it is the statement the language once spelled that way.
+    /// The reference's warning that a return, break or continue sits
+    /// inside a `finally` block, noted once where the word stands for
+    /// whoever compiled the text.
+    fn note_finally_word(&mut self, word: &str) {
+        if self.finally_nesting == 0 { return; }
+        let at = self.look();
+        let noted = (format!("'{word}' in a 'finally' block"), at.row, at.column);
+        if !self.warnings.contains(&noted) { self.warnings.push(noted); }
+    }
+
     fn past_stmt(&mut self, opened: usize) -> Res<()> {
         let table = self.table;
         if !table.has_any("ext.stmt.legacy_call") || !table.has_any("ext.builtin.exceptions.syntax") { return Ok(()); }
@@ -2378,7 +2392,10 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.import.lazy") && self.glance(1).shape == Shape::Bare
                 && (self.table.spells("ext.stmt.import", &self.glance(1).lexeme) || self.table.spells("ext.stmt.import.from", &self.glance(1).lexeme)) {
                 self.advance();
-                return self.stmt();
+                self.in_lazy_from = true;
+                let read = self.stmt();
+                self.in_lazy_from = false;
+                return read;
             }
             if self.key("ext.stmt.async") {
                 let word = self.advance().lexeme;
@@ -2517,6 +2534,7 @@ impl<'a> Builder<'a> {
                 return Ok(constant(Value::Nil));
             }
             if self.key("stmt.return") {
+                self.note_finally_word("return");
                 self.advance();
                 // A routine giving back a cell answers with the cell of
                 // whatever it names, so a name tied to the answer and
@@ -2534,11 +2552,13 @@ impl<'a> Builder<'a> {
                 return Ok(prim_call(Prim::Yield, value));
             }
             if self.key("stmt.break") {
+                self.note_finally_word("break");
                 self.advance();
                 let levels = self.loop_levels()?;
                 return Ok(prim_call(Prim::Leave, levels));
             }
             if self.key("stmt.continue") {
+                self.note_finally_word("continue");
                 self.advance();
                 let levels = self.loop_levels()?;
                 return Ok(prim_call(Prim::Resume, levels));
@@ -2682,8 +2702,25 @@ impl<'a> Builder<'a> {
         let mut path = String::new();
         if taking_names {
             let start = self.pos;
+            let mut last_dot = None;
             while self.on_any("op.pipe") || self.on_any("ext.op.index.slice.ellipsis") {
+                last_dot = Some(self.look().clone());
                 path.push_str(&self.look().lexeme);
+                self.advance();
+            }
+            // A relative import written `from . lazy import`, the lazy
+            // word after the dots and set off by a space or a break, is
+            // the older order; the reference warns and reads it as the
+            // same import without the word.
+            if !self.in_lazy_from && self.pos != start && self.look().lexeme == "lazy"
+                && self.glance(1).shape == Shape::Bare && self.table.spells("ext.stmt.import", &self.glance(1).lexeme)
+                && last_dot.map_or(false, |dot: Token| {
+                    let flush = dot.column + dot.lexeme.chars().count();
+                    self.look().row != dot.row || self.look().column != flush
+                }) {
+                let at = self.look().clone();
+                let noticed = (format!("did you mean 'lazy from {path} import'?"), at.row, at.column);
+                if !self.warnings.contains(&noticed) { self.warnings.push(noticed); }
                 self.advance();
             }
             if self.pos == start || !self.key("ext.stmt.import") {
@@ -3428,7 +3465,10 @@ impl<'a> Builder<'a> {
         let last = match self.key("ext.stmt.finally") {
             true => {
                 self.advance();
-                Some(Box::new(self.guarded_attempt_body(bare_clauses)?))
+                self.finally_nesting += 1;
+                let body = self.guarded_attempt_body(bare_clauses)?;
+                self.finally_nesting -= 1;
+                Some(Box::new(body))
             }
             false => None,
         };
@@ -5137,12 +5177,65 @@ impl<'a> Builder<'a> {
         } else { first };
         if self.key("ext.stmt.match.as") {
             self.advance();
-            match self.pattern_name()? {
-                CaseTest::Keep(name) => test = CaseTest::Also { test: Box::new(test), name },
-                _ => return Err(self.bad_case()),
+            let opening = self.pos;
+            if self.key("ext.stmt.match.wildcard") {
+                self.pos = opening;
+                return Err(String::from("SyntaxError: cannot use '_' as a target"));
             }
+            let name = match self.pattern_name() {
+                Ok(CaseTest::Keep(name)) => name,
+                _ => { self.pos = opening; return Err(self.pattern_target_wrong()); }
+            };
+            // A binding here is a bare name alone; a dot, a call or an
+            // index after the name makes it a member, call or index.
+            if self.on_any("op.pipe") {
+                let (end, row) = self.pattern_chain_end(opening);
+                self.range_end = Some((end, row));
+                self.pos = opening;
+                return Err(String::from("SyntaxError: cannot use attribute as pattern target"));
+            }
+            if self.on_any("syntax.call.open") {
+                return Err(String::from("SyntaxError: cannot use function call as pattern target"));
+            }
+            if self.on_any("syntax.array.open") {
+                return Err(String::from("SyntaxError: cannot use subscript as pattern target"));
+            }
+            test = CaseTest::Also { test: Box::new(test), name };
         }
         Ok(test)
+    }
+
+    /// The reference's refusal of an `as` binding that is not a plain
+    /// name: the kind of thing written there, named in the message.
+    fn pattern_target_wrong(&self) -> String {
+        if self.on_any("syntax.group.open") {
+            if let Some(close) = self.pair_close(self.pos, self.tokens.len()) {
+                if self.pos + 1 == close || self.pair_holds(self.pos, close, &[","]) {
+                    return String::from("SyntaxError: cannot use tuple as pattern target");
+                }
+                return String::from("SyntaxError: cannot use expression as pattern target");
+            }
+        }
+        if self.on_any("syntax.array.open") {
+            return String::from("SyntaxError: cannot use list as pattern target");
+        }
+        String::from("SyntaxError: cannot use expression as pattern target")
+    }
+
+    /// The column and row just past the dotted name that begins at
+    /// `at`, a name and its members run name . name . name ... as far
+    /// as they go.
+    fn pattern_chain_end(&self, at: usize) -> (usize, u32) {
+        let mut i = at;
+        while i + 2 < self.tokens.len()
+            && self.tokens[i].shape == Shape::Bare
+            && self.tokens[i + 1].shape == Shape::Sign && self.table.spells("op.pipe", &self.tokens[i + 1].lexeme)
+            && self.tokens[i + 2].shape == Shape::Bare {
+            i += 2;
+        }
+        let last = &self.tokens[i];
+        let end = if last.end_column > 0 { last.end_column } else { last.column + last.lexeme.chars().count() };
+        (end, last.end_row.max(last.row))
     }
 
     fn pattern_single(&mut self) -> Res<crate::form::CaseTest> {
@@ -6546,9 +6639,16 @@ impl<'a> Builder<'a> {
                 while head + 1 < tail && self.tokens[head].lexeme == "(" && self.tokens[tail - 1].lexeme == ")" {
                     head += 1; tail -= 1;
                 }
-                let initial = &self.tokens[head].lexeme;
-                let bad = if self.table.spells("ext.stmt.function.short", initial) { Some("cannot assign to lambda") }
-                    else if self.table.spells("ext.stmt.yield", initial) { Some("cannot assign to yield expression here. Maybe you meant '==' instead of '='?") } else { None };
+                let single = head + 1 == tail;
+                let token = &self.tokens[head];
+                let initial = &token.lexeme;
+                let bad: Option<String> = if self.table.spells("ext.stmt.function.short", initial) { Some("cannot assign to lambda".to_owned()) }
+                    else if self.table.spells("ext.stmt.yield", initial) { Some(if single { "assignment to yield expression not possible".to_owned() } else { "cannot assign to yield expression here. Maybe you meant '==' instead of '='?".to_owned() }) }
+                    else if single && matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) { Some("cannot assign to literal here. Maybe you meant '==' instead of '='?".to_owned()) }
+                    else if single && self.table.spells("ext.literal.ellipsis", initial) { Some("cannot assign to ellipsis here. Maybe you meant '==' instead of '='?".to_owned()) }
+                    else if single && token.shape == Shape::Bare && (self.table.spells("literal.null", initial) || self.table.spells("literal.true", initial) || self.table.spells("literal.false", initial)) { Some(format!("cannot assign to {initial}")) }
+                    else if single && token.shape == Shape::Bare && initial == "__debug__" && token.row as u32 > self.before { Some("cannot assign to __debug__".to_owned()) }
+                    else { None };
                 if let Some(bad) = bad {
                     let ending = &self.tokens[tail - 1];
                     self.range_end = Some((ending.column + ending.lexeme.chars().count(), ending.row));
@@ -7248,6 +7348,14 @@ impl<'a> Builder<'a> {
         let origin = self.pos;
         if floor == 0 && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
             let word = self.advance().lexeme;
+            if table.has_any("ext.builtin.exceptions.syntax") {
+                if table.spells("literal.true", &word) || table.spells("literal.false", &word) || table.spells("literal.null", &word) {
+                    return Err(format!("SyntaxError: cannot use assignment expressions with {word}"));
+                }
+                if word == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".to_owned());
+                }
+            }
             let layer = self.layers.last_mut().unwrap();
             if layer.gathering_kind.is_some() { layer.expression_targets.push(word.clone()); }
             self.advance();
@@ -8018,7 +8126,7 @@ impl<'a> Builder<'a> {
             if targets && table.has_any("ext.builtin.exceptions.syntax") {
                 let token = self.look();
                 let description = match token.lexeme.as_str() {
-                    "None" | "False" | "True" => Some(token.lexeme.as_str()),
+                    "None" | "False" | "True" | "__debug__" => Some(token.lexeme.as_str()),
                     "*" => Some("starred"),
                     "not" | "~" | "-" | "+" => Some("expression"),
                     _ if matches!(token.shape, Shape::Quote | Shape::Numeral | Shape::ByteQuote) => Some("literal"),

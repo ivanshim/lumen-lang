@@ -145,7 +145,7 @@ vars = vars
 # the answer falls back on what the reader would have seeded: there is
 # no switch in this runtime that turns the checks off, so it is always
 # true.
-__debug__ = globals().get('__debug__', True)
+setattr(__load_module('builtins'), '__debug__', globals().get('__debug__', True))
 
 # True, False, None, Ellipsis, bytes and bytearray are words the reader
 # knows rather than names it can be asked for, so none of them can stand
