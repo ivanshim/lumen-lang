@@ -2996,6 +2996,9 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+        if !from && !lang.syntax_members.is_empty() && self.on_keyword(&lang.import_from_words) {
+            return Err("SyntaxError: Did you mean to use 'from ... import ...' instead?".into());
+        }
         if let Some(g) = group {
             self.want_sign(&g.close, "after the imported names")?;
         }

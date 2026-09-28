@@ -2815,6 +2815,9 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        if !taking_names && self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.import.from") {
+            return Err("SyntaxError: Did you mean to use 'from ... import ...' instead?".to_owned());
+        }
         if enclosed {
             let closing = self.table.single("syntax.group.close").unwrap_or_default().to_string();
             self.need_sign(&closing, "after the import list")?;
