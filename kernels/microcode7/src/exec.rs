@@ -7899,6 +7899,8 @@ impl<'a> Machine<'a> {
                 let place = if op == Prim::Prepare { formals.iter().position(|word| word == &key) }
                     else if matches!(op, Prim::Perform | Prim::Weigh) {
                         match key.as_str() { "source" => Some(0), "globals" => Some(1), "locals" => Some(2), "closure" if op == Prim::Perform => Some(3), _ => None }
+                    } else if op == Prim::Summon {
+                        match key.as_str() { "name" => Some(0), "globals" => Some(1), "locals" => Some(2), "fromlist" => Some(3), "level" => Some(4), _ => None }
                     } else { None }.ok_or_else(|| self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)))?;
                 if positional.get(place).map_or(false, |held| !matches!(held, Value::Unset)) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into()); }
                 if positional.len() <= place { positional.resize(place + 1, Value::Unset); }
@@ -18344,10 +18346,64 @@ impl<'a> Machine<'a> {
                 if !v.is_empty() { return Err(self.core_complaint("core.arity", name)); }
                 Ok(Value::Shared(self.book_about(op == Prim::WorldBook)))
             }
-            Prim::Summon => match v.first().map(Value::settled) {
-                Some(Value::Text(path)) => self.load_namespace(&path),
-                _ => Err(self.source_refused()),
-            },
+            // __import__(name, globals=None, locals=None, fromlist=(),
+            // level=0): the level is weighed before the name is fetched,
+            // and an empty name belongs only to a relative import, all as
+            // the reference has it.
+            Prim::Summon => {
+                if v.len() > 5 { return Err(format!("TypeError: __import__() takes at most 5 arguments ({} given)", v.len())); }
+                let level = match v.get(4).map(Value::settled) {
+                    None | Some(Value::Nil) | Some(Value::Unset) => 0i64,
+                    Some(Value::Small(n)) => n,
+                    Some(Value::Flag(b)) => i64::from(b),
+                    Some(other) => return Err(format!("TypeError: __import__() argument 5 must be int, not {}", other.kind_word())),
+                };
+                if level < 0 { return Err("ValueError: level must be >= 0".to_owned()); }
+                let name = match v.first().map(Value::settled) {
+                    Some(Value::Text(path)) => path,
+                    Some(other) => match Self::underlying(&other).map(|under| under.settled()) {
+                        Some(Value::Text(path)) => path,
+                        _ => return Err(format!("TypeError: __import__() argument 1 must be str, not {}", other.kind_word())),
+                    },
+                    None => return Err("TypeError: __import__() missing required argument 'name' (pos 1)".to_owned()),
+                };
+                if name.is_empty() && level == 0 { return Err("ValueError: Empty module name".to_owned()); }
+                if level > 0 {
+                    // A relative import resolves against the package the
+                    // handed globals name. Globals that name none leave
+                    // nothing to resolve against, which the reference says
+                    // with an ImportError after an ImportWarning about the
+                    // names it fell back on.
+                    let globe = v.get(1).map(Value::settled);
+                    let asked = |word: &str| match &globe {
+                        Some(Value::Dict(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, kept)| kept.clone()),
+                        _ => None,
+                    };
+                    let package = match asked("__package__") {
+                        Some(Value::Text(named)) => Some(named.to_string()),
+                        Some(other) if !matches!(other, Value::Nil) => None,
+                        _ => match asked("__spec__") {
+                            Some(found) if !matches!(found, Value::Nil) => None,
+                            _ => {
+                                match self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__") {
+                                    Ok(()) => {}
+                                    Err(Escape::Error(told)) => return Err(told),
+                                    Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                                }
+                                match asked("__name__") {
+                                    Some(Value::Text(named)) => Some(if asked("__path__").is_some() { named.to_string() } else { named.rsplit_once('.').map(|(head, _)| head.to_string()).unwrap_or_default() }),
+                                    _ => None,
+                                }
+                            }
+                        },
+                    };
+                    match package {
+                        Some(named) if !named.is_empty() => return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_string()),
+                        _ => return Err("ImportError: attempted relative import with no known parent package".to_owned()),
+                    }
+                }
+                self.load_namespace(&name)
+            }
             Prim::Prepare => self.text_prepared(name, v),
             _ => self.text_performed(op == Prim::Weigh, name, v),
         }

@@ -18567,6 +18567,8 @@ impl Engine<'_> {
                 self.lang.compile_parameters.iter().position(|word| word == &key)
             } else if matches!(builtin, Builtin::RunText | Builtin::Eval) {
                 match key.as_str() { "source" => Some(0), "globals" => Some(1), "locals" => Some(2), "closure" if builtin == Builtin::RunText => Some(3), _ => None }
+            } else if builtin == Builtin::Summon {
+                match key.as_str() { "name" => Some(0), "globals" => Some(1), "locals" => Some(2), "fromlist" => Some(3), "level" => Some(4), _ => None }
             } else { None }.ok_or_else(|| Self::named_fault(&self.lang.call_unknown, &key))?;
             if at < args.len() && !matches!(args[at], Value::Gap) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
             if args.len() <= at { args.resize(at + 1, Value::Gap); }
@@ -18588,8 +18590,58 @@ impl Engine<'_> {
                 Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))))
             }
             Builtin::Summon => {
-                let Some(Value::Text(path)) = args.first().map(Value::contents) else { return Err(self.source_unready()) };
-                match self.import_module(&path) {
+                // __import__(name, globals=None, locals=None, fromlist=(),
+                // level=0): the level is read before the name is looked
+                // up, and an empty name is only a relative import's, all
+                // as the reference has it.
+                if args.len() > 5 { return Err(format!("TypeError: __import__() takes at most 5 arguments ({} given)", args.len())); }
+                let level = match args.get(4).map(Value::contents) {
+                    None | Some(Value::Null) => 0i64,
+                    Some(Value::Small(n)) => n,
+                    Some(Value::Flag(b)) => i64::from(b),
+                    Some(other) => return Err(format!("TypeError: __import__() argument 5 must be int, not {}", other.core_kind()).into()),
+                };
+                if level < 0 { return Err("ValueError: level must be >= 0".to_string()); }
+                let name = match args.first().map(Value::contents) {
+                    Some(Value::Text(path)) => path,
+                    Some(other) => match Self::worth_of(&other).map(|w| w.contents()) {
+                        Some(Value::Text(path)) => path,
+                        _ => return Err(format!("TypeError: __import__() argument 1 must be str, not {}", other.core_kind()).into()),
+                    },
+                    None => return Err("TypeError: __import__() missing required argument 'name' (pos 1)".to_string()),
+                };
+                if name.is_empty() && level == 0 { return Err("ValueError: Empty module name".to_string()); }
+                if level > 0 {
+                    // A relative import is resolved against the package
+                    // the handed globals name. Globals naming no package
+                    // at all leave nothing to resolve against: the
+                    // reference says so with an ImportError, after an
+                    // ImportWarning about the names it fell back on.
+                    let globe = args.get(1).map(Value::contents);
+                    let asked = |word: &str| match &globe {
+                        Some(Value::Map(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, held)| held.clone()),
+                        _ => None,
+                    };
+                    let package = match asked("__package__") {
+                        Some(Value::Text(named)) => Some(named.to_string()),
+                        Some(other) if !matches!(other, Value::Null) => None,
+                        _ => match asked("__spec__") {
+                            Some(found) if !matches!(found, Value::Null) => None,
+                            _ => {
+                                self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__")?;
+                                match asked("__name__") {
+                                    Some(Value::Text(named)) => Some(if asked("__path__").is_some() { named.to_string() } else { named.rsplit_once('.').map(|(head, _)| head.to_string()).unwrap_or_default() }),
+                                    _ => None,
+                                }
+                            }
+                        },
+                    };
+                    match package {
+                        Some(named) if !named.is_empty() => return Err(self.lang.import_relative_unready.clone().into()),
+                        _ => return Err("ImportError: attempted relative import with no known parent package".to_string()),
+                    }
+                }
+                match self.import_module(&name) {
                     Ok(module) => Ok(module),
                     Err(Fault::Note(told)) => Err(told),
                     Err(fled) => { self.carried = Some(fled); Err(String::new()) }
