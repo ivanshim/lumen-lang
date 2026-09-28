@@ -2615,6 +2615,9 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.throw") {
                 self.advance();
+                if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.throw.from") {
+                    return Err("SyntaxError: did you forget an expression between 'raise' and 'from'?".to_owned());
+                }
                 if self.table.single("ext.stmt.throw.from").is_some()
                     && (matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.on_any("stmt.terminator"))
                 {
@@ -2623,6 +2626,9 @@ impl<'a> Builder<'a> {
                 let mut values = vec![self.expr(0)?];
                 if self.key("ext.stmt.throw.from") {
                     self.advance();
+                    if self.table.has_any("ext.builtin.exceptions.syntax") && (self.on_stmt_end() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
+                        return Err("SyntaxError: did you forget an expression after 'from'?".to_owned());
+                    }
                     let cause = self.expr(0)?;
                     if self.table.has_any("ext.builtin.exceptions") { values.push(cause); }
                 }

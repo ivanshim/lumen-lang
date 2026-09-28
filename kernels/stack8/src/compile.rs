@@ -2340,6 +2340,9 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.throw_words, &w) {
                 self.take();
+                if !lang.syntax_members.is_empty() && self.on_keyword(&lang.throw_from) {
+                    return Err("SyntaxError: did you forget an expression between 'raise' and 'from'?".into());
+                }
                 if !lang.throw_from.is_empty() && (self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
                     self.act(Action::Reraise, 0);
                 } else {
@@ -2347,6 +2350,9 @@ impl<'a> Compiler<'a> {
                     let mut count = 1;
                     if self.on_keyword(&lang.throw_from) {
                         self.take();
+                        if !lang.syntax_members.is_empty() && (self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
+                            return Err("SyntaxError: did you forget an expression after 'from'?".into());
+                        }
                         let from = self.mark();
                         self.expr(0)?;
                         if lang.exceptions.is_empty() { self.piece().instrs.truncate(from); } else { count = 2; }
