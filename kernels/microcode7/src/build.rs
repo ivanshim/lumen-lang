@@ -5791,10 +5791,13 @@ impl<'a> Builder<'a> {
         while !self.sign(&close) && !self.exhausted() {
             let mut manner = if beyond { 'n' } else { 'b' };
             if bind {
-                if closed { return Err(wrong()); }
+                if closed { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: parameters cannot follow var-keyword parameter".to_owned() } else { wrong() }); }
                 let word = self.look().lexeme.clone();
                 if table.spells("ext.stmt.function.positional_only", &word) {
-                    if slash || beyond || params.is_empty() { return Err(wrong()); }
+                    if slash || beyond || params.is_empty() {
+                        let complaint = if slash { "/ may appear only once" } else if beyond { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {complaint}") } else { wrong() });
+                    }
                     for before in &mut manners { *before = 'p'; }
                     slash = true;
                     self.advance();
@@ -5808,7 +5811,7 @@ impl<'a> Builder<'a> {
                     manner = 'k';
                     self.advance();
                 } else if table.spells("ext.stmt.function.carries", &word) || table.spells("ext.stmt.function.keyword_only", &word) {
-                    if beyond { return Err(wrong()); }
+                    if beyond { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * may appear only once".to_owned() } else { wrong() }); }
                     if self.table.has_any("ext.builtin.exceptions.syntax") && (self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == close) {
                         return Err("SyntaxError: named arguments must follow bare *".to_string());
                     }
@@ -5882,9 +5885,12 @@ impl<'a> Builder<'a> {
                     return Err(message);
                 }
                 match (self.on_assign(), manner) {
-                    (true, 'v' | 'k') => return Err(wrong()),
+                    (true, 'v' | 'k') => {
+                        let kind = if manner == 'v' { "var-positional" } else { "var-keyword" };
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} parameter cannot have default value") } else { wrong() });
+                    }
                     (true, 'b') => optional = true,
-                    (false, 'b') if optional => return Err(wrong()),
+                    (false, 'b') if optional => return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: parameter without a default follows parameter with a default".to_owned() } else { wrong() }),
                     _ => {}
                 }
                 manners.push(manner);
@@ -5897,6 +5903,9 @@ impl<'a> Builder<'a> {
             if self.on_assign() {
                 let row = (self.look().row as u32).saturating_sub(self.before);
                 self.advance();
+                if table.has_any("ext.builtin.exceptions.syntax") && (self.sign(&close) || self.on_any("syntax.call.separator")) {
+                    return Err("SyntaxError: expected default value expression".to_owned());
+                }
                 spares.push((params.len() - 1, self.pos));
                 // Read once here only to step over it.
                 let spare = self.expr(0)?;

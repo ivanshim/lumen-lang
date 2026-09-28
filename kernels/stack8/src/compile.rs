@@ -5880,10 +5880,13 @@ impl<'a> Compiler<'a> {
         while !self.at_symbol(&call.close) && !self.exhausted() {
             let mut rule = if named_only { 2 } else { 0 };
             if lang.bind_names {
-                if pairs { return Err(bad()); }
+                if pairs { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: parameters cannot follow var-keyword parameter".into() }); }
                 let sign = self.look().lexeme.clone();
                 if Lang::spells(&lang.positional_only, &sign) {
-                    if divided || named_only || formals.is_empty() { return Err(bad()); }
+                    if divided || named_only || formals.is_empty() {
+                        let phrase = if divided { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {phrase}") });
+                    }
                     divided = true;
                     rules.fill(1);
                     self.take();
@@ -5897,7 +5900,7 @@ impl<'a> Compiler<'a> {
                     pairs = true;
                     rule = 4;
                 } else if Lang::spells(&lang.carries_words, &sign) || Lang::spells(&lang.keyword_only, &sign) {
-                    if gather || named_only { return Err(bad()); }
+                    if gather || named_only { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: * may appear only once".into() }); }
                     if !lang.syntax_members.is_empty() && self.look_ahead(1).is_lexeme(Shape::Sign, &call.close) {
                         return Err("SyntaxError: named arguments must follow bare *".into());
                     }
@@ -5973,9 +5976,14 @@ impl<'a> Compiler<'a> {
                     return Err(said);
                 }
                 if self.on_assign() {
-                    if rule >= 3 { return Err(bad()); }
+                    if rule >= 3 {
+                        let phrase = if rule == 3 { "var-positional parameter cannot have default value" } else { "var-keyword parameter cannot have default value" };
+                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {phrase}") });
+                    }
                     if rule == 0 { default_seen = true; }
-                } else if rule == 0 && default_seen { return Err(bad()); }
+                } else if rule == 0 && default_seen {
+                    return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: parameter without a default follows parameter with a default".into() });
+                }
                 rules.push(rule);
             }
             if names_property {
@@ -5985,6 +5993,9 @@ impl<'a> Compiler<'a> {
             // leave it out.
             if self.on_assign() {
                 self.take();
+                if !lang.syntax_members.is_empty() && (self.at_symbol(&call.close) || call.between.as_ref().is_some_and(|mark| self.at_symbol(mark))) {
+                    return Err("SyntaxError: expected default value expression".into());
+                }
                 spares.push((formals.len() - 1, self.pos));
                 // Read once here only to step over it.
                 let spare = self.member_value()?;
