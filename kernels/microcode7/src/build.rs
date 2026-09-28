@@ -7584,7 +7584,9 @@ impl<'a> Builder<'a> {
                 let test = self.expr(1)?;
                 let end = conditional.get(1).ok_or("Conditional expression needs two words")?;
                 if self.look().lexeme != *end {
-                    return Err(format!("Expected '{}' in conditional expression", end));
+                    return Err(if table.has_any("ext.builtin.exceptions.syntax") && !self.on_any("block.intro") {
+                        String::from("SyntaxError: expected 'else' after 'if' expression")
+                    } else { format!("Expected '{}' in conditional expression", end) });
                 }
                 self.advance();
                 if table.has_any("ext.builtin.exceptions.syntax") && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {

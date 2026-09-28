@@ -7846,7 +7846,9 @@ impl<'a> Compiler<'a> {
                 self.land(no);
                 let other = lang.if_else_words.get(1).ok_or("Conditional expression needs two words")?;
                 if !self.at_lexeme(other) {
-                    return Err(format!("Expected '{}' in conditional expression", other));
+                    return Err(if lang.syntax_members.is_empty() || self.on_any(&lang.block_intros) {
+                        format!("Expected '{}' in conditional expression", other)
+                    } else { "SyntaxError: expected 'else' after 'if' expression".into() });
                 }
                 self.take();
                 if !lang.syntax_members.is_empty() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {
