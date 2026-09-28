@@ -6175,7 +6175,14 @@ impl<'a> Compiler<'a> {
                     if rule >= 3 { return Err(bad()); }
                     if rule == 0 { default_seen = true; }
                 } else if rule == 0 && default_seen {
-                    if !lang.syntax_members.is_empty() { return Err("SyntaxError: parameter without a default follows parameter with a default".into()); }
+                    if !lang.syntax_members.is_empty() {
+                        // The complaint names the parameter that takes
+                        // nothing, standing over it as the reference
+                        // stands.
+                        let newest = formals.last().cloned().unwrap_or_default();
+                        if let Some(at) = (0..self.pos).rev().find(|i| self.tokens[*i].lexeme == newest) { self.pos = at; }
+                        return Err("SyntaxError: parameter without a default follows parameter with a default".into());
+                    }
                     return Err(bad());
                 }
                 rules.push(rule);
@@ -6518,7 +6525,11 @@ impl<'a> Compiler<'a> {
                     self.write(&hidden);
                     defaults.push((formals.len() - 1, hidden));
                 } else if mode == 0 && default_seen {
-                    if !lang.syntax_members.is_empty() { return Err("SyntaxError: parameter without a default follows parameter with a default".into()); }
+                    if !lang.syntax_members.is_empty() {
+                        let newest = formals.last().cloned().unwrap_or_default();
+                        if let Some(at) = (0..self.pos).rev().find(|i| self.tokens[*i].lexeme == newest) { self.pos = at; }
+                        return Err("SyntaxError: parameter without a default follows parameter with a default".into());
+                    }
                     return Err(bad());
                 }
             }

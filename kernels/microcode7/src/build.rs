@@ -6093,7 +6093,15 @@ impl<'a> Builder<'a> {
                     (true, 'v' | 'k') => return Err(wrong()),
                     (true, 'b') => optional = true,
                     (false, 'b') if optional => {
-                        if table.has_any("ext.builtin.exceptions.syntax") { return Err("SyntaxError: parameter without a default follows parameter with a default".to_string()); }
+                        if table.has_any("ext.builtin.exceptions.syntax") {
+                            // The complaint names the parameter that
+                            // takes nothing, standing over it as the
+                            // reference stands.
+                            let newest = params.last().cloned().unwrap_or_default();
+                            let mut cursor = self.pos;
+                            while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == newest { self.pos = cursor; break; } }
+                            return Err("SyntaxError: parameter without a default follows parameter with a default".to_string());
+                        }
                         return Err(wrong());
                     }
                     _ => {}
@@ -6459,7 +6467,12 @@ impl<'a> Builder<'a> {
                     before.push(Form::Write(hidden.clone(), Box::new(worth)));
                     spares.push((names.len() - 1, hidden));
                 } else if way == 'b' && default_seen {
-                    if table.has_any("ext.builtin.exceptions.syntax") { return Err("SyntaxError: parameter without a default follows parameter with a default".to_string()); }
+                    if table.has_any("ext.builtin.exceptions.syntax") {
+                        let newest = names.last().cloned().unwrap_or_default();
+                        let mut cursor = self.pos;
+                        while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == newest { self.pos = cursor; break; } }
+                        return Err("SyntaxError: parameter without a default follows parameter with a default".to_string());
+                    }
                     return Err(bad());
                 }
             }
