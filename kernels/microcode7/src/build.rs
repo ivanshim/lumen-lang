@@ -4021,13 +4021,14 @@ impl<'a> Builder<'a> {
                 // still be one `locals()[k] = v` bound there while
                 // the body ran: `del` of it is a `del` through the
                 // body's own namespace all the same, once that
-                // namespace exists. With none at all this walk has
-                // no place to follow the name to, and the class is
-                // refused as it always was.
+                // namespace exists. With none at all the name is no
+                // member to take out, and the language this follows
+                // raises NameError rather than reaching past the
+                // class into the scope around it.
                 let Some(book) = self.parts().book.clone() else {
-                    self.parts().cannot = true;
-                    self.pos = end;
-                    return Ok(constant(Value::Nil));
+                    let blank = self.gensym("delete");
+                    steps.push(Form::Read(Address { ident: Rc::from(word.as_str()), up: blank.up, at: blank.at, fallback: None }));
+                    continue;
                 };
                 let target = self.read_to_write(&book.ident.to_string());
                 let key = constant(Value::text(&word));

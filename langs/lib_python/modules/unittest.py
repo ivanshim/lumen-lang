@@ -587,17 +587,31 @@ class _Warns:
         self.manager.__exit__(kind, value, traceback)
         if kind is not None:
             return False
+        import warnings
         first_matching = None
+        matched = False
+        non_matching = []
         for record in self.manager.records:
             if isinstance(record.message, self.expected):
                 if first_matching is None:
                     first_matching = record.message
                 if self.pattern is not None and self.pattern.search(_message(record.message)) is None:
+                    non_matching = [*non_matching, record]
                     continue
-                self.warning = record.message
-                self.filename = record.filename
-                self.lineno = record.lineno
-                return False
+                if not matched:
+                    matched = True
+                    self.warning = record.message
+                    self.filename = record.filename
+                    self.lineno = record.lineno
+            else:
+                non_matching = [*non_matching, record]
+        # A nested assertWarns records into the innermost list only, so a
+        # warning claimed by no pattern here is handed back to the enclosing
+        # context instead of being dropped.
+        for record in non_matching:
+            warnings.warn_explicit(record.message, record.category, record.filename, record.lineno)
+        if matched:
+            return False
         if first_matching is not None:
             raise AssertionError('"' + self.pattern.pattern + '" does not match "' + _message(first_matching) + '"')
         raise AssertionError(_class_name(self.expected) + ' not triggered')
