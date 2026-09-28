@@ -17723,6 +17723,14 @@ impl Engine<'_> {
                 arity(if b == Builtin::Vars { 1 } else { 2 }, if matches!(b, Builtin::SetAttr | Builtin::GetAttr) { 3 } else if b == Builtin::Vars { 1 } else { 2 })?;
                 if b != Builtin::Vars {
                     if let Some(Value::Text(word)) = Self::worth_of(&args[1]) { args[1] = Value::Text(word); }
+                    // A text holding a lone surrogate is a text all the
+                    // same for naming a member: no member's name holds
+                    // one, so it is asked after as the stand-in text such
+                    // a row walks as everywhere else.
+                    if let Value::Codepoints(row) = &args[1] {
+                        let stand_in = Value::predicate_text(row);
+                        args[1] = Value::text(&stand_in);
+                    }
                 }
                 if b != Builtin::Vars && !matches!(args[1], Value::Text(_)) { return Err(self.core_fault("core.attribute.name", &args[1].core_kind())); }
                 let Value::Object(o) = &args[0] else {

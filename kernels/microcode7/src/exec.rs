@@ -20175,6 +20175,14 @@ impl Machine<'_> {
                 require(count, if matches!(op, GetMember | SetMember) { 3 } else { count })?;
                 if op != MembersOf {
                     if let Some(base @ Value::Text(_)) = Self::underlying(&input[1]) { input[1] = base; }
+                    // A text keeping a lone half of a surrogate pair is a
+                    // text all the same for naming a member: no member's
+                    // name keeps one, so it is asked after as the stand-in
+                    // text such a row reads as elsewhere.
+                    if let Value::Unpaired(numbers) = &input[1] {
+                        let stand_in = Value::category_text(numbers);
+                        input[1] = Value::text(&stand_in);
+                    }
                 }
                 if op != MembersOf && !matches!(input[1], Value::Text(_)) { return Err(self.core_complaint("core.attribute.name", &input[1].kind_word())); }
                 let Value::Thing(thing) = &input[0] else {

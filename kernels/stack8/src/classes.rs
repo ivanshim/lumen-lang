@@ -2277,13 +2277,17 @@ impl<'a> Engine<'a> {
             3|6 if args.len()>=2=>{
                 // A name standing on text is asked after as the text it keeps.
                 let asked=match &args[1] {Value::Object(_)=>Self::worth_of(&args[1]).map(|w|w.contents()).filter(|w|matches!(w,Value::Text(_))),_=>None}.unwrap_or_else(||args[1].clone());
+                // A text keeping a lone surrogate names a member too;
+                // no member's name keeps one, so it is asked after as
+                // the stand-in text such a row reads as elsewhere.
+                let asked=match &asked {Value::Codepoints(row)=>Value::text(&Value::predicate_text(row)),other=>other.clone()};
                 let Value::Text(name)=&asked else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
                 if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)])?;return self.drop_top().map_err(|words|Fault::Note(words));}}
                 Err(fault)},Err(e)=>Err(e)}},
             3=>Err(self.arity_told(&self.class_tool_word(3),2,args.len())),
             6=>Err(self.arity_told(&self.class_tool_word(6),2,args.len())),
-            4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};self.class_write(one,n,args.get(2).cloned(),false)},
+            4|5 if args.len()==if which==4{3}else{2}=>{let written=match &args[1]{Value::Codepoints(row)=>Value::text(&Value::predicate_text(row)),other=>other.clone()};let Value::Text(n)=&written else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};self.class_write(one,n,args.get(2).cloned(),false)},
             4|5=>Err(self.arity_told(&self.class_tool_word(which),if which==4{3}else{2},args.len())),
             7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
             8 if args.len()==1=>{
