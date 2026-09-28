@@ -10496,7 +10496,7 @@ impl<'a> Machine<'a> {
                                 let value = self.ask_special(&other, 11, &[item.clone()])?.ok_or_else(|| self.bad_answer())?;
                                 (item, value)
                             } else {
-                                let fields = self.core_collect(&item)?;
+                                let fields = self.dict_merge_row(&item, position)?;
                                 if fields.len() != 2 {
                                     let parts = self.table.strings("ext.builtin.core.dict.pair");
                                     return Err(format!("{}{}{}{}{}", parts[0], position, parts[1], fields.len(), parts[2]));
@@ -10524,6 +10524,44 @@ impl<'a> Machine<'a> {
             }
         }
         match stopped { Some(words) => Err(words), None => Ok(Value::Nil) }
+    }
+
+    /// One member of a dictionary-update sequence made into a pair the
+    /// way CPython makes it: a row or tuple is taken whole, anything
+    /// else is read out; an element that cannot be read at all raises
+    /// "object is not iterable", and one whose own reading raises keeps
+    /// that fault's words. In both cases the fault carries a note with
+    /// the element's place, for a clause to read back.
+    fn dict_merge_row(&mut self, item: &Value, position: usize) -> Result<Vec<Value>, String> {
+        match self.core_collect(item) {
+            Ok(row) => Ok(row),
+            Err(_) => {
+                let parts = self.table.strings("ext.builtin.core.dict.sequence");
+                let note = format!("{}{}{}", parts[0], position, parts[1]);
+                match self.got_away.take() {
+                    Some(Escape::Thrown(value)) => { self.attach_note(&value, &note); self.got_away = Some(Escape::Thrown(value)); }
+                    Some(other) => { self.got_away = Some(other); }
+                    None => match self.as_raised("TypeError: object is not iterable") {
+                        Some(raised) => { self.attach_note(&raised, &note); self.got_away = Some(Escape::Thrown(raised)); }
+                        None => return Err(String::from("TypeError: object is not iterable")),
+                    },
+                }
+                Err(self.bad_answer())
+            }
+        }
+    }
+
+    /// A note written onto a fault's own object, so `__notes__` keeps
+    /// the reading the element's place asked for.
+    fn attach_note(&self, value: &Value, note: &str) {
+        let Value::Thing(thing) = value else { return };
+        let Some(key) = self.table.single("ext.builtin.exceptions.notes").map(str::to_string) else { return };
+        let mut holds = thing.holds.borrow_mut();
+        match holds.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, Value::Vector(items))) => Rc::make_mut(items).push(Value::text(note)),
+            Some(_) => return,
+            None => holds.push((key, Value::Vector(Rc::new(vec![Value::text(note)])))),
+        }
     }
 
     /// `dict.fromkeys`: a new map with a key for each member its
@@ -20223,7 +20261,7 @@ impl Machine<'_> {
                         }
                     } else {
                         for (position,row) in self.core_collect(source)?.into_iter().enumerate() {
-                            let fields = self.core_collect(&row).map_err(|_| self.core_complaint("core.dict.sequence", &position.to_string()))?;
+                            let fields = self.dict_merge_row(&row, position)?;
                             if fields.len() != 2 {
                                 let parts = self.table.strings("ext.builtin.core.dict.pair");
                                 return Err(format!("{}{}{}{}{}",parts[0],position,parts[1],fields.len(),parts[2]));

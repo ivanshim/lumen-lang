@@ -4784,7 +4784,7 @@ impl<'a> Engine<'a> {
                             let walk = self.core_iterator(&other)?;
                             let mut at = 0;
                             while let Some(item) = self.core_step(&walk)? {
-                                let pair = self.core_members(&item)?;
+                                let pair = self.dict_merge_row(&item, at)?;
                                 if pair.len() != 2 {
                                     let w = &self.lang.core_words["core.dict.pair"];
                                     return Err(format!("{}{}{}{}{}", w[0], at, w[1], pair.len(), w[2]));
@@ -4811,6 +4811,43 @@ impl<'a> Engine<'a> {
             }
         }
         match amiss { Some(told) => Err(told), None => Ok(Value::Null) }
+    }
+
+    /// One element of a dictionary-update sequence read as a pair, the
+    /// way CPython reads it: a list or tuple is used as it stands, and
+    /// anything else is walked; a thing that cannot be walked at all
+    /// raises "object is not iterable", and a thing whose own walk
+    /// raises keeps that fault's words. Either way a note is left on
+    /// the fault naming the element's place, so a catch can read it.
+    fn dict_merge_row(&mut self, item: &Value, at: usize) -> Res<Vec<Value>> {
+        match self.core_members(item) {
+            Ok(row) => Ok(row),
+            Err(_) => {
+                let note = Self::named_fault(&self.lang.core_words["core.dict.sequence"], &at.to_string());
+                match self.carried.take() {
+                    Some(Fault::Thrown(value)) => { self.attach_note(&value, &note); self.carried = Some(Fault::Thrown(value)); }
+                    Some(other) => { self.carried = Some(other); }
+                    None => match self.as_fault("TypeError: object is not iterable") {
+                        Some(raised) => { self.attach_note(&raised, &note); self.carried = Some(Fault::Thrown(raised)); }
+                        None => return Err("TypeError: object is not iterable".into()),
+                    },
+                }
+                Err(self.special_fault())
+            }
+        }
+    }
+
+    /// A note put on a fault's own object, so that `__notes__` holds
+    /// the reading the element's place asked for.
+    fn attach_note(&self, value: &Value, note: &str) {
+        let Value::Object(object) = value else { return };
+        let Some(key) = &self.lang.notes_member else { return };
+        let mut fields = object.fields.borrow_mut();
+        match fields.iter_mut().find(|(n, _)| n == key) {
+            Some((_, Value::Array(row))) => Rc::make_mut(row).push(Value::text(note)),
+            Some(_) => return,
+            None => fields.push((key.clone(), Value::array(vec![Value::text(note)]))),
+        }
     }
 
     /// `dict.fromkeys`: a new map with a row for each member its
@@ -8246,6 +8283,14 @@ impl<'a> Engine<'a> {
                 // A map held in a cell is walked under watch, so that a
                 // change of its size under the walk is seen.
                 if self.lang.map_resized.is_some() && Self::map_cell(&source).is_some() {
+                    // A view upon a map is walked as it stands, so a
+                    // change of its size under the walk stops the next
+                    // step, and the values it hands out are not kept
+                    // alive beyond that one step.
+                    if let Some(living @ CursorSource::Viewed(..)) = Self::living_source(&source) {
+                        self.data.push(Self::core_cursor(living));
+                        return Ok(());
+                    }
                     let items = self.special_items(&source)?;
                     self.data.push(self.watched_walk(&source, items));
                     return Ok(());
@@ -17746,7 +17791,7 @@ impl Engine<'_> {
                             }
                         } else {
                         for (at,item) in self.core_members(v)?.into_iter().enumerate() {
-                            let row = self.core_members(&item).map_err(|_| self.core_fault("core.dict.sequence", &at.to_string()))?;
+                            let row = self.dict_merge_row(&item, at)?;
                             if row.len() != 2 { let w = &self.lang.core_words["core.dict.pair"]; return Err(format!("{}{}{}{}{}", w[0],at,w[1],row.len(),w[2])); }
                             pairs.push((row[0].clone(), row[1].clone()));
                         }

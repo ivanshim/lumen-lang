@@ -665,7 +665,7 @@
     "; 2 is required"
   ],
   "ext.builtin.core.dict.sequence": [
-    "TypeError: cannot convert dictionary update sequence element #",
+    "Cannot convert dictionary update sequence element #",
     " to a sequence"
   ],
   "ext.builtin.core.dict.changed": [
