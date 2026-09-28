@@ -132,7 +132,12 @@ def run_unittest(*classes):
     return result
 
 def check_syntax_error(testcase, statement, errtext='', lineno=None, offset=None):
-    raise 'NotImplementedError: syntax checks need a compile builtin'
+    with testcase.assertRaisesRegex(SyntaxError, errtext) as caught:
+        compile(statement, '<test string>', 'exec')
+    if lineno is not None:
+        testcase.assertEqual(caught.exception.lineno, lineno)
+    if offset is not None:
+        testcase.assertEqual(caught.exception.offset, offset)
 
 class swap_attr:
     def __init__(self, obj, attr, new_val):

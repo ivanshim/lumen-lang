@@ -1,1 +1,1 @@
-PythonError: TypeError: value is not iterable
+PythonError: TypeError: Value after * must be an iterable, not int

@@ -8,7 +8,7 @@ argv = __program_namespace()['__program_argv']
 # is searched, in order, before the library carried inside this run.
 # Nothing stands here by default, since nothing outside the library
 # this run carries is on the way until a program puts it there.
-path = []
+path = [argv[0].rsplit('/', 1)[0] if '/' in argv[0] else '']
 maxsize = 9223372036854775807
 version_info = (3, 14, 0, 'final', 0)
 platform = 'linux'
@@ -170,8 +170,12 @@ def _input(prompt=''):
         return line[:-1]
     return line
 
-def exit(status=None):
-    raise SystemExit(status)
+def exit(*args, **kwargs):
+    if kwargs:
+        raise TypeError('exit() takes no keyword arguments')
+    if len(args) > 1:
+        raise TypeError('exit() takes at most 1 argument (%d given)' % len(args))
+    raise SystemExit(args[0] if args else None)
 
 # The default answer to breakpoint(): a name in $PYTHONBREAKPOINT picks
 # what runs in its place, '0' turns it off, and an unset or empty name

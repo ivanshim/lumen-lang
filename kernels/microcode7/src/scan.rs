@@ -648,12 +648,36 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
 
 pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
     if !source.contains('\\') || !table.has_any("ext.lexical.escape.warning") { return vec![]; }
-    match scan_notices(source, table) {
-        Ok(read) => read.into_iter().filter_map(|item| {
-            (item.shape == Shape::EscapeNotice).then_some((item.lexeme, item.row))
-        }).collect(),
-        Err(_) => vec![],
+    // A reading that stops short on a fault later in the text still
+    // says what it noticed about a string already read, so the notices
+    // are gathered by walking the strings in turn, keeping only those
+    // whose string finished rather than faulted short.
+    let input = if table.has_any("ext.builtin.exceptions.syntax") && source.contains('\r') {
+        std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
+    } else { std::borrow::Cow::Borrowed(source) };
+    let src: Vec<char> = input.chars().collect();
+    let mut notices: Vec<(String, u32)> = Vec::new();
+    let (mut pos, mut row) = (0usize, 1u32);
+    while pos < src.len() {
+        if table.strings("lexical.comment_line").iter().any(|m| src[pos..].starts_with(&m.chars().collect::<Vec<_>>())) {
+            while pos < src.len() && src[pos] != '\n' { pos += 1; }
+            continue;
+        }
+        if src[pos] == '\n' { row += 1; pos += 1; continue; }
+        if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
+            let mut quote = Quotation { source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
+            if quote.literal(body, &end, raw, fields, 0).is_ok() {
+                for token in &quote.made {
+                    if token.shape == Shape::EscapeNotice { notices.push((token.lexeme.clone(), token.row)); }
+                }
+            }
+            pos = quote.next;
+            row = quote.row;
+            continue;
+        }
+        pos += 1;
     }
+    notices
 }
 
 fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)> {
@@ -923,17 +947,41 @@ impl Quotation<'_> {
         if fields { self.token(Shape::WovenEnd, String::new()); }
         Ok(())
     }
+    /// The escape a backslash begins that the reference warns about: what
+    /// follows the backslash, and whether it is written in figures of
+    /// eights. None where the reference takes the escape without a word.
+    fn noticed_escape(&self, ch: char, bytes: bool) -> Option<(String, bool)> {
+        if ['\\', '\r', '\n'].contains(&ch) { return None; }
+        let table = self.table;
+        let mut known = table.letters("lexical.string_escapes");
+        known.extend(table.letters("lexical.string_quotes"));
+        known.extend(table.letters("ext.lexical.escape.controls"));
+        if known.contains(&ch) { return None; }
+        if table.spells("ext.lexical.escape.byte", &ch.to_string()) { return None; }
+        let lettered = table.spells("ext.lexical.escape.named", &ch.to_string())
+            || table.spells("ext.lexical.escape.codepoint", &ch.to_string())
+            || table.spells("ext.lexical.escape.codepoint.wide", &ch.to_string());
+        if lettered { return if bytes { Some((ch.to_string(), false)) } else { None }; }
+        if table.flag("ext.lexical.escape.octal") && ch.is_digit(8) {
+            let mut worth = 0u32;
+            let mut tail = String::new();
+            for ahead in 1..=3 {
+                let Some(d) = self.source.get(self.next + ahead).and_then(|c| c.to_digit(8)) else { break };
+                worth = worth * 8 + d;
+                tail.push(self.source[self.next + ahead]);
+            }
+            return if worth > 0o377 { Some((tail, true)) } else { None };
+        }
+        Some((ch.to_string(), false))
+    }
+
     fn slash(&mut self, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool, noticed: &mut bool) -> Result<(), String> {
         let begin = self.next;
         let ch = *self.source.get(begin + 1).ok_or_else(|| self.bad())?;
         if !raw && !*noticed && self.table.strings("ext.lexical.escape.warning").len() == 4 {
-            let mut recognized = self.table.letters("lexical.string_escapes");
-            for key in ["lexical.string_quotes", "ext.lexical.escape.controls", "ext.lexical.escape.named",
-                "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide", "ext.lexical.escape.byte"] {
-                recognized.extend(self.table.letters(key));
-            }
-            if !recognized.contains(&ch) && !ch.is_digit(8) && !['\\', '\r', '\n'].contains(&ch) {
-                let text = self.table.strings("ext.lexical.escape.warning")[3].replace("{}", &ch.to_string());
+            if let Some((tail, octal)) = self.noticed_escape(ch, bytes) {
+                let mut text = self.table.strings("ext.lexical.escape.warning")[3].replace("{}", &tail);
+                if octal { text = text.replacen("escape sequence", "octal escape sequence", 1); }
                 self.token(Shape::EscapeNotice, text);
                 *noticed = true;
             }
@@ -1329,6 +1377,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 }
                 if !fields {
                     for token in &mut quote.made {
+                        if token.shape == Shape::EscapeNotice { continue; }
                         token.column = at_column(pos); token.row = row;
                         token.end_column = at_column(quote.next); token.end_row = quote.row;
                     }
@@ -1508,7 +1557,21 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             if strict {
                 while at(k).map_or(false, |x| table.extends_name(x)) { k += 1; }
             }
-            let spelling: String = src[pos..k].iter().collect();
+            let mut spelling: String = src[pos..k].iter().collect();
+            if strict && check_numeral(&spelling, table).is_err() && table.has_any("ext.builtin.exceptions.syntax") {
+                for word in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+                    if let Some(beginning) = spelling.strip_suffix(word) {
+                        if !beginning.is_empty() && check_numeral(beginning, table).is_ok()
+                            && !(beginning == "0" && word == "or")
+                            && !(beginning.starts_with("0x") && matches!(word, "and" | "else")) {
+                            let kept = beginning.len();
+                            k -= word.len();
+                            spelling.truncate(kept);
+                            break;
+                        }
+                    }
+                }
+            }
             if strict {
                 if let Err(mut words) = check_numeral(&spelling, table) {
                     if table.has_any("ext.builtin.exceptions.syntax") {
@@ -1941,7 +2004,7 @@ fn failed_digit(spelling: &str, complaint: &str) -> usize {
         let c = chars[index];
         let next = chars.get(index + 1);
         if c == '_' {
-            if !next.map_or(false, |n| n.is_digit(base)) { return index; }
+            if !next.map_or(false, |n| n.is_digit(base) || base < 10 && n.is_ascii_digit()) { return index; }
         } else if !c.is_digit(base) {
             if skip != 0 {
                 return if base != 16 && c.is_ascii_digit() { index } else { index.saturating_sub(1) };

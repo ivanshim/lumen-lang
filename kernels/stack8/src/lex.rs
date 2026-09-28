@@ -581,56 +581,90 @@ impl<'a> Cursor<'a> {
     /// far short of its end may be the truer complaint about.
     fn rich_string(&mut self, prefix: usize, mark: &str, raw: bool, format: bool, depth: u32) -> Result<(), String> {
         if format && depth >= 150 { return Err(self.lang.source_syntax.clone().unwrap_or_else(|| self.string_words())); }
-        let (line, col) = (self.row, self.column);
-        let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
-        for _ in 0..prefix + mark.chars().count() { self.step(); }
-        if format { self.push(Shape::StringBegin, String::new(), 0, line, col); }
-        let mut warned = false;
-        let (mut text, mut fault) = (String::new(), false);
-        loop {
-            if at_word(&self.text, self.at, mark) {
-                for _ in mark.chars() { self.step(); }
-                break;
-            }
-            let Some(c) = self.look(0) else {
-                let triple = mark.chars().count() > 1;
-                let named = match (triple, format) {
-                    (false, false) => &self.lang.string_unterminated,
-                    (true, false) => &self.lang.string_unterminated_triple,
-                    (false, true) => &self.lang.fstring_unterminated,
-                    (true, true) => &self.lang.fstring_unterminated_triple,
-                };
-                return Err(match named {
-                    Some(said) if depth < NESTED_UNTERMINATED_DEPTH => said.clone(),
-                    None if triple && !format => format!("Unterminated {} string", mark.chars().next().unwrap()),
-                    _ => self.string_words(),
-                });
-            };
-            if bytes && (!c.is_ascii() || c == '\\' && self.look(1).map_or(false, |c| !c.is_ascii())) {
-                return Err(self.lang.byte_words["ext.lexical.string.bytes.ascii"][0].clone());
-            }
-            if c == '\n' && mark.chars().count() == 1 {
-                if !format && depth == 0 && !self.lang.syntax_members.is_empty() {
-                    if let Some(said) = &self.lang.string_unterminated { return Err(said.clone()); }
+        // A string read short of its end leaves no warnings of its own:
+        // what was pushed while reading it is taken back, so a later
+        // pass that gathers warnings keeps only strings that finished.
+        let saved = self.out.len();
+        let outcome = (|| -> Result<(), String> {
+            let (line, col) = (self.row, self.column);
+            let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
+            for _ in 0..prefix + mark.chars().count() { self.step(); }
+            if format { self.push(Shape::StringBegin, String::new(), 0, line, col); }
+            let mut warned = false;
+            let (mut text, mut fault) = (String::new(), false);
+            loop {
+                if at_word(&self.text, self.at, mark) {
+                    for _ in mark.chars() { self.step(); }
+                    break;
                 }
-                return Err(self.string_words());
+                let Some(c) = self.look(0) else {
+                    let triple = mark.chars().count() > 1;
+                    let named = match (triple, format) {
+                        (false, false) => &self.lang.string_unterminated,
+                        (true, false) => &self.lang.string_unterminated_triple,
+                        (false, true) => &self.lang.fstring_unterminated,
+                        (true, true) => &self.lang.fstring_unterminated_triple,
+                    };
+                    return Err(match named {
+                        Some(said) if depth < NESTED_UNTERMINATED_DEPTH => said.clone(),
+                        None if triple && !format => format!("Unterminated {} string", mark.chars().next().unwrap()),
+                        _ => self.string_words(),
+                    });
+                };
+                if bytes && (!c.is_ascii() || c == '\\' && self.look(1).map_or(false, |c| !c.is_ascii())) {
+                    return Err(self.lang.byte_words["ext.lexical.string.bytes.ascii"][0].clone());
+                }
+                if c == '\n' && mark.chars().count() == 1 {
+                    if !format && depth == 0 && !self.lang.syntax_members.is_empty() {
+                        if let Some(said) = &self.lang.string_unterminated { return Err(said.clone()); }
+                    }
+                    return Err(self.string_words());
+                }
+                if format && (c == '{' || c == '}') {
+                    if self.look(1) == Some(c) {
+                        self.step(); self.step(); text.push(c); warned = false;
+                    } else if c == '{' {
+                        self.string_text(&mut text, &mut fault, line, col);
+                        self.string_field(raw, depth, mark, 0)?;
+                        warned = false;
+                    } else { return Err(self.field_error(1)); }
+                } else if c == '\\' {
+                    self.rich_escape(raw, format, bytes, &mut text, &mut fault, &mut warned)?;
+                } else { text.push(self.step()); }
             }
-            if format && (c == '{' || c == '}') {
-                if self.look(1) == Some(c) {
-                    self.step(); self.step(); text.push(c); warned = false;
-                } else if c == '{' {
-                    self.string_text(&mut text, &mut fault, line, col);
-                    self.string_field(raw, depth, mark, 0)?;
-                    warned = false;
-                } else { return Err(self.field_error(1)); }
-            } else if c == '\\' {
-                self.rich_escape(raw, format, bytes, &mut text, &mut fault, &mut warned)?;
-            } else { text.push(self.step()); }
+            if bytes { self.push(Shape::Bytes, text, 0, line, col); }
+            else { self.string_text(&mut text, &mut fault, line, col); }
+            if format { self.push(Shape::StringEnd, String::new(), 0, line, col); }
+            Ok(())
+        })();
+        if outcome.is_err() { self.out.truncate(saved); }
+        outcome
+    }
+
+    /// The escape a backslash begins that the reference warns about: what
+    /// follows the backslash, and whether it is written in figures of
+    /// eights. None where the reference takes the escape without a word.
+    fn noticed_escape(&self, next: char, bytes: bool) -> Option<(String, bool)> {
+        let lang = self.lang;
+        if matches!(next, '\\' | '\n' | '\r') { return None; }
+        if lang.quotes.contains(&next) || lang.escape_letters.contains(&next) || lang.control_escapes.contains(&next) {
+            return None;
         }
-        if bytes { self.push(Shape::Bytes, text, 0, line, col); }
-        else { self.string_text(&mut text, &mut fault, line, col); }
-        if format { self.push(Shape::StringEnd, String::new(), 0, line, col); }
-        Ok(())
+        if lang.byte_letter == Some(next) { return None; }
+        let lettered = [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next));
+        if lettered { return if bytes { Some((next.to_string(), false)) } else { None }; }
+        if lang.octal_escapes && next.is_digit(8) {
+            let mut number = 0u32;
+            let mut tail = String::new();
+            for ahead in 1..=3 {
+                let Some(c) = self.look(ahead) else { break };
+                let Some(digit) = c.to_digit(8) else { break };
+                number = number * 8 + digit;
+                tail.push(c);
+            }
+            return if number > 0o377 { Some((tail, true)) } else { None };
+        }
+        Some((next.to_string(), false))
     }
 
     fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool, warned: &mut bool) -> Result<(), String> {
@@ -641,12 +675,13 @@ impl<'a> Cursor<'a> {
             return Ok(());
         }
         let lang = self.lang;
-        if !*warned && lang.escape_warning.len() == 4 && !matches!(next, '\\' | '\n' | '\r')
-            && !lang.quotes.contains(&next) && !lang.escape_letters.contains(&next)
-            && !lang.control_escapes.contains(&next) && !next.is_digit(8)
-            && ![lang.named_letter, lang.codepoint_letter, lang.wide_letter, lang.byte_letter].contains(&Some(next)) {
-            *warned = true;
-            self.push(Shape::EscapeWarning, lang.escape_warning[3].replace("{}", &next.to_string()), 0, self.row, self.column);
+        if !*warned && lang.escape_warning.len() == 4 {
+            if let Some((tail, octal)) = self.noticed_escape(next, bytes) {
+                *warned = true;
+                let mut message = lang.escape_warning[3].replace("{}", &tail);
+                if octal { message = message.replacen("escape sequence", "octal escape sequence", 1); }
+                self.push(Shape::EscapeWarning, message, 0, self.row, self.column);
+            }
         }
         if bytes && [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next)) {
             text.push(self.step()); text.push(self.step());
@@ -1172,6 +1207,21 @@ impl<'a> Cursor<'a> {
             while self.look(0).map_or(false, |c| lang.extends_name(c)) {
                 s.push(self.step());
             }
+            if number_spelling(&s, lang).is_err() && !lang.syntax_members.is_empty() {
+                for keyword in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+                    if let Some(prefix) = s.strip_suffix(keyword) {
+                        if !prefix.is_empty() && number_spelling(prefix, lang).is_ok()
+                            && !(prefix == "0" && keyword == "or")
+                            && !(prefix.starts_with("0x") && matches!(keyword, "and" | "else")) {
+                            let kept = prefix.len();
+                            self.at -= keyword.len();
+                            self.column -= keyword.len();
+                            s.truncate(kept);
+                            break;
+                        }
+                    }
+                }
+            }
             if let Err(mut said) = number_spelling(&s, lang) {
                 if !lang.syntax_members.is_empty() {
                     self.column = col + number_error_column(&s, &said);
@@ -1392,8 +1442,18 @@ pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, us
 
 pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
     if lang.escape_warning.is_empty() || !source.contains('\\') { return Vec::new(); }
-    lex_notices(source, lang).unwrap_or_default().into_iter()
-        .filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
+    // A reading that stops short on a fault later in the text still
+    // says what it noticed about a string already read, so warnings are
+    // gathered straight from the reader rather than only when it ends.
+    let final_crlf = source.ends_with("\r\n");
+    let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
+        .then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
+    let source = normalized.as_deref().unwrap_or(source);
+    if lang.template || (!lang.syntax_members.is_empty() && source.contains('\0')) { return Vec::new(); }
+    let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
+    let mut cur = Cursor { lang, text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf };
+    let _ = cur.run(true);
+    cur.out.into_iter().filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
 }
 
 fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
@@ -1921,7 +1981,7 @@ fn number_error_column(word: &str, message: &str) -> usize {
     let start = if radix == 10 { 0 } else { 2 };
     for i in start..letters.len() {
         let c = letters[i];
-        if c == '_' && !letters.get(i + 1).map_or(false, |c| c.is_digit(radix)) { return i; }
+        if c == '_' && !letters.get(i + 1).map_or(false, |c| c.is_digit(radix) || radix < 10 && c.is_ascii_digit()) { return i; }
         if radix != 10 && c != '_' && !c.is_digit(radix) {
             return if radix < 10 && c.is_ascii_digit() { i } else { i.saturating_sub(1) };
         }

@@ -223,6 +223,7 @@ pub fn create(t: &Table, input: &[Value]) -> Result<Value,String> {
             let parsed = from_chars(s).ok_or_else(|| complaint(t,"invalid"))?;
             Ok(pair(t, parsed.0,parsed.1))
         }
+        [Value::Unpaired(_)] => Err(complaint(t, "invalid")),
         [value @ Value::Complex(_)] => Ok(value.clone()),
         [one] => coordinates(one).map(|p| pair(t, p.0,p.1)).ok_or_else(|| refused(one)),
         [one,two] => {

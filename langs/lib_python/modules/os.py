@@ -30,6 +30,8 @@ def urandom(size):
     raise 'NotImplementedError: os.urandom needs byte values'
 
 def listdir(path='.'):
+    if _host_file_kind(path) == 1:
+        raise OSError(20, 'Not a directory', path)
     entries = __list_dir(path)
     if entries is False:
         raise FileNotFoundError(2, 'No such file or directory', path)

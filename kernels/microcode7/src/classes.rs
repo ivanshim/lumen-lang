@@ -560,6 +560,10 @@ impl<'a> Machine<'a> {
                         for (word, held) in keywords { positional.push(Value::Couple(Rc::new((Value::text(&word), held)))); }
                         self.construct_plainly(target, positional)
                     }
+                    43 => {
+                        if let Some(first) = values.first() { self.make_iterator(first.clone())?; }
+                        self.apply_class_member(kept[0].clone(), values)
+                    }
                     72 => Ok(Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true)),
                     36=>{let named=kept[0].bare();self.root_answers(&named,values)}
                     // The maker of a native kind: the blueprint to make a
@@ -572,6 +576,21 @@ impl<'a> Machine<'a> {
                                 if *op == Prim::Uniques { values.clear(); }
                                 return self.prim(*op, spelling, &values).map_err(Escape::from);
                             }
+                        }
+                        if self.table.prims.get(&word) == Some(&Prim::Truthful) {
+                            return match &target {
+                                Value::Intrinsic(Prim::Truthful, spelling) if spelling.as_ref() == word => {
+                                    if values.len() > 1 {
+                                        Err(format!("TypeError: bool expected at most 1 argument, got {}", values.len()).into())
+                                    } else { self.prim(Prim::Truthful, spelling, &values).map_err(Escape::from) }
+                                }
+                                Value::Intrinsic(_, spelling) => Err(format!("TypeError: bool.__new__({spelling}): {spelling} is not a subtype of bool").into()),
+                                Value::Blueprint(class) => Err(format!("TypeError: bool.__new__({0}): {0} is not a subtype of bool", class.name).into()),
+                                other => Err(format!("TypeError: bool.__new__(X): X is not a type object ({})", other.kind_word()).into()),
+                            };
+                        }
+                        if matches!(&target, Value::Intrinsic(Prim::Truthful, _)) && self.table.prims.get(&word) == Some(&Prim::AsInt) {
+                            return Err("TypeError: int.__new__(bool) is not safe, use bool.__new__()".to_owned().into());
                         }
                         let Value::Blueprint(c)=target else{return Err(self.class_unready());};
                         if self.table.prims.get(&word) == Some(&Prim::Uniques) { values.clear(); }
@@ -684,6 +703,67 @@ impl<'a> Machine<'a> {
     /// Making a thing of a class. A class built by a metaclass is called
     /// through that metaclass's own call, which says what comes of it.
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        if class.name == "FunctionType" && self.table.has_any("ext.builtin.exceptions.traceback") && matches!(given.first().map(Value::settled), Some(Value::Wrapped(7, _))) {
+            let (positional, keywords) = self.open_arguments(given)?;
+            let mut options = vec![None; 5];
+            for (slot, value) in positional.into_iter().enumerate() {
+                if slot >= options.len() { return Err(String::from("TypeError: function() takes at most 5 arguments").into()); }
+                options[slot] = Some(value);
+            }
+            for (word, value) in keywords {
+                let Some(slot) = ["code", "globals", "name", "argdefs", "closure"].iter().position(|name| *name == word) else {
+                    return Err(format!("TypeError: function() got an unexpected keyword argument '{word}'").into());
+                };
+                if options[slot].replace(value).is_some() { return Err(String::from("TypeError: invalid function arguments").into()); }
+            }
+            let Some(Value::Wrapped(7, body)) = options[0].as_ref().map(Value::settled) else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
+            let Some(Value::Routine(origin) | Value::Bound(origin, _)) = body.first() else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
+            let Some(globals) = options[1].clone() else { return Err(String::from("TypeError: function() missing required argument 'globals'").into()); };
+            if !matches!(globals.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+            let mut fresh = (**origin).clone();
+            if let Some(Value::Text(name)) = options[2].as_ref().map(Value::settled) { fresh.ident = name.to_string(); fresh.qualification = name.to_string(); }
+            let closure = match options[4].as_ref().map(Value::settled) {
+                None | Some(Value::Nil) => Vec::new(),
+                Some(Value::Tuple(row)) => row.to_vec(),
+                _ => return Err(String::from("TypeError: arg 5 (closure) must be tuple").into()),
+            };
+            if closure.len() != fresh.reaching.len() { return Err(String::from("ValueError: function requires a closure of the right length").into()); }
+            let mut layers = Vec::new();
+            let mut parent = self.outermost.clone();
+            let depth = fresh.reaching.iter().map(|address| address.up).max().unwrap_or(0);
+            for level in (1..=depth).rev() {
+                let extent = fresh.reaching.iter().filter(|address| address.up == level).map(|address| address.at + 1).max().unwrap_or(0);
+                let frame = Env::make(extent, Some(parent));
+                parent = frame.clone();
+                layers.insert(0, frame);
+            }
+            let mut free: Vec<_> = fresh.reaching.iter().collect();
+            free.sort_by(|left, right| left.ident.cmp(&right.ident));
+            for (address, cell) in free.into_iter().zip(closure.iter()) {
+                let Value::Wrapped(35, items) = cell.settled() else { return Err(String::from("TypeError: arg 5 (closure) must contain cells").into()); };
+                let Some((frame, slot)) = self.cell_place(&items) else { return Err(String::from("TypeError: arg 5 (closure) must contain cells").into()); };
+                let held = frame.cells.borrow().get(slot).cloned().unwrap_or(Value::Unset);
+                if address.up > 0 { layers[address.up - 1].cells.borrow_mut()[address.at] = held; }
+            }
+            let shared_room = closure.first().and_then(|cell| match cell.settled() {
+                Value::Wrapped(35, items) => match items.first() { Some(Value::Bound(_, room)) => Some(room.clone()), _ => None },
+                _ => None,
+            }).filter(|room| closure.iter().all(|cell| match cell.settled() {
+                Value::Wrapped(35, items) => matches!(items.first(), Some(Value::Bound(_, other)) if Rc::ptr_eq(other, room)),
+                _ => false,
+            }));
+            let source = Rc::new(fresh);
+            let base = shared_room.or_else(|| layers.first().cloned()).unwrap_or_else(|| self.outermost.clone());
+            let (source, room) = if let Some(Value::Tuple(defaults)) = options[3].as_ref().map(Value::settled) {
+                let (adjusted, kept) = self.respared(&source, &base, base.clone(), Some(defaults.as_ref().clone()), None);
+                (Rc::new(adjusted), kept)
+            } else { (source, base) };
+            let callable = Value::Bound(source, room);
+            let at = self.routine_storage(&callable);
+            self.routine_members[at].1.holds.borrow_mut().push((Self::HANDED.to_string(), globals));
+            if matches!(origin.ident.as_str(), "<generator>" | "<genexpr>") { return Ok(Value::Wrapped(43, Rc::new(vec![callable]))); }
+            return Ok(callable);
+        }
         if let Some(builder)=Self::builder_over(&class) {
             if let Some(f)=self.inherited_entry(&builder,self.detail("call")) {
                 let mut values=vec![Value::Blueprint(class)];values.extend(given);
@@ -706,6 +786,9 @@ impl<'a> Machine<'a> {
         let created=match (allocator,&native) {
             (Some(allocator),_)=>{let mut args=vec![Value::Blueprint(class.clone())];args.extend(given.clone());self.apply_class_member(allocator,args)?},
             (None,Some(word))=>{
+                if matches!(word.as_str(),"str_iterator"|"str_ascii_iterator"){
+                    return Err(format!("TypeError: cannot create '{}' instances",word).into());
+                }
                 let initial = match self.table.prims.get(word) {
                     Some(Prim::Uniques) => Vec::new(),
                     Some(Prim::AsReal) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => {
@@ -1127,11 +1210,16 @@ impl<'a> Machine<'a> {
         }
     }
     pub(super) fn integer_attribute(&self, value: &Value, key: &str) -> Option<Value> {
+        if let Value::Intrinsic(Prim::Truthful, title) = value {
+            if key == self.detail("allocate") {
+                return Some(Self::wrap(14, vec![Value::text(title)]));
+            }
+        }
         let words = self.table.strings("ext.stmt.class.detail.integer.layout");
         if words.len() < 7 { return None; }
         let mut derived = false;
         let is_type = match value {
-            Value::Intrinsic(Prim::AsInt, _) => true,
+            Value::Intrinsic(Prim::AsInt | Prim::Truthful, _) => true,
             Value::Blueprint(b) => {
                 let primitive = Self::native_beneath(b)?;
                 if self.table.prims.get(&primitive) != Some(&Prim::AsInt) { return None; }
@@ -1411,7 +1499,7 @@ impl<'a> Machine<'a> {
             if fields.get(10).map_or(false, |word| word == key) {
                 return Ok(code.annotator.clone().map_or(Value::Nil, |a| Value::Bound(a, annotation_room.clone())));
             }
-            if key==self.detail("globals")&&code.written_in.is_none(){return Ok(Value::Shared(self.book_about(true)));}
+            if key==self.detail("globals")&&code.written_in.is_none(){return Ok(Value::Shared(self.constructor_world(&code).unwrap_or_else(||self.book_about(true))));}
             if key==self.detail("keywords"){
                 let named=self.spare_worths(&code,&room,'n');
                 if named.is_empty(){return Ok(Value::Nil);}

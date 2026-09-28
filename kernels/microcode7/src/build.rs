@@ -545,6 +545,22 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             if let Some((line, _, col)) = mark { line.set(r.look().row); col.set(r.error_columns()); }
             return Err(format!("Unexpected '{}'", r.look().lexeme));
         }
+        r.warnings_in_statement(0);
+        if table.has_any("ext.system.syntax_warnings") {
+            for index in 1..r.tokens.len() {
+                let left = &r.tokens[index - 1];
+                let right = &r.tokens[index];
+                if left.shape == Shape::Numeral && right.shape == Shape::Bare && left.row == right.row
+                    && left.column + left.lexeme.chars().count() == right.column
+                    && ["and", "or", "in", "not", "if", "else", "for", "is"].contains(&right.lexeme.as_str()) {
+                    let radix_word = if left.lexeme.starts_with("0x") { "hexadecimal" }
+                        else if left.lexeme.starts_with("0o") { "octal" }
+                        else if left.lexeme.starts_with("0b") { "binary" } else { "decimal" };
+                    let detail = (format!("invalid {radix_word} literal"), left.row, right.column);
+                    if !r.warnings.contains(&detail) { r.warnings.push(detail); }
+                }
+            }
+        }
         value
     } else if table.rpn {
         let (mut stmts, rest) = match r.rpn_body(&[], Mode::Body) {
@@ -2115,6 +2131,18 @@ impl<'a> Builder<'a> {
         }
         for here in opened..limit {
             let token = &self.tokens[here];
+            if token.shape == Shape::Numeral {
+                if let Some(next) = self.tokens.get(here + 1) {
+                    if here + 1 < limit && next.shape == Shape::Bare && next.row == token.row
+                        && next.column == token.column + token.lexeme.chars().count()
+                        && ["and", "or", "in", "not", "if", "else", "for", "is"].contains(&next.lexeme.as_str()) {
+                        let label = if token.lexeme.starts_with("0x") { "hexadecimal" }
+                            else if token.lexeme.starts_with("0o") { "octal" }
+                            else if token.lexeme.starts_with("0b") { "binary" } else { "decimal" };
+                        noted.push((format!("invalid {label} literal"), token.row, next.column));
+                    }
+                }
+            }
             if token.shape == Shape::Bare && table.spells("ext.op.identical", &token.lexeme) {
                 let negated = here + 1 < limit && self.tokens[here + 1].shape == Shape::Bare && table.spells("ext.op.identical.negated", &self.tokens[here + 1].lexeme);
                 let mut right = here + 1 + usize::from(negated);
