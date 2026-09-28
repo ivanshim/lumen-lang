@@ -1,1 +1,1 @@
-PythonError: Undefined variable: absent
+NameError: name 'absent' is not defined

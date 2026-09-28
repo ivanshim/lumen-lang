@@ -1,4 +1,5 @@
 import sys, re, pathlib
+from stderr_record import measured_line
 # usage: progcmp.py <fixcheck.log> <repo>  -- compares each program's new progress line to the fixture's
 root = pathlib.Path(sys.argv[2]); log = open(sys.argv[1]).read()
 blocks = re.findall(r'^(\S+) +(stack8|microcode7) +exit=(-?\d+) +(\S+).*\n    first=(.*)\n    prog=(.*)$', log, re.M)
@@ -9,7 +10,7 @@ for prog, ks in by.items():
     a, b = ks['stack8'], ks['microcode7']
     agree = a[3] == b[3] and a[2][:100] == b[2][:100]
     err = root/"scratch"/(prog + ".err")
-    old = err.read_text().splitlines()[0] if err.exists() else ""
+    old = measured_line(err.read_text()) if err.exists() else ""
     new = a[3]
     print("%-18s agree=%s stack8=%s micro=%s" % (prog, agree, a[1], b[1]))
     if old and new and set(old) <= set(".FEsx"):

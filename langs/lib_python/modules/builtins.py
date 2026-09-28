@@ -429,7 +429,7 @@ class _HostFile:
             self._dirty = True
             if _host_file_exists(name) and _host_file_kind(name) == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            self._buffer = ''
+            self._buffer = b'' if self._binary else ''
         elif appending:
             if _host_file_exists(name):
                 if _host_file_kind(name) == 2:
@@ -536,7 +536,7 @@ class _HostFile:
         if self._binary:
             if not isinstance(data, bytes) and not isinstance(data, bytearray):
                 raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
-            data = bytes(data).decode('utf-8')
+            data = bytes(data)
         elif not isinstance(data, str):
             raise TypeError('write() argument must be str, not ' + type(data).__name__)
         self._buffer = self._buffer[:self._pos] + data + self._buffer[self._pos + len(data):]

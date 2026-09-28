@@ -1,1 +1,1 @@
-PythonError: AttributeError: 'str' object has no attribute 'write'
+AttributeError: 'str' object has no attribute 'write'

@@ -1,1 +1,1 @@
-PythonError: TypeError: 'str' object cannot be interpreted as an integer
+TypeError: 'str' object cannot be interpreted as an integer

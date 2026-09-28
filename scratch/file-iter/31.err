@@ -1,1 +1,1 @@
-PythonError: Undefined variable: dec
+NameError: name 'dec' is not defined

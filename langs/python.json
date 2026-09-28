@@ -1548,6 +1548,7 @@
     "center",
     "str.center"
   ],
+  "ext.builtin.uncaught": ["__uncaught"],
   "ext.builtin.text.complaint": [
     "TypeError:",
     "ValueError:",

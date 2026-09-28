@@ -1,1 +1,1 @@
-PythonError: Undefined variable: manager
+NameError: name 'manager' is not defined

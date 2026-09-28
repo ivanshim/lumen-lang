@@ -1931,7 +1931,16 @@ impl<'a> Engine<'a> {
     fn exception_words(&self, told: &str, class: &str) -> String {
         let told = told.trim_start_matches('\0');
         if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
-        if let Some(rest) = told.strip_prefix(&format!("{class}: ")) { return rest.to_string(); }
+        if let Some(rest) = told.strip_prefix(&format!("{class}: ")) {
+            // Native key faults carry a displayed key; the exception's
+            // argument holds the key itself so its string form quotes it once.
+            if self.lang.fault_key.as_deref() == Some(class) {
+                if let Some(key) = rest.strip_prefix("'").and_then(|s| s.strip_suffix("'")) {
+                    return key.to_string();
+                }
+            }
+            return rest.to_string();
+        }
         if self.lang.fault_division.as_deref() == Some(class) { return self.lang.division_words.clone().unwrap_or_else(|| told.into()); }
         if self.lang.fault_index.as_deref() == Some(class) { return self.lang.index_words.clone().unwrap_or_else(|| told.into()); }
         if self.lang.fault_kind.as_deref() == Some(class) { return self.lang.kind_words.clone().unwrap_or_else(|| told.into()); }
@@ -14633,7 +14642,13 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let sp = self.wording();
                 match std::fs::read(args[0].display(&sp)) {
-                    Ok(bytes) => Value::text(&String::from_utf8_lossy(&bytes)),
+                    Ok(bytes) => {
+                        let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
+                            .copied().map(char::from).collect::<String>().to_ascii_lowercase();
+                        if !self.lang.syntax_members.is_empty() && (header.contains("coding: latin1") || header.contains("coding: latin-1")) {
+                            Value::text(&bytes.iter().copied().map(char::from).collect::<String>())
+                        } else { Value::text(&String::from_utf8_lossy(&bytes)) }
+                    },
                     Err(_) => Value::Flag(false),
                 }
             }
@@ -14643,8 +14658,13 @@ impl<'a> Engine<'a> {
                 }
                 let sp = self.wording();
                 let (where_to, what) = (args[0].display(&sp), args[1].display(&sp));
-                match std::fs::write(where_to, self.lang.bytes_of(&what)) {
-                    Ok(()) => Value::Small(what.len() as i64),
+                let raw = match args[1].contents() {
+                    Value::Bytes(cell, ..) if !self.lang.syntax_members.is_empty() => cell.borrow().clone(),
+                    _ => self.lang.bytes_of(&what),
+                };
+                let length = raw.len();
+                match std::fs::write(where_to, raw) {
+                    Ok(()) => Value::Small(length as i64),
                     Err(_) => Value::Flag(false),
                 }
             }

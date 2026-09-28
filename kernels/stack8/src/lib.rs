@@ -144,13 +144,22 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
 /// and the line the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written here and the fault goes back
 /// as it came, for the host to tell in its own way.
-fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool) -> String {
+fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str) -> String {
     let adjusted = if before > 0 && !lang.syntax_members.is_empty() {
         said.rsplit_once(" (detected at line ").and_then(|(head, end)| {
             let line = end.strip_suffix(')')?.parse::<u32>().ok()?;
             Some(format!("{} (detected at line {})", head, line.saturating_sub(before)))
         })
     } else { None };
+    if said == "SyntaxError: 'return' outside function" && !lang.syntax_members.is_empty() {
+        let file = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file")
+            .map(|(.., path, _)| path.as_str()).unwrap_or("");
+        let line = row.saturating_sub(before as usize);
+        let shown = source.lines().nth(row.saturating_sub(1)).unwrap_or("").trim_start();
+        let width = shown.split_once('#').map_or(shown, |(prefix, _)| prefix).chars().count();
+        eprintln!("  File \"{}\", line {}\n    {}\n    {}\n{}", file, line, shown, "^".repeat(width), said);
+        return String::from("\0");
+    }
     let said = adjusted.as_deref().unwrap_or(said);
     let word = match fatally {
         true => lang.complaint_words.iter().find(|(kind, _)| *kind == lang::Complaint::Fatal).map(|(_, word)| word.as_str()),
@@ -202,8 +211,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     let source = universal.as_deref().unwrap_or(source);
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
-    let read = lex::lex_at(&source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
-    let shaped = layout::layout(read?, lang, before as usize).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
+    let read = lex::lex_at(&source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false, &source));
+    let shaped = layout::layout(read?, lang, before as usize).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false, &source));
     let tokens = shaped?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
@@ -240,7 +249,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
-        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally)),
+        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source)),
     };
 
     let mut machine = engine::Engine::new(lang, registry);
@@ -391,7 +400,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         // A program may put a routine in the way of a value nobody
         // took; the run says nothing of its own where one took it up.
-        if !machine.taken_up(&fault) {
+        let handled = machine.taken_up(&fault);
+        if !handled {
             machine.ended_uncaught(&fault);
         }
         // What a program named to run at the end may itself be stopped,
@@ -401,7 +411,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         machine.let_things_go();
         machine.let_go_all();
-        return Err(fault.told(&machine.names()));
+        return Err(if handled && !lang.exceptions.is_empty() { String::from("\0") } else { fault.told(&machine.names()) });
     }
     if let Err(after) = machine.run_when_done() {
         machine.ended_uncaught(&after);

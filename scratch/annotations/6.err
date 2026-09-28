@@ -1,1 +1,1 @@
-PythonError: Undefined variable: thing
+NameError: name 'thing' is not defined

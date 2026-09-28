@@ -1,1 +1,1 @@
-PythonError: Undefined variable: b
+NameError: name 'b' is not defined
