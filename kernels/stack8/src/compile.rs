@@ -2500,6 +2500,9 @@ impl<'a> Compiler<'a> {
                     }
                     end += 1;
                 }
+                if !lang.syntax_members.is_empty() && self.added_target_expression(begin, end) {
+                    return Err("SyntaxError: cannot assign to expression".into());
+                }
                 self.give_places(begin, end, &held).map_err(|e| self.loop_target_error(begin, end, e))?;
                 self.pos = end;
             } else { self.discard(); }
@@ -4269,6 +4272,13 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.take();
+        if !lang.syntax_members.is_empty() {
+            let target_end = self.outer_marks(self.pos, self.tokens.len(), &lang.in_words).0.first().copied()
+                .or_else(|| self.outer_marks(self.pos, self.tokens.len(), &lang.block_intros).0.first().copied());
+            if target_end.is_some_and(|end| self.added_target_expression(self.pos, end)) {
+                return Err("SyntaxError: cannot assign to expression".into());
+            }
+        }
         if !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { return Err("SyntaxError: cannot assign to literal".into()); }
         let target = if !lang.tuple_marks.is_empty() && !lang.unpack_words.is_empty() {
             let (marks, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.in_words);
@@ -6660,13 +6670,30 @@ impl<'a> Compiler<'a> {
         Ok(spread)
     }
 
+    fn added_target_expression(&self, begin: usize, end: usize) -> bool {
+        let mut protected = Vec::new();
+        for at in begin..end {
+            let word = &self.tokens[at];
+            match word.lexeme.as_str() {
+                "[" | "(" => {
+                    let nested = protected.last().copied().unwrap_or(false);
+                    let attached = at > begin && self.tokens[at - 1].shape == Shape::Instr;
+                    protected.push(nested || attached);
+                }
+                "]" | ")" => { protected.pop(); }
+                "+" if !protected.iter().any(|scope| *scope) => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn loop_target_error(&self, begin: usize, end: usize, message: String) -> String {
         if self.lang.syntax_members.is_empty() || !message.starts_with("SyntaxError:") { return message; }
-        let words = &self.tokens[begin..end];
-        if words.iter().any(|word| word.lexeme == "+") {
+        if self.added_target_expression(begin, end) {
             return "SyntaxError: cannot assign to expression".into();
         }
-        if words.windows(2).any(|pair| pair[0].shape == Shape::Instr && pair[1].lexeme == "(") {
+        if self.tokens[begin..end].windows(2).any(|pair| pair[0].shape == Shape::Instr && pair[1].lexeme == "(") {
             return "SyntaxError: cannot assign to function call".into();
         }
         message
@@ -6783,6 +6810,9 @@ impl<'a> Compiler<'a> {
             .any(|pair| self.tokens[begin].is_lexeme(Shape::Sign, &pair.open));
         if signs.len() == 1 && !enclosed && self.outer_marks(begin, last, &self.lang.tuple_marks).0.is_empty() { return Ok(false); }
         if signs.len() > 1 && !self.lang.assign_chain { return Ok(false); }
+        if !self.lang.syntax_members.is_empty() && self.added_target_expression(begin, signs[0]) {
+            return Err("SyntaxError: cannot assign to expression".into());
+        }
         self.pos = last + 1;
         self.tuple_value()?;
         let held = self.gensym("assigned");
@@ -9934,6 +9964,9 @@ impl<'a> Compiler<'a> {
             let target_start = self.pos;
             let (joins, _) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in);
             let target_end = *joins.first().ok_or("Expected the comprehension's collection word")?;
+            if !self.lang.syntax_members.is_empty() && self.added_target_expression(target_start, target_end) {
+                return Err("SyntaxError: cannot assign to expression".into());
+            }
             self.comprehension_locals(target_start, target_end, 0)?;
             self.pos = target_end + 1;
             let expression_start = self.pos;

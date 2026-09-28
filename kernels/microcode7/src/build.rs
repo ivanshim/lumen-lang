@@ -2988,6 +2988,9 @@ impl<'a> Builder<'a> {
                     }
                     boundary += 1;
                 }
+                if table.has_any("ext.builtin.exceptions.syntax") && self.has_added_target(start..boundary) {
+                    return Err(String::from("SyntaxError: cannot assign to expression"));
+                }
                 steps.push(self.distribute(start..boundary, &name).map_err(|e| self.loop_target_error(start..boundary, e))?);
                 self.pos = boundary;
             } else { steps.push(value); }
@@ -5675,6 +5678,13 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
+        if table.has_any("ext.builtin.exceptions.syntax") {
+            let limit = self.divided_at(self.pos, self.tokens.len(), "stmt.for.in").first().copied()
+                .or_else(|| self.divided_at(self.pos, self.tokens.len(), "block.intro").first().copied());
+            if limit.is_some_and(|end| self.has_added_target(self.pos..end)) {
+                return Err(String::from("SyntaxError: cannot assign to expression"));
+            }
+        }
         if table.has_any("ext.builtin.exceptions.syntax") && matches!(self.look().shape, Shape::Quote | Shape::ByteQuote | Shape::Numeral) { return Err(String::from("SyntaxError: cannot assign to literal")); }
         let place = if table.single("ext.op.tuple").is_some() && table.single("ext.stmt.unpack").is_some() {
             self.divided_at(self.pos, self.tokens.len(), "stmt.for.in").first().copied().and_then(|end| {
@@ -6513,13 +6523,29 @@ impl<'a> Builder<'a> {
         Ok((gathered, star))
     }
 
+    fn has_added_target(&self, span: std::ops::Range<usize>) -> bool {
+        let mut inside = Vec::new();
+        for index in span.clone() {
+            let token = &self.tokens[index];
+            if token.lexeme == "[" || token.lexeme == "(" {
+                let carries = inside.iter().any(|scope| *scope);
+                let indexing = index > span.start && self.tokens[index - 1].shape == Shape::Bare;
+                inside.push(carries || indexing);
+            } else if token.lexeme == "]" || token.lexeme == ")" {
+                inside.pop();
+            } else if token.lexeme == "+" && !inside.iter().any(|scope| *scope) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn loop_target_error(&self, span: std::ops::Range<usize>, error: String) -> String {
         if !self.table.has_any("ext.builtin.exceptions.syntax") || !error.starts_with("SyntaxError:") { return error; }
-        let words = &self.tokens[span];
-        if words.iter().any(|word| word.lexeme == "+") {
+        if self.has_added_target(span.clone()) {
             return String::from("SyntaxError: cannot assign to expression");
         }
-        if words.windows(2).any(|two| two[0].shape == Shape::Bare && two[1].lexeme == "(") {
+        if self.tokens[span].windows(2).any(|two| two[0].shape == Shape::Bare && two[1].lexeme == "(") {
             return String::from("SyntaxError: cannot assign to function call");
         }
         error
@@ -6632,6 +6658,9 @@ impl<'a> Builder<'a> {
         if !self.divided_at(left, signs[0], "ext.stmt.annotation").is_empty() { return Ok(None); }
         let enclosed = self.on_any("syntax.group.open") || self.on_any("syntax.array.open");
         if signs.len() == 1 && !enclosed && self.divided_at(left, signs[0], "ext.op.tuple").is_empty() { return Ok(None); }
+        if self.table.has_any("ext.builtin.exceptions.syntax") && self.has_added_target(left..signs[0]) {
+            return Err(String::from("SyntaxError: cannot assign to expression"));
+        }
         self.pos = signs[signs.len() - 1] + 1;
         let answer = self.comma_value()?;
         let resume = self.pos;
@@ -9334,6 +9363,9 @@ impl<'a> Builder<'a> {
         let target_begin = self.pos;
         let target_stop = self.divided_at(target_begin, self.tokens.len(), "ext.op.comprehension.in")
             .into_iter().next().ok_or("Expected the word before a comprehension source")?;
+        if self.table.has_any("ext.builtin.exceptions.syntax") && self.has_added_target(target_begin..target_stop) {
+            return Err(String::from("SyntaxError: cannot assign to expression"));
+        }
         self.gathering_bindings(target_begin..target_stop, 0)?;
         self.pos = target_stop + 1;
         let walks = self.table.flag("ext.stmt.yield.suspends");
