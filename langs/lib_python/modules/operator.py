@@ -220,7 +220,7 @@ def length_hint(value, default=0):
     return hint
 
 def setitem(sequence, key, value):
-    raise 'NotImplementedError: setitem needs shared mutable sequence storage'
+    sequence[key] = value
 
 class _MethodCaller:
     def __init__(self, name, args, kwargs):
@@ -237,7 +237,7 @@ def methodcaller(name, *args, **kwargs):
     return _MethodCaller(name, args, kwargs).call
 
 def delitem(a, b):
-    raise 'NotImplementedError: delitem needs shared mutable sequence storage'
+    del a[b]
 
 def is_none(a):
     return a is None

@@ -778,6 +778,7 @@ impl<'a> Cursor<'a> {
         if spec_depth > 2 { return Err(self.field_error(18)); }
         let (line, col) = (self.row, self.column);
         self.step();
+        let expression_start = self.at;
         let mut expression = String::new();
         let mut brackets = Vec::new();
         loop {
@@ -853,6 +854,13 @@ impl<'a> Cursor<'a> {
         if expression.trim_start().starts_with('*') && !expression.contains(',') {
             return Err(self.field_error(16));
         }
+        let atoms: Vec<&str> = expression.split_whitespace().collect();
+        if atoms.len() == 2 && atoms.iter().all(|word| word.chars().all(|ch| ch.is_ascii_digit())) {
+            let first = (expression_start..self.at).find(|&at| self.text[at].is_ascii_digit()).unwrap_or(expression_start);
+            self.row = self.text[..first].iter().filter(|&&ch| ch == '\n').count() + 1;
+            self.column = first - self.text[..first].iter().rposition(|&ch| ch == '\n').map_or(0, |at| at + 1) + 1;
+            return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
+        }
         let debug = self.look(0) == Some('=');
         if debug {
             self.step();
@@ -881,7 +889,11 @@ impl<'a> Cursor<'a> {
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
         let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false };
-        inner.run(false)?;
+        if let Err(message) = inner.run(false) {
+            self.row = inner.row;
+            self.column = inner.column;
+            return Err(message);
+        }
         self.out.extend(inner.out.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd)));
         self.push(Shape::Sign, group.close.clone(), 0, line, col);
         self.push(Shape::StringBegin, String::new(), 0, line, col);

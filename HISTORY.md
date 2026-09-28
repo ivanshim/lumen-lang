@@ -2069,3 +2069,30 @@ Merged, the fifty files count 2470 on stack8 and 2471 on microcode7, up from
 2411 on both, with no passing test lost; the kernels differ only inside
 test_dict, which neither passes whole. microcode7's test_math and test_str
 were run whole on the build machine (79 and 125).
+
+### 1ak. Batch 20i merged as #516; batch 20j: subprocesses, exceptions, f-strings and bigmem
+
+Pull request #516 merged after one more fix: batch 20i made stack8 order
+ints against floats exactly for every language, so two PHP reference tests
+(operator_gt_or_equal_variation_64bit and its <= twin) passed on microcode7
+and failed on stack8, which CI's kernel-disagreement check rejected.
+fix/php-compare (a DeepSeek V4 Pro worker) keeps PHP's loose whole-to-real
+ordering on stack8 while Python keeps the exact one. The coordinator's
+checks now know that the PHP reference suite shares the kernels with Python.
+
+Batch 20j folds six branches, integrated by a DeepSeek V4 Pro worker:
+fix/exceptions-last (a GPT-6 Sol worker; test_exceptions 90 to 97),
+fix/subprocess (DeepSeek V4 Pro: subprocess.run, Popen and check_output,
+sys.executable, and CPython's script_helper, so tests that start a second
+interpreter now run; the kernel and language pass to the child through
+LUMEN_KERNEL and LUMEN_LANG, and an ordinary start writes no file),
+fix/fstring-ast (test_fstring 73 to 88), fix/bigmem-loader (Kimi; test_bigmem
+0 to 60, and two newly collected tests in test_long and test_math), and
+fix/long-intfloat and fix/long-float, two independent versions of the exact
+int/float ordering that batch 20i already carried: the integrator kept one
+implementation per kernel and dropped the others.
+
+Merged, the fifty files count 2555 on stack8 and 2556 on microcode7, up from
+2470 and 2471, with no passing test lost; more tests are collected now (2802
+ran on stack8, from 2738). microcode7's test_math, test_str and test_long
+were run whole on the build machine (80, 125 and 33).

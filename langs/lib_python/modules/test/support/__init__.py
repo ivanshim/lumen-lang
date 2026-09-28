@@ -244,15 +244,16 @@ class _SmallMemory:
         self.dry_run = dry_run
 
     def decorate(self, function):
-        self.function = function
-        return self.call
-
-    def call(self, testcase):
-        size = self.size if real_max_memuse else 5147
-        if (real_max_memuse or not self.dry_run) and real_max_memuse < size * self.memuse:
-            raise unittest.SkipTest('not enough memory: %.1fG minimum needed' %
-                                    (self.size * self.memuse / (1024 ** 3)))
-        return self.function(testcase, size)
+        memory = self
+        def wrapper(testcase):
+            size = memory.size if real_max_memuse else 5147
+            if (real_max_memuse or not memory.dry_run) and real_max_memuse < size * memory.memuse:
+                raise unittest.SkipTest('not enough memory: %.1fG minimum needed' %
+                                        (memory.size * memory.memuse / (1024 ** 3)))
+            return function(testcase, size)
+        wrapper.memuse = self.memuse
+        wrapper.size = self.size
+        return wrapper
 
 _1M = 1048576
 HAVE_DOCSTRINGS = False

@@ -9,7 +9,7 @@ impl<'a> Machine<'a> {
     // read asks this, so it is a field on the table rather than a name
     // built afresh and looked into at each one.
     pub(super) fn has_class_order(&self)->bool {self.table.has_class_order}
-    fn class_unready(&self)->Escape {self.detail("unready").to_owned().into()}
+    pub(super) fn class_unready(&self)->Escape {self.detail("unready").to_owned().into()}
     pub(super) fn common_ancestor(&mut self)->Rc<Blueprint> {
         if self.ancestor.is_none() {
             let title=self.detail("root").to_owned();
@@ -838,6 +838,42 @@ impl<'a> Machine<'a> {
         }
         Ok(created)
     }
+    pub(super) fn full_class_name(&self, kind: &Blueprint) -> String {
+        let entries = kind.shared.borrow();
+        let local = entries.iter().find(|(key, _)| key == self.detail("qualified")).map_or_else(|| kind.name.clone(), |(_, value)| value.bare());
+        entries.iter().find(|(key, _)| key == self.detail("module")).map_or(local.clone(), |(_, value)| format!("{}.{}", value.bare(), local))
+    }
+
+    fn explain_absence(&self, escaped: Escape, value: &Value, key: &str) -> Escape {
+        let Escape::Thrown(Value::Thing(fault)) = &escaped else { return escaped };
+        if !self.missing_member_escape(&escaped) { return escaped; }
+        let said = match value {
+            Value::Blueprint(kind) => format!("type object '{}' has no attribute '{key}'", self.full_class_name(kind)),
+            Value::Thing(thing) if thing.blueprint().name == "ModuleType" => {
+                let held = thing.holds.borrow();
+                let label = held.iter().find(|(name, _)| name == "__name__").and_then(|(_, item)| match item.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
+                label.map_or_else(|| format!("module has no attribute '{key}'"), |label| format!("module '{label}' has no attribute '{key}'"))
+            }
+            Value::Thing(thing) => format!("'{}' object has no attribute '{key}'", self.full_class_name(&thing.blueprint())),
+            _ => return escaped,
+        };
+        let mut held = fault.holds.borrow_mut();
+        let args_key = self.table.single("ext.builtin.exceptions.args").unwrap_or("args");
+        let old = held.iter().find(|(name, _)| name == "\0raised-values").and_then(|(_, item)| match item { Value::Arguments(items) => Some(items.clone()), _ => None });
+        if old.as_ref().is_some_and(|items| items.is_empty() || items.len() == 1 && items[0].bare() == key) {
+            let replacement = Value::Arguments(Rc::new(vec![Value::text(&said)]));
+            for (name, item) in held.iter_mut() {
+                if name == "\0raised-values" || name == args_key { *item = replacement.clone(); }
+            }
+        }
+        for (name, item) in held.iter_mut() {
+            if self.table.single("ext.builtin.exceptions.name") == Some(name.as_str()) { *item = Value::text(key); }
+            if self.table.single("ext.builtin.exceptions.object") == Some(name.as_str()) { *item = value.clone(); }
+        }
+        drop(held);
+        escaped
+    }
+
     fn absent_attribute(&self,value:&Value,member:&str)->Escape {
         // A namespace and a kind go by their own name, in words of
         // their own, as CPython names them.
@@ -1362,11 +1398,21 @@ impl<'a> Machine<'a> {
         }
         let sought=self.seek_class_member(value.clone(),key,direct);
         if direct{return sought;}
-        let (Err(escape),Value::Thing(t))=(&sought,&value) else{return sought};
-        if !self.missing_member_escape(escape){return sought;}
+        let Err(escape) = &sought else { return sought };
+        if !self.missing_member_escape(escape) { return sought; }
+        if let Value::Blueprint(kind) = &value {
+            if let Some(builder) = Self::builder_over(kind) {
+                if let Some(entry) = self.table.single("ext.stmt.class.reader").and_then(|key| self.inherited_entry(&builder, key)) {
+                    let bound = self.member_binding(entry, Some(value.clone()), builder)?;
+                    return self.apply_class_member(bound, vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key));
+                }
+            }
+            return sought;
+        }
+        let Value::Thing(t) = &value else { return sought };
         let Some(fallback)=self.table.single("ext.stmt.class.reader").and_then(|n|self.inherited_entry(&t.blueprint(),n)) else{return sought};
         let bound=self.member_binding(fallback,Some(value.clone()),t.blueprint().clone())?;
-        self.apply_class_member(bound,vec![Value::text(key)])
+        self.apply_class_member(bound,vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key))
     }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         if let Value::Wrapped(60, parts) = &value {
@@ -1730,6 +1776,9 @@ impl<'a> Machine<'a> {
             }
             if *tag==7 {
                 if let Value::Routine(p)|Value::Bound(p,_)=&items[0] {
+                    if self.table.strings("ext.stmt.class.detail.code.replace").first().map_or(false, |word| word == key) {
+                        return Ok(Value::Member(Rc::new(value.clone()), String::from("code_replace")));
+                    }
                     let fields = self.table.strings("ext.stmt.class.detail.code.fields");
                     if let Some(index) = fields.iter().position(|word| word == key) {
                         let result = match index {
@@ -1764,7 +1813,7 @@ impl<'a> Machine<'a> {
         if let (false, Value::Thing(t), Some(word)) = (self.asking_presence, &value, self.table.single("ext.system.module.getattr")) {
             let answerer = t.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() });
             if let Some(routine @ (Value::Routine(_) | Value::Bound(..))) = answerer {
-                return self.apply_class_member(routine, vec![Value::text(key)]);
+                return self.apply_class_member(routine, vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key));
             }
         }
         // Whatever is no thing is of the kind the kind primitive names
@@ -2341,7 +2390,7 @@ impl<'a> Machine<'a> {
                 // keeps it in, as the program's own member read does.
                 Ok(v)=>Ok(if op==6{Value::Flag(true)}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
                 Err(escape) if self.missing_member_escape(&escape)=>{
-                    if op==6{Ok(Value::Flag(false))}else if values.len()==3{Ok(values[2].clone())}else{Err(escape)}
+                    if op==6{Ok(Value::Flag(false))}else if values.len()==3{Ok(values[2].clone())}else{Err(self.explain_absence(escape, &values[0], key))}
                 }
                 failed=>failed,
             };

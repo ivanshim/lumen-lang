@@ -143,7 +143,7 @@ class ModuleType:
         self.__doc__ = doc
 
     def __repr__(self):
-        return "<module '" + str(self.__name__) + "'>"
+        return "<module '" + str(getattr(self, '__name__', '?')) + "'>"
 
 
 # A reading of a mapping that cannot be written through.

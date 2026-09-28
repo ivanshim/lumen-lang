@@ -63,6 +63,13 @@ the file extension, which each definition in `langs/` declares for itself,
 and Lumen is the default. Arguments after the file are passed to the
 program.
 
+The kernel and the language a run began with are also put in the
+environment, as `LUMEN_KERNEL` and `LUMEN_LANG`, so a program that starts
+this binary again (for instance Python's `sys.executable`) without naming
+them itself gets a second interpreter like itself. A `--kernel` or
+`--lang` flag always wins over these two; where neither a flag nor the
+environment names one, the file's extension and then the default stand.
+
 ## Six kernels, one host
 
 ```

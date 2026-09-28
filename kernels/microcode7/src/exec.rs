@@ -274,6 +274,16 @@ impl Drop for Suspension {
     }
 }
 
+/// A run raised alongside this one, kept with the near ends of the
+/// pipes its surroundings asked for, so that what goes into its input
+/// and what it writes out can be reached again while it runs.
+struct Alongside {
+    child: std::process::Child,
+    in_pipe: Option<std::process::ChildStdin>,
+    out_pipe: Option<std::process::ChildStdout>,
+    err_pipe: Option<std::process::ChildStderr>,
+}
+
 pub struct Machine<'a> {
     active_trace: Option<Rc<Thing>>,
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
@@ -384,7 +394,7 @@ pub struct Machine<'a> {
     allowed: usize,
     /// Every run raised alongside this one, filed under the
     /// number it was raised with so it may be laid to rest.
-    alongside: HashMap<i64, std::process::Child>,
+    alongside: HashMap<i64, Alongside>,
     started: Option<std::time::Instant>,
     /// How many bytes of room the run may take; nought is no mark at
     /// all. What it has taken is not written down here — that tally is
@@ -754,10 +764,21 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn recursion_ceiling(&self) -> Option<usize> {
+        let original = self.table.count("ext.system.recursion.limit");
+        let [module, binding] = self.table.strings("ext.system.recursion.variable") else { return original };
+        let Some(Value::Thing(namespace)) = self.imported.get(module) else { return original };
+        let held = namespace.holds.borrow();
+        held.iter().find(|(key, _)| key == binding).and_then(|(_, item)| match item.settled() {
+            Value::Small(number) => usize::try_from(number).ok(),
+            _ => None,
+        }).or(original)
+    }
+
     /// One more call under way, unless the table's limit on them is
     /// reached already, when the words it gives for that are the fault.
     fn deeper(&mut self) -> Result<(), Escape> {
-        if let (Some(limit), Some(words)) = (self.table.count("ext.system.recursion.limit"), self.table.single("ext.system.recursion.exceeded")) {
+        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), self.table.single("ext.system.recursion.exceeded")) {
             if self.standing >= limit { return Err(format!("\0{words}").into()); }
         }
         self.standing += 1;
@@ -2573,10 +2594,13 @@ impl<'a> Machine<'a> {
         let Some(program) = self.frames_named.last() else {
             return (Vec::new(), Env::make(0, under));
         };
-        let apart = |held: &Value| match held {
-            Value::Shared(cell) => Value::Shared(Rc::new(RefCell::new(cell.borrow().clone()))),
-            other => other.clone(),
-        };
+        // A name the routine keeps in a cell is lent to the text as the
+        // same cell, not a copy: a write the text makes through one --
+        // into a row or a map the name stands for -- is one the routine
+        // sees afterwards, as the reference has it. A name the text
+        // binds anew is still the text's alone, since binding writes the
+        // frame's slot rather than anything the slot holds.
+        let apart = |held: &Value| held.clone();
         let mut names = program.idents.clone();
         let mut cells: Vec<Value> = frame.cells.borrow().iter().map(apart).collect();
         cells.resize(names.len(), Value::Unset);
@@ -4148,6 +4172,9 @@ impl<'a> Machine<'a> {
             }
             Value::Thing(item) if self.activation_kind.as_ref().map_or(false, |kind| Rc::ptr_eq(kind, &item.blueprint())) => {
                 if index == 13 { return Some(Value::Shared(self.book_about(true))); }
+                if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
+                    return Some(Value::Nil);
+                }
                 if index != 12 { return None; }
                 self.update_activation_locals(item);
                 Some(item.holds.borrow()[3].1.clone())
@@ -7244,6 +7271,29 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "code_replace" {
+            let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready()) };
+            let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err(self.class_unready()) };
+            if !arguments.is_empty() { return Err(Escape::Error(String::from("TypeError: code.replace() takes no positional arguments"))); }
+            let line_word = self.table.strings("ext.stmt.class.detail.code.replace").get(1).map(String::as_str).unwrap_or("");
+            let mut copy = (**body).clone();
+            for (keyword, value) in keywords {
+                if keyword == line_word {
+                    if !matches!(value.settled(), Value::Octets { .. }) { return Err(Escape::Error(String::from("TypeError: co_linetable must be bytes"))); }
+                    copy.lineless = true;
+                    continue;
+                }
+                match (keyword.as_str(), value.settled()) {
+                    ("co_name", Value::Text(text)) => copy.ident = text.to_string(),
+                    ("co_qualname", Value::Text(text)) => copy.qualification = text.to_string(),
+                    ("co_filename", Value::Text(text)) => copy.written_in = Some(text),
+                    ("co_firstlineno", Value::Small(line)) if line > 0 => copy.declared_on = line as u32,
+                    ("co_flags", Value::Small(flags)) => copy.flags = flags,
+                    _ => return Err(Escape::Error(format!("TypeError: code.replace() got an unexpected keyword argument '{keyword}'"))),
+                }
+            }
+            return Ok(Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(copy))])));
+        }
         if let Value::Attributes(owner) = receiver.settled() {
             let snapshot = Self::attribute_entries(&owner);
             let storage = Rc::new(RefCell::new(Value::Dict(Rc::new(snapshot.into()))));
@@ -7726,18 +7776,38 @@ impl<'a> Machine<'a> {
             let mark = match using { Value::Nil => item.clone(), work => self.core_run(work, vec![item.clone()])? };
             weighed.push((mark, item));
         }
-        let mut placed: Vec<(Value, Value)> = Vec::with_capacity(weighed.len());
-        for pair in weighed {
-            let mut at = placed.len();
-            while at != 0 {
-                let both = if reverse { [placed[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), placed[at-1].0.clone()] };
-                let below = self.prim(Prim::Lt, "", &both)?;
-                if !self.object_truth(&below)? { break; }
-                at -= 1;
+        self.arrange_sort(&mut weighed, reverse)?;
+        Ok(weighed.into_iter().map(|entry| entry.1).collect())
+    }
+
+    /// A steady merge sort: members are split, each half ordered, and
+    /// then merged back so that equal weights keep the order they had.
+    /// The comparison asks whether the element that should move forward
+    /// is below the other, matching the order the old insertion sort
+    /// used and the messages CPython gives for incomparable keys.
+    fn arrange_sort(&mut self, weighed: &mut [(Value, Value)], reverse: bool) -> Result<(), String> {
+        let len = weighed.len();
+        if len <= 1 { return Ok(()); }
+        let mid = len / 2;
+        self.arrange_sort(&mut weighed[..mid], reverse)?;
+        self.arrange_sort(&mut weighed[mid..], reverse)?;
+        let mut merged = Vec::with_capacity(len);
+        let (mut i, mut j) = (0, mid);
+        while i < mid && j < len {
+            let both = if reverse { [weighed[i].0.clone(), weighed[j].0.clone()] } else { [weighed[j].0.clone(), weighed[i].0.clone()] };
+            let below = self.prim(Prim::Lt, "", &both)?;
+            if self.object_truth(&below)? {
+                merged.push(weighed[j].clone());
+                j += 1;
+            } else {
+                merged.push(weighed[i].clone());
+                i += 1;
             }
-            placed.insert(at, pair);
         }
-        Ok(placed.into_iter().map(|entry| entry.1).collect())
+        while i < mid { merged.push(weighed[i].clone()); i += 1; }
+        while j < len { merged.push(weighed[j].clone()); j += 1; }
+        for (at, pair) in merged.into_iter().enumerate() { weighed[at] = pair; }
+        Ok(())
     }
 
     /// Which of a stepped walk's three numbers this word asks for,
@@ -10642,7 +10712,7 @@ impl<'a> Machine<'a> {
         if !matches!(subject, Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Set(_)) {
             return self.object_words_inner(subject, quoted);
         }
-        let ceiling = self.table.count("ext.system.recursion.limit");
+        let ceiling = self.recursion_ceiling();
         if ceiling.is_some_and(|limit| self.standing >= limit) {
             if let Some(told) = self.table.single("ext.system.recursion.exceeded") {
                 return Err(format!("\0{told}"));
@@ -10682,7 +10752,7 @@ impl<'a> Machine<'a> {
                 return Ok(self.show(std::slice::from_ref(&whole)));
             }
             if matches!(&inner, Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) {
-                let ceiling = self.table.count("ext.system.recursion.limit");
+                let ceiling = self.recursion_ceiling();
                 if ceiling.is_some_and(|limit| self.standing >= limit) {
                     if let Some(words) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{words}")); }
                 }
@@ -12260,7 +12330,7 @@ impl<'a> Machine<'a> {
     }
 
     fn compare_sequences(&mut self, operation: Prim, first: &Value, second: &Value) -> Result<Value, String> {
-        if self.table.count("ext.system.recursion.limit").is_some_and(|n| self.standing >= n) {
+        if self.recursion_ceiling().is_some_and(|n| self.standing >= n) {
             if let Some(message) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{message}")); }
         }
         self.standing += 1;
@@ -14091,7 +14161,7 @@ impl<'a> Machine<'a> {
                     Err(_) => Value::Flag(false),
                     Ok(begun) => {
                         let mark = begun.id() as i64;
-                        self.alongside.insert(mark, begun);
+                        self.alongside.insert(mark, Alongside { child: begun, in_pipe: None, out_pipe: None, err_pipe: None });
                         Value::Small(mark)
                     }
                 }
@@ -14101,11 +14171,152 @@ impl<'a> Machine<'a> {
                 let mark = as_index(&v[0])? as i64;
                 match self.alongside.remove(&mark) {
                     None => Value::Flag(false),
-                    Some(mut begun) => {
-                        let _ = begun.kill();
-                        let _ = begun.wait();
+                    Some(mut kept) => {
+                        let _ = kept.child.kill();
+                        let _ = kept.child.wait();
                         Value::Flag(true)
                     }
+                }
+            }
+            // A second interpreter raised beside this one, its writing
+            // reached through pipes, in steps: raise it (0, with the
+            // words, the surroundings, and how its three streams go),
+            // write into its input (1), close that input (2), read all
+            // a stream says (3), wait for its end (4), ask whether it
+            // ended (5), and stop it (6). A stream goes as nothing (0),
+            // a pipe (1), or inherited (anything else); a third stream
+            // told to follow the second is kept a pipe of its own, and
+            // the library that asked joins the two later.
+            Prim::Subprocess => {
+                if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
+                let step = as_index(&v[0])?;
+                match step {
+                    0 => {
+                        if v.len() != 6 { return Err(format!("{}() expects 6 arguments, got {}", name, v.len())); }
+                        use std::os::unix::ffi::OsStrExt as _;
+                        let w = self.wording();
+                        let mut raising;
+                        if let Value::Vector(words) = &v[1] {
+                            let mut every = words.iter();
+                            let named = match every.next() {
+                                Some(program) => self.table.raw_of(&program.render(w)),
+                                None => return Err(format!("{}() needs a program to run", name)),
+                            };
+                            raising = std::process::Command::new(std::ffi::OsStr::from_bytes(&named));
+                            for word in every {
+                                let word = self.table.raw_of(&word.render(w));
+                                raising.arg(std::ffi::OsStr::from_bytes(&word));
+                            }
+                        } else {
+                            return Err(format!("{}() needs a list of words to run", name));
+                        }
+                        if let Value::Dict(pairs) = &v[2] {
+                            for (called, worth) in pairs.iter() {
+                                let called = self.table.raw_of(&called.render(w));
+                                let worth = self.table.raw_of(&worth.render(w));
+                                raising.env(std::ffi::OsStr::from_bytes(&called), std::ffi::OsStr::from_bytes(&worth));
+                            }
+                        }
+                        let in_mode = as_index(&v[3])?;
+                        let out_mode = as_index(&v[4])?;
+                        let err_mode = as_index(&v[5])?;
+                        let stream = |mode: usize| match mode {
+                            0 => std::process::Stdio::null(),
+                            1 | 3 => std::process::Stdio::piped(),
+                            _ => std::process::Stdio::inherit(),
+                        };
+                        raising.stdin(stream(in_mode));
+                        raising.stdout(stream(out_mode));
+                        raising.stderr(stream(err_mode));
+                        match raising.spawn() {
+                            Err(_) => Value::Flag(false),
+                            Ok(mut begun) => {
+                                let mark = begun.id() as i64;
+                                let in_pipe = if in_mode == 1 { begun.stdin.take() } else { None };
+                                let out_pipe = if out_mode == 1 { begun.stdout.take() } else { None };
+                                let err_pipe = if err_mode == 1 || err_mode == 3 { begun.stderr.take() } else { None };
+                                self.alongside.insert(mark, Alongside { child: begun, in_pipe, out_pipe, err_pipe });
+                                Value::Small(mark)
+                            }
+                        }
+                    }
+                    1 => {
+                        if v.len() != 3 { return Err(format!("{}() expects 3 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        let data = self.octet_contents(&v[2], true)?;
+                        use std::io::Write as _;
+                        match self.alongside.get_mut(&mark) {
+                            Some(Alongside { in_pipe: Some(pipe), .. }) => match pipe.write_all(&data).and_then(|_| pipe.flush()) {
+                                Ok(()) => Value::Small(data.len() as i64),
+                                Err(_) => Value::Flag(false),
+                            },
+                            _ => Value::Flag(false),
+                        }
+                    }
+                    2 => {
+                        if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        match self.alongside.get_mut(&mark) {
+                            Some(Alongside { in_pipe, .. }) => { *in_pipe = None; Value::Flag(true) }
+                            None => Value::Flag(false),
+                        }
+                    }
+                    3 => {
+                        if v.len() != 3 { return Err(format!("{}() expects 3 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        let which = as_index(&v[2])?;
+                        let mut all: Vec<u8> = Vec::new();
+                        let mut broken = false;
+                        let mut piped = false;
+                        {
+                            if let Some(kept) = self.alongside.get_mut(&mark) {
+                                match which {
+                                    0 => empty_pipe(&mut kept.out_pipe, &mut all, &mut piped, &mut broken),
+                                    _ => empty_pipe(&mut kept.err_pipe, &mut all, &mut piped, &mut broken),
+                                }
+                            } else {
+                                broken = true;
+                            }
+                        }
+                        if broken { return Ok(Value::Flag(false)); }
+                        if piped { self.octets(all, false) } else { Value::Nil }
+                    }
+                    4 => {
+                        if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        match self.alongside.get_mut(&mark) {
+                            Some(kept) => match kept.child.wait() {
+                                Ok(status) => Value::Small(status.code().unwrap_or(-1) as i64),
+                                Err(_) => Value::Flag(false),
+                            },
+                            None => Value::Flag(false),
+                        }
+                    }
+                    5 => {
+                        if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        match self.alongside.get_mut(&mark) {
+                            Some(kept) => match kept.child.try_wait() {
+                                Ok(Some(status)) => Value::Small(status.code().unwrap_or(-1) as i64),
+                                Ok(None) => Value::Nil,
+                                Err(_) => Value::Flag(false),
+                            },
+                            None => Value::Flag(false),
+                        }
+                    }
+                    6 => {
+                        if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        match self.alongside.remove(&mark) {
+                            None => Value::Flag(false),
+                            Some(mut kept) => {
+                                let _ = kept.child.kill();
+                                let _ = kept.child.wait();
+                                Value::Flag(true)
+                            }
+                        }
+                    }
+                    _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
             }
             Prim::Clock => {
@@ -14225,7 +14436,7 @@ impl<'a> Machine<'a> {
                 let mut here = of;
                 while let Some(class) = here {
                     let names: Vec<String> = match op {
-                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).chain(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Bound(..) | Value::Adorned(_) | Value::Wrapped(..))).map(|(n,_)| n.clone())).collect(),
+                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).chain(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Bound(..) | Value::Adorned(_) | Value::Wrapped(..) | Value::Method(..))).map(|(n,_)| n.clone())).collect(),
                         _ => class.fields.iter().map(|(called, _)| crate::data::holder_of(called).0.to_string()).collect(),
                     };
                     for called in names {
@@ -14920,6 +15131,22 @@ impl<'a> Machine<'a> {
                 if !self.table.has_any("op.concat") && (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_))) =>
             {
                 Value::text(&format!("{}{}", v[0].render(w), v[1].render(w)))
+            }
+            Prim::Times if self.table.flag("ext.builtin.text.repeat") && v.iter().any(|x| matches!(x,Value::Unpaired(_))) => {
+                let (numbers, multiplier) = match (&v[0],&v[1]) { (Value::Unpaired(t),x)|(x,Value::Unpaired(t)) => (t,x), _ => unreachable!() };
+                let number = match multiplier {
+                    Value::Flag(b) => if *b { 1 } else { 0 }, Value::Small(i) => *i,
+                    Value::Huge(i) => i.to_i64().unwrap_or_else(|| if **i < BigInt::from(0) { i64::MIN } else { i64::MAX }),
+                    _ => return Err(crate::text::complaint(self.table,"integer").into()),
+                };
+                if number == 1 { return Ok(Value::Unpaired(numbers.clone())); }
+                let mut repeated = Vec::new();
+                if number > 0 && !numbers.is_empty() {
+                    let length = (number as usize).checked_mul(numbers.len()).ok_or_else(||crate::text::complaint(self.table,"room"))?;
+                    repeated.try_reserve(length).map_err(|_|String::from("MemoryError: "))?;
+                    for _ in 0..number { repeated.extend(numbers.iter().copied()); }
+                }
+                Value::characters(repeated)
             }
             Prim::Times if self.table.flag("ext.builtin.text.repeat") && v.iter().any(|x| matches!(x,Value::Text(_))) => {
                 let (word, multiplier) = match (&v[0],&v[1]) { (Value::Text(t),x)|(x,Value::Text(t)) => (t,x), _ => unreachable!() };
@@ -16792,6 +17019,16 @@ impl<'a> Machine<'a> {
     }
 }
 
+/// Empty a pipe of all it has to say, into `into`. `had_pipe` records
+/// whether there was a pipe at all, and `failed` whether the reading
+/// broke.
+fn empty_pipe<R: std::io::Read>(pipe: &mut Option<R>, into: &mut Vec<u8>, had_pipe: &mut bool, failed: &mut bool) {
+    if let Some(pipe) = pipe {
+        *had_pipe = true;
+        *failed = pipe.read_to_end(into).is_err();
+    }
+}
+
 fn as_index(v: &Value) -> Result<usize, String> {
     match v {
         Value::Small(i) => usize::try_from(*i).map_err(|_| "Array index out of bounds".to_string()),
@@ -18444,6 +18681,21 @@ impl<'a> Machine<'a> {
         let source = match v[0].settled() {
             Value::Text(s) => s,
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
+            Value::Thing(tree) => {
+                // A syntax tree the library's ast module hands over
+                // carries the text it was parsed from; compiling the
+                // tree compiles that text.
+                let mut carried = None;
+                for (word, worth) in tree.holds.borrow().iter() {
+                    if word == "_lumen_tree_source" {
+                        carried = Some(worth.settled());
+                    }
+                }
+                match carried {
+                    Some(Value::Text(s)) => s,
+                    _ => return Err(self.source_refused()),
+                }
+            }
             _ => return Err(self.source_refused()),
         };
         let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };

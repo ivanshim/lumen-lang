@@ -16,7 +16,11 @@ directory (Lumen, RPLumen, Python, Rust) are embedded at build time and picked b
 file extension, `--lang <name>` or `--lang <extension>`; PHP, beside them
 here, and the ones in `extras/` (Ruby, Pascal, C, JavaScript, Swift) are
 never compiled in and are read from disk with `--lang <path>.json`, the
-same path any definition of your own takes. Which of the two a
+same path any definition of your own takes. A run also puts the
+kernel and the language it began with in its environment, as
+`LUMEN_KERNEL` and `LUMEN_LANG`, so a program that starts the binary
+again without naming them gets a second interpreter like itself; a
+`--kernel` or `--lang` flag always wins. Which of the two a
 definition is has nothing to do with the directory it sits in: only the
 list of files the kernels take in at build time decides it. Every example runs on every kernel, and
 the test suite requires them to print the same thing. The library lives
@@ -2630,6 +2634,22 @@ only. The extension labels so far, all from PHP:
   no letters spell. This is the one label by which a language may start
   a second program beside its own run, and only the full kernels read
   it.
+
+- `ext.builtin.subprocess`: one builtin that starts a second program and
+  holds it open, in steps, so a language whose library writes a
+  `subprocess` module may run another interpreter and read what it
+  writes back. It is told which step it is on first: begin (with the
+  program, the words to hand it, the names to set in its environment,
+  and how each of its three streams is to go — nothing, a pipe, or
+  inherited, a third stream told to follow the second kept as a pipe of
+  its own), then write into the begun run's input, close that input,
+  read all a stream has said so far, wait for the run to end, ask
+  whether it has ended, or stop it. A begun run is named by a whole
+  number the begin step hands back, and every later step names it
+  again. Python's library binds this word as `__subprocess` and writes
+  `langs/lib_python/modules/subprocess.py` on it. Only the full kernels
+  read it.
+
 - `ext.op.hush`: a mark written before a piece of a program, keeping
   quiet whatever that piece has to say about itself while its value is
   found. The value is the one the piece would have come to anyway; only
@@ -3461,12 +3481,16 @@ only. The extension labels so far, all from PHP:
   their finalisers, breaks them so that counting frees them, and answers
   how many it found. A value's finaliser and the routines waiting on its
   weak holds run between two statements, never in the middle of one.
+- `ext.stmt.class.detail.code.replace` names the code-copy method and the
+  line-table keyword it accepts; a replacement leaves the original code
+  value intact.
 - `ext.system.recursion.limit` and `.exceeded`: the most calls a run may
   have under way at once, the outermost body not counted, and the words
   said by the call that would pass it. The words name a class among the
   furnished exceptions, so a clause may take the fault and the run go
   on beneath the limit. Without a count, calls go as deep as the host
-  allows.
+  allows. `ext.system.recursion.variable` names the imported module and
+  its stored limit so calls observe a value changed by that module.
 - `ext.stmt.import.value`: a switch; imports fetch source the host has
   kept under its module name, read it once in its own namespace, and
   bind that namespace or the requested members. Without the switch the
@@ -4713,6 +4737,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
+| `ext.builtin.subprocess` | - | - | `__subprocess` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
 | `ext.builtin.text.capitalize` | - | - | `capitalize` `str.capitalize` | - | - | - | - | - | - | - |
@@ -4817,7 +4842,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
 | `ext.builtin.vars` | - | - | `vars` | - | - | - | - | - | - | - |
-| `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
+| `ext.builtin.wait` | - | - | `__wait` | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.weak.get` | - | - | `__weak_get` | - | - | - | - | - | - | - |
 | `ext.builtin.weak.make` | - | - | `__weak_make` | - | - | - | - | - | - | - |
 | `ext.builtin.weak.refused` | - | - | `TypeError: cannot create weak reference to '` `' object` | - | - | - | - | - | - | - |
@@ -5113,6 +5138,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.delete` | - | - | `__delete__` | - | - | - | - | - | - | - |
@@ -5414,6 +5440,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |
 | `ext.system.recursion.exceeded` | - | - | `RecursionError: maximum recursion depth exceeded` | - | - | - | - | - | - | - |
 | `ext.system.recursion.limit` | - | - | `1000` | - | - | - | - | - | - | - |
+| `ext.system.recursion.variable` | - | - | `sys` `_recursion_limit` | - | - | - | - | - | - | - |
 | `ext.system.request.all` | - | - | - | - | `$_REQUEST` | - | - | - | - | - |
 | `ext.system.request.amiss` | - | - | - | - | `$__request_amiss` | - | - | - | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - | - | - | - |
@@ -5428,7 +5455,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.request.query` | - | - | - | - | `$_GET` | - | - | - | - | - |
 | `ext.system.request.server` | - | - | - | - | `$_SERVER` | - | - | - | - | - |
 | `ext.system.request.settings` | - | - | - | - | `$__started_with` | - | - | - | - | - |
-| `ext.system.runner` | - | - | - | - | `PHP_BINARY` | - | - | - | - | - |
+| `ext.system.runner` | - | - | `__runner__` | - | `PHP_BINARY` | - | - | - | - | - |
 | `ext.system.scope.unready` | - | - | `NotImplementedError: this scope form cannot run yet` | - | - | - | - | - | - | - |
 | `ext.system.source.class` | - | - | - | - | `__CLASS__` | - | - | - | - | - |
 | `ext.system.source.directory` | - | - | - | - | `__DIR__` | - | - | - | - | - |

@@ -1103,6 +1103,7 @@ impl Quotation<'_> {
         if levels >= 3 { return Err(self.field_fault(18, &[])); }
         self.forward(1);
         let origin = self.next;
+        let field_row = self.row;
         let mut nesting = Vec::new();
         let mut comments = Vec::new();
         loop {
@@ -1182,6 +1183,13 @@ impl Quotation<'_> {
         if code.trim().is_empty() { return Err(self.field_fault(2, &[self.here().unwrap().to_string()])); }
         let stripped = code.trim_start();
         if stripped.starts_with('*') && !stripped.contains(',') { return Err(self.field_fault(16, &[])); }
+        let words: Vec<&str> = code.split_whitespace().collect();
+        if words.len() == 2 && words.iter().all(|word| word.chars().all(|ch| ch.is_ascii_digit())) {
+            let where_digit = (origin..self.next).find(|&at| self.source[at].is_ascii_digit()).unwrap_or(origin);
+            self.next = where_digit;
+            self.row = self.source[..where_digit].iter().filter(|&&ch| ch == '\n').count() as u32 + 1;
+            return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
+        }
         let debugging = self.here() == Some('=');
         if debugging {
             self.forward(1);
@@ -1219,7 +1227,20 @@ impl Quotation<'_> {
         let left = self.table.single("syntax.group.open").ok_or_else(|| self.bad())?.to_owned();
         let right = self.table.single("syntax.group.close").ok_or_else(|| self.bad())?.to_owned();
         self.token(Shape::Sign, left);
-        let tokens = scan_code(&code, self.table)?;
+        let tokens = match scan_position(&code, self.table) {
+            Ok(tokens) => tokens,
+            Err((message, relative_row, relative_column)) => {
+                let mut line = 1;
+                let mut start = origin;
+                while line < relative_row && start < self.source.len() {
+                    if self.source[start] == '\n' { line += 1; }
+                    start += 1;
+                }
+                self.next = (start + relative_column.saturating_sub(1)).min(self.source.len());
+                self.row = field_row + relative_row.saturating_sub(1);
+                return Err(message);
+            }
+        };
         self.made.extend(tokens.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)));
         self.token(Shape::Sign, right);
         self.token(Shape::Woven, String::new());
@@ -1372,6 +1393,10 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                             while slash_at > 0 && src[slash_at - 1] == '\\' { slash_at -= 1; }
                             if (stop - 1 - slash_at) % 2 != 0 { words.push_str("; perhaps you escaped the end quote?"); }
                         }
+                    }
+                    if fields && (words.contains("invalid decimal literal") || words.contains("Perhaps you forgot a comma?")) {
+                        ended.0 = quote.row;
+                        ended.1 = at_column(quote.next);
                     }
                     return Err(words);
                 }
