@@ -178,9 +178,14 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                 let (previous, other) = *indents.last().unwrap();
                 if width > previous {
                     if header.is_none() {
-                        if let Some(previous) = last.filter(|t| matches!(t.lexeme.as_str(), "try" | "else" | "finally")) {
-                            if first.map_or(false, |t| std::ptr::eq(t, previous)) {
-                                return Err(("SyntaxError: expected ':'".into(), previous.row, previous.column + previous.lexeme.len()));
+                        if let (Some(start), Some(end)) = (first, last) {
+                            let head = start.lexeme.as_str();
+                            let complete = !matches!(head, "def" | "async") || end.lexeme == ")";
+                            let clause_has_context = !matches!(head, "elif" | "else" | "except" | "finally")
+                                || result.iter().any(|earlier| earlier.row < start.row && !matches!(earlier.shape, Shape::Lead | Shape::LineEnd | Shape::Open | Shape::Close));
+                            if !clause_has_context { return Err(("SyntaxError: invalid syntax".into(), start.row, start.column)); }
+                            if complete && matches!(head, "def" | "async" | "class" | "if" | "elif" | "else" | "for" | "while" | "with" | "try" | "except" | "finally" | "match" | "case") {
+                                return Err(("SyntaxError: expected ':'".into(), end.row, end.column + end.lexeme.len()));
                             }
                         }
                         return Err(error("IndentationError: unexpected indent".into()));

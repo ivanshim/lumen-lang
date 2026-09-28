@@ -175,12 +175,15 @@ fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
                     return Err((format!("IndentationError: expected an indented block after '{word}' statement on line {line}"), t.row, input.get(i + 1).map_or(1, |next| next.column)));
                 }
             } else if rising {
-                if let Some((word, row)) = &line_start {
-                    if matches!(word.as_str(), "try" | "else" | "finally") {
-                        if let Some(previous) = input[..i].iter().rev().find(|part| !matches!(part.shape, Shape::Lead | Shape::LineEnd)) {
-                            if previous.lexeme == *word && previous.row == *row {
-                                return Err((String::from("SyntaxError: expected ':'"), *row, previous.column + word.len()));
-                            }
+                if let Some((head, line)) = &line_start {
+                    let last_on_line = input[..i].iter().rev().find(|piece| piece.row == *line && !matches!(piece.shape, Shape::Lead | Shape::LineEnd));
+                    if let Some(end) = last_on_line {
+                        let named = matches!(head.as_str(), "def" | "async" | "class" | "if" | "elif" | "else" | "for" | "while" | "with" | "try" | "except" | "finally" | "match" | "case");
+                        let earlier = input[..i].iter().any(|part| part.row < *line && !matches!(part.shape, Shape::Lead | Shape::LineEnd));
+                        let clause_ok = !matches!(head.as_str(), "elif" | "else" | "except" | "finally") || earlier;
+                        if !clause_ok { return Err((String::from("SyntaxError: invalid syntax"), *line, t.column)); }
+                        if named && (!matches!(head.as_str(), "def" | "async") || end.lexeme == ")") {
+                            return Err((String::from("SyntaxError: expected ':'"), *line, end.column + end.lexeme.len()));
                         }
                     }
                 }
