@@ -2546,7 +2546,10 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
                 let earlier = std::mem::replace(&mut self.forbids_await, true);
                 self.advance();
-                self.need_word("as the type alias")?;
+                let name = self.need_word("as the type alias")?;
+                if self.table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" {
+                    return Err(String::from("SyntaxError: cannot assign to __debug__"));
+                }
                 self.type_names()?;
                 self.pending_types.clear();
                 self.need_assign("after the type alias")?;
@@ -4295,6 +4298,9 @@ impl<'a> Builder<'a> {
                 let mut builder = false;
                 if keyword {
                     let word = self.original_words[self.pos].lexeme.clone();
+                    if table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" {
+                        return Err(String::from("SyntaxError: cannot assign to __debug__"));
+                    }
                     self.advance();
                     self.advance();
                     if table.spells("ext.stmt.class.metaclass", &word) { builder = true; }
@@ -6722,6 +6728,9 @@ impl<'a> Builder<'a> {
 
     fn binding_or_value(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.look().lexeme == "__debug__" && self.table.compound.contains_key(&self.glance(1).lexeme) {
+                return Err(String::from("SyntaxError: cannot assign to __debug__"));
+            }
             if let Some(mark) = self.declaration_mark() {
                 if !self.divided_at(self.pos, mark, "ext.op.tuple").is_empty() {
                     return Err(String::from("SyntaxError: only single target (not tuple) can be annotated"));

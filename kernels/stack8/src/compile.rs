@@ -2176,7 +2176,10 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).shape == Shape::Instr {
             let old_rule = std::mem::replace(&mut self.forbids_await, true);
             self.take();
-            self.want_name("as the type alias")?;
+            let alias = self.want_name("as the type alias")?;
+            if !lang.syntax_members.is_empty() && alias == "__debug__" {
+                return Err("SyntaxError: cannot assign to __debug__".into());
+            }
             self.declaration_types()?;
             self.pending_types.clear();
             self.expect_assign("after the type alias")?;
@@ -5436,6 +5439,9 @@ impl<'a> Compiler<'a> {
                 let mut names_maker = false;
                 if keyword {
                     let word = self.spelled[self.pos].lexeme.clone();
+                    if !lang.syntax_members.is_empty() && word == "__debug__" {
+                        return Err("SyntaxError: cannot assign to __debug__".into());
+                    }
                     self.take();
                     self.take();
                     if Lang::spells(&lang.metaclass_word, &word) { names_maker = true; }
@@ -6837,6 +6843,9 @@ impl<'a> Compiler<'a> {
 
     fn assignment_expression(&mut self) -> Res<()> {
         if !self.lang.syntax_members.is_empty() {
+            if self.look().lexeme == "__debug__" && self.lang.compound.contains_key(&self.look_ahead(1).lexeme) {
+                return Err("SyntaxError: cannot assign to __debug__".into());
+            }
             if let Some(colon) = self.statement_annotation() {
                 if !self.outer_marks(self.pos, colon, &self.lang.tuple_marks).0.is_empty() {
                     return Err("SyntaxError: only single target (not tuple) can be annotated".into());
