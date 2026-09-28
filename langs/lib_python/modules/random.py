@@ -115,6 +115,9 @@ def getrandbits(k):
     return result
 
 
+_unseeded_sequence = 0
+
+
 class Random:
     """Mersenne Twister stream for independently seeded Random instances."""
 
@@ -123,7 +126,14 @@ class Random:
 
     def seed(self, value=None):
         if value is None:
-            value = 0
+            try:
+                import os
+                value = int.from_bytes(os.urandom(16), 'big')
+            except Exception:
+                import time
+                global _unseeded_sequence
+                _unseeded_sequence += 1
+                value = int(time.time() * 1000000000) + _unseeded_sequence
         value = abs(int(value))
         key = []
         while value:
