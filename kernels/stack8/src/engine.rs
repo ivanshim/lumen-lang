@@ -4623,7 +4623,14 @@ impl<'a> Engine<'a> {
             // thing it stands for is asked as it stands, since a key
             // kept without its hash may still be the very same thing.
             (Value::Hashed(x), y) | (y, Value::Hashed(x)) => {
-                if matches!(y, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && !x.1.equals(y) { return Ok(false); }
+                if x.0.same_place(y) { return Ok(true); }
+                let number = match y {
+                    Value::Object(_) => match self.special_key(y)? {
+                        Value::Hashed(other) => other.1.clone(), _ => return Ok(false),
+                    },
+                    _ => match y.core_hash() { Some(hash) => Value::Small(hash), None => return Ok(false) },
+                };
+                if !x.1.equals(&number) { return Ok(false); }
                 (&x.0, y)
             }
             _ => return Ok(self.keys_alike(a, b)),
@@ -6516,6 +6523,28 @@ impl<'a> Engine<'a> {
                 return Ok(self.byte_make(filled, *mutable));
             }
         }
+        if matches!(op, Action::At) && Lang::spells(&self.lang.builtin_bases, "list") {
+            if let Value::Native(kind, name) = a {
+                if matches!(kind, Builtin::List | Builtin::Tuple | Builtin::Dict | Builtin::Set | Builtin::Frozen)
+                    && matches!(name.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset") {
+                    let module = match self.import_module("types") {
+                        Ok(module) => module,
+                        Err(Fault::Note(words)) => return Err(words),
+                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                    };
+                    let maker = match self.class_get(module, "GenericAlias", false) {
+                        Ok(maker) => maker,
+                        Err(Fault::Note(words)) => return Err(words),
+                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                    };
+                    return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
+                        Ok(alias) => Ok(alias),
+                        Err(Fault::Note(words)) => Err(words),
+                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
+                    };
+                }
+            }
+        }
         let places = match op {
             Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
             Action::Lt => Some((4, 6)), Action::Le => Some((5, 7)),
@@ -7080,11 +7109,9 @@ impl<'a> Engine<'a> {
                 let Value::Fields(o) = &args[2] else { unreachable!() };
                 if let Some(told) = self.unkeyable(&args[0]) { return Err(told); }
                 // The key may be of any kind the thing's dictionary can
-                // hold, a text subclass among them; it is kept as it
-                // stands, so a walk over the dictionary hands back the
-                // very key that was written, and it is found by the same
-                // equality a map's own subscript uses.
-                let key = args[0].clone();
+                // hold, a text subclass among them; its hash is kept
+                // beside it, and a walk hands back the original key.
+                let key = self.special_key(&args[0])?;
                 let mut entries = Self::fields_entries(o);
                 let mut found = None;
                 for (at, (old, _)) in entries.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
@@ -7414,7 +7441,12 @@ impl<'a> Engine<'a> {
 
     fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Value::Fields(o) = value {
-            return Ok(Self::fields_entries(o).into_iter().map(|(key, _)| key).collect());
+            if matches!(self.module_holding(&Value::Object(o.clone())).as_deref(), Some(name) if name != "builtins") {
+                return Err(self.core_fault("core.uniterable", &value.core_kind()));
+            }
+            return Ok(Self::fields_entries(o).into_iter().map(|(key, _)| match key {
+                Value::Hashed(pair) => pair.0.clone(), plain => plain,
+            }).collect());
         }
         if let Value::Walk(walk) = value {
             let mut walk = walk.borrow_mut();
@@ -16770,6 +16802,22 @@ impl Engine<'_> {
     /// kind, and, for a walk, standing at the very place this one
     /// does, so that a value already stepped some way into keeps
     /// standing there once it is written out and read back.
+    fn reduction_constructor(&mut self, op: Builtin) -> Res<Value> {
+        let label = self.lang.builtins.iter().find(|(_, candidate)| **candidate == op)
+            .map(|(label, _)| label.clone()).unwrap_or_default();
+        let Some(module) = self.modules.get("builtins").cloned() else {
+            return Ok(Value::Native(op, Rc::from(label)));
+        };
+        let namespace = self.class_word("namespace").to_string();
+        let book = match self.class_get(module, &namespace, false) {
+            Ok(book) => book,
+            Err(Fault::Note(words)) => return Err(words),
+            Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+        };
+        self.special_dyad(&Action::At, &book.contents(), &Value::text(&label))
+            .map(|value| value.contents())
+    }
+
     fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
         let pack = |parts: Vec<Value>| Value::Tuple(Rc::new(parts));
         let native = |op: Builtin| {
@@ -16787,14 +16835,31 @@ impl Engine<'_> {
             return Ok(pack(vec![iter, pack(vec![Value::array(entries)])]));
         }
         let Value::Cursor(cell) = value else { return Err("TypeError: cannot pickle this iterator".into()) };
+        let reversed_walk = {
+            let held = cell.borrow();
+            matches!(held.source, CursorSource::IndexedBack(..))
+                || matches!(held.walked.as_deref(), Some("list_reverseiterator" | "reversed"))
+        };
+        let maker = self.reduction_constructor(if reversed_walk { Builtin::Reversed } else { Builtin::Iter })?;
+        let reverse = if reversed_walk { maker.clone() } else { native(Builtin::Reversed) };
+        let iter = if reversed_walk { iter } else { maker };
         let saved = cell.borrow().clone();
-        if saved.finished {
+        if saved.finished || matches!(&saved.source, CursorSource::Items(items, place) if *place >= items.len()) {
             match &saved.source {
+                CursorSource::Items(..) => {
+                    let empty = match saved.walked.as_deref() {
+                        Some("str_iterator" | "str_ascii_iterator") => Value::text(""),
+                        Some("list_reverseiterator" | "reversed") => return Ok(pack(vec![reverse.clone(), pack(vec![Value::array(Vec::new())])])),
+                        Some("list_iterator") => Value::array(Vec::new()),
+                        _ => pack(Vec::new()),
+                    };
+                    return Ok(pack(vec![iter, pack(vec![empty])]));
+                }
                 CursorSource::Living(..) => return Ok(pack(vec![iter, pack(vec![Value::array(Vec::new())])])),
                 CursorSource::Called(..) | CursorSource::Indexed(..) => return Ok(pack(vec![iter, pack(vec![pack(Vec::new())])])),
                 CursorSource::IndexedBack(..) => {
                     let empty = if saved.walked.as_deref() == Some("list_reverseiterator") { Value::array(Vec::new()) } else { pack(Vec::new()) };
-                    return Ok(pack(vec![native(Builtin::Reversed), pack(vec![empty])]));
+                    return Ok(pack(vec![reverse.clone(), pack(vec![empty])]));
                 }
                 _ => {}
             }
@@ -16806,7 +16871,7 @@ impl Engine<'_> {
                 if matches!(saved.walked.as_deref(), Some("list_reverseiterator" | "reversed")) {
                     let mut original = items.to_vec();
                     original.reverse();
-                    return Ok(pack(vec![native(Builtin::Reversed), pack(vec![if saved.walked.as_deref() == Some("reversed") { pack(original) } else { Value::array(original) }]), Value::of_big(BigInt::from(items.len()) - BigInt::from(*at) - 1)]));
+                    return Ok(pack(vec![reverse.clone(), pack(vec![if saved.walked.as_deref() == Some("reversed") { pack(original) } else { Value::array(original) }]), Value::of_big(BigInt::from(items.len()) - BigInt::from(*at) - 1)]));
                 }
                 let source = match saved.walked.as_deref() {
                     Some("tuple_iterator") => pack(items.to_vec()),
@@ -16817,7 +16882,7 @@ impl Engine<'_> {
                 (iter, vec![source], Some(Value::Small(*at as i64)))
             }
             CursorSource::Indexed(thing, at) => (iter, vec![thing.clone()], Some(Value::of_big(at.clone()))),
-            CursorSource::IndexedBack(thing, at) => (native(Builtin::Reversed), vec![thing.clone()], Some(Value::of_big(at.clone()))),
+            CursorSource::IndexedBack(thing, at) => (reverse.clone(), vec![thing.clone()], Some(Value::of_big(at.clone()))),
             CursorSource::Called(work, stop, types) => {
                 let customary = types.as_ref().map_or(true, |value| !matches!(stop, Value::Null) && matches!(value, Value::Class(class) if class.name == "StopIteration"));
                 if customary { (iter, vec![work.clone(), stop.clone()], None) }
@@ -16981,7 +17046,7 @@ impl Engine<'_> {
             Value::Set(_) => "set_iterator",
             // A map walked as it stands hands over the keys it holds, so
             // that walk is of the same kind as a walk of its keys.
-            Value::Map(_) => "dict_keyiterator",
+            Value::Map(_) | Value::Fields(_) => "dict_keyiterator",
             Value::Bytes(_, mutable, _) => if *mutable { "bytearray_iterator" } else { "bytes_iterator" },
             _ => return None,
         }))
@@ -17284,6 +17349,14 @@ impl Engine<'_> {
     }
 
     fn core_members(&mut self, v: &Value) -> Res<Vec<Value>> {
+        if let Value::Fields(owner) = v {
+            if matches!(self.module_holding(&Value::Object(owner.clone())).as_deref(), Some(name) if name != "builtins") {
+                return Err(self.core_fault("core.uniterable", &v.core_kind()));
+            }
+            return Ok(Self::fields_entries(owner).into_iter().map(|(key, _)| match key {
+                Value::Hashed(pair) => pair.0.clone(), plain => plain,
+            }).collect());
+        }
         if matches!(v, Value::Cursor(_)) {
             let mut items = Vec::new();
             while let Some(value) = self.core_step(v)? { items.push(value); }
@@ -17322,6 +17395,9 @@ impl Engine<'_> {
     }
 
     fn core_isinstance(&mut self, value: &Value, kind: &Value) -> Res<bool> {
+        if matches!(kind.contents(), Value::Object(o) if o.class_now().name == "GenericAlias") {
+            return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());
+        }
         if let Value::Tuple(types) = kind {
             let types = types.clone();
             for t in types.iter() { if self.core_isinstance(value, t)? { return Ok(true); } }
@@ -18487,7 +18563,7 @@ impl Engine<'_> {
         if let Some(held) = &self.builtins_view { return Ok(held.clone()); }
         let module = self.names_module_value()?;
         let class = match &module { Value::Object(o) => o.class_now(), _ => self.root_class() };
-        let dictionary = self.native_dict();
+        let dictionary = Value::Bond(self.natives_book());
         self.made += 1;
         let object = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
             fields: RefCell::new(vec![("\0namespace".to_string(), dictionary)]), mark: self.made }));

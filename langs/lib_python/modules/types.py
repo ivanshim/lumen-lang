@@ -261,6 +261,47 @@ class GenericAlias:
             shown.append(_kind_name(given))
         return _kind_name(self.__origin__) + '[' + ', '.join(shown) + ']'
 
+    def __iter__(self):
+        return _GenericAliasIterator(self)
+
+
+class _UnpackedGenericAlias:
+    def __init__(self, alias):
+        self.__origin__ = alias.__origin__
+        self.__args__ = alias.__args__
+        self.__unpacked__ = True
+        self._alias = alias
+
+    def __repr__(self):
+        return '*' + repr(self._alias)
+
+    def __eq__(self, other):
+        if isinstance(other, _UnpackedGenericAlias):
+            return self._alias == other._alias
+        return NotImplemented
+
+
+class _GenericAliasIterator:
+    def __init__(self, alias):
+        self.alias = alias
+        self.done = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.done:
+            raise StopIteration
+        self.done = True
+        return _UnpackedGenericAlias(self.alias)
+
+    def __reduce__(self):
+        import builtins
+        factory = builtins.__dict__['iter']
+        if self.done:
+            return (factory, ((),))
+        return (factory, (self.alias,))
+
 
 # A member that answers one way on an instance and another on the class.
 class DynamicClassAttribute:
