@@ -614,6 +614,12 @@ pub enum Builtin {
     Waited,
     RunBegin,
     RunEnd,
+    /// A second program started, spoken to and stopped again, one step
+    /// at a time (ext.builtin.subprocess): the whole thing, in one
+    /// word that is told which step it is on. Only a language spelling
+    /// this may run a second interpreter beside itself and read its
+    /// writing back.
+    Subprocess,
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,

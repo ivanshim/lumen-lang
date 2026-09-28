@@ -54,6 +54,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("statistics", include_str!("statistics.py")),
     ("string", include_str!("string.py")),
     ("struct", include_str!("struct.py")),
+    ("subprocess", include_str!("subprocess.py")),
     ("sys", include_str!("sys.py")),
     ("tempfile", include_str!("tempfile.py")),
     ("test", include_str!("test/__init__.py")),
