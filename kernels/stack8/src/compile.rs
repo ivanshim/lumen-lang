@@ -2497,7 +2497,7 @@ impl<'a> Compiler<'a> {
                     }
                     end += 1;
                 }
-                self.give_places(begin, end, &held)?;
+                self.give_places(begin, end, &held).map_err(|e| self.loop_target_error(begin, end, e))?;
                 self.pos = end;
             } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
@@ -3454,7 +3454,7 @@ impl<'a> Compiler<'a> {
                 if self.target_names(began, end, &mut names) {
                     for name in names { self.claim(&name); }
                 }
-                self.give_places(began, end, value)?;
+                self.give_places(began, end, value).map_err(|e| self.loop_target_error(began, end, e))?;
             } else {
                 self.pos = began;
                 let from = self.mark();
@@ -6649,6 +6649,18 @@ impl<'a> Compiler<'a> {
             self.act(Action::Apart, 2);
         }
         Ok(spread)
+    }
+
+    fn loop_target_error(&self, begin: usize, end: usize, message: String) -> String {
+        if self.lang.syntax_members.is_empty() || !message.starts_with("SyntaxError:") { return message; }
+        let words = &self.tokens[begin..end];
+        if words.iter().any(|word| word.lexeme == "+") {
+            return "SyntaxError: cannot assign to expression".into();
+        }
+        if words.windows(2).any(|pair| pair[0].shape == Shape::Instr && pair[1].lexeme == "(") {
+            return "SyntaxError: cannot assign to function call".into();
+        }
+        message
     }
 
     /// Give a held value to a target's places. The source spans are
@@ -9937,7 +9949,8 @@ impl<'a> Compiler<'a> {
             let item = self.gensym("comprehension_item");
             self.write(&item);
             let resume = self.pos;
-            if let Err(message) = self.give_places(target_start, target_end, &item) {
+            if let Err(error) = self.give_places(target_start, target_end, &item) {
+                let message = self.loop_target_error(target_start, target_end, error);
                 if message.starts_with("SyntaxError: cannot assign to") { self.pos = target_start; }
                 return Err(message);
             }

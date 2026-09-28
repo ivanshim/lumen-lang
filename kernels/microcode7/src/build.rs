@@ -2985,7 +2985,7 @@ impl<'a> Builder<'a> {
                     }
                     boundary += 1;
                 }
-                steps.push(self.distribute(start..boundary, &name)?);
+                steps.push(self.distribute(start..boundary, &name).map_err(|e| self.loop_target_error(start..boundary, e))?);
                 self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
@@ -4990,7 +4990,7 @@ impl<'a> Builder<'a> {
                         if r.target_words(began..end, &mut words) {
                             for word in words { r.claim(&word); }
                         }
-                        r.distribute(began..end, &item)?
+                        r.distribute(began..end, &item).map_err(|e| r.loop_target_error(began..end, e))?
                     } else {
                         r.pos = began;
                         let target = r.expr_at(0, false)?;
@@ -6502,6 +6502,18 @@ impl<'a> Builder<'a> {
             prim_call(Prim::Apart, vec![partition, constant(Value::Small(0))])
         } else { value };
         Ok((gathered, star))
+    }
+
+    fn loop_target_error(&self, span: std::ops::Range<usize>, error: String) -> String {
+        if !self.table.has_any("ext.builtin.exceptions.syntax") || !error.starts_with("SyntaxError:") { return error; }
+        let words = &self.tokens[span];
+        if words.iter().any(|word| word.lexeme == "+") {
+            return String::from("SyntaxError: cannot assign to expression");
+        }
+        if words.windows(2).any(|two| two[0].shape == Shape::Bare && two[1].lexeme == "(") {
+            return String::from("SyntaxError: cannot assign to function call");
+        }
+        error
     }
 
     /// A target is read afresh at its turn, after the whole right hand
@@ -9325,7 +9337,8 @@ impl<'a> Builder<'a> {
         let continue_at = self.pos;
         match self.distribute(target_begin..target_stop, &item_name) {
             Ok(binding) => body.push(binding),
-            Err(message) => {
+            Err(error) => {
+                let message = self.loop_target_error(target_begin..target_stop, error);
                 if message.starts_with("SyntaxError: cannot assign to") { self.pos = target_begin; }
                 return Err(message);
             }
