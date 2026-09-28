@@ -8010,6 +8010,8 @@ impl<'a> Machine<'a> {
                 let place = if op == Prim::Prepare { formals.iter().position(|word| word == &key) }
                     else if matches!(op, Prim::Perform | Prim::Weigh) {
                         match key.as_str() { "source" => Some(0), "globals" => Some(1), "locals" => Some(2), "closure" if op == Prim::Perform => Some(3), _ => None }
+                    } else if op == Prim::Summon {
+                        match key.as_str() { "name" => Some(0), "globals" => Some(1), "locals" => Some(2), "fromlist" => Some(3), "level" => Some(4), _ => None }
                     } else { None }.ok_or_else(|| self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)))?;
                 if positional.get(place).map_or(false, |held| !matches!(held, Value::Unset)) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into()); }
                 if positional.len() <= place { positional.resize(place + 1, Value::Unset); }
@@ -11839,11 +11841,15 @@ impl<'a> Machine<'a> {
                 self.prim(operation, &word, &[whole])?
             }
             // Rounding is the thing's own where it has the method, given
-            // the places if any were asked.
-            (Prim::Rounded, [item @ Value::Thing(_), places @ ..]) => match self.ask_special(item, 73, places)? {
-                Some(answer) => answer,
-                None => return Ok(None),
-            },
+            // the places if any were asked; a places count of None asks
+            // with no count at all, exactly as none handed over does.
+            (Prim::Rounded, [item @ Value::Thing(_), rest @ ..]) => {
+                let places: &[Value] = if matches!(rest, [Value::Nil]) { &[] } else { rest };
+                match self.ask_special(item, 73, places)? {
+                    Some(answer) => answer,
+                    None => return Ok(None),
+                }
+            }
             // Division with remainder asks the left thing, then the right
             // one reflected; refused by both, it is refused by name.
             (Prim::QuotRem, [left, right]) if operands.iter().any(|v| matches!(v, Value::Thing(_))) => {
@@ -18724,10 +18730,64 @@ impl<'a> Machine<'a> {
                 if !v.is_empty() { return Err(self.core_complaint("core.arity", name)); }
                 Ok(Value::Shared(self.book_about(op == Prim::WorldBook)))
             }
-            Prim::Summon => match v.first().map(Value::settled) {
-                Some(Value::Text(path)) => self.load_namespace(&path),
-                _ => Err(self.source_refused()),
-            },
+            // __import__(name, globals=None, locals=None, fromlist=(),
+            // level=0): the level is weighed before the name is fetched,
+            // and an empty name belongs only to a relative import, all as
+            // the reference has it.
+            Prim::Summon => {
+                if v.len() > 5 { return Err(format!("TypeError: __import__() takes at most 5 arguments ({} given)", v.len())); }
+                let level = match v.get(4).map(Value::settled) {
+                    None | Some(Value::Nil) | Some(Value::Unset) => 0i64,
+                    Some(Value::Small(n)) => n,
+                    Some(Value::Flag(b)) => i64::from(b),
+                    Some(other) => return Err(format!("TypeError: __import__() argument 5 must be int, not {}", other.kind_word())),
+                };
+                if level < 0 { return Err("ValueError: level must be >= 0".to_owned()); }
+                let name = match v.first().map(Value::settled) {
+                    Some(Value::Text(path)) => path,
+                    Some(other) => match Self::underlying(&other).map(|under| under.settled()) {
+                        Some(Value::Text(path)) => path,
+                        _ => return Err(format!("TypeError: __import__() argument 1 must be str, not {}", other.kind_word())),
+                    },
+                    None => return Err("TypeError: __import__() missing required argument 'name' (pos 1)".to_owned()),
+                };
+                if name.is_empty() && level == 0 { return Err("ValueError: Empty module name".to_owned()); }
+                if level > 0 {
+                    // A relative import resolves against the package the
+                    // handed globals name. Globals that name none leave
+                    // nothing to resolve against, which the reference says
+                    // with an ImportError after an ImportWarning about the
+                    // names it fell back on.
+                    let globe = v.get(1).map(Value::settled);
+                    let asked = |word: &str| match &globe {
+                        Some(Value::Dict(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, kept)| kept.clone()),
+                        _ => None,
+                    };
+                    let package = match asked("__package__") {
+                        Some(Value::Text(named)) => Some(named.to_string()),
+                        Some(other) if !matches!(other, Value::Nil) => None,
+                        _ => match asked("__spec__") {
+                            Some(found) if !matches!(found, Value::Nil) => None,
+                            _ => {
+                                match self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__") {
+                                    Ok(()) => {}
+                                    Err(Escape::Error(told)) => return Err(told),
+                                    Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                                }
+                                match asked("__name__") {
+                                    Some(Value::Text(named)) => Some(if asked("__path__").is_some() { named.to_string() } else { named.rsplit_once('.').map(|(head, _)| head.to_string()).unwrap_or_default() }),
+                                    _ => None,
+                                }
+                            }
+                        },
+                    };
+                    match package {
+                        Some(named) if !named.is_empty() => return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_string()),
+                        _ => return Err("ImportError: attempted relative import with no known parent package".to_owned()),
+                    }
+                }
+                self.load_namespace(&name)
+            }
             Prim::Prepare => self.text_prepared(name, v),
             _ => self.text_performed(op == Prim::Weigh, name, v),
         }
@@ -18791,15 +18851,18 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn report_escape_notices(&mut self, code: &str, filename: &str) -> Result<(), String> {
+    fn report_escape_notices(&mut self, code: &str, filename: &str, module_hint: Option<&str>) -> Result<(), String> {
         let notices = crate::scan::escape_notices(code, self.table);
         if notices.is_empty() { return Ok(()); }
         let names = self.table.strings("ext.lexical.escape.warning").to_vec();
         let owner = self.load_namespace(&names[0])?;
         let report = self.attribute(&owner, &names[1]).ok_or_else(|| self.source_refused())?;
         let category = self.fault_kinds.get(&names[2]).cloned().ok_or_else(|| self.source_refused())?;
+        // The module the notice belongs to is the one the text runs
+        // under where that is named, else the one its file spells.
+        let spoken_as = match module_hint { Some(named) => Value::text(named), None => Value::Nil };
         for (words, row) in notices {
-            let arguments = vec![Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row))];
+            let arguments = vec![Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row)), spoken_as.clone()];
             match self.core_run(&report, arguments) {
                 Ok(_) => {}
                 Err(failure) => {
@@ -18849,14 +18912,14 @@ impl<'a> Machine<'a> {
             return Err("ValueError: compile(): invalid optimize value".into());
         }
         let top_await = flags & 8192 != 0;
-        self.report_escape_notices(&source, &file)?;
+        self.report_escape_notices(&source, &file, None)?;
         let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await, None, None)?;
         for (message, row, column) in &built.warnings {
-            self.syntax_warning(mode, message, &file, *row, *column, &source)?;
+            self.syntax_warning(mode, message, &file, *row, *column, &source, None)?;
         }
         let kind = self.code_blueprint();
         let flags = if built.program.generator { 128 } else { 0 };
@@ -18869,7 +18932,7 @@ impl<'a> Machine<'a> {
     /// the reference's warnings module so a filter the program set
     /// holds; one making it an error makes it the syntax fault the
     /// reference raises, placed at the line the reading noted.
-    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: u32, column: usize, source: &str) -> Result<(), String> {
+    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: u32, column: usize, source: &str, module_hint: Option<&str>) -> Result<(), String> {
         let words = self.table.strings("ext.system.syntax_warnings");
         let (Some(module_name), Some(teller_name)) = (words.first().cloned(), words.get(1).cloned()) else { return Ok(()) };
         let Some(kind_name) = self.table.strings("ext.builtin.exceptions").get(27).cloned() else { return Ok(()) };
@@ -18881,7 +18944,8 @@ impl<'a> Machine<'a> {
             Err(Escape::Error(told)) => return Err(told),
             Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
         };
-        let handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
+        let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
+        handed.push(match module_hint { Some(named) => Value::text(named), None => Value::Nil });
         match self.apply_class_member(teller, handed) {
             Ok(_) => Ok(()),
             Err(Escape::Thrown(Value::Thing(raised))) if raised.blueprint().goes_by(&kind_name, false) => {
@@ -19027,7 +19091,13 @@ impl<'a> Machine<'a> {
         if v.len() == 4 && !matches!(v[3], Value::Nil) {
             return Err(if file.is_some() { "TypeError: cannot use a closure with this code object" } else { "TypeError: closure can only be used when source is a code object" }.to_owned());
         }
-        if file.is_none() { self.report_escape_notices(&source, "<string>")?; }
+        if file.is_none() {
+            let spoken_as = v.get(1).map(Value::settled).and_then(|held| match held {
+                Value::Dict(pairs) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(k) if k.as_ref() == "__name__")).and_then(|(_, kept)| match kept { Value::Text(named) => Some(named.to_string()), _ => None }),
+                _ => None,
+            });
+            self.report_escape_notices(&source, "<string>", spoken_as.as_deref())?;
+        }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };
         let mut books = Vec::new();
@@ -19103,6 +19173,11 @@ impl<'a> Machine<'a> {
         };
         let seeded = self.idents.clone();
         let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None)?;
+        // What the build noted about how the text is written is said
+        // once the text stands, each warning through the warnings module.
+        for (message, row, column) in built.warnings.clone() {
+            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
+        }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         self.text_concluded(&built, &file, mode, shown)
@@ -19136,6 +19211,9 @@ impl<'a> Machine<'a> {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
+        for (message, row, column) in built.warnings.clone() {
+            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
+        }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         mine.cells.borrow_mut().resize(built.program.idents.len().max(names.len()), Value::Unset);
@@ -19184,6 +19262,13 @@ impl<'a> Machine<'a> {
             None => Value::Mutable(self.natives_kept(), true),
         };
         let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born))?;
+        // What the build noted about how the text is written is said
+        // under the name the handed globals give the text, each warning
+        // through the warnings module.
+        let spoken_as = looked_up(&outer, "__name__").and_then(|held| match held.settled() { Value::Text(named) => Some(named.to_string()), _ => None });
+        for (message, row, column) in built.warnings.clone() {
+            self.syntax_warning(mode, &message, &file, row, column, &source, spoken_as.as_deref())?;
+        }
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -20602,6 +20687,14 @@ impl Machine<'_> {
                 require(count, if matches!(op, GetMember | SetMember) { 3 } else { count })?;
                 if op != MembersOf {
                     if let Some(base @ Value::Text(_)) = Self::underlying(&input[1]) { input[1] = base; }
+                    // A text keeping a lone half of a surrogate pair is a
+                    // text all the same for naming a member: no member's
+                    // name keeps one, so it is asked after as the stand-in
+                    // text such a row reads as elsewhere.
+                    if let Value::Unpaired(numbers) = &input[1] {
+                        let stand_in = Value::category_text(numbers);
+                        input[1] = Value::text(&stand_in);
+                    }
                 }
                 if op != MembersOf && !matches!(input[1], Value::Text(_)) { return Err(self.core_complaint("core.attribute.name", &input[1].kind_word())); }
                 let Value::Thing(thing) = &input[0] else {

@@ -602,8 +602,15 @@ def breakpoint(*args, **kws):
 
 
 def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+    # A null byte inside the name is refused before the name is looked
+    # at any further, the way the reference refuses it, whatever the
+    # mode.
+    if isinstance(file, (bytes, bytearray)) and b'\x00' in bytes(file):
+        raise ValueError('embedded null byte')
     if not isinstance(file, str):
         raise TypeError("expected str, bytes or os.PathLike object, not " + type(file).__name__)
+    if '\x00' in file:
+        raise ValueError('embedded null byte')
     for letter in mode:
         if letter not in 'rwaxb+t':
             raise ValueError("invalid mode: '" + mode + "'")

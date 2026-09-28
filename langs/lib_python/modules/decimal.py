@@ -355,6 +355,33 @@ class Decimal:
     def __abs__(self):
         return Decimal._finite(False, self._int, self._exp) if self.is_finite() else _nonneg(self)
 
+    def _rounded_to(self, exponent):
+        # The coefficient as it stands at the given exponent, a halfway
+        # digit going to the even neighbour, as the reference rounds
+        # its decimals.
+        if self._exp >= exponent:
+            return self._int * (10 ** (self._exp - exponent))
+        divisor = 10 ** (exponent - self._exp)
+        whole, rest = divmod(self._int, divisor)
+        twice = rest * 2
+        if twice > divisor or (twice == divisor and whole % 2 == 1):
+            whole += 1
+        return whole
+
+    def __round__(self, ndigits=None):
+        if ndigits is None:
+            # Rounded to a whole number the answer is a plain int, so
+            # round(d) and round(d, None) answer alike.
+            if self._nan:
+                raise 'ValueError: cannot convert float NaN to integer'
+            if self._inf:
+                raise 'OverflowError: cannot convert float infinity to integer'
+            whole = self._rounded_to(0)
+            return -whole if self._sign else whole
+        if self._nan or self._inf:
+            return Decimal(self)
+        return Decimal._finite(self._sign, self._rounded_to(-ndigits), -ndigits)
+
     def _add(self, other, negate_other):
         other = _coerced(other)
         if self._nan or other._nan:
