@@ -3453,6 +3453,9 @@ impl<'a> Builder<'a> {
                     self.advance();
                     let start = self.pos;
                     let binding = self.need_word("after the caught value's binding word")?;
+                    if table.has_any("ext.builtin.exceptions.syntax") && binding == "__debug__" {
+                        return Err(String::from("SyntaxError: cannot assign to __debug__"));
+                    }
                     if table.has_any("ext.builtin.exceptions.syntax") {
                         let kind = match self.look().lexeme.as_str() { "." => Some("attribute"), "[" => Some("subscript"), _ => None };
                         if let Some(kind) = kind {
@@ -6522,6 +6525,9 @@ impl<'a> Builder<'a> {
         let bad = self.table.single("ext.stmt.unpack.amiss").unwrap_or("Invalid assignment target").to_string();
         let (mut lo, mut hi) = (span.start, span.end);
         if lo >= hi { return Err(bad); }
+        if self.table.has_any("ext.builtin.exceptions.syntax") && hi == lo + 1 && self.tokens[lo].lexeme == "__debug__" {
+            return Err(String::from("SyntaxError: cannot assign to __debug__"));
+        }
         let mut array = false;
         while lo < hi {
             let token = &self.tokens[lo];
@@ -7344,6 +7350,10 @@ impl<'a> Builder<'a> {
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
                 let named = args.pop().unwrap();
+                if self.table.has_any("ext.builtin.exceptions.syntax")
+                    && matches!(&named, Form::Const(Value::Text(word)) if word.as_ref() == "__debug__") {
+                    return Err(String::from("SyntaxError: cannot assign to __debug__"));
+                }
                 let thing = args.pop().unwrap();
                 prim_call(Prim::Onto, vec![thing, named, value])
             }
@@ -9516,6 +9526,9 @@ impl<'a> Builder<'a> {
                     let twice = self.table.strings("ext.syntax.call.amiss.repeated");
                     if spelled.contains(&word) && !twice.is_empty() {
                         return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
+                    }
+                    if self.table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" {
+                        return Err(String::from("SyntaxError: cannot assign to __debug__"));
                     }
                     spelled.push(word.clone());
                     tag = Some(Value::text(&word));

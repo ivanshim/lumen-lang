@@ -4575,6 +4575,9 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let binding_at = self.pos;
                 let name = self.want_name("after the caught value's binding word")?;
+                if !lang.syntax_members.is_empty() && name == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
                 if !lang.syntax_members.is_empty() && (self.at_symbol(".") || self.at_symbol("[")) {
                     let kind = if self.at_symbol(".") { "attribute" } else { "subscript" };
                     while !self.on_any(&lang.block_intros) && !self.on_sep() && !self.exhausted() { self.take(); }
@@ -6668,6 +6671,9 @@ impl<'a> Compiler<'a> {
     fn give_places(&mut self, mut begin: usize, mut end: usize, held: &str) -> Res<()> {
         let amiss = self.lang.unpack_amiss.clone().unwrap_or_else(|| "Invalid assignment target".to_string());
         if begin == end { return Err(amiss.clone()); }
+        if !self.lang.syntax_members.is_empty() && end == begin + 1 && self.tokens[begin].lexeme == "__debug__" {
+            return Err("SyntaxError: cannot assign to __debug__".into());
+        }
         let mut listed = false;
         loop {
             let bracket = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
@@ -7535,6 +7541,9 @@ impl<'a> Compiler<'a> {
             }
             // The read of a member turns into a write of it.
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
+                if !self.lang.syntax_members.is_empty() && member.as_ref() == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
                 let (member, rest) = (member.clone(), rest.to_vec());
                 for w in relocated(rest, 0) {
                     self.put(w);
@@ -10171,6 +10180,9 @@ impl<'a> Compiler<'a> {
             after_pairs |= named_spread && self.lang.bind_names;
             if tagged {
                 let word = self.spelled[self.pos].lexeme.clone();
+                if !self.lang.syntax_members.is_empty() && word == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
                 let twice = &self.lang.call_keyword_repeated;
                 if spelled.contains(&word) && !twice.is_empty() {
                     return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
