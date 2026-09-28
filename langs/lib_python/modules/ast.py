@@ -706,6 +706,8 @@ def _fstring_end(source, i):
             continue
         if depth == 0 and source[i:i + len(quote)] == quote:
             return (i + len(quote), quote, i)
+        if depth == 0 and c == '\n' and len(quote) == 1:
+            _syntax('f-string: unterminated string')
         if c == '{':
             if depth == 0 and source[i + 1:i + 2] == '{':
                 i += 2
@@ -725,6 +727,20 @@ def _fstring_end(source, i):
             continue
         i += 1
     _syntax('unterminated f-string literal')
+
+def _check_single_line(source, q, after):
+    # A single-quoted string literal stands on one line: a raw newline
+    # inside it (one a backslash does not continue) is unterminated.
+    if source[q:q + 3] == source[q] * 3:
+        return
+    i = q
+    while i < after:
+        if source[i] == '\\':
+            i += 2
+            continue
+        if source[i] == '\n':
+            _syntax('unterminated string literal')
+        i += 1
 
 def _lex(source, start, end, row, col, for_field):
     # Tokens over source[start:end], beginning at (row, col). Inside a
@@ -794,6 +810,7 @@ def _lex(source, start, end, row, col, for_field):
                     i, row, col = i2, erow, ecol
                     continue
                 value, after = _read_string(source, j, lowered)
+                _check_single_line(source, j, after)
                 _, erow, ecol = _adv(source, i, after - i, row, col)
                 tok = _Tok('str', source[i:after], srow, scol, erow, ecol)
                 tok.value = value
@@ -807,6 +824,7 @@ def _lex(source, start, end, row, col, for_field):
             continue
         if c == '"' or c == "'":
             value, after = _read_string(source, i, '')
+            _check_single_line(source, i, after)
             _, erow, ecol = _adv(source, i, after - i, row, col)
             tok = _Tok('str', source[i:after], srow, scol, erow, ecol)
             tok.value = value
@@ -832,17 +850,19 @@ def _lex(source, start, end, row, col, for_field):
     toks.append(_Tok('end', '', row, col, row, col))
     return toks
 
-def _ftext(source, s, e, raw):
+def _ftext(source, s, e, raw, escapes):
     # The decoded value of one f-string text piece over source[s:e].
+    # Doubled braces are escapes in a literal's text; a format spec has
+    # no such escapes (a single '{' opens a nested field there instead).
     units = []
     i = s
     while i < e:
         c = source[i]
-        if c == '{' and source[i + 1:i + 2] == '{':
+        if escapes and c == '{' and source[i + 1:i + 2] == '{':
             units.append('{')
             i += 2
             continue
-        if c == '}' and source[i + 1:i + 2] == '}':
+        if escapes and c == '}' and source[i + 1:i + 2] == '}':
             units.append('}')
             i += 2
             continue
@@ -860,10 +880,13 @@ def _ftext(source, s, e, raw):
         i += 1
     return ''.join(units)
 
-def _joined_values(source, seg_i, seg_end, row, col, raw):
+def _joined_values(source, seg_i, seg_end, row, col, raw, spec, multi):
     # The Constant and FormattedValue nodes of one f-string literal's
     # text over [seg_i, seg_end), in order; adjacent text pieces are not
     # merged here (merging happens only across concatenated literals).
+    # In a format spec (spec) doubled braces open nested fields rather
+    # than reading as escapes, and a single-quoted f-string (not multi)
+    # allows no newline in its text.
     parts = []
     text_start = seg_i
     text_srow, text_scol = row, col
@@ -873,34 +896,37 @@ def _joined_values(source, seg_i, seg_end, row, col, raw):
         if c == '\\':
             i, row, col = _adv(source, i, 2, row, col)
             continue
-        if c == '{' and source[i + 1:i + 2] == '{':
+        if not spec and c == '{' and source[i + 1:i + 2] == '{':
             i, row, col = _adv(source, i, 2, row, col)
             continue
-        if c == '}' and source[i + 1:i + 2] == '}':
+        if not spec and c == '}' and source[i + 1:i + 2] == '}':
             i, row, col = _adv(source, i, 2, row, col)
             continue
+        if c == '\n' and not multi and not spec:
+            _syntax('f-string: unterminated string')
         if c == '{':
             if text_start < i:
-                parts.append(Constant(value=_ftext(source, text_start, i, raw),
+                parts.append(Constant(value=_ftext(source, text_start, i, raw, not spec),
                                       lineno=text_srow, col_offset=text_scol,
                                       end_lineno=row, end_col_offset=col))
-            fv, i, row, col = _formatted(source, i, row, col, raw)
+            fv, i, row, col = _formatted(source, i, row, col, raw, multi)
             parts.append(fv)
             text_start = i
             text_srow, text_scol = row, col
             continue
         i, row, col = _adv(source, i, 1, row, col)
     if text_start < seg_end:
-        parts.append(Constant(value=_ftext(source, text_start, seg_end, raw),
+        parts.append(Constant(value=_ftext(source, text_start, seg_end, raw, not spec),
                               lineno=text_srow, col_offset=text_scol,
                               end_lineno=row, end_col_offset=col))
     return parts
 
-def _formatted(source, i, row, col, raw):
+def _formatted(source, i, row, col, raw, multi):
     # i at the '{' opening a replacement field; answers the FormattedValue
     # node, the index just past its '}', and the position there. The
     # node covers its braces; a format spec is a JoinedStr starting at
-    # the ':' and ending where the field's '}' stands.
+    # the ':' and ending where the field's '}' stands. A field may span
+    # lines; its spec may not unless the f-string is triple-quoted.
     srow, scol = row, col
     i, row, col = _adv(source, i, 1, row, col)
     expr_start = i
@@ -968,6 +994,8 @@ def _formatted(source, i, row, col, raw):
                 if c2 == '\\':
                     i, row, col = _adv(source, i, 2, row, col)
                     continue
+                if c2 == '\n' and not multi:
+                    _syntax('f-string: newlines are not allowed in format specifiers for single quoted f-strings')
                 if c2 == '{':
                     sdepth += 1
                     i, row, col = _adv(source, i, 1, row, col)
@@ -985,7 +1013,7 @@ def _formatted(source, i, row, col, raw):
     value = _parse_field_expr(source, expr_start, expr_end, esrow, escol)
     spec = None
     if spec_start >= 0:
-        values = _joined_values(source, spec_start, i, body_srow, body_scol, raw)
+        values = _joined_values(source, spec_start, i, body_srow, body_scol, raw, True, multi)
         spec = JoinedStr(values=values, lineno=spec_srow, col_offset=spec_scol,
                          end_lineno=row, end_col_offset=col)
     node = FormattedValue(value=value, conversion=conv, format_spec=spec,
@@ -1159,33 +1187,41 @@ class _Parser:
 
     def parse_comparison(self):
         node, ls, le = self.parse_arith()
-        tok = self.peek()
-        op = None
-        if tok.kind == 'op' and tok.text in _CMPOPS:
-            self.pop()
-            op = _CMPOPS[tok.text]()
-        elif self.at_name('is'):
-            self.pop()
-            if self.at_name('not'):
+        ops = []
+        comparators = []
+        while True:
+            tok = self.peek()
+            op = None
+            if tok.kind == 'op' and tok.text in _CMPOPS:
                 self.pop()
-                op = IsNot()
-            else:
-                op = Is()
-        elif self.at_name('in'):
-            self.pop()
-            op = In()
-        elif self.at_name('not'):
-            self.pop()
-            if not self.at_name('in'):
-                _syntax('invalid syntax')
-            self.pop()
-            op = NotIn()
-        if op is None:
+                op = _CMPOPS[tok.text]()
+            elif self.at_name('is'):
+                self.pop()
+                if self.at_name('not'):
+                    self.pop()
+                    op = IsNot()
+                else:
+                    op = Is()
+            elif self.at_name('in'):
+                self.pop()
+                op = In()
+            elif self.at_name('not'):
+                self.pop()
+                if not self.at_name('in'):
+                    _syntax('invalid syntax')
+                self.pop()
+                op = NotIn()
+            if op is None:
+                break
+            right, rs, le = self.parse_arith()
+            ops.append(op)
+            comparators.append(right)
+        if not ops:
             return (node, ls, le)
-        right, rs, re = self.parse_arith()
-        node = Compare(left=node, ops=[op], comparators=[right], lineno=ls[0],
-                       col_offset=ls[1], end_lineno=re[0], end_col_offset=re[1])
-        return (node, ls, re)
+        node = Compare(left=node, ops=ops, comparators=comparators,
+                       lineno=ls[0], col_offset=ls[1],
+                       end_lineno=le[0], end_col_offset=le[1])
+        return (node, ls, le)
 
     def parse_arith(self):
         node, ls, le = self.parse_term()
@@ -1459,14 +1495,18 @@ class _Parser:
         pieces = []
         for tok in toks:
             if tok.kind == 'str':
-                pieces.append(Constant(value=tok.value, lineno=tok.srow,
-                                       col_offset=tok.scol,
+                kind = None
+                if 'u' in tok.prefix:
+                    kind = 'u'
+                pieces.append(Constant(value=tok.value, kind=kind,
+                                       lineno=tok.srow, col_offset=tok.scol,
                                        end_lineno=tok.erow,
                                        end_col_offset=tok.ecol))
             else:
                 raw = 'r' in tok.prefix
                 values = _joined_values(self.source, tok.cs, tok.ce,
-                                        tok.cs_row, tok.cs_col, raw)
+                                        tok.cs_row, tok.cs_col, raw, False,
+                                        len(tok.quote) == 3)
                 for value in values:
                     pieces.append(value)
         values = []
@@ -1474,6 +1514,7 @@ class _Parser:
             if values and type(values[-1]) == Constant and type(piece) == Constant:
                 prev = values[-1]
                 values[-1] = Constant(value=prev.value + piece.value,
+                                      kind=prev.kind,
                                       lineno=prev.lineno,
                                       col_offset=prev.col_offset,
                                       end_lineno=piece.end_lineno,
