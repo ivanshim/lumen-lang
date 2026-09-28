@@ -17282,7 +17282,8 @@ impl Engine<'_> {
                 }
                 let held = args[0].contents();
                 let id = match &held {
-                    Value::Array(a) | Value::Tuple(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Array(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Tuple(a) => a.as_ptr() as usize as u64,
                     Value::Set(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Map(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Text(a) => a.as_ptr() as usize as u64,
