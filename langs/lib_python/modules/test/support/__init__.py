@@ -292,7 +292,11 @@ def findfile(filename, subdir=None):
         return filename
     if subdir is not None:
         filename = os.path.join(subdir, filename)
-    path = [TEST_HOME_DIR] + sys.path
+    # Beside the reference files themselves, test data a reference test
+    # reaches for lives with the embedded test package, laid out as the
+    # reference lays it out beside its own tests.
+    embedded_test_home = os.path.dirname(os.path.dirname(__file__))
+    path = [TEST_HOME_DIR, embedded_test_home] + sys.path
     for dn in path:
         fn = os.path.join(dn, filename)
         if os.path.exists(fn): return fn

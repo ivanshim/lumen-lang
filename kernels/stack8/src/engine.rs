@@ -18706,15 +18706,18 @@ impl Engine<'_> {
         Ok(Rc::from(decoded))
     }
 
-    fn source_escape_warnings(&mut self, source: &str, file: &str) -> Res<()> {
+    fn source_escape_warnings(&mut self, source: &str, file: &str, module_hint: Option<&str>) -> Res<()> {
         let warnings = crate::lex::escape_warnings(source, self.lang);
         if warnings.is_empty() { return Ok(()); }
         let route = self.lang.escape_warning.clone();
         let module = self.route_module(&route[0])?;
-        let Some(handler) = self.member_of(module, &route[1])? else { return Err(self.source_unready()); };
-        let Some(category) = self.native_exceptions.get(&route[2]).cloned() else { return Err(self.source_unready()); };
+        let Some(handler) = self.member_of(module, &route[1])? else { return Err(self.source_unready()) };
+        let Some(category) = self.native_exceptions.get(&route[2]).cloned() else { return Err(self.source_unready()) };
+        // The module the warning belongs to is the one the text runs
+        // under where that is named, else the one its file spells.
+        let named = match module_hint { Some(named) => Value::text(named), None => Value::Null };
         for (message, line) in warnings {
-            if let Err(words) = self.call_held(handler.clone(), vec![Value::text(&message), category.clone(), Value::text(file), Value::Small(line as i64)]) {
+            if let Err(words) = self.call_held(handler.clone(), vec![Value::text(&message), category.clone(), Value::text(file), Value::Small(line as i64), named.clone()]) {
                 if matches!(&self.carried, Some(Fault::Thrown(Value::Object(error))) if error.class_now().name == route[2]) {
                     self.carried = None;
                     let short = message.replace("Such sequences will not work in the future. ", "");
@@ -18749,7 +18752,7 @@ impl Engine<'_> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
-        self.source_escape_warnings(&source, &file)?;
+        self.source_escape_warnings(&source, &file, None)?;
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
         trial.allow_top_level_await = allow_top_await;
@@ -18757,7 +18760,7 @@ impl Engine<'_> {
             return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
         }
         for (message, row, column) in std::mem::take(&mut trial.warnings) {
-            self.syntax_warning(mode, &message, &file, row, column, &source)?;
+            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
         }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
@@ -18797,7 +18800,7 @@ impl Engine<'_> {
     /// written, said through the reference's warnings module, so that
     /// a filter the program set is honoured. One turning the warning
     /// into an error makes it the syntax fault the reference raises.
-    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: usize, column: usize, source: &str) -> Res<()> {
+    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: usize, column: usize, source: &str, module_hint: Option<&str>) -> Res<()> {
         let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
         let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
         let Some(kind_name) = self.lang.exceptions.get(27).cloned() else { return Ok(()) };
@@ -18813,7 +18816,10 @@ impl Engine<'_> {
             Err(Fault::Note(told)) => return Err(told),
             Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
         };
-        let handed = vec![Value::text(message), category, Value::text(file), Value::Small(row as i64)];
+        // The module the warning belongs to is the one the text runs
+        // under where that is named, else the one its file spells.
+        let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(row as i64)];
+        handed.push(match module_hint { Some(named) => Value::text(named), None => Value::Null });
         match self.class_apply(teller, handed) {
             Ok(_) => Ok(()),
             Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if o.class_now().named(&kind_name, false)) => {
@@ -18918,7 +18924,13 @@ impl Engine<'_> {
         if args.len() == 4 && !matches!(args[3], Value::Null) {
             return Err(if file.is_some() { "TypeError: cannot use a closure with this code object" } else { "TypeError: closure can only be used when source is a code object" }.into());
         }
-        if file.is_none() { self.source_escape_warnings(&source, "<string>")?; }
+        if file.is_none() {
+            let module_hint = args.get(1).map(Value::contents).and_then(|held| match held {
+                Value::Map(pairs) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(k) if k.as_ref() == "__name__")).and_then(|(_, kept)| match kept { Value::Text(named) => Some(named.to_string()), _ => None }),
+                _ => None,
+            });
+            self.source_escape_warnings(&source, "<string>", module_hint.as_deref())?;
+        }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_string() } else { source };
         let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {
@@ -18991,7 +19003,7 @@ impl Engine<'_> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await)?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await, None)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
     }
@@ -19083,7 +19095,8 @@ impl Engine<'_> {
             local.globe = Some(globe);
             local.born = Some(born);
         }
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await)?;
+        let module_hint = book_entry(&outer, "__name__").and_then(|held| match held.contents() { Value::Text(named) => Some(named.to_string()), _ => None });
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref())?;
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -19099,22 +19112,38 @@ impl Engine<'_> {
     /// one statement shown as it runs, which is an expression written
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
-    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool) -> Res<(Rc<Routine>, bool)> {
-        let amiss;
+    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool, module_hint: Option<&str>) -> Res<(Rc<Routine>, bool)> {
+        let mut amiss = (String::new(), 0, 0, (0, 0));
+        let mut noted = Vec::new();
+        let mut compiled = None;
         {
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
             registry.allow_top_level_await = top_await;
             if mode == 2 {
                 registry.value_only = true;
-                if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }
+                if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
+                    noted = std::mem::take(&mut registry.warnings);
+                    compiled = Some((program, true));
+                }
             }
-            registry.value_only = mode == 1;
-            match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
-                Ok(program) => return Ok((program, false)),
-                Err(said) => amiss = (said, registry.stopped_at, registry.stopped_column, (registry.stopped_end_row, registry.stopped_end)),
+            if compiled.is_none() {
+                registry.value_only = mode == 1;
+                match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
+                    Ok(program) => { noted = std::mem::take(&mut registry.warnings); compiled = Some((program, false)); }
+                    Err(said) => amiss = (said, registry.stopped_at, registry.stopped_column, (registry.stopped_end_row, registry.stopped_end)),
+                }
             }
         }
-        Err(self.text_syntax(mode, amiss.0, file, amiss.1, amiss.2, Some(amiss.3), source))
+        match compiled {
+            // What the reading noted about how the text is written is
+            // said once the reading stands, each warning through the
+            // warnings module under the name the text runs as.
+            Some((program, shown)) => {
+                for (message, row, column) in noted { self.syntax_warning(mode, &message, file, row, column, source, module_hint)?; }
+                Ok((program, shown))
+            }
+            None => Err(self.text_syntax(mode, amiss.0, file, amiss.1, amiss.2, Some(amiss.3), source)),
+        }
     }
 
     /// Run a text's program as standing in its file, and answer what it

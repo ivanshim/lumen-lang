@@ -18467,15 +18467,18 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn report_escape_notices(&mut self, code: &str, filename: &str) -> Result<(), String> {
+    fn report_escape_notices(&mut self, code: &str, filename: &str, module_hint: Option<&str>) -> Result<(), String> {
         let notices = crate::scan::escape_notices(code, self.table);
         if notices.is_empty() { return Ok(()); }
         let names = self.table.strings("ext.lexical.escape.warning").to_vec();
         let owner = self.load_namespace(&names[0])?;
         let report = self.attribute(&owner, &names[1]).ok_or_else(|| self.source_refused())?;
         let category = self.fault_kinds.get(&names[2]).cloned().ok_or_else(|| self.source_refused())?;
+        // The module the notice belongs to is the one the text runs
+        // under where that is named, else the one its file spells.
+        let spoken_as = match module_hint { Some(named) => Value::text(named), None => Value::Nil };
         for (words, row) in notices {
-            let arguments = vec![Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row))];
+            let arguments = vec![Value::text(&words), category.clone(), Value::text(filename), Value::Small(i64::from(row)), spoken_as.clone()];
             match self.core_run(&report, arguments) {
                 Ok(_) => {}
                 Err(failure) => {
@@ -18510,14 +18513,14 @@ impl<'a> Machine<'a> {
             return Err("ValueError: compile(): invalid optimize value".into());
         }
         let top_await = flags & 8192 != 0;
-        self.report_escape_notices(&source, &file)?;
+        self.report_escape_notices(&source, &file, None)?;
         let tokens = match self.text_tokens(&source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await, None, None)?;
         for (message, row, column) in &built.warnings {
-            self.syntax_warning(mode, message, &file, *row, *column, &source)?;
+            self.syntax_warning(mode, message, &file, *row, *column, &source, None)?;
         }
         let kind = self.code_blueprint();
         let flags = if built.program.generator { 128 } else { 0 };
@@ -18530,7 +18533,7 @@ impl<'a> Machine<'a> {
     /// the reference's warnings module so a filter the program set
     /// holds; one making it an error makes it the syntax fault the
     /// reference raises, placed at the line the reading noted.
-    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: u32, column: usize, source: &str) -> Result<(), String> {
+    fn syntax_warning(&mut self, mode: usize, message: &str, file: &str, row: u32, column: usize, source: &str, module_hint: Option<&str>) -> Result<(), String> {
         let words = self.table.strings("ext.system.syntax_warnings");
         let (Some(module_name), Some(teller_name)) = (words.first().cloned(), words.get(1).cloned()) else { return Ok(()) };
         let Some(kind_name) = self.table.strings("ext.builtin.exceptions").get(27).cloned() else { return Ok(()) };
@@ -18542,7 +18545,8 @@ impl<'a> Machine<'a> {
             Err(Escape::Error(told)) => return Err(told),
             Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
         };
-        let handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
+        let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
+        handed.push(match module_hint { Some(named) => Value::text(named), None => Value::Nil });
         match self.apply_class_member(teller, handed) {
             Ok(_) => Ok(()),
             Err(Escape::Thrown(Value::Thing(raised))) if raised.blueprint().goes_by(&kind_name, false) => {
@@ -18688,7 +18692,13 @@ impl<'a> Machine<'a> {
         if v.len() == 4 && !matches!(v[3], Value::Nil) {
             return Err(if file.is_some() { "TypeError: cannot use a closure with this code object" } else { "TypeError: closure can only be used when source is a code object" }.to_owned());
         }
-        if file.is_none() { self.report_escape_notices(&source, "<string>")?; }
+        if file.is_none() {
+            let spoken_as = v.get(1).map(Value::settled).and_then(|held| match held {
+                Value::Dict(pairs) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(k) if k.as_ref() == "__name__")).and_then(|(_, kept)| match kept { Value::Text(named) => Some(named.to_string()), _ => None }),
+                _ => None,
+            });
+            self.report_escape_notices(&source, "<string>", spoken_as.as_deref())?;
+        }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };
         let mut books = Vec::new();
@@ -18764,6 +18774,11 @@ impl<'a> Machine<'a> {
         };
         let seeded = self.idents.clone();
         let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None)?;
+        // What the build noted about how the text is written is said
+        // once the text stands, each warning through the warnings module.
+        for (message, row, column) in built.warnings.clone() {
+            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
+        }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         self.text_concluded(&built, &file, mode, shown)
@@ -18797,6 +18812,9 @@ impl<'a> Machine<'a> {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
+        for (message, row, column) in built.warnings.clone() {
+            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
+        }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         mine.cells.borrow_mut().resize(built.program.idents.len().max(names.len()), Value::Unset);
@@ -18845,6 +18863,13 @@ impl<'a> Machine<'a> {
             None => Value::Mutable(self.natives_kept(), true),
         };
         let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born))?;
+        // What the build noted about how the text is written is said
+        // under the name the handed globals give the text, each warning
+        // through the warnings module.
+        let spoken_as = looked_up(&outer, "__name__").and_then(|held| match held.settled() { Value::Text(named) => Some(named.to_string()), _ => None });
+        for (message, row, column) in built.warnings.clone() {
+            self.syntax_warning(mode, &message, &file, row, column, &source, spoken_as.as_deref())?;
+        }
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
