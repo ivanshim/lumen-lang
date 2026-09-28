@@ -206,6 +206,14 @@ fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
         }
         if t.shape == Shape::LineEnd {
             if opened.is_empty() {
+                if let Some((head, line)) = &line_start {
+                    if head == "case" && widths.len() == 1 {
+                        let words: Vec<&Token> = input.iter().filter(|item| item.row == *line && !matches!(item.shape, Shape::Lead | Shape::LineEnd)).collect();
+                        if words.get(1).is_some_and(|next| next.lexeme != ":") && words.iter().any(|item| item.lexeme == ":") {
+                            return Err(("SyntaxError: case statement must be inside match statement".to_owned(), *line, words[0].column));
+                        }
+                    }
+                }
                 if tail == ":" { pending = line_start.clone(); }
                 output.push(t.clone());
             }

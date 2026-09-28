@@ -2300,6 +2300,10 @@ impl<'a> Builder<'a> {
 
     fn plain_or_kind(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.look().lexeme == "case" && self.glance(1).lexeme != ":" {
+                let arm = self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|token| token.lexeme == ":");
+                if arm { return Err("SyntaxError: case statement must be inside match statement".to_owned()); }
+            }
             if self.look().lexeme == "lazy" && ["import", "from"].contains(&self.glance(1).lexeme.as_str()) {
                 let from = self.glance(1).lexeme == "from";
                 let disallowed = if self.in_class_body() { Some("inside classes") }

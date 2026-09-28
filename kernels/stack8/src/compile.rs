@@ -2089,6 +2089,10 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if !lang.syntax_members.is_empty() {
             let word = self.look().lexeme.clone();
+            if word == "case" && self.look_ahead(1).lexeme != ":" {
+                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|item| item.lexeme == ":");
+                if has_arm { return Err("SyntaxError: case statement must be inside match statement".into()); }
+            }
             if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {
                 let from = self.look_ahead(1).lexeme == "from";
                 let complaint = if self.in_class_body() { Some("inside classes") }
