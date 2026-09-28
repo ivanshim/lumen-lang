@@ -9166,6 +9166,9 @@ impl<'a> Builder<'a> {
             if mapped && !spreading {
                 self.need_sign(self.table.single("syntax.map.pair").unwrap(), "between the key and its value")?;
                 beginning = self.pos;
+                if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
+                    return Err(String::from("SyntaxError: cannot use a starred expression in a dictionary value"));
+                }
                 let right = self.expr(0)?;
                 item = prim_call(Prim::Couple, vec![item, right]);
             }

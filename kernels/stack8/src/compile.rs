@@ -9774,6 +9774,9 @@ impl<'a> Compiler<'a> {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a map key and value")?;
                 item_at = self.pos;
+                if !self.lang.syntax_members.is_empty() && self.at_symbol("*") {
+                    return Err("SyntaxError: cannot use a starred expression in a dictionary value".into());
+                }
                 self.expr(0)?;
                 self.act(Action::Tie, 2);
             }
