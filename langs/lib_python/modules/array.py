@@ -35,8 +35,3 @@ class array:
         if self.typecode == 'B':
             return bytes(self.data)
         raise 'NotImplementedError: array byte buffers are not supported'
-
-    def __float__(self):
-        if self.typecode != 'B':
-            raise TypeError('float() argument must be a string or a real number, not array')
-        return float(self.tobytes())
