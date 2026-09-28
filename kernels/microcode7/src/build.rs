@@ -2779,6 +2779,10 @@ impl<'a> Builder<'a> {
             self.pos = statement_at;
             return Err(String::from("SyntaxError: from __future__ imports must occur at the beginning of the file"));
         }
+        if self.table.has_any("ext.builtin.exceptions.syntax")
+            && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+            return Err(String::from("SyntaxError: Expected one or more names after 'import'"));
+        }
         let enclosed = taking_names && self.on_any("syntax.group.open");
         if enclosed {
             self.advance();

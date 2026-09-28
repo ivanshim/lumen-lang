@@ -2969,6 +2969,9 @@ impl<'a> Compiler<'a> {
             self.pos = import_at;
             return Err("SyntaxError: from __future__ imports must occur at the beginning of the file".into());
         }
+        if !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+            return Err("SyntaxError: Expected one or more names after 'import'".into());
+        }
         let group = lang.grouping.as_ref().filter(|g| from && self.at_symbol(&g.open));
         if group.is_some() {
             self.take();
