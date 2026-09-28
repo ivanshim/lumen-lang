@@ -10278,6 +10278,10 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
             if labelled { self.pos += 2; }
+            if tagged && !self.lang.syntax_members.is_empty()
+                && (self.at_symbol(&pair.close) || pair.between.as_ref().is_some_and(|sep| self.at_symbol(sep))) {
+                return Err("SyntaxError: expected argument value expression".into());
+            }
             self.expr(0)?;
             if tagged || spread { self.act(Action::Tie, 2); }
             if self.lang.bind_names {

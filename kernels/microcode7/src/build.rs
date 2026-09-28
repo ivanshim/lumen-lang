@@ -9641,6 +9641,10 @@ impl<'a> Builder<'a> {
                     _ => {}
                 }
             }
+            if label && bind && self.table.has_any("ext.builtin.exceptions.syntax")
+                && (self.sign(&close) || sep.as_ref().is_some_and(|mark| self.sign(mark))) {
+                return Err(String::from("SyntaxError: expected argument value expression"));
+            }
             let value = self.expr(0)?;
             let named = matches!(tag, Some(Value::Text(_) | Value::Flag(true)));
             let argument = match tag {
