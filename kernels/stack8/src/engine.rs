@@ -6936,9 +6936,12 @@ impl<'a> Engine<'a> {
                 self.builtin(op, &word, &mut settled)?
             }
             // Rounding is the thing's own where it has a method for it,
-            // given the places if any were asked.
+            // given the places if any were asked; a places count of None
+            // asks the method with no count at all, exactly as none
+            // handed over does.
             Builtin::Round if matches!(args.first(), Some(Value::Object(_))) => {
-                match self.special_call(&args[0], 73, args[1..].to_vec())? { Some(answer) => answer, None => return Ok(None) }
+                let asked: Vec<Value> = if matches!(args.get(1), Some(Value::Null)) { Vec::new() } else { args[1..].to_vec() };
+                match self.special_call(&args[0], 73, asked)? { Some(answer) => answer, None => return Ok(None) }
             }
             // Division with remainder asks the left thing, then the right
             // one reflected; power with a modulus likewise, the modulus

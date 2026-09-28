@@ -11644,11 +11644,15 @@ impl<'a> Machine<'a> {
                 self.prim(operation, &word, &[whole])?
             }
             // Rounding is the thing's own where it has the method, given
-            // the places if any were asked.
-            (Prim::Rounded, [item @ Value::Thing(_), places @ ..]) => match self.ask_special(item, 73, places)? {
-                Some(answer) => answer,
-                None => return Ok(None),
-            },
+            // the places if any were asked; a places count of None asks
+            // with no count at all, exactly as none handed over does.
+            (Prim::Rounded, [item @ Value::Thing(_), rest @ ..]) => {
+                let places: &[Value] = if matches!(rest, [Value::Nil]) { &[] } else { rest };
+                match self.ask_special(item, 73, places)? {
+                    Some(answer) => answer,
+                    None => return Ok(None),
+                }
+            }
             // Division with remainder asks the left thing, then the right
             // one reflected; refused by both, it is refused by name.
             (Prim::QuotRem, [left, right]) if operands.iter().any(|v| matches!(v, Value::Thing(_))) => {
