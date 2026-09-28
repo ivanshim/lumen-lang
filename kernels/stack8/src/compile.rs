@@ -9577,6 +9577,14 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             self.take();
+            if !lang.syntax_members.is_empty() && self.at_symbol("*") {
+                let next = self.look_ahead(1).lexeme.as_str();
+                let empty = next == index.close || next == ":";
+                let starred_slice = next == "(" && self.tokens[self.pos + 2..].iter()
+                    .take_while(|word| word.lexeme != ")")
+                    .any(|word| word.lexeme == ":");
+                if empty || starred_slice { return Err("SyntaxError: Invalid star expression".into()); }
+            }
             let began = self.mark();
             let separator = self.lang.calling.as_ref().and_then(|b| b.between.clone());
             self.slice_part(&index.close, separator.as_deref())?;
@@ -10149,6 +10157,10 @@ impl<'a> Compiler<'a> {
             let spread = marker && self.lang.bind_names && !labelled
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
+            if spread && !named_spread && !self.lang.syntax_members.is_empty()
+                && matches!(self.look_ahead(1).lexeme.as_str(), ")" | ":") {
+                return Err("SyntaxError: Invalid star expression".into());
+            }
             if let [follows, unpacking, spread_late] = self.lang.call_order.as_slice() {
                 if !tagged && !named_spread && after_pairs {
                     return Err(if spread { spread_late.clone() } else { format!("{follows}{unpacking}") });

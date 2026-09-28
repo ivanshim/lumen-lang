@@ -8983,6 +8983,14 @@ impl<'a> Builder<'a> {
                 continue;
             }
             self.advance();
+            if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
+                let next = self.glance(1).lexeme.as_str();
+                let incomplete = next == close || next == ":";
+                let slice_in_group = next == "(" && self.tokens[self.pos + 2..].iter()
+                    .take_while(|token| token.lexeme != ")")
+                    .any(|token| token.lexeme == ":");
+                if incomplete || slice_in_group { return Err(String::from("SyntaxError: Invalid star expression")); }
+            }
             let separator = self.table.single("syntax.call.separator");
             let mut keys = vec![self.bracket_part(close, separator)?];
             let several = self.table.has_any("ext.op.index.slice") && separator.map_or(false, |word| self.sign(word));
@@ -9518,6 +9526,10 @@ impl<'a> Builder<'a> {
                 if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
                 else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }
                 if tag.is_some() { self.advance(); }
+            }
+            if bind && matches!(tag, Some(Value::Flag(false)))
+                && matches!(self.look().lexeme.as_str(), ")" | ":") {
+                return Err(String::from("SyntaxError: Invalid star expression"));
             }
             if bind && misplaced.len() == 3 {
                 match &tag {
