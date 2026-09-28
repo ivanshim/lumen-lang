@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use num_bigint::BigInt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use num_traits::{ToPrimitive, Zero};
 
@@ -289,6 +289,7 @@ pub struct Machine<'a> {
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
+    generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     code_handles: HashMap<usize, (Rc<Routine>, Value)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
@@ -1249,6 +1250,7 @@ impl<'a> Machine<'a> {
             gathering_locals: None,
             extent: None,
             activation_kind: None,
+            generator_frames: HashMap::new(),
             code_handles: HashMap::new(),
             holding_fault: Vec::new(),
             holding_below: 0,
@@ -3499,7 +3501,10 @@ impl<'a> Machine<'a> {
             };
             match waited {
                 Some(Value::Generator(inner)) => {
+                    let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
+                    let saved = std::mem::replace(&mut self.active_trace, parent);
                     let stepped = self.step_into(&inner, Value::Nil, Some(value), given);
+                    self.active_trace = saved;
                     let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
                     match stepped {
                         Ok(Some(item)) => return Ok(Some(item)),
@@ -3522,7 +3527,11 @@ impl<'a> Machine<'a> {
                         // that is what the reference hands it.
                         (Some(thing), Some((body, scope))) => {
                             let arguments = std::iter::once(thing).chain(if given.is_empty() { vec![value] } else { given.to_vec() }).collect();
-                            match self.invoke(body, scope, arguments) {
+                            let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
+                            let saved = std::mem::replace(&mut self.active_trace, parent);
+                            let invoked = self.invoke(body, scope, arguments);
+                            self.active_trace = saved;
+                            match invoked {
                                 Ok(handed) => return Ok(Some(handed)),
                                 Err(Escape::Thrown(raised)) if matches!(&raised, Value::Thing(thing) if self.is_stop_kind(&thing.blueprint())) => {
                                     Self::finish_walk(&walk);
@@ -4133,7 +4142,7 @@ impl<'a> Machine<'a> {
         let words = self.table.strings("ext.builtin.exceptions.traceback").to_vec();
         if words.len() <= 15 { return None; }
         if self.activation_kind.is_none() {
-            self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: None, presentation: None,
+            self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: None, presentation: Some(format!("<class '{}'>", words[9])),
                 parents: Vec::new(), ancestry: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                 answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }));
         }
@@ -4153,13 +4162,24 @@ impl<'a> Machine<'a> {
 
     pub(super) fn activation_member(&mut self, value: &Value, key: &str) -> Option<Value> {
         let words = self.table.strings("ext.builtin.exceptions.traceback");
+        if key == "clear" {
+            if let Value::Thing(item) = value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    return Some(Value::Member(Rc::new(value.clone()), key.to_string()));
+                }
+            }
+        }
         let index = words.iter().position(|word| word == key)?;
         match value {
-            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24) => {
+            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 25) => {
+                if index == 25 && cell.try_borrow().is_err() { return Some(Value::text("GEN_RUNNING")); }
                 if index == 23 { return Some(Value::Flag(cell.try_borrow().is_err())); }
                 if index == 24 && cell.try_borrow().is_err() { return Some(Value::Nil); }
                 let state = cell.try_borrow().ok()?;
                 if index == 24 { return Some(state.inner.clone().unwrap_or(Value::Nil)); }
+                if index == 25 {
+                    return Some(Value::text(if state.ended { "GEN_CLOSED" } else if state.begun { "GEN_SUSPENDED" } else { "GEN_CREATED" }));
+                }
                 if matches!(index, 21 | 22) { return Some(Value::Flag(state.begun && !state.ended)); }
                 if matches!(index, 14 | 19 | 20) {
                     if let Some(item) = &state.trace_state {
@@ -7294,6 +7314,27 @@ impl<'a> Machine<'a> {
             }
             return Ok(Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(copy))])));
         }
+        if name == "clear" {
+            if let Value::Thing(item) = receiver.settled() {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                    if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&item) as usize)).and_then(Weak::upgrade) {
+                        self.shut_generator(&walk)?;
+                        return Ok(Value::Nil);
+                    }
+                    let mut holds = item.holds.borrow_mut();
+                    if let Value::Bound(_, environment) = &holds[5].1 {
+                        for place in environment.cells.borrow_mut().iter_mut() {
+                            if let Value::Shared(cell) = place { *cell.borrow_mut() = Value::Unset; }
+                            *place = Value::Unset;
+                        }
+                    }
+                    holds[3].1 = Value::Nil;
+                    holds[6].1 = Value::Nil;
+                    return Ok(Value::Nil);
+                }
+            }
+        }
         if let Value::Attributes(owner) = receiver.settled() {
             let snapshot = Self::attribute_entries(&owner);
             let storage = Rc::new(RefCell::new(Value::Dict(Rc::new(snapshot.into()))));
@@ -8805,7 +8846,11 @@ impl<'a> Machine<'a> {
         state.titles[0] = self.read_class_member(callable.clone(), &self.detail("name").to_owned(), true)?.bare();
         state.titles[1] = self.read_class_member(callable, &self.detail("qualified").to_owned(), true)?.bare();
         state.trace_state = self.activation(program, &state.frame, None);
-        Ok(Value::Generator(Rc::new(RefCell::new(state))))
+        let walk = Rc::new(RefCell::new(state));
+        if let Some(frame) = &walk.borrow().trace_state {
+            self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
+        }
+        Ok(Value::Generator(walk))
     }
 
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
@@ -8993,7 +9038,11 @@ impl<'a> Machine<'a> {
                     if p.generator && self.table.flag("ext.stmt.yield.suspends") {
                         let mut suspension = Suspension::body(&p, f.clone());
                         suspension.trace_state = self.activation(&p, &f, None);
-                        break Ok(Value::Generator(Rc::new(RefCell::new(suspension))));
+                        let walk = Rc::new(RefCell::new(suspension));
+                        if let Some(frame) = &walk.borrow().trace_state {
+                            self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
+                        }
+                        break Ok(Value::Generator(walk));
                     }
                     program = p;
                     frame = f;
