@@ -2090,7 +2090,11 @@ impl<'a> Compiler<'a> {
         if !lang.syntax_members.is_empty() {
             let word = self.look().lexeme.clone();
             if word == "case" && self.look_ahead(1).lexeme != ":" {
-                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|item| item.lexeme == ":");
+                let mut depth = 0usize;
+                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|item| {
+                    match item.lexeme.as_str() { "(" | "[" | "{" => depth += 1, ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {} }
+                    item.lexeme == ":" && depth == 0
+                });
                 if has_arm { return Err("SyntaxError: case statement must be inside match statement".into()); }
             }
             if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {

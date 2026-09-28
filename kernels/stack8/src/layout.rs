@@ -214,7 +214,12 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
             Shape::LineEnd => {
                 if let Some(start) = first.filter(|start| start.lexeme == "case" && indents.len() == 1) {
                     let line: Vec<&Token> = tokens.iter().filter(|part| part.row == start.row && !matches!(part.shape, Shape::Lead | Shape::LineEnd)).collect();
-                    if line.get(1).is_some_and(|next| next.lexeme != ":") && line.iter().any(|part| part.lexeme == ":") {
+                    let mut inside = 0usize;
+                    let arm = line.iter().any(|part| {
+                        match part.lexeme.as_str() { "(" | "[" | "{" => inside += 1, ")" | "]" | "}" => inside = inside.saturating_sub(1), _ => {} }
+                        part.lexeme == ":" && inside == 0
+                    });
+                    if line.get(1).is_some_and(|next| next.lexeme != ":") && arm {
                         return Err(("SyntaxError: case statement must be inside match statement".into(), start.row, start.column));
                     }
                 }
