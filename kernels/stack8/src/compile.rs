@@ -2089,6 +2089,10 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if !lang.syntax_members.is_empty() {
             let word = self.look().lexeme.clone();
+            if word == "elso" && self.look_ahead(1).lexeme == ":"
+                && self.look_ahead(2).shape == Shape::LineEnd {
+                return Err("SyntaxError: invalid syntax. Did you mean 'else'?".into());
+            }
             if word == "case" && self.look_ahead(1).lexeme != ":" {
                 let mut depth = 0usize;
                 let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|item| {

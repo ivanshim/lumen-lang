@@ -2300,6 +2300,10 @@ impl<'a> Builder<'a> {
 
     fn plain_or_kind(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.look().lexeme == "elso" && self.glance(1).lexeme == ":"
+                && self.glance(2).shape == Shape::LineEnd {
+                return Err(String::from("SyntaxError: invalid syntax. Did you mean 'else'?"));
+            }
             if self.look().lexeme == "case" && self.glance(1).lexeme != ":" {
                 let mut nested = 0usize;
                 let arm = self.tokens.iter().skip(self.pos + 1).take_while(|token| !matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|token| {
