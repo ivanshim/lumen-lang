@@ -12288,6 +12288,9 @@ impl<'a> Engine<'a> {
 
     /// A steady merge sort: members are split, each half ordered, and
     /// then merged back so that equal weights keep the order they had.
+    /// The comparison asks whether the element that should move forward
+    /// is below the other, matching the order the old insertion sort
+    /// used and the messages CPython gives for incomparable keys.
     fn steady_sort(&mut self, ranked: &mut [(Value, Value)], backwards: bool) -> Res<()> {
         let len = ranked.len();
         if len <= 1 { return Ok(()); }
@@ -12297,14 +12300,14 @@ impl<'a> Engine<'a> {
         let mut merged = Vec::with_capacity(len);
         let (mut i, mut j) = (0, mid);
         while i < mid && j < len {
-            let (left, right) = if backwards { (&ranked[j].0, &ranked[i].0) } else { (&ranked[i].0, &ranked[j].0) };
+            let (left, right) = if backwards { (&ranked[i].0, &ranked[j].0) } else { (&ranked[j].0, &ranked[i].0) };
             let below = self.special_dyad(&Action::Lt, left, right)?;
             if self.special_truth(&below)? {
-                merged.push(ranked[i].clone());
-                i += 1;
-            } else {
                 merged.push(ranked[j].clone());
                 j += 1;
+            } else {
+                merged.push(ranked[i].clone());
+                i += 1;
             }
         }
         while i < mid { merged.push(ranked[i].clone()); i += 1; }

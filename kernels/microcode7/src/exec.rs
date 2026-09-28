@@ -7543,6 +7543,9 @@ impl<'a> Machine<'a> {
 
     /// A steady merge sort: members are split, each half ordered, and
     /// then merged back so that equal weights keep the order they had.
+    /// The comparison asks whether the element that should move forward
+    /// is below the other, matching the order the old insertion sort
+    /// used and the messages CPython gives for incomparable keys.
     fn arrange_sort(&mut self, weighed: &mut [(Value, Value)], reverse: bool) -> Result<(), String> {
         let len = weighed.len();
         if len <= 1 { return Ok(()); }
@@ -7552,14 +7555,14 @@ impl<'a> Machine<'a> {
         let mut merged = Vec::with_capacity(len);
         let (mut i, mut j) = (0, mid);
         while i < mid && j < len {
-            let both = if reverse { [weighed[j].0.clone(), weighed[i].0.clone()] } else { [weighed[i].0.clone(), weighed[j].0.clone()] };
+            let both = if reverse { [weighed[i].0.clone(), weighed[j].0.clone()] } else { [weighed[j].0.clone(), weighed[i].0.clone()] };
             let below = self.prim(Prim::Lt, "", &both)?;
             if self.object_truth(&below)? {
-                merged.push(weighed[i].clone());
-                i += 1;
-            } else {
                 merged.push(weighed[j].clone());
                 j += 1;
+            } else {
+                merged.push(weighed[i].clone());
+                i += 1;
             }
         }
         while i < mid { merged.push(weighed[i].clone()); i += 1; }
