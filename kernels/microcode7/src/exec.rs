@@ -749,10 +749,21 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn recursion_ceiling(&self) -> Option<usize> {
+        let original = self.table.count("ext.system.recursion.limit");
+        let [module, binding] = self.table.strings("ext.system.recursion.variable") else { return original };
+        let Some(Value::Thing(namespace)) = self.imported.get(module) else { return original };
+        let held = namespace.holds.borrow();
+        held.iter().find(|(key, _)| key == binding).and_then(|(_, item)| match item.settled() {
+            Value::Small(number) => usize::try_from(number).ok(),
+            _ => None,
+        }).or(original)
+    }
+
     /// One more call under way, unless the table's limit on them is
     /// reached already, when the words it gives for that are the fault.
     fn deeper(&mut self) -> Result<(), Escape> {
-        if let (Some(limit), Some(words)) = (self.table.count("ext.system.recursion.limit"), self.table.single("ext.system.recursion.exceeded")) {
+        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), self.table.single("ext.system.recursion.exceeded")) {
             if self.standing >= limit { return Err(format!("\0{words}").into()); }
         }
         self.standing += 1;
@@ -4111,6 +4122,9 @@ impl<'a> Machine<'a> {
             }
             Value::Thing(item) if self.activation_kind.as_ref().map_or(false, |kind| Rc::ptr_eq(kind, &item.blueprint())) => {
                 if index == 13 { return Some(Value::Shared(self.book_about(true))); }
+                if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
+                    return Some(Value::Nil);
+                }
                 if index != 12 { return None; }
                 self.update_activation_locals(item);
                 Some(item.holds.borrow()[3].1.clone())
@@ -7011,7 +7025,7 @@ impl<'a> Machine<'a> {
     /// kind at all.
     fn kind_word_of(&self, value: &Value) -> Option<String> {
         match value {
-            Value::Blueprint(class) => Some(class.name.clone()),
+            Value::Blueprint(class) => Some(self.full_class_name(class)),
             Value::KindOf(kind) => Some(Value::word_for_kind(*kind).to_string()),
             Value::OctetKind { changeable, .. } => Some(self.octet_kind_word(*changeable).to_string()),
             Value::Intrinsic(op, word) if op.names_a_kind() => Some(word.to_string()),
@@ -7153,6 +7167,29 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "code_replace" {
+            let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready()) };
+            let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err(self.class_unready()) };
+            if !arguments.is_empty() { return Err(Escape::Error(String::from("TypeError: code.replace() takes no positional arguments"))); }
+            let line_word = self.table.strings("ext.stmt.class.detail.code.replace").get(1).map(String::as_str).unwrap_or("");
+            let mut copy = (**body).clone();
+            for (keyword, value) in keywords {
+                if keyword == line_word {
+                    if !matches!(value.settled(), Value::Octets { .. }) { return Err(Escape::Error(String::from("TypeError: co_linetable must be bytes"))); }
+                    copy.lineless = true;
+                    continue;
+                }
+                match (keyword.as_str(), value.settled()) {
+                    ("co_name", Value::Text(text)) => copy.ident = text.to_string(),
+                    ("co_qualname", Value::Text(text)) => copy.qualification = text.to_string(),
+                    ("co_filename", Value::Text(text)) => copy.written_in = Some(text),
+                    ("co_firstlineno", Value::Small(line)) if line > 0 => copy.declared_on = line as u32,
+                    ("co_flags", Value::Small(flags)) => copy.flags = flags,
+                    _ => return Err(Escape::Error(format!("TypeError: code.replace() got an unexpected keyword argument '{keyword}'"))),
+                }
+            }
+            return Ok(Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(copy))])));
+        }
         if let Value::Attributes(owner) = receiver.settled() {
             let snapshot = owner.holds.borrow().iter().filter_map(|(word, item)| {
                 if word.starts_with('\0') || matches!(item, Value::Unset) { None }
@@ -10451,7 +10488,7 @@ impl<'a> Machine<'a> {
         if !matches!(subject, Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Set(_)) {
             return self.object_words_inner(subject, quoted);
         }
-        let ceiling = self.table.count("ext.system.recursion.limit");
+        let ceiling = self.recursion_ceiling();
         if ceiling.is_some_and(|limit| self.standing >= limit) {
             if let Some(told) = self.table.single("ext.system.recursion.exceeded") {
                 return Err(format!("\0{told}"));
@@ -10491,7 +10528,7 @@ impl<'a> Machine<'a> {
                 return Ok(self.show(std::slice::from_ref(&whole)));
             }
             if matches!(&inner, Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) {
-                let ceiling = self.table.count("ext.system.recursion.limit");
+                let ceiling = self.recursion_ceiling();
                 if ceiling.is_some_and(|limit| self.standing >= limit) {
                     if let Some(words) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{words}")); }
                 }
@@ -11871,7 +11908,7 @@ impl<'a> Machine<'a> {
     }
 
     fn compare_sequences(&mut self, operation: Prim, first: &Value, second: &Value) -> Result<Value, String> {
-        if self.table.count("ext.system.recursion.limit").is_some_and(|n| self.standing >= n) {
+        if self.recursion_ceiling().is_some_and(|n| self.standing >= n) {
             if let Some(message) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{message}")); }
         }
         self.standing += 1;

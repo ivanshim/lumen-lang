@@ -913,6 +913,43 @@ impl<'a> Engine<'a> {
         let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with('\0') && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
         if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) }
     }
+    pub(super) fn qualified_class(&self, class: &Class) -> String {
+        let fields = class.shared.borrow();
+        let module = fields.iter().find(|(key, _)| key == self.class_word("module")).map(|(_, value)| value.plain());
+        let local = fields.iter().find(|(key, _)| key == self.class_word("qualified")).map(|(_, value)| value.plain()).unwrap_or_else(|| class.name.clone());
+        module.map_or(local.clone(), |prefix| format!("{prefix}.{local}"))
+    }
+
+    fn attribute_from_hook(&self, failure: Fault, subject: &Value, name: &str) -> Fault {
+        let Fault::Thrown(Value::Object(error)) = &failure else { return failure };
+        if !self.attribute_fault(&failure) { return failure; }
+        let qualified = match subject {
+            Value::Class(class) => format!("type object '{}' has no attribute '{name}'", self.qualified_class(class)),
+            Value::Object(instance) if instance.class_now().name == "ModuleType" => {
+                let fields = instance.fields.borrow();
+                let label = fields.iter().find(|(key, _)| key == "__name__").and_then(|(_, value)| match value.contents() { Value::Text(word) => Some(word.to_string()), _ => None });
+                label.map_or_else(|| format!("module has no attribute '{name}'"), |label| format!("module '{label}' has no attribute '{name}'"))
+            }
+            Value::Object(instance) => format!("'{}' object has no attribute '{name}'", self.qualified_class(&instance.class_now())),
+            _ => return failure,
+        };
+        let mut fields = error.fields.borrow_mut();
+        let arguments = fields.iter().find(|(key, _)| key == "\0arguments").and_then(|(_, value)| match value { Value::Tuple(items) => Some(items.clone()), _ => None });
+        let use_default = arguments.as_ref().is_some_and(|items| items.is_empty() || items.len() == 1 && items[0].plain() == name);
+        if use_default {
+            let args = Value::Tuple(Rc::new(vec![Value::text(&qualified)]));
+            for (key, value) in fields.iter_mut() {
+                if key == "\0arguments" || self.lang.exception_args.as_deref() == Some(key) { *value = args.clone(); }
+            }
+        }
+        for (key, value) in fields.iter_mut() {
+            if self.lang.absent_name_member.as_deref() == Some(key) { *value = Value::text(name); }
+            if self.lang.absent_object_member.as_deref() == Some(key) { *value = subject.clone(); }
+        }
+        drop(fields);
+        failure
+    }
+
     fn missing_member(&self, subject: &Value, name: &str) -> Fault {
         // A module and a kind are named by their own name in words of
         // their own, as CPython names them.
@@ -920,7 +957,7 @@ impl<'a> Engine<'a> {
         if !named.is_empty() { return named.into(); }
         // A thing and a class are named by their own name; anything
         // else by the name its kind goes under.
-        let class = match subject { Value::Object(o)=>o.class_now().name.clone(), Value::Class(c)=>c.name.clone(), other=>other.contents().core_kind() };
+        let class = match subject { Value::Object(o)=>self.qualified_class(&o.class_now()), Value::Class(c)=>self.qualified_class(c), other=>other.contents().core_kind() };
         let pieces = self.lang.class_details.get("attribute.amiss").cloned().unwrap_or_default();
         if pieces.len()!=3 { return self.class_refusal(); }
         format!("{}{class}{}{name}{}",pieces[0],pieces[1],pieces[2]).into()
@@ -1021,11 +1058,20 @@ impl<'a> Engine<'a> {
         let answer = self.class_read(subject.clone(), name, plain);
         if plain { return answer; }
         let Err(fault) = &answer else { return answer };
-        let Value::Object(o) = &subject else { return answer };
         if !self.attribute_fault(fault) { return answer; }
+        if let Value::Class(class) = &subject {
+            if let Some(maker) = Self::maker_beneath(class) {
+                if let Some(reader) = self.lang.reader.as_deref().and_then(|key| self.class_value(&maker, key)) {
+                    let bound = self.bind_class_value(reader, Some(subject.clone()), maker)?;
+                    return self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name));
+                }
+            }
+            return answer;
+        }
+        let Value::Object(o) = &subject else { return answer };
         let Some(reader) = self.lang.reader.as_deref().and_then(|n| self.class_value(&o.class_now(), n)) else { return answer };
         let bound = self.bind_class_value(reader, Some(subject.clone()), o.class_now().clone())?;
-        self.class_apply(bound, vec![Value::text(name)])
+        self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name))
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
         if let Value::Object(object) = &subject {
@@ -1318,6 +1364,9 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
+                    if self.lang.class_details.get("code.replace").and_then(|words| words.first()).map_or(false, |word| word == name) {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_string()))));
+                    }
                     if let Some(field) = self.lang.class_details.get("code.fields").and_then(|v| v.iter().position(|s| s == name)) {
                         let number = |n: usize| Value::Small(n as i64);
                         let words = |v: &[String]| Value::Tuple(Rc::new(v.iter().map(|s| Value::text(s)).collect()));
@@ -2065,10 +2114,10 @@ impl<'a> Engine<'a> {
             3|6 if args.len()>=2=>{
                 // A name standing on text is asked after as the text it keeps.
                 let asked=match &args[1] {Value::Object(_)=>Self::worth_of(&args[1]).map(|w|w.contents()).filter(|w|matches!(w,Value::Text(_))),_=>None}.unwrap_or_else(||args[1].clone());
-                let Value::Text(name)=&asked else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
+                let Value::Text(name)=&asked else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one.clone(),name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
-                if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)])?;return self.drop_top().map_err(|words|Fault::Note(words));}}
-                Err(fault)},Err(e)=>Err(e)}},
+                if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &one, name))?;return self.drop_top().map_err(Fault::Note);}}
+                Err(self.attribute_from_hook(fault, &one, name))},Err(e)=>Err(self.attribute_from_hook(e, &one, name))}},
             3=>Err(self.arity_told(&self.class_tool_word(3),2,args.len())),
             6=>Err(self.arity_told(&self.class_tool_word(6),2,args.len())),
             4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};self.class_write(one,n,args.get(2).cloned(),false)},

@@ -3461,12 +3461,16 @@ only. The extension labels so far, all from PHP:
   their finalisers, breaks them so that counting frees them, and answers
   how many it found. A value's finaliser and the routines waiting on its
   weak holds run between two statements, never in the middle of one.
+- `ext.stmt.class.detail.code.replace` names the code-copy method and the
+  line-table keyword it accepts; a replacement leaves the original code
+  value intact.
 - `ext.system.recursion.limit` and `.exceeded`: the most calls a run may
   have under way at once, the outermost body not counted, and the words
   said by the call that would pass it. The words name a class among the
   furnished exceptions, so a clause may take the fault and the run go
   on beneath the limit. Without a count, calls go as deep as the host
-  allows.
+  allows. `ext.system.recursion.variable` names the imported module and
+  its stored limit so calls observe a value changed by that module.
 - `ext.stmt.import.value`: a switch; imports fetch source the host has
   kept under its module name, read it once in its own namespace, and
   bind that namespace or the requested members. Without the switch the
@@ -5110,6 +5114,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.delete` | - | - | `__delete__` | - | - | - | - | - | - | - |
@@ -5410,6 +5415,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |
 | `ext.system.recursion.exceeded` | - | - | `RecursionError: maximum recursion depth exceeded` | - | - | - | - | - | - | - |
 | `ext.system.recursion.limit` | - | - | `1000` | - | - | - | - | - | - | - |
+| `ext.system.recursion.variable` | - | - | `sys` `_recursion_limit` | - | - | - | - | - | - | - |
 | `ext.system.request.all` | - | - | - | - | `$_REQUEST` | - | - | - | - | - |
 | `ext.system.request.amiss` | - | - | - | - | `$__request_amiss` | - | - | - | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - | - | - | - |
