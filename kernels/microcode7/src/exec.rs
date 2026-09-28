@@ -5670,7 +5670,7 @@ impl<'a> Machine<'a> {
                             for (stored, held) in entries.iter_mut() {
                                 if self.keys_agree(stored, &wanted)? { *held = value.clone(); found = true; break; }
                             }
-                            if !found { entries.push((raw.clone(), value.clone())); }
+                            if !found { entries.push((wanted, value.clone())); }
                             Self::attribute_restore(t, entries);
                             return Ok(Value::Nil);
                         }
@@ -10187,7 +10187,13 @@ impl<'a> Machine<'a> {
             (Value::Keyed(a, ah), Value::Keyed(b, bh)) => { if !ah.equals(bh) { return Ok(false); } (a.as_ref(), b.as_ref()) }
             (Value::Keyed(a, hash), b) | (b, Value::Keyed(a, hash)) => {
                 // A hashed thing beside a plain number agrees only where its hash does.
-                if matches!(b, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && !hash.equals(b) { return Ok(false); }
+                if a.one_place(b) { return Ok(true); }
+                let value = if matches!(b, Value::Thing(_)) {
+                    match self.hash_key(b)? { Value::Keyed(_, number) => number.as_ref().clone(), _ => return Ok(false) }
+                } else {
+                    match b.hash_number() { Some(number) => Value::Small(number), None => return Ok(false) }
+                };
+                if !hash.equals(&value) { return Ok(false); }
                 (a.as_ref(), b)
             }
             _ => return Ok(self.keys_match(first, second)),
@@ -11151,7 +11157,14 @@ impl<'a> Machine<'a> {
     fn object_members(&mut self, subject: &Value) -> Result<Vec<Value>, String> {
         if let Some(under) = self.underlying_unless(subject, &[15]) { return self.object_members(&under); }
         match subject {
-            Value::Attributes(t) => Ok(Self::attribute_entries(t).into_iter().map(|(key, _)| key).collect()),
+            Value::Attributes(t) => {
+                if matches!(self.namespace_holding(&Value::Thing(t.clone())).as_deref(), Some(name) if name != "builtins") {
+                    return Err(self.core_complaint("core.uniterable", &subject.kind_word()));
+                }
+                Ok(Self::attribute_entries(t).into_iter().map(|(key, _)| match key {
+                    Value::Keyed(original, _) => original.as_ref().clone(), plain => plain,
+                }).collect())
+            },
             Value::Cursor(c) => {
                 let mut c = c.borrow_mut();
                 let answer = c.drain(..).collect();
@@ -11369,6 +11382,18 @@ impl<'a> Machine<'a> {
                 let pattern = cell.borrow().iter().copied().map(char::from).collect::<String>();
                 let filled = self.octet_filled(&pattern, right)?;
                 return Ok(Some(self.octets(filled, *changeable)));
+            }
+        }
+        if operation == Prim::At && self.table.has_any("ext.stmt.class.builtin") {
+            if let [Value::Intrinsic(kind, label), parameter] = operands {
+                let eligible = matches!(kind, Prim::Listed | Prim::Tupling | Prim::Dictionary | Prim::Uniques | Prim::Unchanging)
+                    && matches!(label.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset");
+                if eligible {
+                    let namespace = self.load_namespace("types")?;
+                    let alias_class = self.namespace_item(&namespace, "types", "GenericAlias")?;
+                    let made = self.apply_class_member(alias_class, vec![operands[0].clone(), parameter.clone()]);
+                    return made.map(Some).map_err(|escape| self.suspension_fault(escape));
+                }
             }
         }
         let pair = match operation {
@@ -11771,6 +11796,14 @@ impl<'a> Machine<'a> {
             }
             (Prim::Onto, [_, Value::Text(name), _]) if self.table.strings("ext.stmt.class.special").get(35..38).map_or(false, |members| members.iter().any(|word| word == name.as_ref())) => {
                 return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned());
+            }
+            (Prim::Contains | Prim::Absent, [needle, Value::Attributes(owner)]) => {
+                let sought = self.hash_key(needle)?;
+                let mut present = false;
+                for (candidate, _) in Self::attribute_entries(owner) {
+                    if self.keys_agree(&candidate, &sought)? { present = true; break; }
+                }
+                Value::Flag(present != (operation == Prim::Absent))
             }
             (Prim::Contains | Prim::Absent, [needle, Value::Dict(entries)]) => {
                 // A value that could be no key of a map is in no map,
@@ -12297,6 +12330,12 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Contains | Prim::Absent) {
+            if let [needle, Value::Mutable(cell, _) | Value::Shared(cell)] = v {
+                let current = cell.borrow().clone();
+                return self.prim(op, name, &[needle.clone(), current]);
+            }
+        }
         if matches!(op, Prim::Contains | Prim::Absent) {
             if let [needle, Value::Progression(walk)] = v {
                 let present = self.find_in_walk(walk, needle, true)?.0.is_some();
@@ -16698,6 +16737,14 @@ impl<'a> Machine<'a> {
     }
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
+        if let Value::Attributes(owner) = source {
+            if matches!(self.namespace_holding(&Value::Thing(owner.clone())).as_deref(), Some(name) if name != "builtins") {
+                return Err(self.core_complaint("core.uniterable", &source.kind_word()));
+            }
+            return Ok(Self::attribute_entries(owner).into_iter().map(|(key, _)| match key {
+                Value::Keyed(value, _) => value.as_ref().clone(), other => other,
+            }).collect());
+        }
         if let Value::Unpaired(numbers) = source { return Ok(numbers.iter().map(|&n| Value::characters(vec![n])).collect()); }
         if let Some(under) = self.underlying_unless(source, &[15]) { return self.gathered_members(&under); }
         // A thing of the program's own that says how it is walked, by a
@@ -18884,6 +18931,19 @@ impl Machine<'_> {
     /// kind, and, for a walk, standing at the very place this one
     /// does, so that a value already stepped some way into keeps
     /// standing there once it is written out and read back.
+    fn constructor_for_reduction(&mut self, op: Prim) -> Result<Value, String> {
+        let word = self.table.prims.iter().find(|(_, candidate)| **candidate == op)
+            .map(|(name, _)| name.clone()).unwrap_or_default();
+        let Some(module) = self.imported.get("builtins").cloned() else {
+            return Ok(Value::Intrinsic(op, Rc::from(word)));
+        };
+        let namespace = self.detail("namespace").to_owned();
+        let dictionary = self.read_class_member(module, &namespace, false)
+            .map_err(|escape| self.suspension_fault(escape))?;
+        self.user_operation(Prim::At, &[dictionary, Value::text(&word)])?
+            .map(|answer| answer.settled()).ok_or_else(|| self.bad_answer())
+    }
+
     fn reduce_iterator(&mut self, subject: &Value) -> Result<Value, String> {
         fn tuple(values: Vec<Value>) -> Value { Value::Tuple(Rc::new(values)) }
         let builtin = |op: Prim| {
@@ -18901,14 +18961,30 @@ impl Machine<'_> {
             return Ok(tuple(vec![builtin(Prim::Iterator), tuple(vec![Value::Vector(Rc::new(entries))])]));
         }
         let Value::Iterator(handle) = subject else { return Err("TypeError: cannot pickle this iterator".to_owned()); };
+        let backwards = {
+            let state = handle.borrow();
+            matches!(state.kind, IteratorKind::PlacedBack(..))
+                || matches!(state.walks.as_deref(), Some("list_reverseiterator" | "reversed"))
+        };
+        let chosen = self.constructor_for_reduction(if backwards { Prim::Backwards } else { Prim::Iterator })?;
+        let reversed = if backwards { chosen.clone() } else { builtin(Prim::Backwards) };
         let snapshot = handle.borrow().clone();
-        let mut constructor = builtin(Prim::Iterator);
-        if snapshot.done {
+        let mut constructor = if backwards { reversed.clone() } else { chosen };
+        if snapshot.done || matches!(&snapshot.kind, IteratorKind::Stored { entries, next } if *next >= entries.len()) {
             let empty = match &snapshot.kind {
+                IteratorKind::Stored { .. } => Some(match snapshot.walks.as_deref() {
+                    Some("str_iterator" | "str_ascii_iterator") => Value::text(""),
+                    Some("list_reverseiterator" | "reversed") => {
+                        constructor = reversed.clone();
+                        Value::Vector(Rc::new(Vec::new()))
+                    }
+                    Some("list_iterator") => Value::Vector(Rc::new(Vec::new())),
+                    _ => tuple(Vec::new()),
+                }),
                 IteratorKind::Living(..) => Some(Value::Vector(Rc::new(Vec::new()))),
                 IteratorKind::Placed(..) | IteratorKind::Summoned { .. } => Some(tuple(Vec::new())),
                 IteratorKind::PlacedBack(..) => {
-                    constructor = builtin(Prim::Backwards);
+                    constructor = reversed.clone();
                     Some(if snapshot.walks.as_deref() == Some("list_reverseiterator") { Value::Vector(Rc::new(Vec::new())) } else { tuple(Vec::new()) })
                 }
                 _ => None,
@@ -18934,7 +19010,7 @@ impl Machine<'_> {
                     Some("bytearray_iterator") => self.octets(items.iter().filter_map(|v| v.as_big().ok().and_then(|n| n.to_u8())).collect(), true),
                     Some("str_iterator" | "str_ascii_iterator") => Value::text(&items.iter().map(|item| item.bare()).collect::<String>()),
                     Some("list_reverseiterator" | "reversed") => {
-                        constructor = builtin(Prim::Backwards);
+                        constructor = reversed.clone();
                         state = Some(Value::from_big(BigInt::from(items.len()) - BigInt::from(*next) - BigInt::from(1)));
                         items.reverse();
                         if snapshot.walks.as_deref() == Some("reversed") { tuple(items) } else { Value::Vector(Rc::new(items)) }
@@ -18944,7 +19020,7 @@ impl Machine<'_> {
                 vec![source]
             }
             IteratorKind::Placed(source, offset) | IteratorKind::PlacedBack(source, offset) => {
-                if matches!(snapshot.kind, IteratorKind::PlacedBack(..)) { constructor = builtin(Prim::Backwards); }
+                if matches!(snapshot.kind, IteratorKind::PlacedBack(..)) { constructor = reversed.clone(); }
                 state = Some(Value::from_big(offset.clone()));
                 vec![source.clone()]
             }
@@ -19115,7 +19191,7 @@ impl Machine<'_> {
             Value::Set(_) => "set_iterator",
             // What a map gives up when walked are its keys, so a walk of
             // the map itself is a walk of the keys and named as one.
-            Value::Dict(_) => "dict_keyiterator",
+            Value::Dict(_) | Value::Attributes(_) => "dict_keyiterator",
             Value::Octets { changeable, .. } => if *changeable { "bytearray_iterator" } else { "bytes_iterator" },
             _ => return None,
         };
@@ -19496,6 +19572,9 @@ impl Machine<'_> {
     }
 
     fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
+        if matches!(expected.settled(), Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
+            return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned());
+        }
         match expected {
             Value::Tuple(kinds) => {
                 let kinds = kinds.clone();

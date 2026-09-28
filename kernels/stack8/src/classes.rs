@@ -2171,7 +2171,7 @@ impl<'a> Engine<'a> {
             Builtin::AsReal=>matches!(value,Value::Real(_)),
             Builtin::List=>matches!(value,Value::Array(_)),
             Builtin::SortOf=>matches!(value,Value::Class(_)|Value::Native(..)|Value::ByteKind(..)|Value::SortOf(_))||self.kind_spelled(value).is_some(),
-            Builtin::Dict=>matches!(value,Value::Map(_)),
+            Builtin::Dict=>matches!(value,Value::Map(_)|Value::Fields(_)),
             Builtin::Tuple=>matches!(value,Value::Tuple(_)),
             Builtin::Set=>matches!(value,Value::Set(_))&&!value.set_fixed(),
             Builtin::Frozen=>value.set_fixed(),
@@ -2192,6 +2192,9 @@ impl<'a> Engine<'a> {
         if told.is_empty(){self.class_refusal()}else{told.into()}
     }
     fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
+        if matches!(wanted, Value::Object(o) if o.class_now().name == "GenericAlias") {
+            return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());
+        }
         if let Some(told)=self.maker_answers(wanted,value,subclass)? { return Ok(told); }
         // The bytes kinds stand as values of their own rather than as
         // builtin words, so each is asked about under its own word.

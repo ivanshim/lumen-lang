@@ -2213,7 +2213,7 @@ impl<'a> Machine<'a> {
             Prim::AsReal=>matches!(value,Value::Frac(r) if r.places.is_some()),
             Prim::Listed=>matches!(value,Value::Vector(_)),
             Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
-            Prim::Dictionary=>matches!(value,Value::Dict(_)),
+            Prim::Dictionary=>matches!(value,Value::Dict(_)|Value::Attributes(_)),
             Prim::Tupling=>matches!(value,Value::Tuple(_)),
             Prim::Uniques=>matches!(value,Value::Set(_))&&!value.set_sealed(),
             Prim::Unchanging=>value.set_sealed(),
@@ -2234,6 +2234,9 @@ impl<'a> Machine<'a> {
         if told.is_empty(){self.class_unready()}else{told.into()}
     }
     fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+        if matches!(choice, Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
+            return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
+        }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
         // The byte kinds are values in their own right rather than
         // intrinsic words, so each is asked after under its own word.
