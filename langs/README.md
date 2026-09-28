@@ -16,7 +16,11 @@ directory (Lumen, RPLumen, Python, Rust) are embedded at build time and picked b
 file extension, `--lang <name>` or `--lang <extension>`; PHP, beside them
 here, and the ones in `extras/` (Ruby, Pascal, C, JavaScript, Swift) are
 never compiled in and are read from disk with `--lang <path>.json`, the
-same path any definition of your own takes. Which of the two a
+same path any definition of your own takes. A run also puts the
+kernel and the language it began with in its environment, as
+`LUMEN_KERNEL` and `LUMEN_LANG`, so a program that starts the binary
+again without naming them gets a second interpreter like itself; a
+`--kernel` or `--lang` flag always wins. Which of the two a
 definition is has nothing to do with the directory it sits in: only the
 list of files the kernels take in at build time decides it. Every example runs on every kernel, and
 the test suite requires them to print the same thing. The library lives
