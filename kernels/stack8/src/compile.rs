@@ -7763,7 +7763,11 @@ impl<'a> Compiler<'a> {
                     lambda_formals.push(false);
                 }
                 "[" | "{" => { groups.push(false); lambda_formals.push(false); }
-                ")" | "]" | "}" => { groups.pop(); lambda_formals.pop(); }
+                ")" | "]" | "}" => {
+                    groups.pop();
+                    lambda_formals.pop();
+                    if groups.is_empty() { break; }
+                }
                 ":" => { if let Some(formals) = lambda_formals.last_mut() { *formals = false; } }
                 "=" if groups.last() == Some(&false) && lambda_formals.last() != Some(&true)
                     && at > start && self.tokens[at - 1].shape == Shape::Instr => return true,

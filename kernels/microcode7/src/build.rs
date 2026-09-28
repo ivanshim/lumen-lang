@@ -7523,7 +7523,9 @@ impl<'a> Builder<'a> {
                 scopes.push(false);
                 taking.push(false);
             } else if [")", "]", "}"].contains(&token.lexeme.as_str()) {
-                scopes.pop(); taking.pop();
+                scopes.pop();
+                taking.pop();
+                if scopes.is_empty() { break; }
             } else if token.lexeme == ":" {
                 if let Some(formals) = taking.last_mut() { *formals = false; }
             } else if token.lexeme == "=" && index > start && self.tokens[index - 1].shape == Shape::Bare
