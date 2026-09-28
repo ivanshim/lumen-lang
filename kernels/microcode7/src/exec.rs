@@ -9839,6 +9839,12 @@ impl<'a> Machine<'a> {
         }
         if writing && matches!(values[0], Value::Unpaired(_)) { return self.codec_function("_encode_surrogates", values.to_vec()); }
         let alphabet = alphabet?;
+        // An error-policy name the codecs module does not carry is
+        // refused up front, so a row that needs no fix-up still turns
+        // an unknown handler away instead of letting it slip through.
+        if handling != "strict" && handling != "ignore" && handling != "replace" {
+            self.codec_function("lookup_error", vec![Value::text(&handling)])?;
+        }
         let encoding = self.octet_codec_name(alphabet);
         if writing {
             let Value::Text(word) = &values[0] else { return Err(self.octet_error("arguments")); };

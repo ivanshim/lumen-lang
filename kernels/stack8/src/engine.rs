@@ -13791,6 +13791,12 @@ impl<'a> Engine<'a> {
             Ok(n) if n < 3 => n,
             _ => return self.codec_library(if encode { "_encode" } else { "_decode" }, args.to_vec()),
         };
+        // A policy the codecs module has never heard of is refused here,
+        // before the fold below could pass it over on an empty or clean
+        // input where no error would ever bring it to light.
+        if policy != "strict" && policy != "ignore" && policy != "replace" {
+            self.codec_library("lookup_error", vec![Value::text(&policy)])?;
+        }
         if encode && matches!(args[0], Value::Codepoints(_)) { return self.codec_library("_encode_surrogates", args.to_vec()); }
         let name = self.byte_codec_name(codec);
         let mut output = Vec::new();
