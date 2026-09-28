@@ -1,1 +1,1 @@
-ValueError: zip() argument 3 is shorter than arguments 1-2
+Traceback (most recent call last):

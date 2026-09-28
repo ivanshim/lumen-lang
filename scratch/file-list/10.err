@@ -1,1 +1,1 @@
-PythonError: AttributeError: 'int' object has no attribute 'seq'
+Traceback (most recent call last):

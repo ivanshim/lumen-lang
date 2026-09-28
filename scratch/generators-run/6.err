@@ -1,1 +1,1 @@
-PythonError: TypeError: exceptions must be classes or instances deriving from BaseException, not str
+Traceback (most recent call last):

@@ -1,1 +1,1 @@
-ValueError: character mapping must be in range(0x110000)
+Traceback (most recent call last):

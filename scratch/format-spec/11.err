@@ -1,1 +1,1 @@
-TypeError: not all arguments converted during string formatting (required 1, got 2)
+Traceback (most recent call last):

@@ -1,1 +1,1 @@
-PythonError: TypeError: cannot create weak reference to 'list' object
+Traceback (most recent call last):

@@ -1,1 +1,1 @@
-TypeError: type 'bool' is not an acceptable base type
+Traceback (most recent call last):
