@@ -2375,6 +2375,10 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.assert_words, &w) {
                 self.take();
                 if !lang.syntax_members.is_empty() {
+                    let (named, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.expression_assign);
+                    if !named.is_empty() {
+                        return Err("SyntaxError: cannot use named expression without parentheses here".into());
+                    }
                     let (signs, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.assign_words);
                     if signs.first().is_some_and(|at| *at > self.pos && self.tokens[*at - 1].shape == Shape::Instr) {
                         return Err("SyntaxError: cannot assign to name here. Maybe you meant '==' instead of '='?".into());

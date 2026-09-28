@@ -2649,6 +2649,9 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.assert") {
                 self.advance();
                 if self.table.has_any("ext.builtin.exceptions.syntax") {
+                    if !self.divided_at(self.pos, self.tokens.len(), "ext.op.assign.expression").is_empty() {
+                        return Err(String::from("SyntaxError: cannot use named expression without parentheses here"));
+                    }
                     let equals = self.divided_at(self.pos, self.tokens.len(), "stmt.assign");
                     if equals.first().is_some_and(|at| *at > self.pos && self.tokens[*at - 1].shape == Shape::Bare) {
                         return Err(String::from("SyntaxError: cannot assign to name here. Maybe you meant '==' instead of '='?"));
