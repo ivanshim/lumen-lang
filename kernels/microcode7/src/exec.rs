@@ -274,6 +274,16 @@ impl Drop for Suspension {
     }
 }
 
+/// A run raised alongside this one, kept with the near ends of the
+/// pipes its surroundings asked for, so that what goes into its input
+/// and what it writes out can be reached again while it runs.
+struct Alongside {
+    child: std::process::Child,
+    in_pipe: Option<std::process::ChildStdin>,
+    out_pipe: Option<std::process::ChildStdout>,
+    err_pipe: Option<std::process::ChildStderr>,
+}
+
 pub struct Machine<'a> {
     active_trace: Option<Rc<Thing>>,
     extent: Option<(u32, u32, u32, u32)>,
@@ -379,7 +389,7 @@ pub struct Machine<'a> {
     allowed: usize,
     /// Every run raised alongside this one, filed under the
     /// number it was raised with so it may be laid to rest.
-    alongside: HashMap<i64, std::process::Child>,
+    alongside: HashMap<i64, Alongside>,
     started: Option<std::time::Instant>,
     /// How many bytes of room the run may take; nought is no mark at
     /// all. What it has taken is not written down here — that tally is
@@ -13673,7 +13683,7 @@ impl<'a> Machine<'a> {
                     Err(_) => Value::Flag(false),
                     Ok(begun) => {
                         let mark = begun.id() as i64;
-                        self.alongside.insert(mark, begun);
+                        self.alongside.insert(mark, Alongside { child: begun, in_pipe: None, out_pipe: None, err_pipe: None });
                         Value::Small(mark)
                     }
                 }
@@ -13683,11 +13693,152 @@ impl<'a> Machine<'a> {
                 let mark = as_index(&v[0])? as i64;
                 match self.alongside.remove(&mark) {
                     None => Value::Flag(false),
-                    Some(mut begun) => {
-                        let _ = begun.kill();
-                        let _ = begun.wait();
+                    Some(mut kept) => {
+                        let _ = kept.child.kill();
+                        let _ = kept.child.wait();
                         Value::Flag(true)
                     }
+                }
+            }
+            // A second interpreter raised beside this one, its writing
+            // reached through pipes, in steps: raise it (0, with the
+            // words, the surroundings, and how its three streams go),
+            // write into its input (1), close that input (2), read all
+            // a stream says (3), wait for its end (4), ask whether it
+            // ended (5), and stop it (6). A stream goes as nothing (0),
+            // a pipe (1), or inherited (anything else); a third stream
+            // told to follow the second is kept a pipe of its own, and
+            // the library that asked joins the two later.
+            Prim::Subprocess => {
+                if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
+                let step = as_index(&v[0])?;
+                match step {
+                    0 => {
+                        if v.len() != 6 { return Err(format!("{}() expects 6 arguments, got {}", name, v.len())); }
+                        use std::os::unix::ffi::OsStrExt as _;
+                        let w = self.wording();
+                        let mut raising;
+                        if let Value::Vector(words) = &v[1] {
+                            let mut every = words.iter();
+                            let named = match every.next() {
+                                Some(program) => self.table.raw_of(&program.render(w)),
+                                None => return Err(format!("{}() needs a program to run", name)),
+                            };
+                            raising = std::process::Command::new(std::ffi::OsStr::from_bytes(&named));
+                            for word in every {
+                                let word = self.table.raw_of(&word.render(w));
+                                raising.arg(std::ffi::OsStr::from_bytes(&word));
+                            }
+                        } else {
+                            return Err(format!("{}() needs a list of words to run", name));
+                        }
+                        if let Value::Dict(pairs) = &v[2] {
+                            for (called, worth) in pairs.iter() {
+                                let called = self.table.raw_of(&called.render(w));
+                                let worth = self.table.raw_of(&worth.render(w));
+                                raising.env(std::ffi::OsStr::from_bytes(&called), std::ffi::OsStr::from_bytes(&worth));
+                            }
+                        }
+                        let in_mode = as_index(&v[3])?;
+                        let out_mode = as_index(&v[4])?;
+                        let err_mode = as_index(&v[5])?;
+                        let stream = |mode: usize| match mode {
+                            0 => std::process::Stdio::null(),
+                            1 | 3 => std::process::Stdio::piped(),
+                            _ => std::process::Stdio::inherit(),
+                        };
+                        raising.stdin(stream(in_mode));
+                        raising.stdout(stream(out_mode));
+                        raising.stderr(stream(err_mode));
+                        match raising.spawn() {
+                            Err(_) => Value::Flag(false),
+                            Ok(mut begun) => {
+                                let mark = begun.id() as i64;
+                                let in_pipe = if in_mode == 1 { begun.stdin.take() } else { None };
+                                let out_pipe = if out_mode == 1 { begun.stdout.take() } else { None };
+                                let err_pipe = if err_mode == 1 || err_mode == 3 { begun.stderr.take() } else { None };
+                                self.alongside.insert(mark, Alongside { child: begun, in_pipe, out_pipe, err_pipe });
+                                Value::Small(mark)
+                            }
+                        }
+                    }
+                    1 => {
+                        if v.len() != 3 { return Err(format!("{}() expects 3 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        let data = self.octet_contents(&v[2], true)?;
+                        use std::io::Write as _;
+                        match self.alongside.get_mut(&mark) {
+                            Some(Alongside { in_pipe: Some(pipe), .. }) => match pipe.write_all(&data).and_then(|_| pipe.flush()) {
+                                Ok(()) => Value::Small(data.len() as i64),
+                                Err(_) => Value::Flag(false),
+                            },
+                            _ => Value::Flag(false),
+                        }
+                    }
+                    2 => {
+                        if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        match self.alongside.get_mut(&mark) {
+                            Some(Alongside { in_pipe, .. }) => { *in_pipe = None; Value::Flag(true) }
+                            None => Value::Flag(false),
+                        }
+                    }
+                    3 => {
+                        if v.len() != 3 { return Err(format!("{}() expects 3 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        let which = as_index(&v[2])?;
+                        let mut all: Vec<u8> = Vec::new();
+                        let mut broken = false;
+                        let mut piped = false;
+                        {
+                            if let Some(kept) = self.alongside.get_mut(&mark) {
+                                match which {
+                                    0 => empty_pipe(&mut kept.out_pipe, &mut all, &mut piped, &mut broken),
+                                    _ => empty_pipe(&mut kept.err_pipe, &mut all, &mut piped, &mut broken),
+                                }
+                            } else {
+                                broken = true;
+                            }
+                        }
+                        if broken { return Ok(Value::Flag(false)); }
+                        if piped { self.octets(all, false) } else { Value::Nil }
+                    }
+                    4 => {
+                        if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        match self.alongside.get_mut(&mark) {
+                            Some(kept) => match kept.child.wait() {
+                                Ok(status) => Value::Small(status.code().unwrap_or(-1) as i64),
+                                Err(_) => Value::Flag(false),
+                            },
+                            None => Value::Flag(false),
+                        }
+                    }
+                    5 => {
+                        if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        match self.alongside.get_mut(&mark) {
+                            Some(kept) => match kept.child.try_wait() {
+                                Ok(Some(status)) => Value::Small(status.code().unwrap_or(-1) as i64),
+                                Ok(None) => Value::Nil,
+                                Err(_) => Value::Flag(false),
+                            },
+                            None => Value::Flag(false),
+                        }
+                    }
+                    6 => {
+                        if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
+                        let mark = as_index(&v[1])? as i64;
+                        match self.alongside.remove(&mark) {
+                            None => Value::Flag(false),
+                            Some(mut kept) => {
+                                let _ = kept.child.kill();
+                                let _ = kept.child.wait();
+                                Value::Flag(true)
+                            }
+                        }
+                    }
+                    _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
             }
             Prim::Clock => {
@@ -16359,6 +16510,16 @@ impl<'a> Machine<'a> {
             }
         }
         v.iter().map(argument).collect::<Vec<_>>().join(" ")
+    }
+}
+
+/// Empty a pipe of all it has to say, into `into`. `had_pipe` records
+/// whether there was a pipe at all, and `failed` whether the reading
+/// broke.
+fn empty_pipe<R: std::io::Read>(pipe: &mut Option<R>, into: &mut Vec<u8>, had_pipe: &mut bool, failed: &mut bool) {
+    if let Some(pipe) = pipe {
+        *had_pipe = true;
+        *failed = pipe.read_to_end(into).is_err();
     }
 }
 

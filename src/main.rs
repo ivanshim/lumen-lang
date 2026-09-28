@@ -219,6 +219,57 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
     }
 }
 
+/// A one-line script that runs this very binary again with the kernel
+/// and the language a program was started with. It is written among the
+/// system's own temporary files, once for each binary and kernel, so a
+/// program that names its own executable and starts it again gets a
+/// second interpreter like itself rather than a host with no language
+/// behind it. When the host was itself started through the dynamic
+/// loader, the launcher starts the binary through that loader again,
+/// with the loader's own directory as the place its libraries stand.
+/// The script is written over only where it does not already say the
+/// same thing, so a copy of the binary run from another place leaves no
+/// stale one behind.
+fn launcher_for(started: &Path, binary: &Path, kernel: &str, language: &str) -> String {
+    let mut dir = std::env::temp_dir();
+    dir.push("lumen-lang");
+    let _ = std::fs::create_dir_all(&dir);
+    let stem = binary.file_name().and_then(|n| n.to_str()).unwrap_or("lumen");
+    dir.push(format!("{stem}-{kernel}-{language}"));
+    let quoted = |word: &str| word.replace('\'', r#"'\''"#);
+    let through_loader = std::fs::canonicalize(started)
+        .ok()
+        .zip(std::fs::canonicalize(binary).ok())
+        .map_or(false, |(one, other)| one != other);
+    let script = if through_loader {
+        let libraries = started.parent().map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+        format!(
+            "#!/bin/sh\nexec '{}' --library-path '{}' '{}' --kernel '{}' --lang '{}' \"$@\"\n",
+            quoted(&started.to_string_lossy()),
+            quoted(&libraries),
+            quoted(&binary.to_string_lossy()),
+            kernel,
+            language,
+        )
+    } else {
+        format!(
+            "#!/bin/sh\nexec '{}' --kernel '{}' --lang '{}' \"$@\"\n",
+            quoted(&binary.to_string_lossy()),
+            kernel,
+            language,
+        )
+    };
+    if std::fs::read_to_string(&dir).ok().as_deref() != Some(script.as_str()) {
+        let mut fresh = dir.clone();
+        fresh.set_extension("tmp");
+        let _ = std::fs::write(&fresh, &script);
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::rename(&fresh, &dir);
+    }
+    dir.to_string_lossy().into_owned()
+}
+
 fn main() {
     // A language may allow a program to go a thousand calls deep before
     // it complains, which wants more of the machine's stack than a run
@@ -301,8 +352,28 @@ fn run_all() {
     request.push(("SELF".to_string(), "directory".to_string(), held, false));
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
+    // A full kernel names a small launcher instead of the bare binary,
+    // one that starts this very binary again with the same kernel and
+    // language, so that a program that runs the interpreter it names is
+    // running a second interpreter like itself.
     if let Ok(runner) = std::env::current_exe() {
-        request.push(("SELF".to_string(), "runner".to_string(), runner.to_string_lossy().into_owned(), false));
+        let runner = if FULL_KERNELS.contains(&inv.kernel.as_str()) && inv.language.name() == "python" {
+            // The host may be started through the dynamic loader, in
+            // which case the system names the loader as the running
+            // program; the first word of the arguments names the binary
+            // itself, and that is what the launcher must start again.
+            let binary = match args.first() {
+                Some(word) => {
+                    let path = std::path::PathBuf::from(word);
+                    std::fs::canonicalize(&path).unwrap_or(path)
+                }
+                None => runner.clone(),
+            };
+            launcher_for(&runner, &binary, &inv.kernel, inv.language.name())
+        } else {
+            runner.to_string_lossy().into_owned()
+        };
+        request.push(("SELF".to_string(), "runner".to_string(), runner, false));
     }
     request.push(("SELF".to_string(), "lines_before".to_string(), lines_before.to_string(), true));
 

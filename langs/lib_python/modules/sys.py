@@ -216,10 +216,13 @@ def exc_info():
         return (None, None, None)
     return (type(held), held, held.__traceback__)
 
-# No path to a program that could run this one again is handed to a
-# library here, and the empty string is what a Python says when it
-# cannot find its own program, so a test that needs one skips.
-executable = ''
+# The program that ran this one again, as the host named it: on a
+# full kernel it is a small launcher that starts this same binary with
+# the kernel and language already chosen, so that a program which runs
+# the interpreter it names gets a second interpreter like itself. Where
+# nothing was named -- a reference kernel reads no such label -- the
+# empty string stands, and a test that needs its own program skips.
+executable = globals().get('__runner__', '')
 
 float_repr_style = 'short'
 byteorder = 'little'

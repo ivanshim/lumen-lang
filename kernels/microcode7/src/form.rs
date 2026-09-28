@@ -223,6 +223,11 @@ pub enum Prim {
     Bided,
     Raised,
     Laid,
+    /// A second program started, spoken to and stopped again, one step
+    /// at a time (ext.builtin.subprocess): one word, told which step it
+    /// is on. Only a language spelling this may raise a second
+    /// interpreter beside itself and read what it writes back.
+    Subprocess,
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,

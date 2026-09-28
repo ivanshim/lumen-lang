@@ -84,6 +84,12 @@
   "ext.builtin.host.info": [
     "__host_info"
   ],
+  "ext.builtin.subprocess": [
+    "__subprocess"
+  ],
+  "ext.builtin.wait": [
+    "__wait"
+  ],
   "ext.builtin.method.numerator": [
     "numerator"
   ],
@@ -167,6 +173,9 @@
   "ext.system.source.marked": true,
   "ext.system.source.file": [
     "__file__"
+  ],
+  "ext.system.runner": [
+    "__runner__"
   ],
   "ext.system.debug": [
     "__debug__"
