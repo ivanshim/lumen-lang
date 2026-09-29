@@ -554,6 +554,12 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         r.skip_line_ends();
         if !r.exhausted() {
             if let Some((line, _, col)) = mark { line.set(r.look().row); col.set(r.error_columns()); }
+            if r.pos > 0 && r.tokens[r.pos - 1].shape == Shape::Quote
+                && r.look().shape == Shape::Bare
+                && r.tokens[r.pos..].iter().take_while(|token| token.row == r.look().row)
+                    .any(|token| token.shape == Shape::Quote) {
+                return Err(String::from("SyntaxError: invalid syntax. Is this intended to be part of the string?"));
+            }
             return Err(format!("Unexpected '{}'", r.look().lexeme));
         }
         r.warnings_in_statement(0);
@@ -2310,6 +2316,11 @@ impl<'a> Builder<'a> {
                 let word = first.lexeme;
                 return Err(format!("SyntaxError: Missing parentheses in call to '{word}'. Did you mean {word}(...)?"));
             }
+        }
+        if previous.shape == Shape::Quote && self.look().shape == Shape::Bare
+            && self.tokens[self.pos..].iter().take_while(|word| word.row == previous.row)
+                .any(|word| word.shape == Shape::Quote) {
+            return Err(String::from("SyntaxError: invalid syntax. Is this intended to be part of the string?"));
         }
         Err("SyntaxError: invalid syntax".to_owned())
     }

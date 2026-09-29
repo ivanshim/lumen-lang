@@ -558,6 +558,12 @@ fn compile_pass(
         a.skip_seps();
         if !a.exhausted() {
             a.record_stop();
+            if a.pos > 0 && a.tokens[a.pos - 1].shape == Shape::Quote
+                && a.look().shape == Shape::Instr
+                && a.tokens[a.pos..].iter().take_while(|item| item.row == a.look().row)
+                    .any(|item| item.shape == Shape::Quote) {
+                return Err("SyntaxError: invalid syntax. Is this intended to be part of the string?".into());
+            }
             return Err(format!("Unexpected '{}'", a.look().lexeme));
         }
         a.note_syntax_warnings(0);
@@ -2169,6 +2175,11 @@ impl<'a> Compiler<'a> {
             if reads {
                 return Err(format!("SyntaxError: Missing parentheses in call to '{0}'. Did you mean {0}(...)?", head.lexeme));
             }
+        }
+        if last.shape == Shape::Quote && self.look().shape == Shape::Instr
+            && self.tokens[self.pos..].iter().take_while(|part| part.row == last.row)
+                .any(|part| part.shape == Shape::Quote) {
+            return Err("SyntaxError: invalid syntax. Is this intended to be part of the string?".into());
         }
         Err("SyntaxError: invalid syntax".into())
     }
