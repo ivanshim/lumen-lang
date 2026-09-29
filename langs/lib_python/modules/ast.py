@@ -10,6 +10,14 @@
 # walking, dumping, unparsing, and source outside the subset -- still says
 # it has no tree rather than return something shaped like one.
 #
+# With type_comments=True one of CPython's type-comment rules is applied:
+# a '# type: ...' comment attached to a bare * in a function's parameter
+# list is SyntaxError ('bare * has associated type comment'). Type
+# comments in the positions CPython accepts (on assignments, 'for' and
+# 'with' headers, a def's own line) are read but not attached to any
+# node, and placements CPython rejects outright are not checked, since
+# the statements carrying them have no tree in this subset.
+#
 # One difference from CPython is worth naming: CPython raises SyntaxError for
 # source that will not parse and ValueError for source that parses into
 # something that is not a literal. Without a full parser the two cannot
@@ -742,10 +750,12 @@ def _check_single_line(source, q, after):
             _syntax('unterminated string literal')
         i += 1
 
-def _lex(source, start, end, row, col, for_field):
+def _lex(source, start, end, row, col, for_field, comments=None):
     # Tokens over source[start:end], beginning at (row, col). Inside a
     # replacement field (for_field) newlines are plain whitespace; outside
-    # one they end a statement unless brackets are open.
+    # one they end a statement unless brackets are open. When comments is
+    # a list each comment is recorded there as (row, col, source text),
+    # '#' first, without entering the token stream.
     toks = []
     i = start
     depth = 0
@@ -771,9 +781,13 @@ def _lex(source, start, end, row, col, for_field):
             toks.append(_Tok('newline', '\n', srow, scol, srow, scol + 1))
             continue
         if c == '#' and not for_field:
-            while i < end and source[i] != '\n':
-                i += 1
-                col += 1
+            j = i
+            while j < end and source[j] != '\n':
+                j += 1
+            if comments is not None:
+                comments.append((srow, scol, source[i:j]))
+            col += j - i
+            i = j
             continue
         if c.isdigit() or (c == '.' and source[i + 1:i + 2].isdigit()):
             j = i
@@ -1526,6 +1540,81 @@ class _Parser:
                          end_col_offset=last.ecol)
         return (node, (first.srow, first.scol), (last.erow, last.ecol))
 
+def _type_comment_payload(text):
+    # The payload of a type comment, or None when the comment (its
+    # source, '#' first, to the end of the line) is not one. CPython's
+    # tokenizer matches '#', then any spaces and tabs, then 'type:',
+    # then spaces and tabs again; a 'type: ignore' comment is collected
+    # apart and is not a type comment.
+    i = 1
+    n = len(text)
+    while i < n and (text[i] == ' ' or text[i] == '\t'):
+        i += 1
+    if text[i:i + 5] != 'type:':
+        return None
+    i += 5
+    while i < n and (text[i] == ' ' or text[i] == '\t'):
+        i += 1
+    payload = text[i:]
+    if payload[:6] == 'ignore' and (len(payload) == 6 or
+                                    (ord(payload[6]) < 128 and
+                                     not payload[6].isalnum())):
+        return None
+    return payload
+
+def _check_type_comments(toks, comments):
+    # One pass over tokens and comments in source order. Inside a def's
+    # parameter list, a type comment that follows the comma closing a
+    # lone '*' parameter -- on the same line or a later one -- is
+    # attached to that bare star, and CPython rejects it. Comments
+    # deeper in the brackets or outside a parameter list attach to
+    # constructs this reader does not check.
+    tlen = len(toks) - 1
+    clen = len(comments)
+    ti = 0
+    ci = 0
+    depth = 0
+    base = -1
+    seg = []
+    closed_star = False
+    after_comma = False
+    while ti < tlen or ci < clen:
+        if ci < clen and (ti >= tlen or
+                          (comments[ci][0], comments[ci][1]) <
+                          (toks[ti].srow, toks[ti].scol)):
+            if (base >= 0 and depth == base and after_comma and
+                    closed_star and
+                    _type_comment_payload(comments[ci][2]) is not None):
+                _syntax('bare * has associated type comment')
+            ci += 1
+            continue
+        tok = toks[ti]
+        ti += 1
+        if tok.kind == 'op' and tok.text in ('(', '[', '{'):
+            if (tok.text == '(' and base < 0 and ti >= 3 and
+                    toks[ti - 3].kind == 'name' and toks[ti - 3].text == 'def' and
+                    toks[ti - 2].kind == 'name'):
+                base = depth + 1
+                seg = []
+                closed_star = False
+                after_comma = False
+            depth += 1
+            continue
+        if tok.kind == 'op' and tok.text in (')', ']', '}'):
+            depth -= 1
+            if base >= 0 and depth < base:
+                base = -1
+            continue
+        if base < 0 or depth != base:
+            continue
+        if tok.kind == 'op' and tok.text == ',':
+            closed_star = len(seg) == 1 and seg[0] == '*'
+            seg = []
+            after_comma = True
+            continue
+        seg.append(tok.text)
+        after_comma = False
+
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1):
     if type(source) != type(''):
@@ -1541,7 +1630,10 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         return tree
     if mode != 'exec':
         _no_tree()
-    toks = _lex(source, 0, len(source), 1, 0, False)
+    comments = []
+    toks = _lex(source, 0, len(source), 1, 0, False, comments)
+    if type_comments:
+        _check_type_comments(toks, comments)
     parser = _Parser(source, toks)
     tree = parser.parse_module()
     tree._lumen_tree_source = source
