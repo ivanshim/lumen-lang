@@ -1241,7 +1241,14 @@ impl Quotation<'_> {
                 return Err(message);
             }
         };
-        self.made.extend(tokens.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)));
+        // The tokens were read out of the field's own text, whose rows
+        // count from one; they stand where the field stands, so each is
+        // moved down to the row the field opens on.
+        self.made.extend(tokens.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)).map(|mut t| {
+            t.row = t.row + field_row.saturating_sub(1);
+            if t.end_row != 0 { t.end_row = t.end_row + field_row.saturating_sub(1); }
+            t
+        }));
         self.token(Shape::Sign, right);
         self.token(Shape::Woven, String::new());
         let mut noticed = false;
