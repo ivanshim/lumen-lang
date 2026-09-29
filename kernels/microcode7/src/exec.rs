@@ -13529,11 +13529,39 @@ impl<'a> Machine<'a> {
             }
             Prim::BringModule => {
                 let path = v[0].bare();
-                let namespace = self.load_namespace(&path)?;
-                match &v[1] {
-                    Value::Text(wanted) => self.namespace_item(&namespace, &path, wanted)?,
-                    _ if matches!(v[2], Value::Flag(true)) => self.load_namespace(path.split('.').next().unwrap_or(&path))?,
-                    _ => namespace,
+                // The import is asked of the builtins in force here, the
+                // very way the reference's import statement calls
+                // __import__: absent from the caller's own builtins it
+                // is the ImportError the reference names; a reading of
+                // the caller's own that raises raises here rather than
+                // silently falling back to the kernel's own builtins.
+                let importer = self.builtin_named("__import__")?
+                    .ok_or_else(|| "ImportError: __import__ not found".to_owned())?;
+                if matches!(importer.settled(), Value::Intrinsic(Prim::Summon, _)) {
+                    let namespace = self.load_namespace(&path)?;
+                    match &v[1] {
+                        Value::Text(wanted) => self.namespace_item(&namespace, &path, wanted)?,
+                        _ if matches!(v[2], Value::Flag(true)) => self.load_namespace(path.split('.').next().unwrap_or(&path))?,
+                        _ => namespace,
+                    }
+                } else {
+                    // A __import__ of the program's own is called with
+                    // the names it is handed by the reference, and what
+                    // it answers stands for the import itself.
+                    let globals = Value::Shared(self.book_about(true));
+                    let locals = Value::Shared(self.book_about(false));
+                    let fromlist = match (&v[1], &v[2]) {
+                        (Value::Text(wanted), _) => Value::Tuple(Rc::new(vec![Value::text(wanted)])),
+                        (_, Value::Flag(false)) => Value::Tuple(Rc::new(vec![Value::text("*")])),
+                        _ => Value::Nil,
+                    };
+                    let got = self.apply_held(importer, vec![Value::text(&path), globals, locals, fromlist, Value::Small(0)])
+                        .map_err(|escape| self.suspension_fault(escape))?;
+                    match &v[1] {
+                        Value::Text(wanted) => self.read_class_member(got, wanted, false)
+                            .map_err(|escape| self.suspension_fault(escape))?,
+                        _ => got,
+                    }
                 }
             }
             Prim::SpreadModule => {
@@ -19404,24 +19432,52 @@ impl Machine<'_> {
         walk
     }
 
-    /// What a value keeps no built-in writing for reduces to, for the
-    /// module that writes values out to bytes: nothing for a value
-    /// with no such reduction, else the pieces that opposite number
-    /// reads back into a value the very same as this one -- the same
-    /// kind, and, for a walk, standing at the very place this one
-    /// does, so that a value already stepped some way into keeps
-    /// standing there once it is written out and read back.
-    fn constructor_for_reduction(&mut self, op: Prim) -> Result<Value, String> {
-        let word = self.table.prims.iter().find(|(_, candidate)| **candidate == op)
-            .map(|(name, _)| name.clone()).unwrap_or_default();
+    /// Look a name up in the builtins in force where the run stands,
+    /// through the mapping protocol they answer to, the very way the
+    /// reference's _PyEval_GetBuiltin reads its builtins: a key gone
+    /// missing is nothing, a reading of the caller's own that raises
+    /// raises here uncaught, and the kernel's own dictionary is read
+    /// live so a program that changed it reads the change.
+    fn builtin_named(&mut self, name: &str) -> Result<Option<Value>, String> {
+        let builtins = self.builtins_here();
+        // A dictionary of builtins the caller handed over is read the
+        // very way any name is read from it, so a mapping of its own --
+        // read-only, raising, or merely short of a name -- is honoured.
+        if !self.is_our_natives(&builtins) {
+            return self.mapping_read(&builtins, name)
+                .map_err(|escape| { self.got_away = Some(escape); self.bad_answer() });
+        }
+        self.builtin_from_module(name)
+    }
+
+    /// A builtin of the kernel's own, read out of the builtins module's
+    /// dictionary where the module stands, live, so a program that
+    /// changed the module reads the change; before the module is read
+    /// in, the kernel's own dictionary answers.
+    fn builtin_from_module(&mut self, name: &str) -> Result<Option<Value>, String> {
         let Some(module) = self.imported.get("builtins").cloned() else {
-            return Ok(Value::Intrinsic(op, Rc::from(word)));
+            return Ok(self.native_of(name));
         };
         let namespace = self.detail("namespace").to_owned();
-        let dictionary = self.read_class_member(module, &namespace, false)
-            .map_err(|escape| self.suspension_fault(escape))?;
-        self.user_operation(Prim::At, &[dictionary, Value::text(&word)])?
-            .map(|answer| answer.settled()).ok_or_else(|| self.bad_answer())
+        let dictionary = match self.read_class_member(module, &namespace, false) {
+            Ok(book) => book,
+            Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+        };
+        match self.user_operation(Prim::At, &[dictionary, Value::text(name)]) {
+            Ok(found) => Ok(found.map(|value| value.settled())),
+            Err(words) => {
+                let escape = match self.got_away.take() {
+                    Some(escape) => escape,
+                    None => match self.as_raised(&words) {
+                        Some(value) => Escape::Thrown(value),
+                        None => Escape::Error(words),
+                    },
+                };
+                if self.escape_names(&escape, "KeyError") { return Ok(None); }
+                self.got_away = Some(escape);
+                Err(self.bad_answer())
+            }
+        }
     }
 
     fn reduce_iterator(&mut self, subject: &Value) -> Result<Value, String> {
@@ -19446,7 +19502,9 @@ impl Machine<'_> {
             matches!(state.kind, IteratorKind::PlacedBack(..))
                 || matches!(state.walks.as_deref(), Some("list_reverseiterator" | "reversed"))
         };
-        let chosen = self.constructor_for_reduction(if backwards { Prim::Backwards } else { Prim::Iterator })?;
+        let wanted = if backwards { "reversed" } else { "iter" };
+        let chosen = self.builtin_named(wanted)?
+            .ok_or_else(|| format!("AttributeError: {wanted}"))?;
         let reversed = if backwards { chosen.clone() } else { builtin(Prim::Backwards) };
         let snapshot = handle.borrow().clone();
         let mut constructor = if backwards { reversed.clone() } else { chosen };
