@@ -574,6 +574,7 @@
   "ext.builtin.bytes.hex": [
     "hex"
   ],
+  "ext.builtin.bytes._export": ["_export"],
   "ext.builtin.bytes.join": [
     "join"
   ],

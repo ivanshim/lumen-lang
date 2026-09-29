@@ -1,3 +1,30 @@
+thread_local! {
+    static BYTE_EXPORTS: std::cell::RefCell<std::collections::HashMap<usize, usize>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[derive(Debug)]
+pub struct ByteExport(usize);
+impl ByteExport {
+    fn acquire(cell: &Rc<RefCell<Vec<u8>>>) -> Self {
+        let key = Rc::as_ptr(cell) as usize;
+        BYTE_EXPORTS.with(|counts| *counts.borrow_mut().entry(key).or_default() += 1);
+        Self(key)
+    }
+    fn active(cell: &Rc<RefCell<Vec<u8>>>) -> bool {
+        BYTE_EXPORTS.with(|counts| counts.borrow().contains_key(&(Rc::as_ptr(cell) as usize)))
+    }
+}
+impl Drop for ByteExport {
+    fn drop(&mut self) {
+        BYTE_EXPORTS.with(|counts| {
+            let mut counts = counts.borrow_mut();
+            let count = counts.get_mut(&self.0).expect("active byte export");
+            *count -= 1;
+            if *count == 0 { counts.remove(&self.0); }
+        });
+    }
+}
+
 // The engine: one loop over the words of a routine, one data stack for
 // the whole run. A call runs the callee's words on the same stack with a
 // fresh frame of cells; globals are one table. Fused words read their
@@ -5616,6 +5643,7 @@ impl<'a> Engine<'a> {
                 let grown = self.special_dyad(&plain, &held, &args[0].contents())?;
                 let Value::Bytes(source, ..) = grown.contents() else { return Err(self.special_fault()); };
                 let taken = source.borrow().clone();
+                if ByteExport::active(cell) && cell.borrow().len() != taken.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 *cell.borrow_mut() = taken;
                 return Ok(held.clone());
             }
@@ -7615,6 +7643,7 @@ impl<'a> Engine<'a> {
                 }
                 let result = self.dyadic(if *repeat { &Action::Mul } else { &Action::Add }, &operands[0], &operands[1])?;
                 if let (Value::Bytes(target, true, _), Value::Bytes(source, ..)) = (&operands[0], &result) {
+                    if ByteExport::active(target) && target.borrow().len() != source.borrow().len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     *target.borrow_mut() = source.borrow().clone();
                     operands[0].clone()
                 } else { result }
@@ -11630,7 +11659,10 @@ impl<'a> Engine<'a> {
             let replacement = self.byte_row(&given, false)?;
             let (start, stop, step, places) = self.slice_places(parts, row.borrow().len())?;
             if step != 1 && places.len() != replacement.len() { return Err(self.byte_fault("arguments")); }
-            if step == 1 { row.borrow_mut().splice(start..stop, replacement); }
+            if step == 1 {
+                if ByteExport::active(row) && stop - start != replacement.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                row.borrow_mut().splice(start..stop, replacement);
+            }
             else { for (at, byte) in places.into_iter().zip(replacement) { row.borrow_mut()[at] = byte; } }
             return Ok(target);
         }
@@ -13733,9 +13765,14 @@ impl<'a> Engine<'a> {
                 let (_, _, _, mut picked) = self.slice_places(bounds, held.len())?;
                 picked.sort_unstable();
                 picked.dedup();
+                if !picked.is_empty() && ByteExport::active(content) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 for place in picked.into_iter().rev() { held.remove(place); }
             }
-            key => { let place = self.byte_position(key, held.len(), true)?; held.remove(place); }
+            key => {
+                let place = self.byte_position(key, held.len(), true)?;
+                if ByteExport::active(content) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                held.remove(place);
+            }
         }
         drop(held);
         Ok(row.clone())
@@ -14143,12 +14180,13 @@ impl<'a> Engine<'a> {
             let rest = &args[1..];
             let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(bad()) };
             match task {
-                52 => { counted(1)?; let byte = self.byte_number(&rest[0], false)?; cell.borrow_mut().push(byte); }
-                53 => { counted(1)?; let more = self.byte_taken(&rest[0])?; cell.borrow_mut().extend(more); }
+                52 => { counted(1)?; let byte = self.byte_number(&rest[0], false)?; if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                53 => { counted(1)?; let more = self.byte_taken(&rest[0])?; if !more.is_empty() && ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
                 54 => {
                     counted(2)?;
                     let asked = self.byte_whole(&rest[0])?;
                     let byte = self.byte_number(&rest[1], false)?;
+                    if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     let mut held = cell.borrow_mut();
                     let at = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
                     held.insert(at, byte);
@@ -14160,6 +14198,7 @@ impl<'a> Engine<'a> {
                     if held.is_empty() { return Err(self.byte_said("index", 2)); }
                     let at = if asked < 0 { asked.saturating_add(held.len() as i64) } else { asked };
                     if at < 0 || at as usize >= held.len() { return Err(self.byte_said("index", 1)); }
+                    if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     return Ok(Value::Small(i64::from(held.remove(at as usize))));
                 }
                 56 => {
@@ -14167,13 +14206,20 @@ impl<'a> Engine<'a> {
                     let byte = self.byte_number(&rest[0], false)?;
                     let mut held = cell.borrow_mut();
                     let Some(at) = held.iter().position(|kept| *kept == byte) else { return Err(self.byte_said("missing", 1)); };
+                    if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     held.remove(at);
                 }
-                57 => { counted(0)?; cell.borrow_mut().clear(); }
+                57 => { counted(0)?; if ByteExport::active(cell) && !cell.borrow().is_empty() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().clear(); }
                 58 => { counted(0)?; cell.borrow_mut().reverse(); }
                 _ => { counted(0)?; let copy = cell.borrow().clone(); return Ok(self.byte_make(copy, true)); }
             }
             return Ok(Value::Null);
+        }
+        if task == 60 {
+            let [source] = args else { return Err(unready()); };
+            let held = Self::worth_of(source).unwrap_or_else(|| source.contents());
+            let Value::Bytes(cell, true, _) = &held else { return Err(unready()); };
+            return Ok(Value::Export(Rc::new(ByteExport::acquire(cell))));
         }
         if task == 40 {
             let [from, to] = args else { return Err(bad()); };
@@ -14265,12 +14311,17 @@ impl<'a> Engine<'a> {
                 return Ok(Value::array(parts));
             }
             9 if given.len() == 1 => {
+                let _export = if *mutable { Some(ByteExport::acquire(cell)) } else { None };
                 let parts = self.core_members(&given[0])?;
                 let mut joined = Vec::new();
                 for (at, part) in parts.iter().enumerate() {
-                    if at > 0 { joined.extend(&row); }
+                    if at > 0 { joined.extend(cell.borrow().iter().copied()); }
                     match part {
                         Value::Bytes(piece, ..) => joined.extend(piece.borrow().iter().copied()),
+                        Value::Object(object) if object.class_now().name == "memoryview" => {
+                            let piece = self.bytes_argument(part)?.ok_or_else(|| self.byte_fault("arguments"))?;
+                            joined.extend(piece);
+                        }
                         _ => return Err(self.byte_fault("arguments")),
                     }
                 }

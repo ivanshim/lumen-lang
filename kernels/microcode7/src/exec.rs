@@ -1,3 +1,30 @@
+thread_local! {
+    static OCTET_LEASES: std::cell::RefCell<std::collections::HashMap<usize, usize>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+pub struct OctetLease { address: usize }
+impl OctetLease {
+    fn new(bytes: &Rc<RefCell<Vec<u8>>>) -> Self {
+        let address = Rc::as_ptr(bytes) as usize;
+        OCTET_LEASES.with(|leases| { let mut entries = leases.borrow_mut(); *entries.entry(address).or_insert(0) += 1; });
+        Self { address }
+    }
+    fn held(bytes: &Rc<RefCell<Vec<u8>>>) -> bool {
+        OCTET_LEASES.with(|leases| leases.borrow().get(&(Rc::as_ptr(bytes) as usize)).copied().unwrap_or(0) != 0)
+    }
+}
+impl Drop for OctetLease {
+    fn drop(&mut self) {
+        OCTET_LEASES.with(|leases| {
+            let mut entries = leases.borrow_mut();
+            if let Some(n) = entries.get_mut(&self.address) {
+                *n -= 1;
+                if *n == 0 { entries.remove(&self.address); }
+            }
+        });
+    }
+}
+
 // The seven forms, run.
 //
 // A constant is itself, a routine constant becoming a bound routine over
@@ -9201,10 +9228,15 @@ impl<'a> Machine<'a> {
         match at {
             Value::Span(bounds) if self.table.has_any("ext.builtin.slice") => {
                 let (_, picked, _) = self.span_selection(bounds, numbers.len())?;
+                if !picked.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 let kept = numbers.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, n)| *n).collect();
                 *numbers = kept;
             }
-            key => { let place = self.octet_at(key, numbers.len(), true)?; numbers.remove(place); }
+            key => {
+                let place = self.octet_at(key, numbers.len(), true)?;
+                if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                numbers.remove(place);
+            }
         }
         drop(numbers);
         Ok(row.clone())
@@ -10085,6 +10117,12 @@ impl<'a> Machine<'a> {
                 let [Value::Text(source)] = values else { return Err(wrong()); };
                 return Ok(self.octets(self.octets_from_hex(source)?, operation == 49));
             }
+            60 => {
+                let [source] = values else { return Err(refusal()); };
+                let held = Self::underlying(source).unwrap_or_else(|| source.settled());
+                let Value::Octets { cell, changeable: true, .. } = &held else { return Err(refusal()); };
+                return Ok(Value::Export(Rc::new(OctetLease::new(cell))));
+            }
             40 => {
                 let [from, onto] = values else { return Err(wrong()); };
                 return self.octet_mapping(&self.octet_contents(from, false)?, &self.octet_contents(onto, false)?);
@@ -10099,12 +10137,13 @@ impl<'a> Machine<'a> {
                 let rest = &values[1..];
                 let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(wrong()) };
                 match operation {
-                    52 => { counted(1)?; let byte = self.octet_item(&rest[0], false)?; cell.borrow_mut().push(byte); }
-                    53 => { counted(1)?; let more = self.octet_lengthening(&rest[0])?; cell.borrow_mut().extend(more); }
+                    52 => { counted(1)?; let byte = self.octet_item(&rest[0], false)?; if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                    53 => { counted(1)?; let more = self.octet_lengthening(&rest[0])?; if !more.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
                     54 => {
                         counted(2)?;
                         let asked = self.octet_place(&rest[0])?;
                         let byte = self.octet_item(&rest[1], false)?;
+                        if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                         let mut held = cell.borrow_mut();
                         let index = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
                         held.insert(index, byte);
@@ -10116,6 +10155,7 @@ impl<'a> Machine<'a> {
                         if held.is_empty() { return Err(self.octet_worded("index", 2)); }
                         let index = if asked < 0 { asked.saturating_add(held.len() as i64) } else { asked };
                         if index < 0 || index as usize >= held.len() { return Err(self.octet_worded("index", 1)); }
+                        if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                         return Ok(Value::Small(i64::from(held.remove(index as usize))));
                     }
                     56 => {
@@ -10123,9 +10163,10 @@ impl<'a> Machine<'a> {
                         let byte = self.octet_item(&rest[0], false)?;
                         let mut held = cell.borrow_mut();
                         let Some(index) = held.iter().position(|kept| *kept == byte) else { return Err(self.octet_worded("missing", 1)); };
+                        if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                         held.remove(index);
                     }
-                    57 => { counted(0)?; cell.borrow_mut().clear(); }
+                    57 => { counted(0)?; if OctetLease::held(cell) && !cell.borrow().is_empty() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().clear(); }
                     58 => { counted(0)?; cell.borrow_mut().reverse(); }
                     _ => { counted(0)?; let copy = cell.borrow().clone(); return Ok(self.octets(copy, true)); }
                 }
@@ -10216,9 +10257,18 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Vector(Rc::new(chunks.into_iter().map(|chunk| self.octets(chunk, *changeable)).collect())));
             }
             9 if args.len() == 1 => {
+                let _lease = if *changeable { Some(OctetLease::new(cell)) } else { None };
                 let items = self.core_collect(&args[0])?;
-                let pieces = items.iter().map(|item| self.octet_contents(item, false)).collect::<Result<Vec<_>, _>>()?;
-                result = pieces.join(content.as_slice());
+                let mut pieces = Vec::with_capacity(items.len());
+                for item in &items {
+                    let piece = match item {
+                        Value::Thing(thing) if thing.blueprint().name == "memoryview" =>
+                            self.octet_argument(item)?.ok_or_else(|| self.octet_error("arguments"))?,
+                        _ => self.octet_contents(item, false)?,
+                    };
+                    pieces.push(piece);
+                }
+                result = pieces.join(cell.borrow().as_slice());
             }
             11 if (2..=3).contains(&args.len()) => {
                 let old = self.octet_contents(&args[0], false)?;
@@ -13127,6 +13177,7 @@ impl<'a> Machine<'a> {
                 let changed = self.prim(if times { Prim::Times } else { Prim::Plus }, name, v)?;
                 match (&v[0], &changed) {
                     (Value::Octets { cell, changeable: true, .. }, Value::Octets { cell: content, .. }) => {
+                        if OctetLease::held(cell) && cell.borrow().len() != content.borrow().len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                         cell.replace(content.borrow().to_vec());
                         v[0].clone()
                     }
@@ -16652,7 +16703,10 @@ impl<'a> Machine<'a> {
             if !*changeable { return Err(self.octet_error("immutable")); }
             let incoming = self.octet_contents(handed, true)?;
             let (range, positions, contiguous) = self.span_selection(bounds, cell.borrow().len())?;
-            if contiguous { cell.borrow_mut().splice(range, incoming); }
+            if contiguous {
+                if OctetLease::held(cell) && range.len() != incoming.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                cell.borrow_mut().splice(range, incoming);
+            }
             else {
                 if positions.len() != incoming.len() { return Err(self.octet_error("arguments")); }
                 for (index, byte) in positions.into_iter().zip(incoming) { cell.borrow_mut()[index] = byte; }
