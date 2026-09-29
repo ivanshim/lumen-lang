@@ -158,6 +158,14 @@ pub fn indent_position(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<
 fn suite_needed(input: &[Token], word: &str, line: u32) -> String {
     let line_words = input.iter().filter(|token| token.row == line && !matches!(token.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)).map(|token| token.lexeme.as_str()).collect::<Vec<_>>();
     let second = line_words.get(1).copied().unwrap_or("");
+    let offset = usize::from(word == "async" && second == "def");
+    if ["def", "async", "class"].contains(&word) && line_words.get(offset + 2) == Some(&"[")
+        && line_words.get(offset + 3) == Some(&"]") {
+        return String::from("SyntaxError: Type parameter list cannot be empty");
+    }
+    if (word == "def" || word == "async" && second == "def") && !line_words.contains(&"(") {
+        return String::from("SyntaxError: expected '('");
+    }
     let subject = if word == "async" && ["for", "with"].contains(&second) {
         format!("'{second}' statement")
     } else if (word == "def" || word == "async" && second == "def") && line_words.contains(&")") {

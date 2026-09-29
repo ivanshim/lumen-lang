@@ -162,6 +162,16 @@ pub fn layout_position(tokens: Vec<Token>, lang: &Lang, before: usize) -> Result
 fn missing_suite_message(tokens: &[Token], header: &Token) -> String {
     let words: Vec<&Token> = tokens.iter().filter(|part| part.row == header.row && !matches!(part.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)).collect();
     let next = words.get(1).map(|part| part.lexeme.as_str()).unwrap_or("");
+    let name_at = if header.lexeme == "async" && next == "def" { 2 } else { 1 };
+    if matches!(header.lexeme.as_str(), "def" | "async" | "class")
+        && words.get(name_at + 1).is_some_and(|part| part.lexeme == "[")
+        && words.get(name_at + 2).is_some_and(|part| part.lexeme == "]") {
+        return "SyntaxError: Type parameter list cannot be empty".into();
+    }
+    if (header.lexeme == "def" || header.lexeme == "async" && next == "def")
+        && !words.iter().any(|part| part.lexeme == "(") {
+        return "SyntaxError: expected '('".into();
+    }
     let prefix = match header.lexeme.as_str() {
         "async" if next == "for" || next == "with" => format!("'{next}' statement"),
         "async" if next == "def" && words.iter().any(|part| part.lexeme == ")") => "function definition".into(),
