@@ -286,10 +286,13 @@ def fsum(values):
             x = high
         kept.append(x)
         partials = kept
-    if saw_nan:
-        return nan
+    # Two infinities of opposite sign have no sum to agree on, and that
+    # objection stands even when a NaN walked in among them; CPython says
+    # so before it answers a NaN of its own.
     if pos_inf and neg_inf:
         raise 'ValueError: -inf + inf in fsum'
+    if saw_nan:
+        return nan
     if pos_inf:
         return inf
     if neg_inf:

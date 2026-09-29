@@ -1831,9 +1831,10 @@ impl<'a> Machine<'a> {
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
     }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
-        let Some(slots)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
+        let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
+        let slots=declared.settled();
         let matching=|x:&Value|matches!(x,Value::Text(s) if s.as_ref()==key||s.as_ref()==self.detail("namespace"));
-        if match slots{Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching),v=>matching(&v)}{return true;}
+        if match &slots{Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching),v=>matching(v)}{return true;}
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.allowed_slot(p,key))
     }
     pub(super) fn change_entry(entries:&mut Vec<(String,Value)>,key:&str,replacement:Option<Value>)->bool {
@@ -2382,6 +2383,10 @@ impl<'a> Machine<'a> {
             // A name of a kind standing on text is asked after as that text.
             let spelled=match &values[1]{Value::Thing(_)=>Self::underlying(&values[1]).map(|under|under.settled()).filter(|under|matches!(under,Value::Text(_))),_=>None};
             let spelled=spelled.unwrap_or_else(||values[1].clone());
+            // A text keeping a lone half of a surrogate pair still names
+            // a member; it is asked after as the stand-in text such a
+            // row reads as elsewhere, no member's name keeping one.
+            let spelled=match &spelled{Value::Unpaired(numbers)=>Value::text(&Value::category_text(numbers)),other=>other.clone()};
             let Value::Text(key)=&spelled else{return Err(self.core_complaint("core.attribute.name",&values[1].kind_word()).into());};
             // Asking whether a name is there, or reading it with something
             // to fall back on, does not wake a namespace's own answerer.
@@ -2401,7 +2406,8 @@ impl<'a> Machine<'a> {
         if op==3 {return Err(self.wrong_count(&self.class_tool_word(3),2,values.len()));}
         if op==6 {return Err(self.wrong_count(&self.class_tool_word(6),2,values.len()));}
         if (op==4&&values.len()==3)||(op==5&&values.len()==2){
-            let Value::Text(key)=&values[1]else{return Err(self.core_complaint("core.attribute.name",&values[1].kind_word()).into());};return self.alter_class_member(values[0].clone(),key,values.get(2).cloned(),false);
+            let written=match &values[1]{Value::Unpaired(numbers)=>Value::text(&Value::category_text(numbers)),other=>other.clone()};
+            let Value::Text(key)=&written else{return Err(self.core_complaint("core.attribute.name",&values[1].kind_word()).into());};return self.alter_class_member(values[0].clone(),key,values.get(2).cloned(),false);
         }
         if op==4 {return Err(self.wrong_count(&self.class_tool_word(4),3,values.len()));}
         if op==5 {return Err(self.wrong_count(&self.class_tool_word(5),2,values.len()));}

@@ -1,4 +1,5 @@
 import sys, subprocess, pathlib, time
+from stderr_record import measured_line
 root = pathlib.Path(sys.argv[1]); binary = root/"target/debug/lumen-lang"
 progs = sys.argv[2:]
 for p in progs:
@@ -12,13 +13,13 @@ for p in progs:
             status, so, se = r.returncode, r.stdout, r.stderr
         except subprocess.TimeoutExpired:
             status, so, se = 124, "", "TIMEOUT"
-        first = se.splitlines()[0] if se.strip() else ""
+        first = measured_line(se)
         if out.exists():
             ok = status == 0 and so == out.read_text()
             want = "out"
         elif err.exists():
-            ok = status != 0 and first == err.read_text().splitlines()[0]
-            want = "err:" + err.read_text().splitlines()[0][:100]
+            ok = status != 0 and first == measured_line(err.read_text())
+            want = "err:" + measured_line(err.read_text())[:100]
         else:
             ok = False; want = "none"
         prog = [l for l in se.splitlines() if l and set(l) <= set(".FEsx")]

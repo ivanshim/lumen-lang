@@ -1,1 +1,1 @@
-PythonError: AttributeError: property 'x' of 'C' object has no setter
+AttributeError: property 'x' of 'C' object has no setter

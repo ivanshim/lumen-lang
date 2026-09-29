@@ -1,4 +1,5 @@
 import sys, subprocess, pathlib
+from stderr_record import measured_line
 root = pathlib.Path(sys.argv[1]); binary = root/"target/debug/lumen-lang"
 for p in sys.argv[2:]:
     py = root/"scratch"/(p + ".py"); err = py.with_suffix(".err")
@@ -7,11 +8,15 @@ for p in sys.argv[2:]:
     if out.exists():
         assert r.returncode == 0, p
         old = out.read_text()
-        out.write_text(r.stdout)
-        print(p, "written", len(r.stdout), "was", len(old), flush=True)
+        if r.stdout != old:
+            out.write_text(r.stdout)
+            print(p, "written", len(r.stdout), "was", len(old), flush=True)
         continue
     assert r.returncode != 0, p
-    first = r.stderr.splitlines()[0]
-    old = err.read_text().splitlines()[0] if err.exists() else None
-    err.write_text(first + "\n")
-    print(p, "written", len(first), "was", None if old is None else len(old), flush=True)
+    first = measured_line(r.stderr)
+    assert first, p
+    old = err.read_text() if err.exists() else None
+    new = first + "\n"
+    if new != old:
+        err.write_text(new)
+        print(p, "written", len(first), "was", None if old is None else len(old.rstrip("\n")), flush=True)

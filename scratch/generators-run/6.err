@@ -1,1 +1,1 @@
-PythonError: TypeError: exceptions must be classes or instances deriving from BaseException, not str
+TypeError: exceptions must be classes or instances deriving from BaseException, not str

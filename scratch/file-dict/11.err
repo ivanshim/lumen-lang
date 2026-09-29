@@ -1,1 +1,1 @@
-PythonError: TypeError: multiple values for argument 'x'
+TypeError: multiple values for argument 'x'

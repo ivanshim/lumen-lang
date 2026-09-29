@@ -1,1 +1,1 @@
-PythonError: AttributeError: readonly attribute
+AttributeError: readonly attribute

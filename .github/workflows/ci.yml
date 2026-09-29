@@ -145,7 +145,8 @@ jobs:
                   failed=1
                 fi
                 head -n 1 "${f%.py}.err" >"$tmp/expected-error"
-                head -n 1 "$tmp/stderr" >"$tmp/actual-error"
+                # the measured line: the first stderr line, or a traceback's exception line (scripts/suite/stderr_record.py)
+                python3 scripts/suite/stderr_record.py <"$tmp/stderr" >"$tmp/actual-error"
                 if ! diff -u "$tmp/expected-error" "$tmp/actual-error"; then
                   failed=1
                 fi

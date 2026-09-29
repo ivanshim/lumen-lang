@@ -108,6 +108,8 @@ class _Reader:
             return ['lit', 'A'] if inside else ['start_abs']
         if mark == 'Z':
             return ['lit', 'Z'] if inside else ['end_abs']
+        if mark == 'z':
+            return ['lit', 'z'] if inside else ['end_abs']
         if mark == 'n':
             return ['lit', '\n']
         if mark == 't':

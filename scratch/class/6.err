@@ -1,1 +1,1 @@
-PythonError: Undefined variable: options
+NameError: name 'options' is not defined

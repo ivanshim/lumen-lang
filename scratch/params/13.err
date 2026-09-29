@@ -1,1 +1,1 @@
-PythonError: TypeError: argument after * must be an iterable
+TypeError: argument after * must be an iterable

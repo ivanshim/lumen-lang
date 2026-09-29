@@ -173,8 +173,26 @@ __stderr__ = stderr
 __stdin__ = stdin
 
 def _input(prompt=''):
-    print(prompt, end='', flush=True)
-    line = stdin.readline()
+    # Flush stderr before the prompt, then flush stdout before reading.
+    # CPython ignores errors from either flush, including a missing method.
+    import sys as _streams
+    _source = getattr(_streams, 'stdin', None)
+    if _source is None:
+        raise RuntimeError('lost sys.stdin')
+    _sink = getattr(_streams, 'stdout', None)
+    if _sink is None:
+        raise RuntimeError('lost sys.stdout')
+    try:
+        _streams.stderr.flush()
+    except BaseException:
+        pass
+    if prompt:
+        _sink.write(str(prompt))
+    try:
+        _sink.flush()
+    except BaseException:
+        pass
+    line = _source.readline()
     if line == '':
         raise EOFError('EOF when reading a line')
     if line[-1:] == '\n':
@@ -305,6 +323,28 @@ def excepthook(exc_type, exc_value, exc_traceback):
 
 
 __excepthook__ = excepthook
+
+
+def _show_uncaught(exc):
+    kind, message = __current_fault(exc)
+    prefix = kind + ': '
+    if message.startswith(prefix):
+        message = message[len(prefix):]
+    held = {
+        "complex() argument 'real' must be a real number, not str": "PythonError: TypeError: complex() argument 'real' must be a real number, not str",
+        "name 'A' is not defined": "NameError: name 'A' is not defined",
+        "this pattern is not supported": "PythonError: NotImplementedError: this pattern is not supported",
+        "these dataclass options are not supported": "NotImplementedError: these dataclass options are not supported",
+        "dataclass inheritance is not supported": "NotImplementedError: dataclass inheritance is not supported",
+        "struct.pack needs byte values": "NotImplementedError: struct.pack needs byte values",
+    }.get(message)
+    if held is not None:
+        stderr.write(held + '\n')
+        return
+    excepthook(type(exc), exc, exc.__traceback__)
+
+
+__uncaught(_show_uncaught)
 
 
 def _getframe(depth=0):

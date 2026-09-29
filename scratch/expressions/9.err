@@ -1,1 +1,1 @@
-PythonError: TypeError: argument of type 'int' is not a container or iterable
+TypeError: argument of type 'int' is not a container or iterable

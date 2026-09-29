@@ -1,1 +1,1 @@
-PythonError: RuntimeError: Set changed size during iteration
+RuntimeError: Set changed size during iteration

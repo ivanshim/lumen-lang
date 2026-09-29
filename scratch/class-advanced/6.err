@@ -1,1 +1,1 @@
-PythonError: TypeError: cannot create a consistent method resolution order
+TypeError: cannot create a consistent method resolution order

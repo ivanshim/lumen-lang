@@ -2119,3 +2119,29 @@ os.urandom, or the time, instead of 0.
 Merged, the fifty files count 2565 on stack8 and 2566 on microcode7, up from
 2555 and 2556, with no passing test lost; microcode7's test_math, test_str
 and test_long were run whole on the build machine (80, 125 and 34).
+
+### 1am. Batch 20k merged as #518; batch 20l: builtins, tracebacks, dicts
+
+Batch 20l folds four branches, integrated by a GPT-6 Sol worker.
+fix/builtin-last (Kimi K3; test_builtin 90 to 96: round(x, None), __slots__,
+a lone surrogate as an attribute name, __import__ keywords, exec's warnings,
+open() and embedded nulls), fix/dict-list-last (DeepSeek V4 Pro; test_dict
+complete on both kernels, functools.cmp_to_key), fix/fsum-encoding (DeepSeek
+V4 Pro; development mode checks encoding and errors arguments even for empty
+input, test_str +1) and fix/traceback-source (Sol; an uncaught Python error
+now prints CPython's traceback, with each frame's source line and carets
+under the failing expression, and a SyntaxError in a file shows its line;
+test_exceptions 97 to 100).
+
+Because a Python traceback now opens with "Traceback (most recent call
+last):", a scratch record measured by its first stderr line would say the
+same thing for every crashing program. scripts/suite/stderr_record.py now
+measures such a program by its last line, the exception itself, and the
+records were rewritten to it; many now read as CPython prints them
+("NameError: name 'thing' is not defined") where they held the interpreter's
+own wording. The integrator also restored input()'s flushes: CPython flushes
+stderr, writes the prompt, and flushes stdout, ignoring either flush's error.
+
+Merged, the fifty files count 2578 on both stack8 and microcode7, up from
+2565 and 2566, with no passing test lost; microcode7's test_math, test_str
+and test_long were run whole on the build machine (80, 126 and 34).
