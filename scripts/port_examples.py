@@ -1909,34 +1909,42 @@ def write_library_report(lib, defs, coverage):
 
 
 def python_number_examples(relative, text):
-    """Keep the shared examples' operands meaningful under Python's rules."""
+    """Adjust only explanatory text for Python's numeric results."""
     name = relative.as_posix()
     if name == "constructs/round_function.py":
-        text = text.replace("2.5, 0", "2.4, 0")
-        text = text.replace("round half away from zero", "Python rounding")
+        changes = [
+            ("round half away from zero", "round halves to even"),
+        ]
     elif name == "constructs/integer_quotient_minimal.py":
-        text = text.replace("Truncate toward zero", "Negative divisible case")
-        text = text.replace("-17", "-20").replace("(-3)", "(-4)")
-        first, third = text.split('sys.stdout.write("3. 17 // -5 = ")', 1)
-        section, tail = third.split('sys.stdout.write("4. Rational', 1)
-        section = section.replace("17", "20").replace("(-3)", "(-4)")
-        text = first + 'sys.stdout.write("3. 20 // -5 = ")' + section + 'sys.stdout.write("4. Rational' + tail
+        changes = [
+            ("Truncate toward zero", "Floor division"),
+            ("5 * (-3) + (-17 % 5)", "5 * (-4) + (-17 % 5)"),
+            ("-5 * (-3) + (17 % -5)", "-5 * (-4) + (17 % -5)"),
+            ("Rational // Integer", "Float // Integer"),
+            ("Rational // Rational", "Float // Float"),
+            ("Real // Integer", "Float // Integer"),
+        ]
     elif name == "constructs/integer_quotient.py":
-        text = text.replace("-17", "-20")
-        first, third = text.split('sys.stdout.write("Test 1c: 17 // -5 = ")', 1)
-        section, tail = third.split('sys.stdout.write("Test 1d:', 1)
-        section = section.replace("17", "20")
-        text = first + 'sys.stdout.write("Test 1c: 20 // -5 = ")' + section + 'sys.stdout.write("Test 1d:' + tail
-        text = text.replace("-20/3", "-18/3").replace("a = -20 / 3", "a = -18 / 3")
-        text = text.replace("quotient truncates to -5", "quotient floors to -3")
-        text = text.replace("-3.5", "-4.0")
-        text = text.replace("Verify truncation toward zero", "Verify floor division")
-        text = text.replace("(not floor division which would be 2.5 -> 2, but truncate 2.5 -> 2) [OK]", "(floor of 2.5 is 2) [OK]")
-        text = text.replace("-5 // 2", "-6 // 2")
-        text = text.replace("(not floor division which would be -2.5 -> -3, but truncate -2.5 -> -2) [OK]", "(floor of -3 is -3) [OK]")
-        text = text.replace("[OK] Truncates toward zero (not floor division)", "[OK] Floors quotients")
+        changes = [
+            ("quotient truncates to -5", "quotient floors to -3"),
+            ("Verify truncation toward zero", "Verify floor division"),
+            ("(not floor division which would be 2.5 -> 2, but truncate 2.5 -> 2) [OK]", "(floor of 2.5 is 2) [OK]"),
+            ("(not floor division which would be -2.5 -> -3, but truncate -2.5 -> -2) [OK]", "(floor of -2.5 is -3) [OK]"),
+            ("[OK] Truncates toward zero (not floor division)", "[OK] Floors quotients"),
+            ("Rational // Integer = Rational", "Float // Integer = Float"),
+            ("Rational // Rational = Rational", "Float // Float = Float"),
+            ("Float Literals (Real) // Integer = Real", "Float Literals // Integer = Float"),
+            ("[OK] Rational // Integer returns Rational", "[OK] Float // Integer returns Float"),
+            ("[OK] Rational // Rational returns Rational", "[OK] Float // Float returns Float"),
+            ("Real // ... returns Real", "Float // ... returns Float"),
+        ]
+    else:
+        return text
+    for prior, current in changes:
+        if prior not in text:
+            raise ValueError(f"{name}: missing source wording {prior!r}")
+        text = text.replace(prior, current)
     return text
-
 
 def main():
     lib, constants = load_library()
