@@ -1603,7 +1603,10 @@ only. The extension labels so far, all from PHP:
   a header carrying it asks for a metaclass, which no class form runs,
   so the form stays unready. `ext.stmt.class.format.amiss`: two pieces enclosing the
   class name of a thing given a format specification it has no method
-  for. Each of these complaints names its own fault kind and is told
+  for. `ext.stmt.class.format.argument` opens the refusal of a
+  specification that is no text, and `ext.stmt.class.format.result` the
+  refusal of a format method answering with no text, the kind of what
+  was given or answered closing each. Each of these complaints names its own fault kind and is told
   without the language's title before it.
 - `ext.stmt.class.special.declined` names the single value with which a
   method declines an operation, leaving the other operand to answer.
@@ -5204,6 +5207,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
 | `ext.stmt.class.finaliser` | - | - | `__del__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.format.amiss` | - | - | `TypeError: unsupported format string passed to ` `.__format__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.format.argument` | - | - | `TypeError: __format__() argument must be str, not ` | - | - | - | - | - | - | - |
+| `ext.stmt.class.format.result` | - | - | `TypeError: __format__ must return a str, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.guarded` | - | - | - | - | `protected` | - | - | - | - | - |
 | `ext.stmt.class.hidden` | - | - | - | - | `private` | - | - | - | - | - |
 | `ext.stmt.class.implements` | - | - | - | - | `implements` | - | - | - | - | - |

@@ -5556,8 +5556,17 @@ impl<'a> Engine<'a> {
         if place == 72 {
             let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
             let given = args[0].contents();
-            let Value::Text(spec) = &given else { return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(&given)])) };
-            return Ok(Value::text(&writer.field(&receiver.contents(), spec, "")?));
+            let spec = match &given {
+                Value::Text(spec) => spec.to_string(),
+                other => match Self::worth_of(other).map(|worth| worth.contents()) {
+                    Some(Value::Text(held)) => held.to_string(),
+                    _ => {
+                        let word = Self::format_given_kind(other);
+                        return Err(format!("{}{}", self.lang.format_argument.first().map_or("", String::as_str), word));
+                    }
+                },
+            };
+            return Ok(Value::text(&writer.field(&receiver.contents(), &spec, "")?));
         }
         // A whole and a remainder taken at once, either way round.
         if matches!(place, 60 | 61) {
@@ -6054,6 +6063,14 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// The name a complaint of the formatting protocol gives what was
+    /// handed it where text was wanted: the reference's own word for
+    /// nothing, and the plain kind of anything else.
+    pub(super) fn format_given_kind(value: &Value) -> String {
+        if matches!(value, Value::Null) { return "None".to_string(); }
+        Self::shown_kind(value)
+    }
+
     /// The sign the language writes a dyadic action with. Under a
     /// compound write the sign named is the compound one the program
     /// wrote, and not the plain working it falls back to.
@@ -6271,7 +6288,13 @@ impl<'a> Engine<'a> {
     /// by the worth it keeps, or as its text where nothing was asked.
     fn special_format(&mut self, value: &Value, spec: &str) -> Res<String> {
         if let Some(answer) = self.special_call(value, 72, vec![Value::text(spec)])? {
-            return match answer { Value::Text(text) => Ok(text.to_string()), _ => Err(self.special_fault()) };
+            return match answer {
+                Value::Text(text) => Ok(text.to_string()),
+                other => match Self::worth_of(&other).map(|worth| worth.contents()) {
+                    Some(Value::Text(text)) => Ok(text.to_string()),
+                    _ => Err(format!("{}{}", self.lang.format_result.first().map_or("", String::as_str), Self::shown_kind(&other))),
+                },
+            };
         }
         if spec.is_empty() { return self.special_text(value, false); }
         if let Some(worth) = Self::worth_of(value) {
@@ -7125,10 +7148,14 @@ impl<'a> Engine<'a> {
                 let spec = match args.get(1) {
                     None => String::new(),
                     Some(Value::Text(s)) => s.to_string(),
-                    Some(other) => {
-                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-                        return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(other)]));
-                    }
+                    Some(other) => match Self::worth_of(other).map(|worth| worth.contents()) {
+                        Some(Value::Text(s)) => s.to_string(),
+                        _ => {
+                            let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                            let word = Self::format_given_kind(other);
+                            return Err(writer.fault("ext.text.format.spec.type", &[&word]));
+                        }
+                    },
                 };
                 Value::text(&self.special_format(&args[0], &spec)?)
             }
@@ -14475,11 +14502,17 @@ impl<'a> Engine<'a> {
                 if args.is_empty() || args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
                 let writer = crate::formatting::Writer { lang: self.lang, words: sp };
                 let spec = match args.get(1) {
-                    None => "",
-                    Some(Value::Text(s)) => s.as_ref(),
-                    Some(v) => return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(v)])),
+                    None => String::new(),
+                    Some(Value::Text(s)) => s.to_string(),
+                    Some(other) => match Self::worth_of(other).map(|worth| worth.contents()) {
+                        Some(Value::Text(s)) => s.to_string(),
+                        _ => {
+                            let word = Self::format_given_kind(other);
+                            return Err(writer.fault("ext.text.format.spec.type", &[&word]));
+                        }
+                    },
                 };
-                Value::text(&writer.field(&args[0], spec, "")?)
+                Value::text(&writer.field(&args[0], &spec, "")?)
             }
             // Bytes are made of the numbers they are handed, and a walk
             // stands for its numbers as plainly as a list does. Gather

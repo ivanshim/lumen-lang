@@ -94,6 +94,12 @@ impl<'a> Machine<'a> {
     /// The native worth a thing keeps, as it is kept: a row or a map
     /// stays in its cell, so that what is done to it through the thing
     /// is done to what the thing holds.
+    /// The word the formatting protocol's complaints give what stood
+    /// where a specification was wanted: the reference's own word for
+    /// nothing, the plain kind word of anything else.
+    pub(super) fn format_spec_complaint_kind(item:&Value)->String {
+        match item.settled() { Value::Nil=>"None".to_owned(), other=>other.kind_word() }
+    }
     pub(super) fn underlying(value:&Value)->Option<Value> {
         let Value::Thing(t)=value else{return None};
         t.holds.borrow().iter().find(|(k,_)|k=="\0underlying").map(|(_,v)|v.clone())
@@ -675,8 +681,16 @@ impl<'a> Machine<'a> {
                     5=>Err(self.core_complaint("core.uncallable","classmethod").into()),
                     // The root's formatting of a thing to a specification.
                     59 if values.len()==2=>{
-                        let Value::Text(spec)=&values[1] else{return Err(self.class_unready())};
-                        let spec=spec.to_string();
+                        let spec=match &values[1] {
+                            Value::Text(spec)=>spec.to_string(),
+                            other=>match Self::underlying(other).map(|worth|worth.settled()) {
+                                Some(Value::Text(held))=>held.to_string(),
+                                _=>{
+                                    let words=self.table.strings("ext.stmt.class.format.argument");
+                                    return Err(format!("{}{}",words.first().map_or("",String::as_str),Self::format_spec_complaint_kind(other)).into());
+                                }
+                            },
+                        };
                         if !spec.is_empty() { return Err(format!("TypeError: unsupported format string passed to {}.__format__", values[0].kind_word()).into()); }
                         self.object_words(&values[0],false).map(|word|Value::text(&word)).map_err(Escape::from)
                     }

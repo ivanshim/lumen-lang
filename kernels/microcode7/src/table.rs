@@ -189,7 +189,7 @@ ext.builtin.complex.order:L ext.builtin.complex.floor:L ext.builtin.complex.zero
 ext.builtin.complex.power.overflow:L ext.builtin.complex.power.modulo:L ext.builtin.complex.integer.overflow:L ext.builtin.complex.unready:L ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L \
 ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.map.short:L ext.builtin.map.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L \
 ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B \
-ext.stmt.class.index.amiss:L ext.stmt.class.binary.amiss:L ext.stmt.class.format.amiss:L ext.stmt.class.metaclass:L \
+ext.stmt.class.index.amiss:L ext.stmt.class.binary.amiss:L ext.stmt.class.format.amiss:L ext.stmt.class.format.argument:L ext.stmt.class.format.result:L ext.stmt.class.metaclass:L \
 ext.op.sequence.values:B ext.op.sequence.concat:L ext.op.sequence.repeat:L ext.op.sequence.index:L ext.op.sequence.delete:L \
 ext.op.sequence.subscript:L ext.op.sequence.missing:L ext.op.sequence.assign:L ext.builtin.globals:L ext.builtin.locals:L \
 ext.builtin.exec:L ext.builtin.compile:L ext.builtin.compile.modes:L ext.builtin.compile.parameters:L \
