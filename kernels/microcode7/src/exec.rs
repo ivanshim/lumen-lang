@@ -20628,7 +20628,7 @@ impl Machine<'_> {
                 if self.table.flag("ext.op.arithmetic.python_numbers") && left.above.is_zero() && left.under { x = -0.0; }
                 if self.table.flag("ext.op.arithmetic.python_numbers") && right.above.is_zero() && right.under { y = -0.0; }
                 if y == 0.0 {
-                    return Err(if self.table.flag("ext.op.arithmetic.python_numbers") { "ZeroDivisionError: float divmod()".to_string() } else { self.core_complaint("core.zero", "") });
+                    return Err(self.core_complaint("core.zero", ""));
                 }
                 let residue = x % y;
                 let corrected = residue != 0.0 && residue.is_sign_negative() != y.is_sign_negative();

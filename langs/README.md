@@ -4405,7 +4405,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complex.power.zero` | - | - | `ZeroDivisionError: 0.0 to a negative or complex power` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.real` | - | - | `real` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.unready` | - | - | `NotImplementedError: this complex operation is not supported` | - | - | - | - | - | - | - |
-| `ext.builtin.complex.zero` | - | - | `ZeroDivisionError: complex division by zero` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
 | `ext.builtin.core.abs.type` | - | - | `TypeError: bad operand type for abs(): '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
@@ -5029,7 +5029,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.pow.overflow` | - | - | `OverflowError: numerical result out of range` | - | - | - | - | - | - | - |
 | `ext.op.pow.real_exponent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.pow.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
-| `ext.op.quot.real_zero` | - | - | `ZeroDivisionError: float floor division by zero` | - | - | - | - | - | - | - |
+| `ext.op.quot.real_zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
 | `ext.op.quot.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | `Only variable references should be returned by reference` | - | - | - | - | - |
@@ -5059,7 +5059,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.rem.format.unsupported` | - | - | `Unsupported string format` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.width.big` | - | - | `ValueError: width too big at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.formats_text` | - | - | `true` | - | - | - | - | - | - | - |
-| `ext.op.rem.real_zero` | - | - | `ZeroDivisionError: float modulo` | - | - | - | - | - | - | - |
+| `ext.op.rem.real_zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
 | `ext.op.sequence.assign` | - | - | `TypeError: '` `' object does not support item assignment` | - | - | - | - | - | - | - |
 | `ext.op.sequence.concat` | - | - | `TypeError: can only concatenate ` ` (not "` `") to ` | - | - | - | - | - | - | - |

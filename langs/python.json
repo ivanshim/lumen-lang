@@ -42,7 +42,7 @@
     "NotImplementedError: this complex operation is not supported"
   ],
   "ext.builtin.complex.zero": [
-    "ZeroDivisionError: complex division by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.builtin.file.exists": [
     "__file_exists"
@@ -2359,7 +2359,7 @@
     "ZeroDivisionError: 0.0 cannot be raised to a negative power"
   ],
   "ext.op.quot.real_zero": [
-    "ZeroDivisionError: float floor division by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.quot.zero": [
     "ZeroDivisionError: division by zero"
@@ -2455,7 +2455,7 @@
   ],
   "ext.op.rem.formats_text": true,
   "ext.op.rem.real_zero": [
-    "ZeroDivisionError: float modulo"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.sequence.assign": [
     "TypeError: '",

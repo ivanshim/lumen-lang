@@ -18086,7 +18086,7 @@ impl Engine<'_> {
                             crate::value::real_of(remainder, arith::DEFAULT_PLACES),
                         ])));
                     }
-                    if y == 0.0 { return Err(if self.lang.python_numbers { "ZeroDivisionError: float divmod()".to_string() } else { self.core_fault("core.zero", "") }); }
+                    if y == 0.0 { return Err(self.core_fault("core.zero", "")); }
                     let mut rem = x % y;
                     let mut div = (x - rem) / y;
                     if rem != 0.0 && rem.is_sign_negative() != y.is_sign_negative() {
