@@ -175,6 +175,7 @@ struct BindingPlan {
 }
 
 struct Piece {
+    python_fallthrough: bool,
     asynchronous: bool,
     asynchronous_walk: bool,
     comprehension_kind: Option<&'static str>,
@@ -526,7 +527,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let mut top = Piece { asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
+    let mut top = Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -1589,7 +1590,7 @@ impl<'a> Compiler<'a> {
         }
         formal_kinds.truncate(formals.len());
         let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
-        self.pieces.push(Piece { asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
+        self.pieces.push(Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -1632,10 +1633,15 @@ impl<'a> Compiler<'a> {
         self.syntax_finally_nesting = finally_around;
         body_result?;
         self.comprehension_names = surrounding_names;
-        // A function whose value only ever comes from a return
-        // drops the result slot: its prologue goes, and a fall off the
-        // end leaves nothing, which the machine reads as null.
-        let used = self.piece().result_touched;
+        // An ordinary Python function falling off the end returns None.
+        // A return jumps past this write, preserving its own result.
+        let python_body = returns_value && self.piece().python_fallthrough
+            && !self.lang.compile_modes.is_empty();
+        if python_body {
+            self.constant(Value::Null);
+            self.write(RESULT_CELL);
+        }
+        let used = self.piece().result_touched || python_body;
         if returns_value && used {
             self.read(RESULT_CELL);
         }
@@ -6691,6 +6697,7 @@ impl<'a> Compiler<'a> {
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
         self.pending_types = typed;
         let program = self.routine(&original, formals, least, true, |a| {
+            a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
             // The names carried away take the slots after the

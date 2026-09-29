@@ -1558,13 +1558,13 @@ impl<'a> Engine<'a> {
             for (object, routine) in words {
                 self.speak_ignoring(routine, vec![Value::Object(object)], "deallocator");
             }
+            for (told, bearer) in gone {
+                self.speak_ignoring(told, vec![bearer], "callback");
+            }
             for walk in walks {
                 if let Err(fault) = self.close_generator(&walk) {
                     self.ignore_fault(fault, &Value::Generator(walk.clone()), "generator");
                 }
-            }
-            for (told, bearer) in gone {
-                self.speak_ignoring(told, vec![bearer], "callback");
             }
         }
     }
@@ -3140,6 +3140,9 @@ impl<'a> Engine<'a> {
             generator.qualified = self.class_get(function, &self.class_word("qualified").to_string(), true)?.plain();
             generator.trace_frame = self.make_frame(program, &generator.frame, None);
             let walk = Rc::new(RefCell::new(generator));
+            if self.lang.finaliser.is_some() {
+                crate::faint::remember(crate::faint::Hold::Generator(Rc::downgrade(&walk)));
+            }
             if let Some(frame) = &walk.borrow().trace_frame {
                 self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
             }
@@ -3879,6 +3882,13 @@ impl<'a> Engine<'a> {
         let mut kept = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
         if let Some(value) = hurled {
             if kept.closed || !kept.started || kept.program.is_none() {
+                if !kept.started && !kept.closed {
+                    if let Some(body) = &kept.program {
+                        let caller = std::mem::replace(&mut self.trace_frame, kept.trace_frame.clone());
+                        self.record_trace(&value, body);
+                        self.trace_frame = caller;
+                    }
+                }
                 kept.closed = true;
                 kept.trace_frame = None;
                 kept.returned = Value::Null;
@@ -19573,7 +19583,7 @@ impl Engine<'_> {
         // keeps that dictionary and the builtins in force there, so
         // that it may answer for both later.
         if let Some(word) = self.lang.module_builtins.first().cloned() {
-            let globe = outer.borrow().clone();
+            let globe = Value::Bond(outer.clone());
             let born = match self.book_get(&outer, &word) {
                 Ok(Some(held)) if !self.our_native_dict(&held) => match self.as_builtins_dictionary(held) {
                     Ok(dictionary) => dictionary,
@@ -19594,6 +19604,9 @@ impl Engine<'_> {
         let was_reading = self.reading_in.replace(self.text_books.len() - 1);
         let answer = self.text_finished(&program, &file, shown);
         self.reading_in = was_reading;
+        // The dictionary owns these names after the text finishes. Its
+        // temporary world slots must not keep deleted values alive.
+        self.world[offset..offset + names.len()].fill(Value::Blank);
         answer
     }
 

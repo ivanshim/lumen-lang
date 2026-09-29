@@ -325,8 +325,9 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
         message = 'Exception ignored while closing generator ' + repr(about)
     else:
         message = None
+    target = None if kind == 'generator' else about
     unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
-                                     exc_traceback, message, about))
+                                     exc_traceback, message, target))
 
 
 def excepthook(exc_type, exc_value, exc_traceback):
