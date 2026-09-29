@@ -18149,7 +18149,7 @@ impl Engine<'_> {
                     if let Some(n) = &ndigits_big {
                         if *n > BigInt::from(323) { return Ok(args[0].clone()); }
                         if *n < BigInt::from(-308) {
-                            return Ok(crate::value::real_of(if f.p.is_negative() || f.below { -0.0 } else { 0.0 }, arith::DEFAULT_PLACES));
+                            return Ok(crate::value::real_of(if f.p.is_negative() || (self.lang.python_numbers && f.below) { -0.0 } else { 0.0 }, arith::DEFAULT_PLACES));
                         }
                     }
                 }
@@ -18191,7 +18191,7 @@ impl Engine<'_> {
                     let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
                     let result = crate::value::as_binary(&above, &beneath);
                     if result.is_infinite() { return Err("OverflowError: rounded value too large to represent".to_string()); }
-                    return Ok(crate::value::real_of(if result == 0.0 && (p.is_negative() || matches!(&x, Value::Real(real) if real.below)) { -0.0 } else { result }, arith::DEFAULT_PLACES));
+                    return Ok(crate::value::real_of(if result == 0.0 && (p.is_negative() || (self.lang.python_numbers && matches!(&x, Value::Real(real) if real.below))) { -0.0 } else { result }, arith::DEFAULT_PLACES));
                 }
                 // Keep the library's scale, signed half, and truncating quotient.
                 let scale = Value::of_big(BigInt::from(10).pow(places));

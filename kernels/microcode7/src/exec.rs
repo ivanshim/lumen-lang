@@ -20691,7 +20691,7 @@ impl Machine<'_> {
                     if let Some(n) = &ndigits {
                         if *n > BigInt::from(323) { return Ok(input[0].clone()); }
                         if *n < BigInt::from(-308) {
-                            let negative = r.above.is_negative() || r.under;
+                            let negative = r.above.is_negative() || (self.table.flag("ext.op.arithmetic.python_numbers") && r.under);
                             return Ok(crate::data::worth_of_binary(if negative { -0.0 } else { 0.0 }, math::DEFAULT_PLACES));
                         }
                     }
@@ -20725,7 +20725,7 @@ impl Machine<'_> {
                 let fraction = math::ratio_of(&value).filter(|r| !r.beneath.is_zero()).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 if self.table.lone("system.real.render") == Some("shortest") && fraction.places.is_some() {
                     let factor = BigInt::from(10).pow(places.unsigned_abs().min(100000) as u32);
-                    let negative = fraction.above.is_negative() || fraction.under;
+                    let negative = fraction.above.is_negative() || (self.table.flag("ext.op.arithmetic.python_numbers") && fraction.under);
                     let mut numerator = fraction.above.abs();
                     let mut denominator = fraction.beneath;
                     if places < 0 { denominator *= &factor; } else { numerator *= &factor; }
