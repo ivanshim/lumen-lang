@@ -698,8 +698,9 @@ only. The extension labels so far, all from PHP:
 - `ext.lexical.escape.continued`: whether a backslash and the line end
   after it join the two lines of a string, standing for no character.
 - `ext.lexical.escape.named`: the letter before a character name between
-  braces. The name is read whole against the Unicode 16.0 name, alias,
-  and named-sequence tables, including algorithmic Hangul, CJK, and Tangut names.
+  braces. The name is read whole against the Unicode 16.0 character-name
+  and alias tables, including algorithmic Hangul, CJK, and Tangut names.
+  Named sequences are not valid in Python named escapes.
 - `ext.lexical.escape.named.unknown`: the Python syntax error for a complete
   named escape whose name is absent from the Unicode table.
 - `ext.lexical.escape.unavailable`: what a run says upon reaching a

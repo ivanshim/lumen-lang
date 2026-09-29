@@ -3563,7 +3563,7 @@ static CHANGES: &[(u32, &str, &str, &str, &str)] = &[
 ];
 
 
-/// Resolve a Unicode 16.0 name from the UCD, including aliases and sequences.
+/// Resolve a Unicode 16.0 name from the UCD, including aliases.
 /// UAX #44 defines the Hangul, CJK and Tangut algorithmic names.
 /// Source: https://www.unicode.org/Public/16.0.0/ucd/ ; license:
 /// https://www.unicode.org/license.txt .
@@ -3613,18 +3613,6 @@ pub fn name_value(word: &str) -> Option<String> {
             if let Ok(number) = u32::from_str_radix(cells[0], 16) {
                 if let Some(symbol) = char::from_u32(number) { index.insert(cells[1].to_string(), symbol.to_string()); }
             }
-        }
-        for record in include_str!("../../../unicode-data/NamedSequences.txt").lines().filter(|r| !r.starts_with('#')) {
-            let Some((title, sequence)) = record.split_once(';') else { continue };
-            let mut result = String::new();
-            let mut valid = true;
-            for hex in sequence.split_whitespace() {
-                match u32::from_str_radix(hex, 16).ok().and_then(char::from_u32) {
-                    Some(symbol) => result.push(symbol),
-                    None => valid = false,
-                }
-            }
-            if valid && !result.is_empty() { index.insert(title.to_string(), result); }
         }
         index
     });

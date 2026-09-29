@@ -6335,7 +6335,7 @@ static CASES: &[(u32, [&str; 4])] = &[
 ];
 
 
-/// Unicode 16.0 character names, aliases, named sequences, and the
+/// Unicode 16.0 character names, aliases, and the
 /// algorithmic Hangul/CJK/Tangut names described by UAX #44.
 /// Data: https://www.unicode.org/Public/16.0.0/ucd/ (Unicode License).
 pub fn named_text(name: &str) -> Option<String> {
@@ -6385,14 +6385,6 @@ pub fn named_text(name: &str) -> Option<String> {
                 if let Ok(code) = u32::from_str_radix(hex, 16) {
                     if let Some(ch) = char::from_u32(code) { names.insert(alias.to_owned(), ch.to_string()); }
                 }
-            }
-        }
-        for row in include_str!("../../../unicode-data/NamedSequences.txt").lines() {
-            if row.starts_with('#') || row.is_empty() { continue; }
-            if let Some((title, points)) = row.split_once(';') {
-                let value: Option<String> = points.split_whitespace()
-                    .map(|hex| u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)).collect();
-                if let Some(value) = value { names.insert(title.to_owned(), value); }
             }
         }
         names

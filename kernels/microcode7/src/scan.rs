@@ -702,6 +702,7 @@ impl Quotation<'_> {
         let mut noticed = false;
         let mut saved = String::new();
         let mut missing = false;
+        let mut part_start = body;
         while !self.source[self.next..].starts_with(end) {
             let ch = self.here().ok_or_else(|| {
                 let key = match (end.len() > 1, fields) {
@@ -726,7 +727,7 @@ impl Quotation<'_> {
                     } else { None };
                     return Err(complaint.unwrap_or_else(|| self.bad()));
                 },
-                '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing, &mut noticed)?,
+                '\\' => self.slash(part_start, raw, fields, bytes, &mut saved, &mut missing, &mut noticed)?,
                 '{' | '}' if fields => {
                     if self.source.get(self.next + 1) == Some(&ch) {
                         saved.push(ch);
@@ -735,7 +736,8 @@ impl Quotation<'_> {
                     } else {
                         if ch == '}' { return Err(self.field_fault(1, &[])); }
                         self.flush(&mut saved, &mut missing);
-                        self.field(raw, depth, end, 0, template)?;
+                        self.field(part_start, raw, depth, end, 0, template)?;
+                        part_start = self.next;
                         noticed = false;
                     }
                 }
@@ -775,7 +777,7 @@ impl Quotation<'_> {
         Some((ch.to_string(), false))
     }
 
-    fn slash(&mut self, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool, noticed: &mut bool) -> Result<(), String> {
+    fn slash(&mut self, body: usize, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool, noticed: &mut bool) -> Result<(), String> {
         let begin = self.next;
         let ch = *self.source.get(begin + 1).ok_or_else(|| self.bad())?;
         if !raw && !*noticed && self.table.strings("ext.lexical.escape.warning").len() == 4 {
@@ -815,8 +817,9 @@ impl Quotation<'_> {
                         None if table.single("ext.lexical.escape.named.unknown").is_some() => {
                             let complaint = table.single("ext.lexical.escape.named.unknown").expect("checked above");
                             let span = self.source[begin..self.next].iter().map(|c| c.len_utf8()).sum::<usize>();
-                            let words = complaint.replacen("{}", &text.len().to_string(), 1)
-                                .replacen("{}", &(text.len() + span - 1).to_string(), 1);
+                            let offset: usize = self.source[body..begin].iter().map(|c| c.len_utf8()).sum();
+                            let words = complaint.replacen("{}", &offset.to_string(), 1)
+                                .replacen("{}", &(offset + span - 1).to_string(), 1);
                             return Err(words);
                         }
                         None => *missing = true,
@@ -826,8 +829,9 @@ impl Quotation<'_> {
             }
             let consumed: String = self.source[begin..self.next].iter().collect();
             let mut message = table.single("ext.lexical.escape.named.amiss").unwrap_or("Invalid string literal").to_owned();
-            for offset in [text.len(), text.len() + consumed.len() - 1] {
-                message = message.replacen("{}", &offset.to_string(), 1);
+            let offset: usize = self.source[body..begin].iter().map(|c| c.len_utf8()).sum();
+            for place in [offset, offset + consumed.len() - 1] {
+                message = message.replacen("{}", &place.to_string(), 1);
             }
             return Err(message);
         }
@@ -906,7 +910,7 @@ impl Quotation<'_> {
         for insert in inserts { words = words.replacen("{}", insert, 1); }
         words
     }
-    fn field(&mut self, raw: bool, depth: u32, delimiter: &[char], levels: usize, template: Option<char>) -> Result<(), String> {
+    fn field(&mut self, body: usize, raw: bool, depth: u32, delimiter: &[char], levels: usize, template: Option<char>) -> Result<(), String> {
         if levels >= 3 { return Err(self.field_fault(18, &[])); }
         self.forward(1);
         let origin = self.next;
@@ -1067,8 +1071,8 @@ impl Quotation<'_> {
                 if self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[])); }
                 match self.here().ok_or_else(|| self.field_fault(0, &[]))? {
                     '\n' | '\r' if delimiter.len() == 1 => return Err(self.field_fault(17, &[])),
-                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw, depth, delimiter, levels + 1, template)?; noticed = false; }
-                    '\\' => self.slash(raw, true, false, &mut specification, &mut missing, &mut noticed)?,
+                    '{' => { self.flush(&mut specification, &mut missing); self.field(body, raw, depth, delimiter, levels + 1, template)?; noticed = false; }
+                    '\\' => self.slash(body, raw, true, false, &mut specification, &mut missing, &mut noticed)?,
                     c => { specification.push(c); self.forward(1); }
                 }
             }

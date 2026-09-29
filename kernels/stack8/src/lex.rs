@@ -593,6 +593,7 @@ impl<'a> Cursor<'a> {
             for _ in 0..prefix + mark.chars().count() { self.step(); }
             if format { self.push(Shape::StringBegin, self.template.map(|c| c.to_string()).unwrap_or_default(), 0, line, col); }
             let mut warned = false;
+            let mut body_start = self.at;
             let (mut text, mut fault) = (String::new(), false);
             loop {
                 if at_word(&self.text, self.at, mark) {
@@ -627,11 +628,12 @@ impl<'a> Cursor<'a> {
                         self.step(); self.step(); text.push(c); warned = false;
                     } else if c == '{' {
                         self.string_text(&mut text, &mut fault, line, col);
-                        self.string_field(raw, depth, mark, 0)?;
+                        self.string_field(body_start, raw, depth, mark, 0)?;
+                        body_start = self.at;
                         warned = false;
                     } else { return Err(self.field_error(1)); }
                 } else if c == '\\' {
-                    self.rich_escape(raw, format, bytes, &mut text, &mut fault, &mut warned)?;
+                    self.rich_escape(body_start, raw, format, bytes, &mut text, &mut fault, &mut warned)?;
                 } else { text.push(self.step()); }
             }
             if bytes { self.push(Shape::Bytes, text, 0, line, col); }
@@ -669,7 +671,7 @@ impl<'a> Cursor<'a> {
         Some((next.to_string(), false))
     }
 
-    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool, warned: &mut bool) -> Result<(), String> {
+    fn rich_escape(&mut self, body_start: usize, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool, warned: &mut bool) -> Result<(), String> {
         let Some(next) = self.look(1) else { return Err(self.string_words()); };
         if raw {
             text.push(self.step());
@@ -702,7 +704,7 @@ impl<'a> Cursor<'a> {
         }
         if Some(next) == lang.named_letter {
             let begin = self.at;
-            let position = text.len();
+            let position: usize = self.text[body_start..begin].iter().map(|c| c.len_utf8()).sum();
             self.step(); self.step();
             if self.look(0) == Some('{') {
                 self.step();
@@ -781,7 +783,7 @@ impl<'a> Cursor<'a> {
         self.lang.field_errors.get(number).cloned().unwrap_or_else(|| self.string_words())
     }
 
-    fn string_field(&mut self, raw: bool, depth: u32, outer: &str, spec_depth: u32) -> Result<(), String> {
+    fn string_field(&mut self, body_start: usize, raw: bool, depth: u32, outer: &str, spec_depth: u32) -> Result<(), String> {
         if spec_depth > 2 { return Err(self.field_error(18)); }
         let (line, col) = (self.row, self.column);
         self.step();
@@ -913,8 +915,8 @@ impl<'a> Cursor<'a> {
                 match self.look(0) {
                     Some('}') => break,
                     Some('\n' | '\r') if outer.len() == 1 => return Err(self.field_error(17)),
-                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth, outer, spec_depth + 1)?; warned = false; }
-                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault, &mut warned)?,
+                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(body_start, raw, depth, outer, spec_depth + 1)?; warned = false; }
+                    Some('\\') => self.rich_escape(body_start, raw, true, false, &mut text, &mut fault, &mut warned)?,
                     Some(_) => text.push(self.step()),
                     None => return Err(self.field_error(0)),
                 }
