@@ -329,12 +329,12 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 
 /// The same, saying besides which row the reading had reached when it
 /// stopped, for a language that tells such a stopping in its own words.
-pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool)> {
+pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool, (usize, usize, u32))> {
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
     build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard, &column)), None, None, false, false)
-        .map_err(|said| (said, at.get(), hard.get()))
+        .map_err(|said| (said, at.get(), hard.get(), column.get()))
 }
 
 /// The same, said besides which file the text came out of. Nothing but
