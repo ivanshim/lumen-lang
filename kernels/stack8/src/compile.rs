@@ -9939,8 +9939,14 @@ impl<'a> Compiler<'a> {
             self.expr(0)?;
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
+                if !self.lang.syntax_members.is_empty() && (self.at_symbol(&pair.close) || pair.between.as_ref().is_some_and(|sep| self.at_symbol(sep))) {
+                    return Err("SyntaxError: ':' expected after dictionary key".into());
+                }
                 self.want_sign(&mark, "between a map key and value")?;
                 item_at = self.pos;
+                if !self.lang.syntax_members.is_empty() && (self.at_symbol(&pair.close) || pair.between.as_ref().is_some_and(|sep| self.at_symbol(sep))) {
+                    return Err("SyntaxError: expression expected after dictionary key and ':'".into());
+                }
                 if !self.lang.syntax_members.is_empty() && self.at_symbol("*") {
                     return Err("SyntaxError: cannot use a starred expression in a dictionary value".into());
                 }

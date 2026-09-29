@@ -9333,8 +9333,14 @@ impl<'a> Builder<'a> {
             let mut beginning = self.pos;
             let mut item = self.expr(0)?;
             if mapped && !spreading {
+                if self.table.has_any("ext.builtin.exceptions.syntax") && (self.sign(&closing) || self.sign(&separator)) {
+                    return Err(String::from("SyntaxError: ':' expected after dictionary key"));
+                }
                 self.need_sign(self.table.single("syntax.map.pair").unwrap(), "between the key and its value")?;
                 beginning = self.pos;
+                if self.table.has_any("ext.builtin.exceptions.syntax") && (self.sign(&closing) || self.sign(&separator)) {
+                    return Err(String::from("SyntaxError: expression expected after dictionary key and ':'"));
+                }
                 if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
                     return Err(String::from("SyntaxError: cannot use a starred expression in a dictionary value"));
                 }
