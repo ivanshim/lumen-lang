@@ -20518,6 +20518,7 @@ impl Machine<'_> {
                 Ok(Value::Vector(Rc::new(row)).keep(true))
             }
             Least | Greatest => {
+                if input.is_empty() { return Err(format!("TypeError: {} expected at least 1 argument, got 0", name)); }
                 require(1, usize::MAX)?;
                 if input.len() > 1 && fallback.is_some() { return Err(self.core_complaint("core.default.many", "")); }
                 // The smallest and the largest of a stepped walk are the

@@ -17965,6 +17965,7 @@ impl Engine<'_> {
                 Value::array(self.steady_order(items, &key, reverse)?).held(true)
             }
             Builtin::Minimum | Builtin::Maximum => {
+                if args.is_empty() { return Err(format!("TypeError: {} expected at least 1 argument, got 0", name)); }
                 arity(1, usize::MAX)?;
                 if args.len() > 1 && default.is_some() { return Err(self.core_fault("core.default.many", "")); }
                 // The least and the greatest of a counted row are its
