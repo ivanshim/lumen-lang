@@ -8505,6 +8505,10 @@ impl<'a> Builder<'a> {
                                 if table.has_any("ext.builtin.tuple") { constant(Value::Tuple(Rc::new(Vec::new()))) } else { self.scope_unrun("ext.system.scope.unready") }
                             }
                                 else { self.comma_value()? };
+                            if table.has_any("ext.builtin.exceptions.syntax")
+                                && matches!(self.look().shape, Shape::Bare | Shape::Numeral) {
+                                return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
+                            }
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                             expression
                         }

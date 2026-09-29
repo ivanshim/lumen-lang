@@ -8916,6 +8916,10 @@ impl<'a> Compiler<'a> {
                                 else { self.scope_fault(&lang.scope_unready.clone()); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
+                            if !lang.syntax_members.is_empty()
+                                && matches!(self.look().shape, Shape::Instr | Shape::Numeral) {
+                                return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
+                            }
                             self.want_sign(&group.close, "to close a group")?;
                         }
                         }
