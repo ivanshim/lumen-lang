@@ -19090,26 +19090,51 @@ impl Engine<'_> {
         }
     }
 
+    /// The name the reference knows a coding word's encoding by when
+    /// it spells one of the UTF-8 or Latin-1 families; anything else
+    /// keeps the name it was written with.
+    fn coding_word_normalized(written: &str) -> String {
+        let folded: String = written.chars().take(12).map(|c| if c == '_' { '-' } else { c.to_ascii_lowercase() }).collect();
+        let family = match folded.as_str() {
+            f if f == "utf-8" || f.starts_with("utf-8-") => Some("utf-8"),
+            f if matches!(f, "latin-1" | "iso-8859-1" | "iso-latin-1")
+                || f.starts_with("latin-1-") || f.starts_with("iso-8859-1-") || f.starts_with("iso-latin-1-") => Some("iso-8859-1"),
+            _ => None,
+        };
+        family.unwrap_or(written).to_string()
+    }
+
     /// Text checked ahead of time and kept as a code value, with the
     /// file and the manner it is to be read in.
     fn source_bytes(&mut self, bytes: &[u8], filename: &str) -> Res<Rc<str>> {
         let bom = bytes.starts_with(&[239, 187, 191]);
         let bytes = bytes.strip_prefix(&[239, 187, 191]).unwrap_or(bytes);
-        let mut spelling = "utf-8".to_string();
-        for line in bytes.split(|b| *b == b'\n').take(2) {
+        let mut spelling: Option<String> = None;
+        'head: for line in bytes.split(|b| *b == b'\n').take(2) {
             let line = String::from_utf8_lossy(line);
-            if !line.trim_start().starts_with('#') { continue; }
-            if let Some((_, tail)) = line.split_once("coding") {
-                if let Some(tail) = tail.strip_prefix(':').or_else(|| tail.strip_prefix('=')) {
-                    spelling = tail.trim_start().chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).collect();
-                    break;
+            let trimmed = line.trim_start_matches([' ', '\t', '\x0c']);
+            if !trimmed.starts_with('#') {
+                // Past a line that is not blank and not only a comment
+                // no coding word is looked for, as the reference seeks.
+                if !trimmed.trim_end_matches('\r').is_empty() { break; }
+                continue;
+            }
+            let mut rest = trimmed;
+            while let Some(at) = rest.find("coding") {
+                rest = &rest[at + 6..];
+                let Some(marked) = rest.strip_prefix(':').or_else(|| rest.strip_prefix('=')) else { continue };
+                let name: String = marked.trim_start_matches([' ', '\t']).chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).collect();
+                if !name.is_empty() {
+                    spelling = Some(name);
+                    break 'head;
                 }
             }
         }
+        let spelling = spelling.unwrap_or_else(|| "utf-8".to_string());
         let encoding = spelling.to_ascii_lowercase().replace(['-', '_'], "");
-        let declared = spelling.to_ascii_lowercase().replace('_', "-");
-        if bom && declared != "utf-8" && !declared.starts_with("utf-8-") {
-            return Err(self.text_syntax(0, format!("SyntaxError: encoding problem: {spelling} with BOM"), filename, 0, 0, None, ""));
+        let declared = Self::coding_word_normalized(&spelling);
+        if bom && declared != "utf-8" {
+            return Err(self.text_syntax(0, format!("SyntaxError: encoding problem: {declared} with BOM"), filename, 0, 0, None, ""));
         }
         let decoded = match encoding.as_str() {
             "ascii" | "usascii" => {
@@ -19138,6 +19163,12 @@ impl Engine<'_> {
  ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�" };
                 let upper: Vec<char> = mapping.chars().collect();
                 bytes.iter().map(|b| if *b < 128 { char::from(*b) } else { upper[*b as usize - 128] }).collect()
+            }
+            // The DOS page's upper half: each byte above 127 stands
+            // for the character the reference's codec gives it.
+            "cp437" | "437" | "ibm437" => {
+                let page: Vec<char> = "\u{c7}\u{fc}\u{e9}\u{e2}\u{e4}\u{e0}\u{e5}\u{e7}\u{ea}\u{eb}\u{e8}\u{ef}\u{ee}\u{ec}\u{c4}\u{c5}\u{c9}\u{e6}\u{c6}\u{f4}\u{f6}\u{f2}\u{fb}\u{f9}\u{ff}\u{d6}\u{dc}\u{a2}\u{a3}\u{a5}\u{20a7}\u{192}\u{e1}\u{ed}\u{f3}\u{fa}\u{f1}\u{d1}\u{aa}\u{ba}\u{bf}\u{2310}\u{ac}\u{bd}\u{bc}\u{a1}\u{ab}\u{bb}\u{2591}\u{2592}\u{2593}\u{2502}\u{2524}\u{2561}\u{2562}\u{2556}\u{2555}\u{2563}\u{2551}\u{2557}\u{255d}\u{255c}\u{255b}\u{2510}\u{2514}\u{2534}\u{252c}\u{251c}\u{2500}\u{253c}\u{255e}\u{255f}\u{255a}\u{2554}\u{2569}\u{2566}\u{2560}\u{2550}\u{256c}\u{2567}\u{2568}\u{2564}\u{2565}\u{2559}\u{2558}\u{2552}\u{2553}\u{256b}\u{256a}\u{2518}\u{250c}\u{2588}\u{2584}\u{258c}\u{2590}\u{2580}\u{3b1}\u{df}\u{393}\u{3c0}\u{3a3}\u{3c3}\u{b5}\u{3c4}\u{3a6}\u{398}\u{3a9}\u{3b4}\u{221e}\u{3c6}\u{3b5}\u{2229}\u{2261}\u{b1}\u{2265}\u{2264}\u{2320}\u{2321}\u{f7}\u{2248}\u{b0}\u{2219}\u{b7}\u{221a}\u{207f}\u{b2}\u{25a0}\u{a0}".chars().collect();
+                bytes.iter().map(|b| if *b < 128 { char::from(*b) } else { page[*b as usize - 128] }).collect()
             }
             _ => return Err(self.text_syntax(0, format!("SyntaxError: unknown encoding: {spelling}"), filename, 0, 0, None, "")),
         };

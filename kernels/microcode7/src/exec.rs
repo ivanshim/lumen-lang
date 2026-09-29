@@ -18820,17 +18820,42 @@ impl<'a> Machine<'a> {
     fn decode_program(&mut self, raw: &[u8], file: &str) -> Result<Rc<str>, String> {
         let has_bom = raw.starts_with(b"\xef\xbb\xbf");
         let raw = if has_bom { &raw[3..] } else { raw };
-        let written = raw.split(|c| *c == 10).take(2).find_map(|line| {
+        let mut found: Option<String> = None;
+        'head: for line in raw.split(|c| *c == 10).take(2) {
             let ascii = String::from_utf8_lossy(line);
-            if !ascii.trim_start().starts_with('#') { return None; }
-            let (_, suffix) = ascii.split_once("coding")?;
-            let suffix = suffix.strip_prefix('=').or_else(|| suffix.strip_prefix(':'))?;
-            Some(suffix.trim_start().chars().take_while(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect::<String>())
-        }).unwrap_or_else(|| "utf-8".into());
+            let head = ascii.trim_start_matches([' ', '\t', '\x0c']);
+            if !head.starts_with('#') {
+                // A line that is not blank and not only a comment ends
+                // the search for a coding word, as the reference seeks.
+                if !head.trim_end_matches('\r').is_empty() { break; }
+                continue;
+            }
+            let mut rest = &head[1..];
+            while let Some(at) = rest.find("coding") {
+                rest = &rest[at + 6..];
+                let Some(marked) = rest.strip_prefix('=').or_else(|| rest.strip_prefix(':')) else { continue };
+                let name: String = marked.trim_start_matches([' ', '\t']).chars().take_while(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect();
+                if !name.is_empty() {
+                    found = Some(name);
+                    break 'head;
+                }
+            }
+        }
+        let written = found.unwrap_or_else(|| "utf-8".into());
         let cookie: String = written.chars().filter(|c| !"-_".contains(*c)).flat_map(char::to_lowercase).collect();
-        let normalized = written.to_lowercase().replace('_', "-");
-        if has_bom && !(normalized == "utf-8" || normalized.starts_with("utf-8-")) {
-            let why = format!("SyntaxError: encoding problem: {written} with BOM");
+        // The name the reference knows the UTF-8 and Latin-1 spellings
+        // by; any other keeps the name it was written with.
+        let folded: String = written.chars().take(12).map(|c| if c == '_' { '-' } else { c.to_ascii_lowercase() }).collect();
+        let known_as: &str = if folded == "utf-8" || folded.starts_with("utf-8-") {
+            "utf-8"
+        } else if matches!(folded.as_str(), "latin-1" | "iso-8859-1" | "iso-latin-1")
+            || folded.starts_with("latin-1-") || folded.starts_with("iso-8859-1-") || folded.starts_with("iso-latin-1-") {
+            "iso-8859-1"
+        } else {
+            &written
+        };
+        if has_bom && known_as != "utf-8" {
+            let why = format!("SyntaxError: encoding problem: {known_as} with BOM");
             return Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""));
         }
         if cookie == "ascii" || cookie == "usascii" {
@@ -18846,6 +18871,7 @@ impl<'a> Machine<'a> {
         let alphabet = match cookie.as_str() {
             "cp1251" => Some("ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя"),
             "iso88597" => Some(" ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�"),
+            "cp437" | "437" | "ibm437" => Some("\u{c7}\u{fc}\u{e9}\u{e2}\u{e4}\u{e0}\u{e5}\u{e7}\u{ea}\u{eb}\u{e8}\u{ef}\u{ee}\u{ec}\u{c4}\u{c5}\u{c9}\u{e6}\u{c6}\u{f4}\u{f6}\u{f2}\u{fb}\u{f9}\u{ff}\u{d6}\u{dc}\u{a2}\u{a3}\u{a5}\u{20a7}\u{192}\u{e1}\u{ed}\u{f3}\u{fa}\u{f1}\u{d1}\u{aa}\u{ba}\u{bf}\u{2310}\u{ac}\u{bd}\u{bc}\u{a1}\u{ab}\u{bb}\u{2591}\u{2592}\u{2593}\u{2502}\u{2524}\u{2561}\u{2562}\u{2556}\u{2555}\u{2563}\u{2551}\u{2557}\u{255d}\u{255c}\u{255b}\u{2510}\u{2514}\u{2534}\u{252c}\u{251c}\u{2500}\u{253c}\u{255e}\u{255f}\u{255a}\u{2554}\u{2569}\u{2566}\u{2560}\u{2550}\u{256c}\u{2567}\u{2568}\u{2564}\u{2565}\u{2559}\u{2558}\u{2552}\u{2553}\u{256b}\u{256a}\u{2518}\u{250c}\u{2588}\u{2584}\u{258c}\u{2590}\u{2580}\u{3b1}\u{df}\u{393}\u{3c0}\u{3a3}\u{3c3}\u{b5}\u{3c4}\u{3a6}\u{398}\u{3a9}\u{3b4}\u{221e}\u{3c6}\u{3b5}\u{2229}\u{2261}\u{b1}\u{2265}\u{2264}\u{2320}\u{2321}\u{f7}\u{2248}\u{b0}\u{2219}\u{b7}\u{221a}\u{207f}\u{b2}\u{25a0}\u{a0}"),
             _ => None,
         };
         if let Some(alphabet) = alphabet {
