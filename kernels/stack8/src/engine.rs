@@ -11202,6 +11202,92 @@ impl<'a> Engine<'a> {
         Ok(Some(crate::value::real_of(raised, arith::DEFAULT_PLACES)))
     }
 
+    // `sum` keeps the low bits lost by each binary addition until it must
+    // return a Python float or delegate to ordinary addition.
+    fn sum_piece(mut pair: (f64, f64), x: f64) -> (f64, f64) {
+        let next = pair.0 + x;
+        pair.1 += if pair.0.abs() >= x.abs() { (pair.0 - next) + x } else { (x - next) + pair.0 };
+        (next, pair.1)
+    }
+
+    fn sum_finish(pair: (f64, f64)) -> f64 {
+        if pair.1 != 0.0 && pair.1.is_finite() { pair.0 + pair.1 } else { pair.0 }
+    }
+
+    fn sum_step(&mut self, total: &mut Value, running: &mut Option<((f64, f64), Option<(f64, f64)>)>, item: Value) -> Res<()> {
+        if running.is_none() {
+            if matches!(&item, Value::Real(r) if r.places > 0) || matches!(&item, Value::Complex(_)) {
+                // The first crossing from exact integers to binary numbers
+                // rounds the integer before adding, just as Python's numeric
+                // addition does. Retain later rounding losses separately.
+                let whole = match total {
+                    Value::Small(n) => Some(*n as f64),
+                    Value::Huge(n) => Some(n.to_f64().filter(|v| v.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_string())?),
+                    Value::Flag(b) => Some(f64::from(u8::from(*b))),
+                    _ => None,
+                };
+                if let Some(whole) = whole {
+                    let next = match &item {
+                        Value::Real(r) if r.places > 0 => Some((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, None)),
+                        Value::Complex(z) => Some((z.real, Some(z.imag))),
+                        _ => None,
+                    };
+                    if let Some((real, imag)) = next {
+                        *running = Some(((whole + real, 0.0), imag.map(|part| (part, 0.0))));
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        if running.is_none() {
+            *running = match total {
+                Value::Real(r) if r.places > 0 => Some(((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, 0.0), None)),
+                Value::Complex(z) => Some(((z.real, 0.0), Some((z.imag, 0.0)))),
+                _ => None,
+            };
+        }
+        if let Some((real, imag)) = running.as_mut() {
+            let number = match &item {
+                Value::Small(n) => Some((*n as f64, None)),
+                Value::Huge(n) => Some((n.to_f64().filter(|v| v.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_string())?, None)),
+                Value::Flag(b) => Some((f64::from(u8::from(*b)), None)),
+                Value::Real(r) if r.places > 0 => Some((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, None)),
+                Value::Complex(z) if imag.is_some() => Some((z.real, Some(z.imag))),
+                Value::Object(o) => {
+                    let kind = Self::kind_beneath(&o.class_now());
+                    let native = Self::worth_of(&item);
+                    match (kind.as_deref(), native) {
+                        (Some("int"), Some(Value::Small(n))) => Some((n as f64, None)),
+                        (Some("int"), Some(Value::Huge(n))) => Some((n.to_f64().filter(|v| v.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_string())?, None)),
+                        (Some("float"), Some(Value::Real(r))) if imag.is_some() => Some((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, None)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some((x, y)) = number {
+                *real = Self::sum_piece(*real, x);
+                if let (Some(part), Some(y)) = (imag.as_mut(), y) { *part = Self::sum_piece(*part, y); }
+                return Ok(());
+            }
+            *total = match imag {
+                Some(part) => crate::complex::made(self.lang, Self::sum_finish(*real), Self::sum_finish(*part)),
+                None => crate::value::real_of(Self::sum_finish(*real), crate::arith::DEFAULT_PLACES),
+            };
+            *running = None;
+        }
+        *total = self.sum_added(total, &item)?;
+        Ok(())
+    }
+
+    fn sum_result(&self, total: Value, running: Option<((f64, f64), Option<(f64, f64)>)>) -> Value {
+        match running {
+            Some((real, Some(imag))) => crate::complex::made(self.lang, Self::sum_finish(real), Self::sum_finish(imag)),
+            Some((real, None)) => crate::value::real_of(Self::sum_finish(real), crate::arith::DEFAULT_PLACES),
+            None => total,
+        }
+    }
+
     /// One member added into `sum`'s running total: the exact reckoning
     /// where the two are numbers, and the plain working of `+`
     /// otherwise — the very working a bare `total + item` already
@@ -15729,8 +15815,23 @@ impl<'a> Engine<'a> {
                 Value::Flag(false)
             }
             Builtin::Sum => {
-                if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
+                if args.is_empty() { return Err(format!("TypeError: {name}() takes at least 1 positional argument (0 given)")); }
+                if args.len() > 2 { return Err(format!("TypeError: {name}() takes at most 2 arguments ({} given)", args.len())); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
+                // A built-in integer range has no user code at its steps.
+                // Retain its exact closed form for very large ranges only
+                // while the start also remains an exact built-in integer.
+                if matches!(total, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    if let Value::Counted(row) = args[0].contents() {
+                        let length = row.length();
+                        if length.is_zero() { return Ok(total); }
+                        let added = (&row.start + (&row.start + (&length - 1) * &row.step)) * &length / 2;
+                        return self.sum_added(&total, &Value::of_big(added));
+                    }
+                }
+                let walk = if self.lang.yield_suspends {
+                    Some(self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))?)
+                } else { None };
                 // A start already text or a row of bytes is refused
                 // before a single member is read, in the words naming
                 // the very kind it is, the way CPython refuses summing
@@ -15739,6 +15840,12 @@ impl<'a> Engine<'a> {
                     Value::Text(_) => Some(0),
                     Value::Bytes(_, false, _) => Some(1),
                     Value::Bytes(_, true, _) => Some(2),
+                    Value::Object(o) => match Self::kind_beneath(&o.class_now()).as_deref() {
+                        Some("str") => Some(0),
+                        Some("bytes") => Some(1),
+                        Some("bytearray") => Some(2),
+                        _ => None,
+                    },
                     _ => None,
                 };
                 if let Some(at) = word_at { return Err(self.lang.sum_non_number.get(at).cloned().unwrap_or_default()); }
@@ -15747,28 +15854,17 @@ impl<'a> Engine<'a> {
                 // flag turns to a whole number only where an addition
                 // actually asks that of it, not merely for standing
                 // where a sum might have needed one.
-                // A counted row is added up from its bounds alone. The
-                // places are never made, so a row of a thousand million
-                // costs no more than a row of three.
-                if let Value::Counted(row) = args[0].contents() {
-                    let length = row.length();
-                    if length == BigInt::from(0) { return Ok(total); }
-                    let gathered = (&row.start + (&row.start + (&length - 1) * &row.step)) * &length / 2;
-                    return self.sum_added(&total, &Value::of_big(gathered));
-                }
-                if self.lang.yield_suspends {
-                    let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
+                let mut running = None;
+                if let Some(Value::Generator(walk)) = walk {
                     while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
-                        let number = match item { Value::Flag(flag) => Value::Small(i64::from(flag)), other => other };
-                        total = self.sum_added(&total, &number)?;
+                        self.sum_step(&mut total, &mut running, item)?;
                     }
-                    return Ok(total);
+                } else {
+                    for item in self.comprehension_items(&args[0])? {
+                        self.sum_step(&mut total, &mut running, item)?;
+                    }
                 }
-                for item in self.comprehension_items(&args[0])? {
-                    let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
-                    total = self.sum_added(&total, &item)?;
-                }
-                total
+                self.sum_result(total, running)
             }
             Builtin::Span if self.lang.range_value => {
                 if args.is_empty() { return Err("TypeError: range expected at least 1 argument, got 0".to_string()); }
