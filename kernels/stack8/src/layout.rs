@@ -159,6 +159,20 @@ pub fn layout_position(tokens: Vec<Token>, lang: &Lang, before: usize) -> Result
 }
 
 
+fn missing_suite_message(tokens: &[Token], header: &Token) -> String {
+    let words: Vec<&Token> = tokens.iter().filter(|part| part.row == header.row && !matches!(part.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)).collect();
+    let next = words.get(1).map(|part| part.lexeme.as_str()).unwrap_or("");
+    let prefix = match header.lexeme.as_str() {
+        "async" if next == "for" || next == "with" => format!("'{next}' statement"),
+        "async" if next == "def" && words.iter().any(|part| part.lexeme == ")") => "function definition".into(),
+        "def" if words.iter().any(|part| part.lexeme == ")") => "function definition".into(),
+        "class" if !next.is_empty() && next != ":" => "class definition".into(),
+        "except" if next == "*" => "'except*' statement".into(),
+        other => format!("'{other}' statement"),
+    };
+    format!("IndentationError: expected an indented block after {prefix} on line {}", header.row)
+}
+
 /// Indentation widths are a stack of columns, not multiples of a unit.
 /// Keep a second width with tabs counted as one to detect ambiguous tabs.
 fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, usize)> {
@@ -197,7 +211,7 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                 } else {
                     if let Some(h) = header {
                         let col = tokens.get(index + 1).map_or(1, |t| t.column);
-                        return Err((format!("IndentationError: expected an indented block after '{}' statement on line {}", h.lexeme, h.row), token.row, col));
+                        return Err((missing_suite_message(&tokens, h), token.row, col));
                     }
                     while indents.last().unwrap().0 > width {
                         indents.pop();
@@ -235,7 +249,7 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                             return Err(("SyntaxError: invalid syntax".into(), line[2].row, line[2].column));
                         }
                     }
-                    return Err((format!("IndentationError: expected an indented block after '{}' statement on line {}", h.lexeme, h.row), h.row, token.column));
+                    return Err((missing_suite_message(&tokens, h), h.row, token.column));
                 }
                 while indents.len() > 1 {
                     indents.pop(); let mut close = token.clone(); close.shape = Shape::Close; result.push(close);

@@ -155,6 +155,23 @@ pub fn indent_position(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<
 }
 
 
+fn suite_needed(input: &[Token], word: &str, line: u32) -> String {
+    let line_words = input.iter().filter(|token| token.row == line && !matches!(token.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)).map(|token| token.lexeme.as_str()).collect::<Vec<_>>();
+    let second = line_words.get(1).copied().unwrap_or("");
+    let subject = if word == "async" && ["for", "with"].contains(&second) {
+        format!("'{second}' statement")
+    } else if (word == "def" || word == "async" && second == "def") && line_words.contains(&")") {
+        String::from("function definition")
+    } else if word == "class" && !second.is_empty() && second != ":" {
+        String::from("class definition")
+    } else if word == "except" && second == "*" {
+        String::from("'except*' statement")
+    } else {
+        format!("'{word}' statement")
+    };
+    format!("IndentationError: expected an indented block after {subject} on line {line}")
+}
+
 /// A second indentation count treats a tab as one character. Both counts
 /// must agree with an earlier level, or the block would depend on tab size.
 fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
@@ -172,7 +189,7 @@ fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
             let rising = t.span > *widths.last().unwrap();
             if let Some((word, line)) = pending.take() {
                 if !rising {
-                    return Err((format!("IndentationError: expected an indented block after '{word}' statement on line {line}"), t.row, input.get(i + 1).map_or(1, |next| next.column)));
+                    return Err((suite_needed(input, &word, line), t.row, input.get(i + 1).map_or(1, |next| next.column)));
                 }
             } else if rising {
                 if let Some((head, line)) = &line_start {
@@ -235,7 +252,7 @@ fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
                         if let Some(bad) = words.get(2) { return Err((String::from("SyntaxError: invalid syntax"), bad.row, bad.column)); }
                     }
                 }
-                return Err((format!("IndentationError: expected an indented block after '{word}' statement on line {line}"), line, t.column));
+                return Err((suite_needed(input, &word, line), line, t.column));
             }
             for _ in 1..widths.len() {
                 let mut boundary = t.clone(); boundary.shape = Shape::Close; output.push(boundary);
