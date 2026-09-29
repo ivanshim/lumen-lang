@@ -5870,7 +5870,8 @@ impl<'a> Engine<'a> {
                         return Ok(format!("<module '{path}'{origin}>"));
                     }
                     let module = self.class_word("main");
-                    Ok(if module.is_empty() { format!("<{} object>", object.class_now().name) }
+                    Ok(if object.class_now().base.is_none() && object.class_now().name == "object" { "<object object at 0x1>".to_owned() }
+                        else if module.is_empty() { format!("<{} object>", object.class_now().name) }
                         else { format!("<{module}.{} object at 0x1>", object.class_now().name) })
                 }
             };
@@ -7180,6 +7181,7 @@ impl<'a> Engine<'a> {
                 let answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
                 match answer {
                     Value::Small(n) if n >= 0 => Value::Small(n),
+                    Value::Huge(ref n) if **n > BigInt::from(i64::MAX) => return Err("OverflowError: cannot fit 'int' into an index-sized integer".into()),
                     Value::Huge(ref n) if **n >= BigInt::from(0) => answer,
                     Value::Small(_) | Value::Huge(_) if self.lang.bool_result.is_some() => return Err("ValueError: __len__() should return >= 0".into()),
                     _ => return Err(self.special_fault()),
@@ -17994,6 +17996,7 @@ impl Engine<'_> {
                 Value::array(self.steady_order(items, &key, reverse)?).held(true)
             }
             Builtin::Minimum | Builtin::Maximum => {
+                if args.is_empty() { return Err(format!("TypeError: {} expected at least 1 argument, got 0", name)); }
                 arity(1, usize::MAX)?;
                 if args.len() > 1 && default.is_some() { return Err(self.core_fault("core.default.many", "")); }
                 // The least and the greatest of a counted row are its
@@ -18055,7 +18058,7 @@ impl Engine<'_> {
                 let (a,z) = (number(&args[0]), number(&args[1]));
                 if matches!(a, Value::Small(_) | Value::Huge(_)) && matches!(z, Value::Small(_) | Value::Huge(_)) {
                     let divisor = z.as_big()?;
-                    if divisor.is_zero() { return Err(self.core_fault("core.zero", "")); }
+                    if divisor.is_zero() { return Err("ZeroDivisionError: division by zero".into()); }
                     let (q,r) = a.as_big()?.div_mod_floor(&divisor);
                     Value::Tuple(Rc::new(vec![Value::of_big(q),Value::of_big(r)]))
                 } else {
@@ -18077,7 +18080,7 @@ impl Engine<'_> {
                     }
                     let (r,s) = arith::parts(&z).ok_or_else(|| self.core_fault("core.unready", name))?;
                     let (x,y) = (crate::value::as_binary(&p,&q),crate::value::as_binary(&r,&s));
-                    if y == 0.0 { return Err(self.core_fault("core.zero", "")); }
+                    if y == 0.0 { return Err("ZeroDivisionError: division by zero".into()); }
                     let mut rem = x % y;
                     let mut div = (x-rem)/y;
                     if rem != 0.0 && rem.is_sign_negative() != y.is_sign_negative() { rem += y; div -= 1.0; }

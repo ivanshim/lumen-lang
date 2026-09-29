@@ -213,7 +213,14 @@ fn python_file_source(written: Vec<u8>) -> String {
     let bytes = written.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&written);
     let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
         .copied().map(char::from).collect::<String>().to_ascii_lowercase();
-    if header.contains("coding: latin1") || header.contains("coding: latin-1") {
+    // The mark of a coding line may be written with room about it or
+    // none, and with either sign: `coding: latin1`, `coding:latin1`
+    // and `coding=latin1` all say the same.
+    let squashed = header.replace([' ', '\t'], "");
+    let latin1 = ["coding:latin1", "coding=latin1", "coding:latin-1", "coding=latin-1"]
+        .iter()
+        .any(|mark| squashed.contains(mark));
+    if latin1 {
         bytes.iter().copied().map(char::from).collect()
     } else {
         String::from_utf8_lossy(bytes).into_owned()
@@ -378,6 +385,10 @@ fn run_all() {
     let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
     request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));
     request.push(("SELF".to_string(), "directory".to_string(), held, false));
+    // The path as the run was started with it, links and all: a
+    // complaint about reading the program names it the way its reader
+    // named it, which is how the reference names it too.
+    request.push(("SELF".to_string(), "given".to_string(), inv.file.clone(), false));
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
     // A full Python kernel names the binary itself, so a program that

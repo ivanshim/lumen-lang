@@ -528,56 +528,329 @@ def atanh(x):
     _overflow_guard(x)
     if x <= -1 or x >= 1:
         raise ValueError('expected a number between -1 and 1, got ' + str(float(x)))
-    return __math('atanh', x)
+    # The width's own atanh is not trusted to the last place on the
+    # negative side, so the working is done by hand the way the careful
+    # libraries do it: half of log1p of twice the ratio, the sign handed
+    # back at the end so that a signed zero keeps its sign.
+    ax = -x if x < 0 else x
+    if ax < 0.5:
+        t = ax + ax
+        t = 0.5 * __math('log1p', t + t * ax / (1.0 - ax))
+    else:
+        t = 0.5 * __math('log1p', (ax + ax) / (1.0 - ax))
+    return __math('copysign', t, x)
 
-# These operations require binary representation or a special-function
-# floor. Their names may be read, but no approximation is passed off.
-def erf(x):
-    _check_real(x)
-    raise 'NotImplementedError: erf is not supported'
+# erf and erfc follow the paths CPython's own fallback takes: a power
+# series close to zero and a continued fraction further out, joined at
+# |x| = 1.5. gamma and lgamma use the Lanczos approximation with the
+# coefficients CPython carries, a reflection through sin(pi*x) answering
+# for the negative half of the line. The special values and faults are
+# CPython's throughout: a NaN comes back untouched, an infinite or
+# whole-number input is answered on its own terms, and everything else
+# is left to the approximation.
+_lanczos_g = 6.02468004077673
+_lanczos_g_minus_half = 5.52468004077673
+_lanczos_num = [23531376880.41076, 42919803642.6491, 35711959237.35567,
+                17921034426.03721, 6039542586.352028, 1439720407.3117216,
+                248874557.86205417, 31426415.585400194, 2876370.6289353725,
+                186056.26539522348, 8071.672002365816, 210.82427775157936,
+                2.5066282746310002]
+_lanczos_den = [0.0, 39916800.0, 120543840.0, 150917976.0, 105258076.0,
+                45995730.0, 13339535.0, 2637558.0, 357423.0, 32670.0,
+                1925.0, 66.0, 1.0]
+_gamma_integral = [1.0, 1.0, 2.0, 6.0, 24.0, 120.0, 720.0, 5040.0, 40320.0,
+                   362880.0, 3628800.0, 39916800.0, 479001600.0, 6227020800.0,
+                   87178291200.0, 1307674368000.0, 20922789888000.0,
+                   355687428096000.0, 6402373705728000.0, 121645100408832000.0,
+                   2432902008176640000.0, 51090942171709440000.0,
+                   1124000727777607680000.0]
+_logpi = 1.1447298858494002
+_sqrtpi = 1.772453850905516
 
-def erfc(x):
-    _check_real(x)
-    raise 'NotImplementedError: erfc is not supported'
+def _sinpi(x):
+    # sin(pi*x) for a finite x. Whole and half turns are folded away
+    # before the sine is ever asked, so an exact multiple answers an
+    # exact zero; the sign the argument brought is handed back at the end.
+    y = __math('fmod', __math('copysign', x, 1.0), 2.0)
+    n = int(2.0 * y + 0.5)
+    if n == 0:
+        r = __math('sin', pi * y)
+    elif n == 1:
+        r = __math('cos', pi * (y - 0.5))
+    elif n == 2:
+        r = __math('sin', pi * (1.0 - y))
+    elif n == 3:
+        r = -__math('cos', pi * (y - 1.5))
+    else:
+        r = __math('sin', pi * (y - 2.0))
+    return __math('copysign', 1.0, x) * r
+
+def _lanczos_sum(x):
+    # The Lanczos sum as a ratio of two polynomials, counted out from
+    # the far end for small x and as a ratio in 1/x past it, where the
+    # straight reading would drown the small coefficients.
+    num = 0.0
+    den = 0.0
+    if x < 5.0:
+        i = 12
+        while i >= 0:
+            num = num * x + _lanczos_num[i]
+            den = den * x + _lanczos_den[i]
+            i -= 1
+    else:
+        for i in range(13):
+            num = num / x + _lanczos_num[i]
+            den = den / x + _lanczos_den[i]
+    return num / den
 
 def gamma(x):
     _check_real(x)
-    if not isfinite(x):
-        raise 'ValueError: math domain error'
-    if x <= 0 and x == int(x):
+    _overflow_guard(x)
+    x = float(x)
+    if isnan(x):
+        return x
+    if isinf(x):
+        if x > 0:
+            return x
         raise ValueError('expected a noninteger or positive integer, got ' + str(x))
     if x == int(x):
-        return float(factorial(int(x) - 1))
-    if x * 2 == int(x * 2):
-        if x > 0.5:
-            result = __math('sqrt', pi)
-            step = 0.5
-            while step < x - 0.5:
-                result *= step
-                step += 1
-            return result
-        result = __math('sqrt', pi)
-        step = -0.5
-        while step >= x:
-            result /= step
-            step -= 1
-        return result
-    coefficients = [676.5203681218851, -1259.1392167224028,
-                    771.32342877765313, -176.61502916214059,
-                    12.507343278686905, -0.13857109526572012,
-                    0.000009984369578019572, 0.00000015056327351493116]
-    if x < 0.5:
-        return pi / (__math('sin', pi * x) * gamma(1 - x))
-    z = x - 1
-    acc = 0.99999999999980993
-    for i in range(len(coefficients)):
-        acc += coefficients[i] / (z + i + 1)
-    t = z + 7.5
-    return __math('sqrt', 2 * pi) * __math('pow', t, z + 0.5) * __math('exp', -t) * acc
+        if x <= 0:
+            raise ValueError('expected a noninteger or positive integer, got ' + str(x))
+        if x <= 23:
+            return _gamma_integral[int(x) - 1]
+    absx = -x if x < 0 else x
+    # Near zero the answer is 1/x to the width's accuracy; past two
+    # hundred it has either overflown or dwindled to a signed zero.
+    if absx < 1e-20:
+        r = __math('fdiv', 1.0, x)
+        if isinf(r):
+            raise 'OverflowError: math range error'
+        return r
+    if absx > 200.0:
+        if x < 0:
+            return __math('fdiv', 0.0, _sinpi(x))
+        raise 'OverflowError: math range error'
+    y = absx + _lanczos_g_minus_half
+    # The error in the computed x + g - 1/2, folded back into the answer
+    # below: where the width cannot hold the sum exactly, pow and exp
+    # would otherwise grow that small error into many last places.
+    if absx > _lanczos_g_minus_half:
+        q = y - absx
+        z = q - _lanczos_g_minus_half
+    else:
+        q = y - _lanczos_g_minus_half
+        z = q - absx
+    z = z * _lanczos_g / y
+    if x < 0:
+        r = -pi / _sinpi(absx) / absx * __math('exp', y) / _lanczos_sum(absx)
+        r = r - z * r
+        if absx < 140.0:
+            r = r / __math('pow', y, absx - 0.5)
+        else:
+            halved = __math('pow', y, absx / 2.0 - 0.25)
+            r = r / halved
+            r = r / halved
+    else:
+        r = _lanczos_sum(absx) / __math('exp', y)
+        r = r + z * r
+        if absx < 140.0:
+            r = r * __math('pow', y, absx - 0.5)
+        else:
+            halved = __math('pow', y, absx / 2.0 - 0.25)
+            r = r * halved
+            r = r * halved
+    if isinf(r):
+        raise 'OverflowError: math range error'
+    return __math('fdiv', r, 1.0)
 
 def lgamma(x):
     _check_real(x)
-    raise 'NotImplementedError: lgamma is not supported'
+    _overflow_guard(x)
+    x = float(x)
+    if isnan(x):
+        return x
+    if isinf(x):
+        return inf
+    if x <= 2.0 and x == int(x):
+        if x <= 0:
+            raise ValueError('expected a noninteger or positive integer, got ' + str(x))
+        return __math('fdiv', 0.0, 1.0)
+    absx = -x if x < 0 else x
+    if absx < 1e-20:
+        return -__math('log', absx)
+    r = __math('log', _lanczos_sum(absx)) - _lanczos_g
+    r = r + (absx - 0.5) * (__math('log', absx + _lanczos_g - 0.5) - 1)
+    if x < 0:
+        s = _sinpi(absx)
+        r = _logpi - __math('log', -s if s < 0 else s) - __math('log', absx) - r
+    if isinf(r):
+        raise 'OverflowError: math range error'
+    return r
+
+def _erf_series(x):
+    # erf(x) = x*exp(-x*x)/sqrt(pi) * [2/1 + 4/3 x^2 + 8/15 x^4 + ...],
+    # counted out from the small end; twenty-five terms settle every
+    # |x| below one and a half.
+    x2 = x * x
+    acc = 0.0
+    fk = 25.5
+    for i in range(25):
+        acc = 2.0 + x2 * acc / fk
+        fk -= 1.0
+    return acc * x * __math('exp', -x2) / _sqrtpi
+
+def _erfc_contfrac(x):
+    # erfc(x) = x*exp(-x*x)/sqrt(pi) * [1/(0.5 + x^2 -) 0.5/(2.5 + x^2 -)
+    # 3.0/(4.5 + x^2 -) 7.5/(6.5 + x^2 -) ...]. The fraction is read from
+    # its far end upward, where each step undoes the error of the one
+    # below, so sixty terms answer to a couple of last places at any
+    # width here. The square's own rounding error is carried apart and
+    # handed to exp with it: at these widths exp feels that error as
+    # whole last places of its own.
+    if x >= 30.0:
+        return 0.0
+    x2 = x * x
+    square_lo = __math('fma', x, x, -x2)
+    e = __math('exp', -x2)
+    if square_lo != 0:
+        e = e * (1.0 - square_lo)
+    t = 0.0
+    k = 100
+    while k >= 1:
+        a = k * (k - 0.5)
+        b = x2 + 2 * k + 0.5
+        t = a / (b - t)
+        k -= 1
+    return x * e / (_sqrtpi * (x2 + 0.5 - t))
+
+def erf(x):
+    _check_real(x)
+    _overflow_guard(x)
+    x = float(x)
+    if isnan(x):
+        return x
+    absx = -x if x < 0 else x
+    if absx < 1.5:
+        return _erf_series(x)
+    cf = _erfc_contfrac(absx)
+    if x > 0:
+        return 1.0 - cf
+    return cf - 1.0
+
+def erfc(x):
+    _check_real(x)
+    _overflow_guard(x)
+    x = float(x)
+    if isnan(x):
+        return x
+    absx = -x if x < 0 else x
+    if absx < 1.0:
+        return 1.0 - _erf_series(x)
+    cf = _erfc_contfrac(absx)
+    if x > 0:
+        return cf
+    return 2.0 - cf
+
+def sinpi(x):
+    _check_real(x)
+    _overflow_guard(x)
+    x = float(x)
+    if not isfinite(x):
+        if isnan(x):
+            return x
+        raise ValueError('expected a finite input, got ' + str(x))
+    return _sinpi(x)
+
+def cospi(x):
+    # cos(pi*x). The whole turns are folded away exactly first, so an
+    # exact multiple answers an exact value; what is left is asked of
+    # cos or sin on the nearest piece of the half turn.
+    _check_real(x)
+    _overflow_guard(x)
+    x = float(x)
+    if not isfinite(x):
+        if isnan(x):
+            return x
+        raise ValueError('expected a finite input, got ' + str(x))
+    r = x - 2.0 * round(0.5 * x)
+    r = -r if r < 0 else r
+    if r <= 0.25:
+        return __math('cos', pi * r)
+    if r == 0.5:
+        return __math('fdiv', 0.0, 1.0)
+    if r <= 0.75:
+        return __math('sin', pi * (0.5 - r))
+    return -__math('cos', pi * (1.0 - r))
+
+def tanpi(x):
+    # tan(pi*x), folded the way cospi folds but kept signed; an exact
+    # half turn answers a zero of the right sign, and an exact odd
+    # quarter turn overflows, the way the width's own divide by nought
+    # would say it.
+    _check_real(x)
+    _overflow_guard(x)
+    x = float(x)
+    if not isfinite(x):
+        if isnan(x):
+            return x
+        raise ValueError('expected a finite input, got ' + str(x))
+    y = x - 2.0 * round(0.5 * x)
+    absy = -y if y < 0 else y
+    if absy == 0.0:
+        return __math('copysign', 0.0, x)
+    if absy == 1.0:
+        return __math('copysign', 0.0, -x)
+    if absy == 0.5:
+        raise OverflowError('math range error')
+    if absy > 0.5:
+        y = y - __math('copysign', 1.0, y)
+        absy = -y if y < 0 else y
+    if absy <= 0.25:
+        return __math('tan', pi * y)
+    return __math('copysign', 1.0 / __math('tan', pi * (0.5 - absy)), y)
+
+def asinpi(x):
+    _check_real(x)
+    if x < -1 or x > 1:
+        raise ValueError('expected a number in range from -1 up to 1, got ' + str(float(x)))
+    _overflow_guard(x)
+    x = float(x)
+    r = __math('asin', x) / pi
+    if r > 0.5 or r < -0.5:
+        return __math('copysign', 0.5, r)
+    return r
+
+def acospi(x):
+    _check_real(x)
+    if x < -1 or x > 1:
+        raise ValueError('expected a number in range from -1 up to 1, got ' + str(float(x)))
+    _overflow_guard(x)
+    x = float(x)
+    if x >= 0.5:
+        # Near 1 the straight acos loses places the half-angle reading
+        # of the same value keeps.
+        return 2.0 * __math('asin', __math('sqrt', (1.0 - x) / 2.0)) / pi
+    r = __math('acos', x) / pi
+    if r > 1.0:
+        return __math('fdiv', 1.0, 1.0)
+    return r
+
+def atanpi(x):
+    _check_real(x)
+    _overflow_guard(x)
+    x = float(x)
+    r = __math('atan', x) / pi
+    if r > 0.5 or r < -0.5:
+        return __math('copysign', 0.5, r)
+    return r
+
+def atan2pi(y, x):
+    _check_real(y)
+    _check_real(x)
+    r = __math('atan2', y, x) / pi
+    if r > 1.0 or r < -1.0:
+        return __math('copysign', 1.0, r)
+    return r
 
 def nextafter(x, y, steps=1):
     if type(steps) != type(1) and type(steps) != type(True):

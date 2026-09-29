@@ -2162,3 +2162,26 @@ record was measured again with scripts/suite/stderr_record.py's rule.
 Merged, the fifty files count 2595 on both stack8 and microcode7, up from
 2578 on both, with no passing test lost; microcode7's test_math, test_str
 and test_long were run whole on the build machine (80, 127 and 34).
+
+### 1ao. Batch 20m merged as #520; batch 20n: builtin corners, file errors and math
+
+Batch 20n folds five branches, integrated by a GPT-6 Sol worker.
+fix/builtin-rest (Sol; test_builtin 96 to 101: empty min/max, oversized
+__len__, divmod wording, plain object representation and __firstlineno__),
+fix/syntaxerror-files (Kimi K3; test_eof 4 to 6 and test_fstring 88 to 90:
+file SyntaxErrors show the filename and source, with lexical warnings),
+fix/math-special (Kimi K3; test_math 80 to 82: erf, erfc, gamma, lgamma,
+the pi-scaled functions exercised by the suite, and accurate atanh),
+fix/doctest-params and fix/syntax-templates (Sol; parameter-list and
+string-prefix diagnostics reduce test_syntax's standalone module doctest
+to one failing example of 557 on each kernel). The remaining example
+needs ast.parse type-comment support; the test is unchanged.
+
+The source merges retained error positions, f-string field row offsets
+and template-prefix refusals. Scratch records were measured again under
+the shared stderr rule, using relative paths so file-error records name
+scratch files independently of the worktree.
+
+Merged, the fifty files count 2606 on both stack8 and microcode7, up from
+2595 on both, with no passing test lost; microcode7's test_math, test_str
+and test_long were run whole on the build machine (82, 127 and 34).

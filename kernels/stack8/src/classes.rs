@@ -898,7 +898,9 @@ impl<'a> Engine<'a> {
             7 | 8 => match &subject {
                 Value::Object(o) if place == 7 => {
                     let module = self.class_word("main");
-                    Value::text(&if module.is_empty() { format!("<{} object>", o.class_now().name) } else { format!("<{module}.{} object at 0x1>", o.class_now().name) })
+                    Value::text(&if o.class_now().base.is_none() && o.class_now().name == "object" { "<object object at 0x1>".to_owned() }
+                        else if module.is_empty() { format!("<{} object>", o.class_now().name) }
+                        else { format!("<{module}.{} object at 0x1>", o.class_now().name) })
                 }
                 other => Value::text(&self.special_text(other,true).map_err(Fault::Note)?),
             },
@@ -1959,6 +1961,9 @@ impl<'a> Engine<'a> {
                         None => return Err(self.class_refusal()),
                     }
                 } else if ["name","kind","bases","mro","namespace","order"].iter().any(|key|name==self.class_word(key)){return Err(self.class_refusal());}
+                if name == self.class_word("module") {
+                    c.shared.borrow_mut().retain(|(member, _)| member != "__firstlineno__");
+                }
                 Self::write_members(&mut c.shared.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
             Value::Routine(_) => {

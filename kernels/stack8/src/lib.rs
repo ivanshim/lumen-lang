@@ -144,7 +144,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
 /// and the line the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written here and the fault goes back
 /// as it came, for the host to tell in its own way.
-fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str) -> String {
+fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str, column: Option<usize>) -> String {
     let adjusted = if before > 0 && !lang.syntax_members.is_empty() {
         said.rsplit_once(" (detected at line ").and_then(|(head, end)| {
             let line = end.strip_suffix(')')?.parse::<u32>().ok()?;
@@ -158,6 +158,37 @@ fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, 
         let shown = source.lines().nth(row.saturating_sub(1)).unwrap_or("").trim_start();
         let width = shown.split_once('#').map_or(shown, |(prefix, _)| prefix).chars().count();
         eprintln!("  File \"{}\", line {}\n    {}\n    {}\n{}", file, line, shown, "^".repeat(width), said);
+        return String::from("\0");
+    }
+    // Any other stopping while a language with syntax exceptions reads
+    // a program is told the way the reference tells it: the file and
+    // the line the reading stopped on, that line as it is written, a
+    // mark under the place the reading reached, and the complaint.
+    if !lang.syntax_members.is_empty() {
+        let told = adjusted.as_deref().unwrap_or(said);
+        let (kind, message) = match told.split_once(": ") {
+            Some((head, rest)) if head.ends_with("Error") && head.chars().all(|c| c.is_ascii_alphabetic()) => (head, rest),
+            _ => ("SyntaxError", told),
+        };
+        if row == 0 {
+            eprintln!("{kind}: {message}");
+            return String::from("\0");
+        }
+        let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.as_str());
+        let file = named("given").or(named("file")).unwrap_or("");
+        let line = row.saturating_sub(before as usize);
+        let whole = source.lines().nth(row.saturating_sub(1)).unwrap_or("");
+        let shown = whole.trim_start();
+        let mut report = format!("  File \"{file}\", line {line}\n    {shown}\n");
+        // A line that is no more than a continuation mark has no place
+        // on it to point at, and the reference points at none.
+        let unplaced = message == "unexpected EOF while parsing" && shown.trim() == "\\";
+        if let Some(at) = column.filter(|_| !unplaced) {
+            let lead = whole.chars().count() - shown.chars().count();
+            report.push_str(&format!("    {}^\n", " ".repeat(at.saturating_sub(lead + 1))));
+        }
+        report.push_str(&format!("{kind}: {message}"));
+        eprintln!("{report}");
         return String::from("\0");
     }
     let said = adjusted.as_deref().unwrap_or(said);
@@ -175,6 +206,24 @@ fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, 
     use std::io::Write;
     let _ = std::io::stdout().flush();
     said.to_string()
+}
+
+/// A string the reference has a word to warn about is warned about as
+/// the program is read, before a word of it runs: each such notice
+/// names the file and the line it was read from and shows the line.
+fn escape_notices_ahead(source: &str, lang: &Lang, before: u32, request: &[(String, String, String, bool)]) {
+    if lang.escape_warning.len() != 4 || lang.syntax_members.is_empty() {
+        return;
+    }
+    let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.as_str());
+    let file = named("given").or(named("file")).unwrap_or("");
+    for (message, row) in lex::escape_warnings(source, lang) {
+        if (row as u32) <= before {
+            continue;
+        }
+        let shown = source.lines().nth(row.saturating_sub(1)).unwrap_or("").trim();
+        eprintln!("{}:{}: {}: {}\n  {}", file, row - before as usize, lang.escape_warning[2], message, shown);
+    }
 }
 
 fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
@@ -211,8 +260,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     let source = universal.as_deref().unwrap_or(source);
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
-    let read = lex::lex_at(&source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false, &source));
-    let shaped = layout::layout(read?, lang, before as usize).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false, &source));
+    escape_notices_ahead(&source, lang, before, request);
+    let read = lex::lex_position(&source, lang).map_err(|(said, row, column)| cannot_read(lang, &said, row, request, before, false, &source, Some(column)));
+    let shaped = layout::layout_position(read?, lang, before as usize).map_err(|(said, row, column)| cannot_read(lang, &said, row, request, before, false, &source, Some(column)));
     let tokens = shaped?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
@@ -249,7 +299,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
-        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source)),
+        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source, None)),
     };
 
     let mut machine = engine::Engine::new(lang, registry);

@@ -45,8 +45,14 @@ def make_script(script_dir, script_basename, source, omit_suffix=False):
     else:
         script_filename = script_basename + os.extsep + 'py'
     script_name = os.path.join(script_dir, script_filename)
-    with open(script_name, 'w', encoding='utf-8') as script_file:
-        script_file.write(source)
+    if isinstance(source, str):
+        # Text is written in UTF-8, the encoding a file is read in by
+        # default; anything already in bytes is written as it came.
+        with open(script_name, 'w', encoding='utf-8') as script_file:
+            script_file.write(source)
+    else:
+        with open(script_name, 'wb') as script_file:
+            script_file.write(source)
     return script_name
 
 
