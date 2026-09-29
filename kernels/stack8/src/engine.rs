@@ -7180,6 +7180,7 @@ impl<'a> Engine<'a> {
                 let answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
                 match answer {
                     Value::Small(n) if n >= 0 => Value::Small(n),
+                    Value::Huge(ref n) if **n > BigInt::from(i64::MAX) => return Err("OverflowError: cannot fit 'int' into an index-sized integer".into()),
                     Value::Huge(ref n) if **n >= BigInt::from(0) => answer,
                     Value::Small(_) | Value::Huge(_) if self.lang.bool_result.is_some() => return Err("ValueError: __len__() should return >= 0".into()),
                     _ => return Err(self.special_fault()),

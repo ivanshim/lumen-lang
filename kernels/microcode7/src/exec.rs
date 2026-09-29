@@ -12172,6 +12172,9 @@ impl<'a> Machine<'a> {
                         "ValueError: __len__() should return >= 0".to_owned()
                     } else { self.bad_answer() });
                 }
+                if length.as_big()? > BigInt::from(i64::MAX) {
+                    return Err("OverflowError: cannot fit 'int' into an index-sized integer".to_owned());
+                }
                 length
             }
             (Prim::Hashed, [one]) if matches!(self.appointment(one, 8), Some(Value::Nil)) => {
