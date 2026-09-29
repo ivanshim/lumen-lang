@@ -5870,7 +5870,8 @@ impl<'a> Engine<'a> {
                         return Ok(format!("<module '{path}'{origin}>"));
                     }
                     let module = self.class_word("main");
-                    Ok(if module.is_empty() { format!("<{} object>", object.class_now().name) }
+                    Ok(if object.class_now().name == "object" { "<object object at 0x1>".to_owned() }
+                        else if module.is_empty() { format!("<{} object>", object.class_now().name) }
                         else { format!("<{module}.{} object at 0x1>", object.class_now().name) })
                 }
             };

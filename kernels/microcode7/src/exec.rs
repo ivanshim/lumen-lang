@@ -10943,7 +10943,8 @@ impl<'a> Machine<'a> {
                             });
                         }
                         let module = self.detail("main");
-                        Ok(if module.is_empty() { format!("<{} object>", t.blueprint().name) }
+                        Ok(if t.blueprint().name == "object" { "<object object at 0x1>".to_owned() }
+                            else if module.is_empty() { format!("<{} object>", t.blueprint().name) }
                             else { format!("<{module}.{} object at 0x1>", t.blueprint().name) })
                     }
                     Some(Value::Text(s)) => Ok(s.to_string()),
