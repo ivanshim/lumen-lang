@@ -2469,6 +2469,7 @@ impl<'a> Builder<'a> {
             if self.key("stmt.if") || self.key("stmt.while") {
                 let mut balance = 0;
                 let mut assigned = false;
+                let mut member = false;
                 for at in self.pos + 1..self.tokens.len() {
                     let t = &self.tokens[at];
                     if matches!(t.shape, Shape::Finish | Shape::LineEnd) { break; }
@@ -2476,13 +2477,18 @@ impl<'a> Builder<'a> {
                     match t.lexeme.as_str() {
                         "(" | "[" | "{" => balance += 1,
                         ")" | "]" | "}" => balance -= 1,
-                        "=" if balance == 0 => assigned = true,
+                        "=" if balance == 0 => {
+                            assigned = true;
+                            member = at > 1 && self.tokens[at - 2].lexeme == "." && self.tokens[at - 1].shape == Shape::Bare;
+                        },
                         ":" if balance == 0 => {
                             if assigned {
                                 let end = &self.tokens[at - 1];
                                 self.range_end = Some((end.column + end.lexeme.chars().count(), end.row));
                                 self.advance();
-                                return Err("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".to_owned());
+                                let message = if member { "SyntaxError: cannot assign to attribute here. Maybe you meant '==' instead of '='?" }
+                                    else { "SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?" };
+                                return Err(message.to_owned());
                             }
                             break;
                         }
@@ -3069,6 +3075,20 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
+        if table.has_any("ext.builtin.exceptions.syntax") {
+            let mut opened = Vec::new();
+            for part in self.tokens.iter().skip(self.pos) {
+                if opened.is_empty() && part.lexeme == ":" { break; }
+                if opened.is_empty() && matches!(part.shape, Shape::LineEnd | Shape::Finish) {
+                    return Err(String::from("SyntaxError: expected ':'"));
+                }
+                match part.lexeme.as_str() {
+                    "(" | "[" | "{" => opened.push(part.lexeme.as_str()),
+                    ")" | "]" | "}" => { opened.pop(); },
+                    _ => (),
+                }
+            }
+        }
         let (open, close) = (table.single("syntax.group.open").unwrap(), table.single("syntax.group.close").unwrap());
         let mut enclosed = false;
         if self.sign(open) {
@@ -3150,6 +3170,12 @@ impl<'a> Builder<'a> {
             if enclosed && self.sign(close) { break; }
         }
         if enclosed { self.need_sign(close, "after the with items")?; }
+        if table.has_any("ext.builtin.exceptions.syntax") {
+            if self.look().lexeme == "ad" && self.glance(1).shape == Shape::Bare {
+                return Err(String::from("SyntaxError: invalid syntax. Did you mean 'and'?"));
+            }
+            if !self.on_any("block.intro") { return Err(String::from("SyntaxError: expected ':'")); }
+        }
         steps.push(self.body()?);
         for (from, manager, bounds) in contexts.into_iter().rev() {
             let enclosed = sequence(steps.split_off(from));
@@ -3609,6 +3635,12 @@ impl<'a> Builder<'a> {
                 }
                 held = if self.key("ext.stmt.catch.as") {
                     self.advance();
+                    if grouped && table.has_any("ext.builtin.exceptions.syntax") {
+                        let target = if self.on_any("syntax.group.open") { Some("tuple") }
+                            else if matches!(self.look().shape, Shape::Numeral | Shape::Quote) { Some("literal") }
+                            else { None };
+                        if let Some(kind) = target { return Err(format!("SyntaxError: cannot use except* statement with {kind}")); }
+                    }
                     let start = self.pos;
                     let binding = self.need_word("after the caught value's binding word")?;
                     if table.has_any("ext.builtin.exceptions.syntax") && binding == "__debug__" {
@@ -3685,7 +3717,9 @@ impl<'a> Builder<'a> {
             false => None,
         };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
-            return Err("A try needs a catch or a last part".to_string());
+            let said = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: expected 'except' or 'finally' block" }
+                else { "A try needs a catch or a last part" };
+            return Err(said.to_string());
         }
         Ok(Form::Attempt { context: None, async_context: false, body: Box::new(body), clauses, last, otherwise })
     }
@@ -5288,7 +5322,12 @@ impl<'a> Builder<'a> {
         loop {
             self.skip_line_ends();
             if self.look().shape == Shape::Close { self.advance(); break; }
-            if !self.key("ext.stmt.match.case") { return Err(self.bad_case()); }
+            if !self.key("ext.stmt.match.case") {
+                if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare && self.glance(1).lexeme == "=" {
+                    return Err(String::from("SyntaxError: invalid syntax"));
+                }
+                return Err(self.bad_case());
+            }
             self.advance();
             self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");

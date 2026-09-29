@@ -2247,6 +2247,7 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.if_words, &word) || Lang::spells(&lang.while_words, &word) {
                 let mut depth = 0usize;
                 let mut assignment = false;
+                let mut attribute = false;
                 for i in self.pos + 1..self.tokens.len() {
                     let token = &self.tokens[i];
                     if token.shape == Shape::LineEnd || token.shape == Shape::Finish { break; }
@@ -2257,11 +2258,15 @@ impl<'a> Compiler<'a> {
                             self.registry.stopped_end = if last.end_column != 0 { last.end_column } else { last.column + last.lexeme.chars().count() };
                             self.registry.stopped_end_row = if last.end_row != 0 { last.end_row } else { last.row };
                             self.pos += 1;
-                            return Err("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into());
+                            return Err(if attribute { "SyntaxError: cannot assign to attribute here. Maybe you meant '==' instead of '='?".into() }
+                                else { "SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into() });
                         }
                         break;
                     }
-                    if token.lexeme == "=" && depth == 0 { assignment = true; }
+                    if token.lexeme == "=" && depth == 0 {
+                        assignment = true;
+                        attribute = i >= 2 && self.tokens[i - 2].lexeme == "." && self.tokens[i - 1].shape == Shape::Instr;
+                    }
                     if ["(", "[", "{"].contains(&token.lexeme.as_str()) { depth += 1; }
                     if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth = depth.saturating_sub(1); }
                 }
@@ -2548,6 +2553,18 @@ impl<'a> Compiler<'a> {
     fn with_stmt(&mut self) -> Res<()> {
         self.take();
         let lang = self.lang;
+        if !lang.syntax_members.is_empty() {
+            let mut nesting = 0usize;
+            for item in self.tokens.iter().skip(self.pos) {
+                if nesting == 0 && item.lexeme == ":" { break; }
+                if nesting == 0 && matches!(item.shape, Shape::LineEnd | Shape::Finish) { return Err("SyntaxError: expected ':'".into()); }
+                match item.lexeme.as_str() {
+                    "(" | "[" | "{" => nesting += 1,
+                    ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
         let asynchronous = std::mem::take(&mut self.asynchronous);
         let group = lang.grouping.clone().expect("group marks");
         let mut bracketed = false;
@@ -2635,6 +2652,12 @@ impl<'a> Compiler<'a> {
             if bracketed && self.at_symbol(&group.close) { break; }
         }
         if bracketed { self.want_sign(&group.close, "after the with items")?; }
+        if !lang.syntax_members.is_empty() && self.look().lexeme == "ad" && self.look_ahead(1).shape == Shape::Instr {
+            return Err("SyntaxError: invalid syntax. Did you mean 'and'?".into());
+        }
+        if !lang.syntax_members.is_empty() && !self.on_any(&lang.block_intros) {
+            return Err("SyntaxError: expected ':'".into());
+        }
         self.body()?;
         let end = self.mark();
         for mark in watchers {
@@ -3768,7 +3791,12 @@ impl<'a> Compiler<'a> {
         let mut ends = Vec::new();
         let mut count = 0;
         while self.look().shape != Shape::Close && !self.exhausted() {
-            if !self.on_keyword(&self.lang.match_cases) { return Err(self.pattern_fault()); }
+            if !self.on_keyword(&self.lang.match_cases) {
+                if !self.lang.syntax_members.is_empty() && self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "=" {
+                    return Err("SyntaxError: invalid syntax".into());
+                }
+                return Err(self.pattern_fault());
+            }
             self.take();
             self.pattern_values = 0;
             let pattern = self.case_pattern()?;
@@ -4748,6 +4776,10 @@ impl<'a> Compiler<'a> {
             }
             let held = if self.on_keyword(&lang.catch_as) {
                 self.take();
+                if grouped && !lang.syntax_members.is_empty() {
+                    if self.at_symbol("(") { return Err("SyntaxError: cannot use except* statement with tuple".into()); }
+                    if matches!(self.look().shape, Shape::Numeral | Shape::Quote) { return Err("SyntaxError: cannot use except* statement with literal".into()); }
+                }
                 let binding_at = self.pos;
                 let name = self.want_name("after the caught value's binding word")?;
                 if !lang.syntax_members.is_empty() && name == "__debug__" {
@@ -4801,7 +4833,8 @@ impl<'a> Compiler<'a> {
             Some(body)
         } else { None };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
-            return Err("A try needs a catch or a last part".to_string());
+            return Err(if lang.syntax_members.is_empty() { "A try needs a catch or a last part".to_string() }
+                else { "SyntaxError: expected 'except' or 'finally' block".to_string() });
         }
         let after = self.mark();
         self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, async_context: false, body, clauses, otherwise, last, after }));
