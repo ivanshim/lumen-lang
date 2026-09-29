@@ -6994,6 +6994,13 @@ impl<'a> Compiler<'a> {
                 if !self.outer_marks(self.pos, colon, &self.lang.tuple_marks).0.is_empty() {
                     return Err("SyntaxError: only single target (not tuple) can be annotated".into());
                 }
+                let mut head = self.pos;
+                while head + 1 < colon && self.tokens[head].lexeme == "(" && self.tokens[colon - 1].lexeme == ")" { head += 1; }
+                let first = &self.tokens[head];
+                let generator = self.tokens[self.pos].lexeme == "(" && self.tokens[head..colon].iter().any(|word| word.lexeme == "for");
+                if matches!(first.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) || first.lexeme == "-" || generator {
+                    return Err("SyntaxError: illegal target for annotation".into());
+                }
             }
             if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
                 let mut start = self.pos;

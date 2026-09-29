@@ -6883,6 +6883,13 @@ impl<'a> Builder<'a> {
                 if !self.divided_at(self.pos, mark, "ext.op.tuple").is_empty() {
                     return Err(String::from("SyntaxError: only single target (not tuple) can be annotated"));
                 }
+                let mut left = self.pos;
+                while left + 1 < mark && self.tokens[left].lexeme == "(" && self.tokens[mark - 1].lexeme == ")" { left += 1; }
+                let starts = &self.tokens[left];
+                let comprehension = self.tokens[self.pos].lexeme == "(" && self.tokens[left..mark].iter().any(|part| part.lexeme == "for");
+                if comprehension || starts.lexeme == "-" || matches!(starts.shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
+                    return Err(String::from("SyntaxError: illegal target for annotation"));
+                }
             }
             let signs = self.divided_at(self.pos, self.tokens.len(), "stmt.assign");
             if let Some(&assignment) = signs.first() {
