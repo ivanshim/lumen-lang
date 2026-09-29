@@ -109,7 +109,7 @@ const REQUEST_PARTS: [(&str, &str); 8] = [
 /// and the row the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written and the fault goes back as
 /// it came, for the host to tell in its own way.
-fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str) -> String {
+fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str, column: Option<usize>) -> String {
     let mut message = said.to_owned();
     if before != 0 && table.has_any("ext.builtin.exceptions.syntax") {
         let marker = " (detected at line ";
@@ -129,6 +129,39 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
         eprintln!("  File \"{}\", line {}\n    {}\n    {}\n{}", file, line, shown, "^".repeat(count), said);
         return String::from("\0");
     }
+    // Every other stopping while a language with syntax exceptions is
+    // read is written out the way the reference writes it: the file and
+    // the number of the row the reading stopped on, the row itself, a
+    // mark under the place it reached, and then the complaint.
+    if table.has_any("ext.builtin.exceptions.syntax") {
+        let told = message.as_str();
+        let (kind, wording) = match told.split_once(": ") {
+            Some((word, rest)) if word.ends_with("Error") && word.bytes().all(|b| b.is_ascii_alphabetic()) => (word, rest),
+            _ => ("SyntaxError", told),
+        };
+        if row == 0 {
+            eprintln!("{kind}: {wording}");
+            return String::from("\0");
+        }
+        let found = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
+        let where_named = found("given").or_else(|| found("file")).unwrap_or_default();
+        let number = row.saturating_sub(before);
+        let written = source.lines().nth(row.saturating_sub(1) as usize).unwrap_or("");
+        let bare = written.trim_start();
+        eprintln!("  File \"{where_named}\", line {number}");
+        eprintln!("    {bare}");
+        // The place the reading reached is marked under the row, unless
+        // the row is a bare continuation mark, which has no such place.
+        let markless = wording == "unexpected EOF while parsing" && bare.trim() == "\\";
+        if let Some(col) = column {
+            if !markless {
+                let indent = written.chars().count() - bare.chars().count();
+                eprintln!("    {}^", " ".repeat(col.saturating_sub(indent + 1)));
+            }
+        }
+        eprintln!("{kind}: {wording}");
+        return String::from("\0");
+    }
     let said = message.as_str();
     let key = match fatally {
         true => "ext.system.complaint.fatal",
@@ -144,6 +177,30 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
     use std::io::Write;
     let _ = std::io::stdout().flush();
     said.to_string()
+}
+
+/// What the reference says about how a string is written is said as
+/// the program is read, before any of it runs: each notice names the
+/// file and the row it was seen on and shows the row itself under it.
+fn escape_notices_ahead_of_run(source: &str, table: &Table, ahead: u32, request: &[(String, String, String, bool)]) {
+    let route = table.strings("ext.lexical.escape.warning");
+    if route.len() != 4 || !table.has_any("ext.builtin.exceptions.syntax") {
+        return;
+    }
+    let where_named = request
+        .iter()
+        .find(|(from, key, ..)| from == "SELF" && key == "given")
+        .or_else(|| request.iter().find(|(from, key, ..)| from == "SELF" && key == "file"))
+        .map(|(.., path, _)| path.as_str())
+        .unwrap_or("");
+    for (wording, row) in crate::scan::escape_notices(source, table) {
+        if row <= ahead {
+            continue;
+        }
+        let written = source.lines().nth(row.saturating_sub(1) as usize).unwrap_or("").trim();
+        eprintln!("{where_named}:{}: {}: {wording}", row - ahead, route[2]);
+        eprintln!("  {written}");
+    }
 }
 
 /// Whether the shortest marker opens a run of code. What says so is a
@@ -241,8 +298,9 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let ahead = lines_before(request);
     let joined = import_rejoined(source, table, ahead);
     let source = joined.as_deref().unwrap_or(source);
-    let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false, source));
-    let shaped = indent::indent(read?, table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false, source));
+    escape_notices_ahead_of_run(source, table, ahead, request);
+    let read = scan::scan_position(source, table).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col)));
+    let shaped = indent::indent_position(read?, table, ahead).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col)));
     let tokens = shaped?;
     let system = ["system.args", "ext.system.args.list", "ext.system.args.count", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null",
@@ -263,7 +321,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         .unwrap_or(0);
     let reduced = if !table.rpn {
         build::build_at(&tokens, table, &seeded, HashMap::new(), true, before)
-            .map_err(|(said, row, hard)| cannot_read(table, &said, row, request, ahead, hard, source))?
+            .map_err(|(said, row, hard)| cannot_read(table, &said, row, request, ahead, hard, source, None))?
     } else {
         // Read leniently until the named programs' arities settle, then strictly.
         let mut assumed: HashMap<String, build::Signature> = HashMap::new();
