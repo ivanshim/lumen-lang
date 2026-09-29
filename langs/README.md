@@ -698,10 +698,12 @@ only. The extension labels so far, all from PHP:
 - `ext.lexical.escape.continued`: whether a backslash and the line end
   after it join the two lines of a string, standing for no character.
 - `ext.lexical.escape.named`: the letter before a character name between
-  braces. The name is read whole. The kernels have no book of these
-  names, so reaching such a literal stops the run.
-- `ext.lexical.escape.unavailable`: what a run says upon reaching a named
-  character or a lone surrogate that its text cannot hold. Such literals
+  braces. The name is read whole against the Unicode 16.0 name, alias,
+  and named-sequence tables, including algorithmic Hangul, CJK, and Tangut names.
+- `ext.lexical.escape.named.unknown`: the Python syntax error for a complete
+  named escape whose name is absent from the Unicode table.
+- `ext.lexical.escape.unavailable`: what a run says upon reaching a
+  character its text cannot hold, such as a lone surrogate. Such literals
   are read fully, even where the run cannot yet give them their meaning.
 - `ext.lexical.interpolating_quotes`: string quotes inside which `$name`,
   `$name[i]` (a number or a variable as index) and `{$expr}` weave values
@@ -4874,6 +4876,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.deferred` | - | - | `u` `U` `N` `x` `0` `1` `2` `3` `4` `5` `6` `7` `r` `a` `b` `f` `v` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.named` | - | - | `N` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.named.amiss` | - | - | `SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \N character escape` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.named.unknown` | - | - | `SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: unknown Unicode character name` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.warning` | - | - | `warnings` `warn_explicit` `SyntaxWarning` `"\{}" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\{}"? A raw string is also an option.` | - | - | - | - | - | - | - |
