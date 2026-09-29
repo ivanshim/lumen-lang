@@ -14,4 +14,6 @@ if __name__ == "__main__":
     # `python3 scripts/suite/stderr_record.py < stderr-file` prints the measured line (CI's scratch job uses this).
     import sys
     text = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
-    sys.stdout.buffer.write((measured_line(text) + "\n").encode("utf-8", "surrogateescape"))
+    # like `head -n 1`: nothing at all for an empty stderr
+    if text:
+        sys.stdout.buffer.write((measured_line(text) + "\n").encode("utf-8", "surrogateescape"))
