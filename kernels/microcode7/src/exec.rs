@@ -8863,6 +8863,9 @@ impl<'a> Machine<'a> {
         state.titles[1] = self.read_class_member(callable, &self.detail("qualified").to_owned(), true)?.bare();
         state.trace_state = self.activation(program, &state.frame, None);
         let walk = Rc::new(RefCell::new(state));
+        if crate::ghost::bidding() {
+            crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
+        }
         if let Some(frame) = &walk.borrow().trace_state {
             self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
         }
@@ -9059,6 +9062,9 @@ impl<'a> Machine<'a> {
                         let mut suspension = Suspension::body(&p, f.clone());
                         suspension.trace_state = self.activation(&p, &f, None);
                         let walk = Rc::new(RefCell::new(suspension));
+                        if crate::ghost::bidding() {
+                            crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
+                        }
                         if let Some(frame) = &walk.borrow().trace_state {
                             self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
                         }
