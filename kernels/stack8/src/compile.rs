@@ -2468,8 +2468,15 @@ impl<'a> Compiler<'a> {
                         return Err("SyntaxError: cannot use named expression without parentheses here".into());
                     }
                     let (signs, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.assign_words);
-                    if signs.first().is_some_and(|at| *at > self.pos && self.tokens[*at - 1].shape == Shape::Instr) {
-                        return Err("SyntaxError: cannot assign to name here. Maybe you meant '==' instead of '='?".into());
+                    if let Some(&equal) = signs.first() {
+                        let target = &self.tokens[self.pos..equal];
+                        let kind = if target.first().is_some_and(|t| t.lexeme == "(") && target.iter().any(|t| t.lexeme == "yield") {
+                            Some("yield expression")
+                        } else if target.len() > 2 && target[0].shape == Shape::Instr && target[1].lexeme == "["
+                            && self.bracket_close(self.pos + 1, equal) == Some(equal - 1) { Some("subscript") }
+                        else if equal > self.pos && self.tokens[equal - 1].shape == Shape::Instr { Some("name") }
+                        else { None };
+                        if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
                     }
                 }
                 self.expr(0)?;

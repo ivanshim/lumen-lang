@@ -2744,8 +2744,15 @@ impl<'a> Builder<'a> {
                         return Err(String::from("SyntaxError: cannot use named expression without parentheses here"));
                     }
                     let equals = self.divided_at(self.pos, self.tokens.len(), "stmt.assign");
-                    if equals.first().is_some_and(|at| *at > self.pos && self.tokens[*at - 1].shape == Shape::Bare) {
-                        return Err(String::from("SyntaxError: cannot assign to name here. Maybe you meant '==' instead of '='?"));
+                    if let Some(&stop) = equals.first() {
+                        let words = &self.tokens[self.pos..stop];
+                        let named = if words.first().is_some_and(|t| t.lexeme == "(") && words.iter().any(|t| t.lexeme == "yield") {
+                            Some("yield expression")
+                        } else if words.len() > 2 && words[0].shape == Shape::Bare && words[1].lexeme == "["
+                            && self.pair_close(self.pos + 1, stop) == Some(stop - 1) { Some("subscript") }
+                        else if stop > self.pos && self.tokens[stop - 1].shape == Shape::Bare { Some("name") }
+                        else { None };
+                        if let Some(name) = named { return Err(format!("SyntaxError: cannot assign to {name} here. Maybe you meant '==' instead of '='?")); }
                     }
                 }
                 let condition = Box::new(self.expr(0)?);
