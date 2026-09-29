@@ -1957,7 +1957,83 @@ impl<'a> Builder<'a> {
         self.limb(catches, |r| r.body())
     }
 
+    fn type_scope_fault(&self) -> Option<String> {
+        if !self.table.has_any("ext.builtin.exceptions.syntax") { return None; }
+        let word = |at: usize| self.tokens.get(at).map_or("", |token| token.lexeme.as_str());
+        let head = word(self.pos);
+        let named = match head {
+            "async" if word(self.pos + 1) == "def" => self.pos + 2,
+            "type" | "class" | "def" => self.pos + 1,
+            _ => return None,
+        };
+        if self.tokens.get(named)?.shape != Shape::Bare { return None; }
+        let mut cursor = named + 1;
+        if word(cursor) == "[" {
+            cursor += 1;
+            if word(cursor) == "]" { return Some(String::from("SyntaxError: Type parameter list cannot be empty")); }
+            loop {
+                let category = if word(cursor) == "**" { cursor += 1; "ParamSpec" }
+                    else if word(cursor) == "*" { cursor += 1; "TypeVarTuple" }
+                    else { "TypeVar" };
+                if self.tokens.get(cursor)?.shape != Shape::Bare { break; }
+                cursor += 1;
+                let relation = word(cursor);
+                if relation == ":" || relation == "=" {
+                    cursor += 1;
+                    let begin = cursor;
+                    let mut nested = Vec::new();
+                    while let Some(token) = self.tokens.get(cursor) {
+                        let text = token.lexeme.as_str();
+                        if nested.is_empty() && (text == "," || text == "]" || matches!(token.shape, Shape::LineEnd | Shape::Finish)) { break; }
+                        match text {
+                            "(" | "[" | "{" => nested.push(text),
+                            ")" | "]" | "}" => { nested.pop(); },
+                            _ => {}
+                        }
+                        cursor += 1;
+                    }
+                    let constrained = relation == ":" && word(begin) == "(" && {
+                        let mut level = 0usize;
+                        let mut found = false;
+                        for place in begin..cursor {
+                            match word(place) {
+                                "(" | "[" | "{" => level += 1,
+                                ")" | "]" | "}" => { level = level.saturating_sub(1); if level == 0 { break; } },
+                                "," if level == 1 => found = true,
+                                _ => {}
+                            }
+                        }
+                        found
+                    };
+                    let place = if relation == "=" { format!("{category} default") }
+                        else if constrained { String::from("TypeVar constraint") }
+                        else { String::from("TypeVar bound") };
+                    if let Some(invalid) = (begin..cursor).find_map(|index| match word(index) {
+                        ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None,
+                    }) { return Some(format!("SyntaxError: {invalid} expression cannot be used within a {place}")); }
+                }
+                match word(cursor) {
+                    "]" => { cursor += 1; break; },
+                    "," => cursor += 1,
+                    _ => break,
+                }
+            }
+        }
+        if head == "type" && word(cursor) == "=" {
+            let mut inside = 0usize;
+            for token in self.tokens.iter().skip(cursor + 1) {
+                if inside == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
+                let bad = match token.lexeme.as_str() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                if !bad.is_empty() { return Some(format!("SyntaxError: {bad} expression cannot be used within a type alias")); }
+                if ["(", "[", "{"].contains(&token.lexeme.as_str()) { inside += 1; }
+                else if [")", "]", "}"].contains(&token.lexeme.as_str()) { inside = inside.saturating_sub(1); }
+            }
+        }
+        None
+    }
+
     fn stmt(&mut self) -> Res<Form> {
+        if let Some(problem) = self.type_scope_fault() { return Err(problem); }
         let opened = self.pos;
         self.warnings_in_statement(opened);
         let made = self.stmt_of_line()?;

@@ -1830,7 +1830,82 @@ impl<'a> Compiler<'a> {
         Ok(true)
     }
 
+    fn python_type_scope_problem(&self) -> Option<String> {
+        if self.lang.syntax_members.is_empty() { return None; }
+        let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.lexeme.as_str());
+        let first = spelling(self.pos);
+        let mut name_at = self.pos + 1;
+        if first == "async" {
+            if spelling(name_at) != "def" { return None; }
+            name_at += 1;
+        } else if !["def", "class", "type"].contains(&first) { return None; }
+        if self.tokens.get(name_at)?.shape != Shape::Instr { return None; }
+        let alias = first == "type";
+        let mut at = name_at + 1;
+        if spelling(at) == "[" {
+            at += 1;
+            if spelling(at) == "]" { return Some("SyntaxError: Type parameter list cannot be empty".into()); }
+            while at < self.tokens.len() {
+                let parameter_kind = match spelling(at) { "*" => { at += 1; "TypeVarTuple" }, "**" => { at += 1; "ParamSpec" }, _ => "TypeVar" };
+                if self.tokens.get(at)?.shape != Shape::Instr { break; }
+                at += 1;
+                let marker = spelling(at);
+                if marker == ":" || marker == "=" {
+                    at += 1;
+                    let begin = at;
+                    let mut depth = 0usize;
+                    while at < self.tokens.len() {
+                        let word = spelling(at);
+                        if depth == 0 && [",", "]"].contains(&word) { break; }
+                        if ["(", "[", "{"].contains(&word) { depth += 1; }
+                        else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }
+                        if depth == 0 && matches!(self.tokens[at].shape, Shape::LineEnd | Shape::Finish) { break; }
+                        at += 1;
+                    }
+                    let mut tuple_bound = false;
+                    if marker == ":" && spelling(begin) == "(" {
+                        let mut inner = 0usize;
+                        for item in begin..at {
+                            match spelling(item) {
+                                "(" | "[" | "{" => inner += 1,
+                                ")" | "]" | "}" => { inner = inner.saturating_sub(1); if inner == 0 { break; } },
+                                "," if inner == 1 => tuple_bound = true,
+                                _ => {}
+                            }
+                        }
+                    }
+                    let scope = if marker == "=" { format!("{parameter_kind} default") }
+                        else if tuple_bound { "TypeVar constraint".to_string() }
+                        else { "TypeVar bound".to_string() };
+                    for item in begin..at {
+                        let kind = match spelling(item) { ":=" => "named", "yield" => "yield", "await" => "await", _ => continue };
+                        return Some(format!("SyntaxError: {kind} expression cannot be used within a {scope}"));
+                    }
+                }
+                if spelling(at) == "]" { at += 1; break; }
+                if spelling(at) != "," { break; }
+                at += 1;
+            }
+        }
+        if alias && spelling(at) == "=" {
+            let mut depth = 0usize;
+            for item in at + 1..self.tokens.len() {
+                let token = &self.tokens[item];
+                if depth == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
+                let kind = match token.lexeme.as_str() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                if !kind.is_empty() { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
+                match token.lexeme.as_str() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
     fn stmt(&mut self) -> Res<()> {
+        if let Some(issue) = self.python_type_scope_problem() { return Err(issue); }
         let began = self.pos;
         self.note_syntax_warnings(began);
         self.stmt_read()?;
