@@ -74,6 +74,7 @@ pub enum Prim {
     ReadMember,
     ProgramNames,
     BringModule,
+    ImportMember,
     SpreadModule,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,

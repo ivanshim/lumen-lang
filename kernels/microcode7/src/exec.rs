@@ -13540,28 +13540,32 @@ impl<'a> Machine<'a> {
                 if matches!(importer.settled(), Value::Intrinsic(Prim::Summon, _)) {
                     let namespace = self.load_namespace(&path)?;
                     match &v[1] {
-                        Value::Text(wanted) => self.namespace_item(&namespace, &path, wanted)?,
-                        _ if matches!(v[2], Value::Flag(true)) => self.load_namespace(path.split('.').next().unwrap_or(&path))?,
+                        Value::Nil => self.load_namespace(path.split('.').next().unwrap_or(&path))?,
                         _ => namespace,
                     }
                 } else {
                     // A __import__ of the program's own is called with
-                    // the names it is handed by the reference, and what
+                    // the names the import statement hands it, and what
                     // it answers stands for the import itself.
                     let globals = Value::Shared(self.book_about(true));
                     let locals = Value::Shared(self.book_about(false));
-                    let fromlist = match (&v[1], &v[2]) {
-                        (Value::Text(wanted), _) => Value::Tuple(Rc::new(vec![Value::text(wanted)])),
-                        (_, Value::Flag(false)) => Value::Tuple(Rc::new(vec![Value::text("*")])),
-                        _ => Value::Nil,
-                    };
-                    let got = self.apply_held(importer, vec![Value::text(&path), globals, locals, fromlist, Value::Small(0)])
-                        .map_err(|escape| self.suspension_fault(escape))?;
-                    match &v[1] {
-                        Value::Text(wanted) => self.read_class_member(got, wanted, false)
-                            .map_err(|escape| self.suspension_fault(escape))?,
-                        _ => got,
-                    }
+                    let fromlist = v[1].clone();
+                    self.apply_held(importer, vec![Value::text(&path), globals, locals, fromlist, Value::Small(0)])
+                        .map_err(|escape| self.suspension_fault(escape))?
+                }
+            }
+            Prim::ImportMember => {
+                // The entry a from-import (or a dotted aliased import)
+                // names is read off the namespace the import itself left
+                // standing: a package's own submodule is read in as the
+                // reference's __import__ reads it in, and a value the
+                // program's own __import__ answered with answers through
+                // the protocol it answers to.
+                if self.is_our_namespace(&v[0], &v[1].bare()) {
+                    self.namespace_item(&v[0], &v[1].bare(), &v[2].bare())?
+                } else {
+                    self.read_class_member(v[0].clone(), &v[2].bare(), false)
+                        .map_err(|escape| self.suspension_fault(escape))?
                 }
             }
             Prim::SpreadModule => {
@@ -18186,6 +18190,16 @@ impl Machine<'_> {
             }
         }
         None
+    }
+
+    /// Whether a value standing on the stack is the kernel's own
+    /// namespace read in under this path, and not a value the program's
+    /// own __import__ answered with.
+    fn is_our_namespace(&self, value: &Value, path: &str) -> bool {
+        self.imported.get(path).map_or(false, |known| match (known, value) {
+            (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        })
     }
 
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {

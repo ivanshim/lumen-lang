@@ -13,7 +13,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
 use crate::value::{Descriptor, Class, Ending, Instance, KeyedPairs, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
-use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
+use crate::code::{Operand, Builtin, Action, ImportStyle, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
 /// loop written around it. Only the latter must pass through last parts.
@@ -8637,7 +8637,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(object)
             }
-            Action::Import(path, member, root) => {
+            Action::Import(path, style) => {
                 // The import is asked of the builtins in force here, the
                 // very way the reference's import statement calls
                 // __import__: absent from the caller's own builtins it
@@ -8650,27 +8650,36 @@ impl<'a> Engine<'a> {
                 };
                 if matches!(importer.contents(), Value::Native(Builtin::Summon, _)) {
                     let module = self.import_module(path)?;
-                    if let Some(name) = member {
-                        self.import_member(&module, path, name)?
-                    } else if *root {
-                        self.import_module(path.split('.').next().unwrap_or(path))?
-                    } else { module }
+                    match style {
+                        ImportStyle::Plain => self.import_module(path.split('.').next().unwrap_or(path))?,
+                        _ => module,
+                    }
                 } else {
                     // A __import__ of the program's own is called with
-                    // the names it is handed by the reference, and what
+                    // the names the import statement hands it, and what
                     // it answers stands for the import itself.
                     let globals = Value::Bond(self.book_here(true));
                     let locals = Value::Bond(self.book_here(false));
-                    let fromlist = match (member, root) {
-                        (Some(name), _) => Value::Tuple(Rc::new(vec![Value::text(name)])),
-                        (None, false) => Value::Tuple(Rc::new(vec![Value::text("*")])),
-                        (None, true) => Value::Null,
+                    let fromlist = match style {
+                        ImportStyle::Plain => Value::Null,
+                        ImportStyle::Star => Value::Tuple(Rc::new(vec![Value::text("*")])),
+                        ImportStyle::Names(names) => Value::Tuple(Rc::new(names.iter().map(|name| Value::text(name)).collect())),
                     };
-                    let got = self.call_held(importer, vec![Value::text(path), globals, locals, fromlist, Value::Small(0)])?;
-                    match member {
-                        Some(name) => self.class_get(got, name, false)?,
-                        None => got,
-                    }
+                    self.call_held(importer, vec![Value::text(path), globals, locals, fromlist, Value::Small(0)])?
+                }
+            }
+            Action::ImportFrom(path, name) => {
+                // The member a from-import (or a dotted aliased import)
+                // names is read off the module the import itself left on
+                // the stack: a package's own submodule is read in as the
+                // reference's __import__ reads it in, and a value the
+                // program's own __import__ answered with answers through
+                // the protocol it answers to.
+                let module = self.data.last().cloned().ok_or_else(|| "Stack underflow".to_string())?;
+                if self.is_builtin_module(&module, path) {
+                    self.import_member(&module, path, name)?
+                } else {
+                    self.class_get(module, name, false)?
                 }
             }
             Action::ImportAll => {
@@ -18425,6 +18434,16 @@ impl Engine<'_> {
         let package = format!("{root}/{stem}/__init__.py");
         if std::path::Path::new(&package).is_file() { return Some(made_absolute(&package)); }
         None
+    }
+
+    /// Whether a value on the stack is the kernel's own module standing
+    /// under this path: read in by the import itself, and not a value the
+    /// program's own __import__ answered with.
+    fn is_builtin_module(&self, module: &Value, path: &str) -> bool {
+        self.modules.get(path).map_or(false, |known| match (known, module) {
+            (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        })
     }
 
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
