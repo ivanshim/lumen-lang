@@ -9420,6 +9420,26 @@ impl<'a> Builder<'a> {
         let separator = self.table.single(&format!("syntax.{}.separator", family)).unwrap().to_string();
         let mapped = family == "map" && (!self.table.flag("ext.syntax.set") || self.sign(&closing)
             || self.ahead_in_item("syntax.map.pair").is_some() || self.on_any("ext.syntax.map.spread"));
+        if self.table.has_any("ext.builtin.exceptions.syntax") {
+            let mut inner = Vec::new();
+            let mut comma_before_for = false;
+            for part in self.tokens.iter().skip(self.pos) {
+                if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
+                if inner.is_empty() {
+                    if part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
+                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
+                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    }
+                }
+                if part.shape == Shape::Sign {
+                    match part.lexeme.as_str() {
+                        "(" | "[" | "{" => inner.push(part.lexeme.as_str()),
+                        ")" | "]" | "}" => { inner.pop(); },
+                        _ => (),
+                    }
+                }
+            }
+        }
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
             return self.gather_comprehension(next, &closing, mapped);
         }

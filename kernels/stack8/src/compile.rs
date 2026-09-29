@@ -10014,6 +10014,22 @@ impl<'a> Compiler<'a> {
     /// Each part is worked out before the literal is enlarged by it.
     fn extended_literal(&mut self, pair: &Brackets, braces: bool) -> Res<()> {
         let map = braces && (!self.lang.set_literals || self.literal_is_map(pair));
+        if !self.lang.syntax_members.is_empty() {
+            let mut depth = 0usize;
+            let mut separated = false;
+            for token in self.tokens.iter().skip(self.pos) {
+                let word = token.lexeme.as_str();
+                if depth == 0 && token.shape == Shape::Sign && word == pair.close { break; }
+                if depth == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
+                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                }
+                if token.shape == Shape::Sign {
+                    if ["(", "[", "{"].contains(&word) { depth += 1; }
+                    else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }
+                }
+            }
+        }
         if let Some(clause) = self.comprehension_ahead() {
             return self.comprehension(pair, clause, map);
         }
