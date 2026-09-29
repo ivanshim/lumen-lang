@@ -144,7 +144,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
 /// and the line the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written here and the fault goes back
 /// as it came, for the host to tell in its own way.
-fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str, column: Option<usize>) -> String {
+fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str, column: Option<usize>, end: Option<(usize, usize)>) -> String {
     let adjusted = if before > 0 && !lang.syntax_members.is_empty() {
         said.rsplit_once(" (detected at line ").and_then(|(head, end)| {
             let line = end.strip_suffix(')')?.parse::<u32>().ok()?;
@@ -185,7 +185,16 @@ fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, 
         let unplaced = message == "unexpected EOF while parsing" && shown.trim() == "\\";
         if let Some(at) = column.filter(|_| !unplaced) {
             let lead = whole.chars().count() - shown.chars().count();
-            report.push_str(&format!("    {}^\n", " ".repeat(at.saturating_sub(lead + 1))));
+            let start = at.saturating_sub(lead + 1);
+            // A span ending on the row is marked across; one reaching
+            // past the row is marked to the row's end, as the reference
+            // marks it; a bare place takes one mark.
+            let width = match end {
+                Some((end_row, end_col)) if end_row == row => end_col.saturating_sub(at).max(1),
+                Some((end_row, _)) if end_row > row => shown.chars().count().saturating_sub(start).max(1),
+                _ => 1,
+            };
+            report.push_str(&format!("    {}{}\n", " ".repeat(start), "^".repeat(width)));
         }
         report.push_str(&format!("{kind}: {message}"));
         eprintln!("{report}");
@@ -261,8 +270,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
     escape_notices_ahead(&source, lang, before, request);
-    let read = lex::lex_position(&source, lang).map_err(|(said, row, column)| cannot_read(lang, &said, row, request, before, false, &source, Some(column)));
-    let shaped = layout::layout_position(read?, lang, before as usize).map_err(|(said, row, column)| cannot_read(lang, &said, row, request, before, false, &source, Some(column)));
+    let read = lex::lex_position(&source, lang).map_err(|(said, row, column)| cannot_read(lang, &said, row, request, before, false, &source, Some(column), None));
+    let shaped = layout::layout_position(read?, lang, before as usize).map_err(|(said, row, column)| cannot_read(lang, &said, row, request, before, false, &source, Some(column), None));
     let tokens = shaped?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
@@ -299,7 +308,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
-        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source, None)),
+        Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source,
+            if registry.stopped_column > 0 { Some(registry.stopped_column) } else { None },
+            if registry.stopped_end > 0 { Some((registry.stopped_end_row, registry.stopped_end)) } else { None })),
     };
 
     let mut machine = engine::Engine::new(lang, registry);

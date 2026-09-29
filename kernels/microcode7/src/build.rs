@@ -202,6 +202,8 @@ pub struct Builder<'a> {
     /// file asked for part way through is. A whole program built this
     /// way is a piece of a run in progress, not a run of its own.
     read_in: bool,
+    /// Show expression statements in text compiled in interactive mode.
+    interactive: bool,
     /// How many layers stood open before a word of this text was read.
     /// A statement is at the top of what was handed over when no more
     /// than these are open, whatever stands around them elsewhere.
@@ -329,12 +331,12 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 
 /// The same, saying besides which row the reading had reached when it
 /// stopped, for a language that tells such a stopping in its own words.
-pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool)> {
+pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool, (usize, usize, u32))> {
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
     build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard, &column)), None, None, false, false)
-        .map_err(|said| (said, at.get(), hard.get()))
+        .map_err(|said| (said, at.get(), hard.get(), column.get()))
 }
 
 /// The same, said besides which file the text came out of. Nothing but
@@ -400,7 +402,7 @@ pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed
 /// and nothing after it where it is to be weighed, else as statements;
 /// said besides which file it came out of, and which builtin words are
 /// to be read as names the program bound, in front of the builtins.
-pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, value_only: bool, shadowed: &[String], allow_top_await: bool) -> Result<Built, (String, u32, (usize, usize, u32))> {
+pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, value_only: bool, shadowed: &[String], allow_top_await: bool, interactive: bool) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
     let mark = Some((&at, &hard, &column));
@@ -408,13 +410,13 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
     let mut bound = shadowed.to_vec();
     let mut exports = HashSet::new();
     if table.flag("ext.stmt.function.closes_over") {
-        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await).map_err(|said| (said, at.get(), column.get()))?;
+        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive).map_err(|said| (said, at.get(), column.get()))?;
         exports = discovery.native_exports;
         for name in discovery.bound_globally {
             if !bound.contains(&name) { bound.push(name); }
         }
     }
-    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, globe, born, mark, None, None, true, &mut words, false, value_only, &bound, &exports, allow_top_await).map_err(|said| (said, at.get(), column.get()))
+    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, globe, born, mark, None, None, true, &mut words, false, value_only, &bound, &exports, allow_top_await, interactive).map_err(|said| (said, at.get(), column.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
@@ -423,10 +425,10 @@ type Within<'w> = (&'w [String], Knows<'w>);
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool) -> Res<Built> {
     let mut words = HashMap::new();
     let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
-        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), None, None, mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false)?;
+        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), None, None, mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false)?;
         (pass.bound_globally, pass.native_exports)
     } else { (Vec::new(), HashSet::new()) };
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, None, None, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false)
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, None, None, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false)
 }
 
 /// Every name a `global` statement names anywhere in this text, however
@@ -511,7 +513,7 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
     output
 }
 
-fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool) -> Res<Built> {
+fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool) -> Res<Built> {
     let original_words = tokens;
     let names_in_classes = class_spellings(tokens, table);
     let tokens = names_in_classes.as_slice();
@@ -549,7 +551,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -6654,6 +6656,11 @@ impl<'a> Builder<'a> {
                 }
             }
             items.push(r.body()?);
+            // A Python function without an explicit return yields None,
+            // regardless of the value its last statement evaluated to.
+            if table.has_any("ext.builtin.compile.modes") {
+                items.push(constant(Value::Nil));
+            }
             Ok(sequence(items))
         })?;
         let mut items: Vec<Form> = said;
@@ -7319,6 +7326,14 @@ impl<'a> Builder<'a> {
         Ok(built)
     }
 
+    fn interactive_statement(&self, value: Form) -> Form {
+        if self.interactive && self.layers.len() == 1 && !self.in_class_body() {
+            prim_call(Prim::Display, vec![value])
+        } else {
+            value
+        }
+    }
+
     fn binding_or_value(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             if let Some(&equal) = self.divided_at(self.pos, self.tokens.len(), "stmt.assign").first() {
@@ -7400,7 +7415,7 @@ impl<'a> Builder<'a> {
             let tuple = self.comma_expression(false)?;
             return if self.on_writing() {
                 Err(String::from("SyntaxError: 'tuple' is an illegal expression for augmented assignment"))
-            } else { Ok(tuple) };
+            } else { Ok(self.interactive_statement(tuple)) };
         }
         let began = self.pos;
         let boundary = began.checked_sub(1).map_or(true, |at| {
@@ -7470,7 +7485,8 @@ impl<'a> Builder<'a> {
             return self.with_annotation(expr, began);
         }
         if !self.on_writing() {
-            return self.comma_tail(expr);
+            let value = self.comma_tail(expr)?;
+            return Ok(self.interactive_statement(value));
         }
         let tail = &self.tokens[began..self.pos];
         let attribute = tail.len() >= 2

@@ -207,23 +207,253 @@ fn honours_extensions(kernel: &str) -> bool {
     matches!(kernel, "stack8" | "microcode7")
 }
 
-/// Read a Python file according to its first two lines, discarding an
-/// optional UTF-8 signature before it reaches the lexer.
-fn python_file_source(written: Vec<u8>) -> String {
-    let bytes = written.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&written);
-    let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
-        .copied().map(char::from).collect::<String>().to_ascii_lowercase();
-    // The mark of a coding line may be written with room about it or
-    // none, and with either sign: `coding: latin1`, `coding:latin1`
-    // and `coding=latin1` all say the same.
-    let squashed = header.replace([' ', '\t'], "");
-    let latin1 = ["coding:latin1", "coding=latin1", "coding:latin-1", "coding=latin-1"]
-        .iter()
-        .any(|mark| squashed.contains(mark));
-    if latin1 {
-        bytes.iter().copied().map(char::from).collect()
+/// The upper halves of the single-byte code pages a Python file's
+/// coding line may name, byte 128 standing for a table's first
+/// character. The tables are the reference's own.
+const CP437_UPPER: &str = "\u{c7}\u{fc}\u{e9}\u{e2}\u{e4}\u{e0}\u{e5}\u{e7}\u{ea}\u{eb}\u{e8}\u{ef}\u{ee}\u{ec}\u{c4}\u{c5}\u{c9}\u{e6}\u{c6}\u{f4}\u{f6}\u{f2}\u{fb}\u{f9}\u{ff}\u{d6}\u{dc}\u{a2}\u{a3}\u{a5}\u{20a7}\u{192}\u{e1}\u{ed}\u{f3}\u{fa}\u{f1}\u{d1}\u{aa}\u{ba}\u{bf}\u{2310}\u{ac}\u{bd}\u{bc}\u{a1}\u{ab}\u{bb}\u{2591}\u{2592}\u{2593}\u{2502}\u{2524}\u{2561}\u{2562}\u{2556}\u{2555}\u{2563}\u{2551}\u{2557}\u{255d}\u{255c}\u{255b}\u{2510}\u{2514}\u{2534}\u{252c}\u{251c}\u{2500}\u{253c}\u{255e}\u{255f}\u{255a}\u{2554}\u{2569}\u{2566}\u{2560}\u{2550}\u{256c}\u{2567}\u{2568}\u{2564}\u{2565}\u{2559}\u{2558}\u{2552}\u{2553}\u{256b}\u{256a}\u{2518}\u{250c}\u{2588}\u{2584}\u{258c}\u{2590}\u{2580}\u{3b1}\u{df}\u{393}\u{3c0}\u{3a3}\u{3c3}\u{b5}\u{3c4}\u{3a6}\u{398}\u{3a9}\u{3b4}\u{221e}\u{3c6}\u{3b5}\u{2229}\u{2261}\u{b1}\u{2265}\u{2264}\u{2320}\u{2321}\u{f7}\u{2248}\u{b0}\u{2219}\u{b7}\u{221a}\u{207f}\u{b2}\u{25a0}\u{a0}";
+const CP1251_UPPER: &str = "\u{402}\u{403}\u{201a}\u{453}\u{201e}\u{2026}\u{2020}\u{2021}\u{20ac}\u{2030}\u{409}\u{2039}\u{40a}\u{40c}\u{40b}\u{40f}\u{452}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{fffd}\u{2122}\u{459}\u{203a}\u{45a}\u{45c}\u{45b}\u{45f}\u{a0}\u{40e}\u{45e}\u{408}\u{a4}\u{490}\u{a6}\u{a7}\u{401}\u{a9}\u{404}\u{ab}\u{ac}\u{ad}\u{ae}\u{407}\u{b0}\u{b1}\u{406}\u{456}\u{491}\u{b5}\u{b6}\u{b7}\u{451}\u{2116}\u{454}\u{bb}\u{458}\u{405}\u{455}\u{457}\u{410}\u{411}\u{412}\u{413}\u{414}\u{415}\u{416}\u{417}\u{418}\u{419}\u{41a}\u{41b}\u{41c}\u{41d}\u{41e}\u{41f}\u{420}\u{421}\u{422}\u{423}\u{424}\u{425}\u{426}\u{427}\u{428}\u{429}\u{42a}\u{42b}\u{42c}\u{42d}\u{42e}\u{42f}\u{430}\u{431}\u{432}\u{433}\u{434}\u{435}\u{436}\u{437}\u{438}\u{439}\u{43a}\u{43b}\u{43c}\u{43d}\u{43e}\u{43f}\u{440}\u{441}\u{442}\u{443}\u{444}\u{445}\u{446}\u{447}\u{448}\u{449}\u{44a}\u{44b}\u{44c}\u{44d}\u{44e}\u{44f}";
+const ISO88597_UPPER: &str = "\u{80}\u{81}\u{82}\u{83}\u{84}\u{a}\u{86}\u{87}\u{88}\u{89}\u{8a}\u{8b}\u{8c}\u{8d}\u{8e}\u{8f}\u{90}\u{91}\u{92}\u{93}\u{94}\u{95}\u{96}\u{97}\u{98}\u{99}\u{9a}\u{9b}\u{9c}\u{9d}\u{9e}\u{9f}\u{a0}\u{2018}\u{2019}\u{a3}\u{20ac}\u{20af}\u{a6}\u{a7}\u{a8}\u{a9}\u{37a}\u{ab}\u{ac}\u{ad}\u{fffd}\u{2015}\u{b0}\u{b1}\u{b2}\u{b3}\u{384}\u{385}\u{386}\u{b7}\u{388}\u{389}\u{38a}\u{bb}\u{38c}\u{bd}\u{38e}\u{38f}\u{390}\u{391}\u{392}\u{393}\u{394}\u{395}\u{396}\u{397}\u{398}\u{399}\u{39a}\u{39b}\u{39c}\u{39d}\u{39e}\u{39f}\u{3a0}\u{3a1}\u{fffd}\u{3a3}\u{3a4}\u{3a5}\u{3a6}\u{3a7}\u{3a8}\u{3a9}\u{3aa}\u{3ab}\u{3ac}\u{3ad}\u{3ae}\u{3af}\u{3b0}\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}\u{3bb}\u{3bc}\u{3bd}\u{3be}\u{3bf}\u{3c0}\u{3c1}\u{3c2}\u{3c3}\u{3c4}\u{3c5}\u{3c6}\u{3c7}\u{3c8}\u{3c9}\u{3ca}\u{3cb}\u{3cc}\u{3cd}\u{3ce}\u{fffd}";
+
+/// A single-byte page read against its upper half: a byte below 128
+/// stands for itself, any other for the character the table gives it.
+fn decode_with_upper(bytes: &[u8], upper: &str) -> String {
+    let table: Vec<char> = upper.chars().collect();
+    bytes.iter().map(|byte| if *byte < 128 { char::from(*byte) } else { table[*byte as usize - 128] }).collect()
+}
+
+/// What a line among a file's first two is: a comment, which may carry
+/// a coding word, or anything else, past which no coding word is
+/// looked for -- the reference stops the search at the first line that
+/// is not blank and not only a comment.
+enum CodingLine {
+    Blank,
+    Comment(Option<String>),
+    Code,
+}
+
+/// Read a line of a file's head the way PEP 263 has the reference read
+/// it. A coding word stands in a comment as `coding`, a `:` or `=`,
+/// and the name, with or without room about the mark; when one mention
+/// is not followed by the mark, the search goes on past it, since a
+/// later one in the same comment may still declare the encoding.
+fn coding_line(line: &[u8]) -> CodingLine {
+    let text = String::from_utf8_lossy(line);
+    let trimmed = text.trim_start_matches([' ', '\t', '\x0c']);
+    if !trimmed.starts_with('#') {
+        return if trimmed.trim_end_matches('\r').is_empty() { CodingLine::Blank } else { CodingLine::Code };
+    }
+    let mut rest = &trimmed[1..];
+    while let Some(at) = rest.find("coding") {
+        rest = &rest[at + 6..];
+        let Some(marked) = rest.strip_prefix(':').or_else(|| rest.strip_prefix('=')) else { continue };
+        let name: String = marked.trim_start_matches([' ', '\t']).chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).collect();
+        if !name.is_empty() {
+            return CodingLine::Comment(Some(name));
+        }
+    }
+    CodingLine::Comment(None)
+}
+
+/// The name the reference knows a coding word by for the UTF-8 and
+/// Latin-1 families -- `UTF_8`, `utf-8-sig` and their kin are UTF-8 to
+/// it, and the Latin-1 spellings are ISO-8859-1. Any other name stays
+/// as it was written.
+fn normal_encoding_name(written: &str) -> &str {
+    let folded: String = written.chars().take(12).map(|c| if c == '_' { '-' } else { c.to_ascii_lowercase() }).collect();
+    if folded == "utf-8" || folded.starts_with("utf-8-") {
+        "utf-8"
+    } else if matches!(folded.as_str(), "latin-1" | "iso-8859-1" | "iso-latin-1")
+        || folded.starts_with("latin-1-") || folded.starts_with("iso-8859-1-") || folded.starts_with("iso-latin-1-") {
+        "iso-8859-1"
     } else {
-        String::from_utf8_lossy(bytes).into_owned()
+        written
+    }
+}
+
+/// A string's contents as the reference's reader bounds them: from
+/// past the opening quote to the closing one. A backslash skips a
+/// byte, a raw mark changes nothing in the reading, and a string a
+/// line's end or the file's end cuts off has no contents the codec
+/// sees -- the reader faults on it on its own. The answers are the
+/// contents' bounds, whether they are decoded (a bytes literal's are
+/// not), and where the reading resumes; a reading that resumes where
+/// the contents ended means no closing quote was found.
+fn string_contents(bytes: &[u8], at: usize, prefix: &[u8]) -> (usize, usize, bool, usize) {
+    let n = bytes.len();
+    let quote = bytes[at];
+    let triple = bytes.get(at + 1) == Some(&quote) && bytes.get(at + 2) == Some(&quote);
+    let content_start = at + if triple { 3 } else { 1 };
+    let decodes = !prefix.iter().any(|b| matches!(b, b'b' | b'B'));
+    let mut i = content_start;
+    while i < n {
+        let c = bytes[i];
+        if c == b'\\' {
+            i += 2;
+            continue;
+        }
+        if !triple && (c == b'\n' || c == b'\r') {
+            return (content_start, i, false, i);
+        }
+        if c == quote {
+            if triple && !(bytes.get(i + 1) == Some(&quote) && bytes.get(i + 2) == Some(&quote)) {
+                i += 1;
+                continue;
+            }
+            return (content_start, i, decodes, i + if triple { 3 } else { 1 });
+        }
+        i += 1;
+    }
+    (content_start, n, false, n)
+}
+
+/// The first piece of a Python file the reference would decode as
+/// UTF-8 and could not: a string's contents between its quotes, or a
+/// run of letters, digits and bytes above 127 standing as a name. A
+/// byte in a comment, in a bytes literal, or in a string cut off is
+/// never decoded by the reference, so it is never faulted here; and
+/// past a string cut off the reader faults on its own, so nothing
+/// later is looked at. Answers the piece's bounds, or None when every
+/// piece decodes.
+fn utf8_fault_piece(bytes: &[u8]) -> Option<(usize, usize)> {
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n {
+        let byte = bytes[i];
+        if byte == b'#' {
+            while i < n && bytes[i] != b'\n' { i += 1; }
+        } else if byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 128 {
+            let start = i;
+            while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] >= 128) { i += 1; }
+            let run = &bytes[start..i];
+            if i < n && (bytes[i] == b'\'' || bytes[i] == b'"')
+                && run.iter().all(|b| matches!(b, b'r' | b'R' | b'b' | b'B' | b'f' | b'F'))
+            {
+                let (from, unto, decodes, resume) = string_contents(bytes, i, run);
+                if decodes && std::str::from_utf8(&bytes[from..unto]).is_err() {
+                    return Some((from, unto));
+                }
+                if resume == unto {
+                    return None;
+                }
+                i = resume;
+            } else if std::str::from_utf8(run).is_err() {
+                return Some((start, i));
+            }
+        } else if byte == b'\'' || byte == b'"' {
+            let (from, unto, decodes, resume) = string_contents(bytes, i, &[]);
+            if decodes && std::str::from_utf8(&bytes[from..unto]).is_err() {
+                return Some((from, unto));
+            }
+            if resume == unto {
+                return None;
+            }
+            i = resume;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// A Python file read as UTF-8, as PEP 263 has it. With neither a
+/// coding word nor a signature, every line is looked at raw, and a
+/// byte that is not UTF-8 is named on its own, with the file and the
+/// line it stands on. With either, the pieces the reader decodes --
+/// string contents and names -- are looked at, and the codec's own
+/// complaint is told with the file, the line and a mark under the
+/// place, as the reference tells it; a file whose undecodable bytes
+/// stand only where nothing decodes them is read as far as it goes,
+/// for the reader to fault on.
+fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, given: &str) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_owned();
+    }
+    if !signed && !declared {
+        let error = std::str::from_utf8(bytes).unwrap_err();
+        let upto = error.valid_up_to();
+        let row = bytes[..upto].iter().filter(|byte| **byte == b'\n').count() + 1;
+        eprintln!("SyntaxError: Non-UTF-8 code starting with '\\x{:02x}' in file {} on line {}, but no encoding declared; see https://peps.python.org/pep-0263/ for details", bytes[upto], given, row);
+        process::exit(1);
+    }
+    let Some((from, unto)) = utf8_fault_piece(bytes) else {
+        return String::from_utf8_lossy(bytes).into_owned();
+    };
+    let error = std::str::from_utf8(&bytes[from..unto]).unwrap_err();
+    let at = from + error.valid_up_to();
+    let row = bytes[..at].iter().filter(|byte| **byte == b'\n').count() + 1;
+    // The complaint counts the place within the piece being decoded;
+    // the mark under the row is set one past the place for a sequence
+    // cut short, and on the byte itself otherwise.
+    let position = error.valid_up_to();
+    let (length, why, past) = match error.error_len() {
+        None => (1, "unexpected end of data", 0),
+        Some(length) if bytes[at] >= 194 => (length, "invalid continuation byte", length),
+        Some(length) => (length, "invalid start byte", 0),
+    };
+    let complaint = if length == 1 {
+        format!("'utf-8' codec can't decode byte 0x{:02x} in position {}", bytes[at], position)
+    } else {
+        format!("'utf-8' codec can't decode bytes in position {}-{}", position, position + length - 1)
+    };
+    let line_start = bytes[..at].iter().rposition(|byte| *byte == b'\n').map_or(0, |p| p + 1);
+    let col = String::from_utf8_lossy(&bytes[line_start..at]).chars().count() + 1 + past;
+    let whole = String::from_utf8_lossy(written);
+    let line = whole.split('\n').nth(row - 1).unwrap_or("");
+    let shown = line.trim_start();
+    let lead = line.chars().count() - shown.chars().count();
+    eprintln!("  File \"{}\", line {}", given, row);
+    eprintln!("    {}", shown);
+    eprintln!("    {}^", " ".repeat(col.saturating_sub(lead + 1)));
+    eprintln!("SyntaxError: (unicode error) {}: {}", complaint, why);
+    process::exit(1);
+}
+
+/// Read a Python file according to PEP 263: a UTF-8 signature is
+/// discarded before it reaches the lexer, and a coding word in a
+/// comment among the first two lines names how the rest decodes. The
+/// same words anywhere else, a string's contents among them, name
+/// nothing. A file naming an encoding its bytes do not keep to, one
+/// conflicting with the signature, or one the interpreter does not
+/// know, is told the way the reference tells it, and the run ends
+/// before it begins.
+fn python_file_source(written: Vec<u8>, given: &str) -> String {
+    let signed = written.starts_with(&[0xef, 0xbb, 0xbf]);
+    let bytes = written.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&written);
+    let mut cookie: Option<String> = None;
+    for line in bytes.split(|byte| *byte == b'\n').take(2) {
+        match coding_line(line) {
+            CodingLine::Comment(Some(name)) => {
+                cookie = Some(name);
+                break;
+            }
+            CodingLine::Comment(None) | CodingLine::Blank => {}
+            CodingLine::Code => break,
+        }
+    }
+    let named = cookie.clone().unwrap_or_else(|| "utf-8".to_string());
+    let normal = normal_encoding_name(&named);
+    if signed && normal != "utf-8" {
+        eprintln!("SyntaxError: encoding problem: {} with BOM", normal);
+        process::exit(1);
+    }
+    match named.to_ascii_lowercase().replace(['-', '_'], "").as_str() {
+        "utf8" | "utf8sig" => utf8_file_source(&written, bytes, signed, cookie.is_some(), given),
+        "ascii" | "usascii" => {
+            if bytes.iter().any(|byte| *byte > 127) {
+                eprintln!("SyntaxError: encoding problem: {}", normal);
+                process::exit(1);
+            }
+            bytes.iter().copied().map(char::from).collect()
+        }
+        "latin1" | "latin" | "iso88591" | "isolatin1" => bytes.iter().copied().map(char::from).collect(),
+        "cp437" | "437" | "ibm437" => decode_with_upper(bytes, CP437_UPPER),
+        "cp1251" => decode_with_upper(bytes, CP1251_UPPER),
+        "iso88597" => decode_with_upper(bytes, ISO88597_UPPER),
+        _ => {
+            eprintln!("SyntaxError: encoding problem: {}", normal);
+            process::exit(1);
+        }
     }
 }
 
@@ -325,7 +555,7 @@ fn run_all() {
         process::exit(1);
     });
     let source = if inv.language.name() == "python" && honours_extensions(&inv.kernel) {
-        python_file_source(written)
+        python_file_source(written, &inv.file)
     } else {
         source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel))
     };

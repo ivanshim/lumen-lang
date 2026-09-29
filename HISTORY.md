@@ -2185,3 +2185,25 @@ scratch files independently of the worktree.
 Merged, the fifty files count 2606 on both stack8 and microcode7, up from
 2595 on both, with no passing test lost; microcode7's test_math, test_str
 and test_long were run whole on the build machine (82, 127 and 34).
+
+### 1ap. Batch 20n merged as #521; batch 20o: source decoding, syntax and interactive display
+
+Batch 20o folds three branches, integrated by a GPT-6 Sol worker.
+fix/source-encoding (Sol; test_exceptions 100 to 102) implements general
+Python encoding-cookie handling and byte-source diagnostics.
+fix/ast-type-comments (Sol; test_syntax 92 to 93) recognizes parameter
+type comments and correctly refuses a comment attached to a bare star;
+all 557 examples in the syntax module doctest now pass.
+fix/generator-finalization (Sol; test_generators 54 to 55) routes
+interactive expression statements through sys.displayhook, including
+expressions in compound suites, and makes doctest use that normal path.
+
+The integration removed a speculative expression-only parse for single
+mode that lost the syntax gain when the branches were combined. Both
+kernels now use their interactive statement path consistently. Tests and
+scratch records are unchanged.
+
+Merged, the fifty files count 2610 on both stack8 and microcode7, up from
+2606 on both, with no passing test lost. Complete build-machine runs
+supply microcode7's test_math, test_str and test_long counts (82, 127 and
+34) where Lambda reaches its time limit.
