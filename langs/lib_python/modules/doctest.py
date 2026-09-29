@@ -70,7 +70,7 @@ _TRACEBACK_HEADERS = ['Traceback (most recent call last):',
 # its value is never shown.
 _STATEMENT_WORDS = ['assert', 'async', 'await', 'break', 'class', 'continue',
                     'def', 'del', 'elif', 'else', 'except', 'finally', 'for',
-                    'from', 'global', 'if', 'import', 'nonlocal', 'pass',
+                    'from', 'global', 'if', 'import', 'match', 'nonlocal', 'pass',
                     'raise', 'return', 'try', 'while', 'with', 'yield']
 
 _OPEN_BRACKETS = ['(', '[', '{']

@@ -5223,7 +5223,12 @@ impl<'a> Builder<'a> {
         let (value, tuple) = self.subject_of_match()?;
         let held = self.gensym("matched");
         let save = Form::Write(held.clone(), Box::new(value));
-        if !self.on_any("block.intro") { return Err(self.bad_case()); }
+        if !self.on_any("block.intro") {
+            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare && self.glance(1).lexeme == ":" {
+                return Err(String::from("SyntaxError: invalid syntax"));
+            }
+            return Err(self.bad_case());
+        }
         self.advance();
         self.skip_line_ends();
         if self.look().shape != Shape::Open { return Err(self.bad_case()); }
@@ -5464,12 +5469,15 @@ impl<'a> Builder<'a> {
             while !self.on_any("syntax.map.close") {
                 if let Some((start, _)) = &rest {
                     self.pos = *start;
-                    let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: invalid syntax".to_owned() } else { self.bad_case() };
+                    let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: double star pattern must be the last (right-most) subpattern in the mapping pattern".to_owned() } else { self.bad_case() };
                     return Err(words);
                 }
                 if self.on_any("op.pow") {
                     self.advance();
                     let start = self.pos;
+                    if table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "_" {
+                        return Err(String::from("SyntaxError: invalid syntax"));
+                    }
                     let CaseTest::Keep(name) = self.pattern_name()? else { return Err(self.bad_case()) };
                     rest = Some((start, name));
                 } else {
@@ -5511,11 +5519,13 @@ impl<'a> Builder<'a> {
         while !self.on_any("syntax.call.close") {
             if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
                 let word = self.advance().lexeme;
-                if named.iter().any(|(seen, _)| *seen == word) { return Err(self.bad_case()); }
+                if named.iter().any(|(seen, _)| *seen == word) {
+                    return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: attribute name repeated in class pattern: {word}") } else { self.bad_case() });
+                }
                 self.advance();
                 named.push((word, self.pattern_choice()?));
             } else if !named.is_empty() {
-                return Err(self.bad_case());
+                return Err(if table.has_any("ext.builtin.exceptions.syntax") { String::from("SyntaxError: positional patterns follow keyword patterns") } else { self.bad_case() });
             } else {
                 positional.push(self.pattern_choice()?);
             }

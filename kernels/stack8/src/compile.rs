@@ -3707,7 +3707,12 @@ impl<'a> Compiler<'a> {
         let tuple = self.match_subject()?;
         let subject = self.gensym("subject");
         self.write(&subject);
-        if !self.on_any(&self.lang.block_intros) { return Err(self.pattern_fault()); }
+        if !self.on_any(&self.lang.block_intros) {
+            if !self.lang.syntax_members.is_empty() && self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == ":" {
+                return Err("SyntaxError: invalid syntax".into());
+            }
+            return Err(self.pattern_fault());
+        }
         self.take();
         self.skip_seps();
         if self.look().shape != Shape::Open { return Err(self.pattern_fault()); }
@@ -3958,11 +3963,14 @@ impl<'a> Compiler<'a> {
                 while !self.at_symbol(&map.close) {
                     if let Some((capture_at, _)) = &rest {
                         self.pos = *capture_at;
-                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: invalid syntax".into() });
+                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: double star pattern must be the last (right-most) subpattern in the mapping pattern".into() });
                     }
                     if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Power)) {
                         self.take();
                         let capture_at = self.pos;
+                        if !lang.syntax_members.is_empty() && lang.match_wildcards.iter().any(|wild| self.at_lexeme(wild)) {
+                            return Err("SyntaxError: invalid syntax".into());
+                        }
                         let Pattern::Capture(name) = self.pattern_capture()? else { return Err(self.pattern_fault()) };
                         rest = Some((capture_at, name));
                     } else {
@@ -4006,11 +4014,13 @@ impl<'a> Compiler<'a> {
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
                 if keyword {
                     let name = self.take().lexeme;
-                    if keyed.iter().any(|(old, _)| *old == name) { return Err(self.pattern_fault()); }
+                    if keyed.iter().any(|(old, _)| *old == name) {
+                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { format!("SyntaxError: attribute name repeated in class pattern: {name}") });
+                    }
                     self.take();
                     keyed.push((name, self.pattern_part()?));
                 } else if !keyed.is_empty() {
-                    return Err(self.pattern_fault());
+                    return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: positional patterns follow keyword patterns".into() });
                 } else {
                     positional.push(self.pattern_part()?);
                 }
