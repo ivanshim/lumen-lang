@@ -6828,6 +6828,13 @@ impl<'a> Compiler<'a> {
         if !name && !index && !member {
             return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an assignment target".into()));
         }
+        if name && !lang.syntax_members.is_empty() {
+            if let Instr::Read(cell) = &self.piece().instrs[from] {
+                if cell.ident.as_ref() == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
+            }
+        }
         if name && self.piece().outermost {
             if let Instr::Read(cell) = self.piece().instrs[from].clone() {
                 if self.tokens[self.pos - 1].lexeme == cell.ident.as_ref() {

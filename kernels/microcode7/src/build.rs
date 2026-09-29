@@ -6907,6 +6907,13 @@ impl<'a> Builder<'a> {
             | Form::Apply(Callee::Prim(Prim::At | Prim::Of, _), _)) {
             return Err(table.single("ext.stmt.annotation.amiss").unwrap_or("Expected an assignment target").to_string());
         }
+        if table.has_any("ext.builtin.exceptions.syntax") {
+            if let Form::Read(slot) = &place {
+                if slot.ident.as_ref() == "__debug__" {
+                    return Err(String::from("SyntaxError: cannot assign to __debug__"));
+                }
+            }
+        }
         if self.layers.len() == 1 {
             if let Form::Read(slot) = &place {
                 if self.tokens[self.pos - 1].lexeme == slot.ident.as_ref() {
