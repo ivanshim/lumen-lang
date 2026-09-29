@@ -3827,6 +3827,9 @@ impl<'a> Compiler<'a> {
 
     fn pattern_capture(&mut self) -> Res<crate::code::Pattern> {
         let name = self.want_name("in a pattern")?;
+        if !self.lang.syntax_members.is_empty() && name == "__debug__" {
+            return Err("SyntaxError: cannot assign to __debug__".into());
+        }
         if self.lang.match_wildcards.contains(&name) { Ok(crate::code::Pattern::Any) }
         else if self.lang.true_words.contains(&name) || self.lang.false_words.contains(&name) || self.lang.null_words.contains(&name) { Err(self.pattern_fault()) }
         else { Ok(crate::code::Pattern::Capture(name)) }
@@ -4014,6 +4017,7 @@ impl<'a> Compiler<'a> {
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
                 if keyword {
                     let name = self.take().lexeme;
+                    if !lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
                     if keyed.iter().any(|(old, _)| *old == name) {
                         return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { format!("SyntaxError: attribute name repeated in class pattern: {name}") });
                     }
@@ -6991,13 +6995,16 @@ impl<'a> Compiler<'a> {
                 return Err("SyntaxError: cannot assign to __debug__".into());
             }
             if let Some(colon) = self.statement_annotation() {
+                if colon >= self.pos + 2 && self.tokens[colon - 1].lexeme == "__debug__" && self.tokens[colon - 2].lexeme == "." {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
                 let mut head = self.pos;
                 let mut tail = colon;
                 while head + 1 < tail && self.tokens[head].lexeme == "(" && self.tokens[tail - 1].lexeme == ")" { head += 1; tail -= 1; }
                 if head == tail || !self.outer_marks(head, tail, &self.lang.tuple_marks).0.is_empty() {
                     return Err("SyntaxError: only single target (not tuple) can be annotated".into());
                 }
-                if self.tokens[head].lexeme == "[" && self.tokens[tail - 1].lexeme == "]" {
+                if self.tokens[head].lexeme == "[" && self.bracket_close(head, tail) == Some(tail - 1) {
                     return Err("SyntaxError: only single target (not list) can be annotated".into());
                 }
                 let first = &self.tokens[head];

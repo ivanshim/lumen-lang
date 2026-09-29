@@ -5332,6 +5332,9 @@ impl<'a> Builder<'a> {
     fn pattern_name(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let word = self.need_word("as a pattern binding")?;
+        if self.table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" {
+            return Err(String::from("SyntaxError: cannot assign to __debug__"));
+        }
         if self.table.spells("ext.stmt.match.wildcard", &word) { return Ok(CaseTest::Ignore); }
         if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &word)) { return Err(self.bad_case()); }
         Ok(CaseTest::Keep(word))
@@ -5519,6 +5522,7 @@ impl<'a> Builder<'a> {
         while !self.on_any("syntax.call.close") {
             if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
                 let word = self.advance().lexeme;
+                if table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" { return Err(String::from("SyntaxError: cannot assign to __debug__")); }
                 if named.iter().any(|(seen, _)| *seen == word) {
                     return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: attribute name repeated in class pattern: {word}") } else { self.bad_case() });
                 }
@@ -6880,12 +6884,15 @@ impl<'a> Builder<'a> {
                 return Err(String::from("SyntaxError: cannot assign to __debug__"));
             }
             if let Some(mark) = self.declaration_mark() {
+                if mark > self.pos + 1 && self.tokens[mark - 1].lexeme == "__debug__" && self.tokens[mark - 2].lexeme == "." {
+                    return Err(String::from("SyntaxError: cannot assign to __debug__"));
+                }
                 let (mut left, mut right) = (self.pos, mark);
                 while left + 1 < right && self.tokens[left].lexeme == "(" && self.tokens[right - 1].lexeme == ")" { left += 1; right -= 1; }
                 if left == right || !self.divided_at(left, right, "ext.op.tuple").is_empty() {
                     return Err(String::from("SyntaxError: only single target (not tuple) can be annotated"));
                 }
-                if self.tokens[left].lexeme == "[" && self.tokens[right - 1].lexeme == "]" {
+                if self.tokens[left].lexeme == "[" && self.pair_close(left, right) == Some(right - 1) {
                     return Err(String::from("SyntaxError: only single target (not list) can be annotated"));
                 }
                 let starts = &self.tokens[left];
