@@ -2895,12 +2895,22 @@ impl<'a> Builder<'a> {
                     false => self.tokens[named_at].lexeme.clone(),
                     true => {
                         self.advance();
-                        if self.table.has_any("ext.builtin.exceptions.syntax")
-                            && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
-                            return Err(String::from("SyntaxError: cannot use literal as import target"));
+                        if self.table.has_any("ext.builtin.exceptions.syntax") {
+                            let kind = match self.look().lexeme.as_str() { "(" => Some("tuple"), "[" => Some("list"), _ => None };
+                            if let Some(name) = kind { return Err(format!("SyntaxError: cannot use {name} as import target")); }
+                            if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
+                                return Err(String::from("SyntaxError: cannot use literal as import target"));
+                            }
                         }
                         let binding = self.look().lexeme.clone();
                         self.module_path(false)?;
+                        if self.table.has_any("ext.builtin.exceptions.syntax") {
+                            let error = if self.on_any("op.pipe") { Some("attribute") }
+                                else if self.on_any("syntax.call.open") { Some("function call") }
+                                else if self.on_any("syntax.array.open") { Some("subscript") }
+                                else { None };
+                            if let Some(name) = error { return Err(format!("SyntaxError: cannot use {name} as import target")); }
+                        }
                         binding
                     }
                 };
@@ -2921,6 +2931,10 @@ impl<'a> Builder<'a> {
                     break;
                 }
                 self.advance();
+                if taking_names && !enclosed && self.table.has_any("ext.builtin.exceptions.syntax")
+                    && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+                    return Err(String::from("SyntaxError: trailing comma not allowed without surrounding parentheses"));
+                }
                 if enclosed && self.on_any("syntax.group.close") {
                     break;
                 }

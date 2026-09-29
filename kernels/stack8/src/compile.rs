@@ -3081,11 +3081,23 @@ impl<'a> Compiler<'a> {
                 let aliased = self.on_keyword(&lang.import_as_words);
                 if self.on_keyword(&lang.import_as_words) {
                     self.take();
-                    if !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) {
-                        return Err("SyntaxError: cannot use literal as import target".into());
+                    if !lang.syntax_members.is_empty() {
+                        let token = self.look();
+                        let kind = match token.lexeme.as_str() { "(" => Some("tuple"), "[" => Some("list"), _ => None };
+                        if let Some(kind) = kind { return Err(format!("SyntaxError: cannot use {kind} as import target")); }
+                        if matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) {
+                            return Err("SyntaxError: cannot use literal as import target".into());
+                        }
                     }
                     bound = self.look().lexeme.clone();
                     self.import_name(false)?;
+                    if !lang.syntax_members.is_empty() {
+                        let kind = if self.on_any(&lang.pipe_words) { Some("attribute") }
+                            else if lang.calling.as_ref().is_some_and(|call| self.at_symbol(&call.open)) { Some("function call") }
+                            else if lang.array_brackets.as_ref().is_some_and(|array| self.at_symbol(&array.open)) { Some("subscript") }
+                            else { None };
+                        if let Some(kind) = kind { return Err(format!("SyntaxError: cannot use {kind} as import target")); }
+                    }
                 }
                 if !lang.syntax_members.is_empty() && bound == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
                 if future && !["nested_scopes", "generators", "division", "absolute_import", "with_statement", "print_function", "unicode_literals", "barry_as_FLUFL", "generator_stop", "annotations"].contains(&original.as_str()) {
@@ -3105,6 +3117,9 @@ impl<'a> Compiler<'a> {
                     break;
                 }
                 self.take();
+                if from && group.is_none() && !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+                    return Err("SyntaxError: trailing comma not allowed without surrounding parentheses".into());
+                }
                 if group.map_or(false, |g| self.at_symbol(&g.close)) {
                     break;
                 }
