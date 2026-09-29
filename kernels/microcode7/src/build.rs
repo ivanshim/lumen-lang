@@ -6268,6 +6268,7 @@ impl<'a> Builder<'a> {
         // A parameter with a class modifier before it names a property
         // of the thing as well, which the maker fills in.
         let mut also_property: Vec<String> = Vec::new();
+        let mut repeated: Option<(String, usize)> = None;
         // Words said about how the parameters are written, said where
         // the routine is declared.
         let mut said: Vec<Form> = Vec::new();
@@ -6285,6 +6286,9 @@ impl<'a> Builder<'a> {
                     slash = true;
                     self.advance();
                     if !self.sign(&close) {
+                        if table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
+                            return Err("SyntaxError: expected comma between / and *".to_owned());
+                        }
                         self.need_sign(table.single("syntax.call.separator").unwrap_or(""), "after the positional mark")?;
                     }
                     continue;
@@ -6344,6 +6348,9 @@ impl<'a> Builder<'a> {
                     }
                 }
                 self.formal_kinds.push(kind);
+                if table.has_any("ext.builtin.exceptions.syntax") && self.sign("(") {
+                    return Err("SyntaxError: Function parameters cannot be parenthesized".to_owned());
+                }
                 params.push(self.need_word("as a parameter name")?);
                 if table.has_any("ext.builtin.exceptions.syntax") && params.last().is_some_and(|word| word == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
                 if !short && self.on_any("ext.stmt.annotation") {
@@ -6363,9 +6370,11 @@ impl<'a> Builder<'a> {
                     let message = format!("{}{}{}", twice[0], last, twice.get(1).map_or("", String::as_str));
                     if table.has_any("ext.builtin.exceptions.syntax") {
                         let mut cursor = self.pos;
-                        while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == *last { self.pos = cursor; break; } }
+                        while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == *last { break; } }
+                        repeated.get_or_insert((message, cursor));
+                    } else {
+                        return Err(message);
                     }
-                    return Err(message);
                 }
                 match (self.on_assign(), manner) {
                     (true, 'v' | 'k') => {
@@ -6447,6 +6456,7 @@ impl<'a> Builder<'a> {
             }
         }
         self.need_sign(&close, "after parameters")?;
+        if let Some((message, at)) = repeated { self.pos = at; return Err(message); }
         self.taking = if bind { Some(manners) } else { None };
         Ok((params, spares, also_property, said))
     }
@@ -6701,52 +6711,71 @@ impl<'a> Builder<'a> {
         let mut named_only = false;
         let mut pairs = false;
         let mut default_seen = false;
+        let mut repeated: Option<(String, usize)> = None;
         let bad = || table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().to_string();
         loop {
             if self.sign(colon) { self.advance(); break; }
-            if pairs { return Err(bad()); }
+            if pairs { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: parameters cannot follow var-keyword parameter".to_owned() } else { bad() }); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if table.spells("op.div", &self.look().lexeme) {
                 if table.flag("ext.stmt.function.closes_over") {
                     if positional_mark || named_only || names.is_empty() {
-                        return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into());
+                        let reason = if positional_mark { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {reason}") } else { bad() });
                     }
                     positional_mark = true;
                     for way in &mut ways { *way = 'p'; }
                 }
                 self.advance();
+                if table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
+                    return Err("SyntaxError: expected comma between / and *".to_owned());
+                }
             } else {
                 let many = table.spells("op.mul", &self.look().lexeme);
                 let mapping = table.spells("op.pow", &self.look().lexeme);
                 let mut way = if named_only { 'n' } else { 'b' };
                 if many || mapping {
-                    if many && named_only { return Err(bad()); }
+                    if many && named_only { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * may appear only once".to_owned() } else { bad() }); }
                     self.advance();
                     named_only = true;
                     pairs = mapping;
                     way = if mapping { 'k' } else { 'v' };
                     if many && self.sign(comma) {
                         self.advance();
-                        if self.sign(colon) { return Err(bad()); }
+                        if self.sign(colon) { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: named parameters must follow bare *".to_owned() } else { bad() }); }
                         continue;
+                    }
+                    if many && table.has_any("ext.builtin.exceptions.syntax") && self.sign(colon) {
+                        return Err("SyntaxError: named parameters must follow bare *".to_owned());
                     }
                     gather = Some(names.len());
                 }
+                if table.has_any("ext.builtin.exceptions.syntax") && self.sign("(") {
+                    return Err("SyntaxError: Lambda expression parameters cannot be parenthesized".to_owned());
+                }
                 let parameter = self.need_word("as a lambda parameter")?;
+                if table.has_any("ext.builtin.exceptions.syntax") && parameter == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".to_owned());
+                }
                 if names.contains(&parameter) {
                     let twice = table.strings("ext.stmt.function.parameters.duplicate");
                     if !twice.is_empty() && table.has_any("ext.builtin.exceptions.syntax") {
-                        self.pos -= 1;
-                        return Err(format!("{}{}{}", twice[0], parameter, twice.get(1).map_or("", String::as_str)));
+                        repeated.get_or_insert((format!("{}{}{}", twice[0], parameter, twice.get(1).map_or("", String::as_str)), self.pos - 1));
                     }
-                    return Err("Duplicate lambda parameter".to_string());
+                    if !table.has_any("ext.builtin.exceptions.syntax") { return Err("Duplicate lambda parameter".to_string()); }
                 }
                 names.push(parameter);
                 ways.push(way);
                 if self.on_assign() {
-                    if many || mapping { return Err(bad()); }
+                    if many || mapping {
+                        let kind = if many { "var-positional" } else { "var-keyword" };
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} parameter cannot have default value") } else { bad() });
+                    }
                     if way == 'b' { default_seen = true; }
                     self.advance();
+                    if table.has_any("ext.builtin.exceptions.syntax") && (self.sign(colon) || self.sign(comma)) {
+                        return Err("SyntaxError: expected default value expression".to_owned());
+                    }
                     let worth = self.expr(0)?;
                     let hidden = self.gensym("spare");
                     before.push(Form::Write(hidden.clone(), Box::new(worth)));
@@ -6763,6 +6792,7 @@ impl<'a> Builder<'a> {
             }
             if !self.sign(colon) { self.need_sign(comma, "between lambda parameters")?; }
         }
+        if let Some((message, at)) = repeated { self.pos = at; return Err(message); }
         let required = gather.unwrap_or(names.len()).saturating_sub(spares.len());
         let parameters = names.clone();
         let bind_arguments = table.flag("ext.syntax.call.bind_names");

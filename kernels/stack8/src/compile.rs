@@ -6332,6 +6332,7 @@ impl<'a> Compiler<'a> {
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
         let mut promoted: Vec<String> = Vec::new();
+        let mut repeated: Option<(String, usize)> = None;
         // The kind each parameter was written with, as they are read.
         let mut kinded: Vec<Option<Rc<str>>> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
@@ -6348,6 +6349,9 @@ impl<'a> Compiler<'a> {
                     rules.fill(1);
                     self.take();
                     if !self.at_symbol(&call.close) {
+                        if !lang.syntax_members.is_empty() && self.at_symbol("*") {
+                            return Err("SyntaxError: expected comma between / and *".into());
+                        }
                         self.want_sign(call.between.as_deref().unwrap_or(""), "after positional parameters")?;
                     }
                     continue;
@@ -6407,6 +6411,9 @@ impl<'a> Compiler<'a> {
                 }
                 self.formal_kinds.push(kind.clone());
                 kinded.push(kind);
+                if !lang.syntax_members.is_empty() && self.at_symbol("(") {
+                    return Err("SyntaxError: Function parameters cannot be parenthesized".into());
+                }
                 formals.push(self.want_name("as a parameter name")?);
                 if !lang.syntax_members.is_empty() && formals.last().is_some_and(|name| name == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".into()); }
                 if call.close != lang.short_function.as_ref().map_or("", |(_, mark)| mark.as_str()) && self.on_any(&lang.annotation_marks) {
@@ -6428,9 +6435,11 @@ impl<'a> Compiler<'a> {
                     if twice.is_empty() { return Err(bad()); }
                     let said = format!("{}{}{}", twice[0], newest, twice.get(1).map_or("", String::as_str));
                     if !lang.syntax_members.is_empty() {
-                        if let Some(at) = (0..self.pos).rev().find(|i| self.tokens[*i].lexeme == *newest) { self.pos = at; }
+                        let at = (0..self.pos).rev().find(|i| self.tokens[*i].lexeme == *newest).unwrap_or(self.pos);
+                        repeated.get_or_insert((said, at));
+                    } else {
+                        return Err(said);
                     }
-                    return Err(said);
                 }
                 if self.on_assign() {
                     if rule >= 3 {
@@ -6510,6 +6519,7 @@ impl<'a> Compiler<'a> {
             }
         }
         self.want_sign(&call.close, "after parameters")?;
+        if let Some((message, at)) = repeated { self.pos = at; return Err(message); }
         self.parameter_rules = lang.bind_names.then_some(rules);
         Ok((formals, spares, promoted))
     }
@@ -6744,50 +6754,71 @@ impl<'a> Compiler<'a> {
         let mut keywords = false;
         let mut pairs = false;
         let mut default_seen = false;
+        let mut repeated: Option<(String, usize)> = None;
         let bad = || lang.parameters_amiss.first().cloned().unwrap_or_default();
         while !self.at_symbol(&mark) {
-            if pairs { return Err(bad()); }
+            if pairs { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: parameters cannot follow var-keyword parameter".into() }); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Div | Action::DivReal)) {
                 if lang.closes_over {
-                    if divided || keywords || modes.is_empty() { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
+                    if divided || keywords || modes.is_empty() {
+                        let reason = if divided { "/ may appear only once" } else if keywords { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {reason}") });
+                    }
                     divided = true;
                     modes.fill(1);
                 }
                 self.take();
+                if !lang.syntax_members.is_empty() && self.at_symbol("*") {
+                    return Err("SyntaxError: expected comma between / and *".into());
+                }
             } else {
                 let star = self.look().lexeme.clone();
                 let spread = lang.dyadic.get(&star).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
                 let mut mode = if keywords { 2 } else { 0 };
                 if spread {
                     let mapping = lang.dyadic.get(&star).map_or(false, |op| matches!(op.action, Action::Power));
-                    if keywords && !mapping { return Err(bad()); }
+                    if keywords && !mapping { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: * may appear only once".into() }); }
                     self.take();
                     keywords = true;
                     pairs = mapping;
                     mode = if mapping { 4 } else { 3 };
                     if !mapping && self.at_symbol(&separator) {
                         self.take();
-                        if self.at_symbol(&mark) { return Err(bad()); }
+                        if self.at_symbol(&mark) { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: named parameters must follow bare *".into() }); }
                         continue;
+                    }
+                    if !mapping && !lang.syntax_members.is_empty() && self.at_symbol(&mark) {
+                        return Err("SyntaxError: named parameters must follow bare *".into());
                     }
                     rest = Some(formals.len());
                 }
+                if !lang.syntax_members.is_empty() && self.at_symbol("(") {
+                    return Err("SyntaxError: Lambda expression parameters cannot be parenthesized".into());
+                }
                 let name = self.want_name("as a lambda parameter")?;
+                if !lang.syntax_members.is_empty() && name == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
                 if formals.contains(&name) {
                     let twice = &lang.parameters_duplicate;
                     if !twice.is_empty() && !lang.syntax_members.is_empty() {
-                        self.pos -= 1;
-                        return Err(format!("{}{}{}", twice[0], name, twice.get(1).map_or("", String::as_str)));
+                        repeated.get_or_insert((format!("{}{}{}", twice[0], name, twice.get(1).map_or("", String::as_str)), self.pos - 1));
                     }
-                    return Err("Duplicate lambda parameter".to_string());
+                    if lang.syntax_members.is_empty() { return Err("Duplicate lambda parameter".to_string()); }
                 }
                 formals.push(name);
                 modes.push(mode);
                 if self.on_assign() {
-                    if mode >= 3 { return Err(bad()); }
+                    if mode >= 3 {
+                        let kind = if mode == 3 { "var-positional" } else { "var-keyword" };
+                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {kind} parameter cannot have default value") });
+                    }
                     if mode == 0 { default_seen = true; }
                     self.take();
+                    if !lang.syntax_members.is_empty() && (self.at_symbol(&mark) || self.at_symbol(&separator)) {
+                        return Err("SyntaxError: expected default value expression".into());
+                    }
                     let hidden = self.gensym("default");
                     self.expr(0)?;
                     self.write(&hidden);
@@ -6804,6 +6835,7 @@ impl<'a> Compiler<'a> {
             if !self.at_symbol(&mark) { self.want_sign(&separator, "between lambda parameters")?; }
         }
         self.take();
+        if let Some((message, at)) = repeated { self.pos = at; return Err(message); }
         let least = rest.unwrap_or(formals.len()).saturating_sub(defaults.len());
         let given = formals.clone();
         let binds = lang.bind_names;
