@@ -70,7 +70,7 @@ _TRACEBACK_HEADERS = ['Traceback (most recent call last):',
 # its value is never shown.
 _STATEMENT_WORDS = ['assert', 'async', 'await', 'break', 'class', 'continue',
                     'def', 'del', 'elif', 'else', 'except', 'finally', 'for',
-                    'from', 'global', 'if', 'import', 'nonlocal', 'pass',
+                    'from', 'global', 'if', 'import', 'match', 'nonlocal', 'pass',
                     'raise', 'return', 'try', 'while', 'with', 'yield']
 
 _OPEN_BRACKETS = ['(', '[', '{']
@@ -432,8 +432,8 @@ def _first_word(text):
 
 
 def _has_assignment(text):
-    """Whether a top-level `=` makes this source an assignment rather than
-    an expression. Quoted text, comments and bracketed text are passed by."""
+    """Whether a top-level assignment, annotation or semicolon makes this
+    source a statement. Quoted text, comments and brackets are passed by."""
     depth = 0
     index = 0
     total = len(text)
@@ -470,6 +470,8 @@ def _has_assignment(text):
             depth -= 1
             index += 1
             continue
+        if char == ':' and depth <= 0 and _first_word(text.strip()) != 'lambda':
+            return True                         # variable annotation
         if char == '=' and depth <= 0:
             after = ''
             if index + 1 < total:
@@ -504,7 +506,10 @@ def _is_expression(source):
         return False
     if body[0] in ['@', '#']:
         return False
-    if _first_word(body) in _STATEMENT_WORDS:
+    first = _first_word(body)
+    if first in _STATEMENT_WORDS:
+        return False
+    if first in ['impor', 'form', 'frum', 'raisee'] and body[len(first):len(first) + 1].isspace():
         return False
     return not _has_assignment(body)
 

@@ -1,0 +1,1 @@
+PythonError: SyntaxError: name 'x' is assigned to before global declaration

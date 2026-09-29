@@ -8867,6 +8867,26 @@ impl<'a> Engine<'a> {
                             let asked = Value::Text(Rc::from(name.as_ref()));
                             return self.invoke(&method, vec![Value::Object(o), asked]);
                         }
+                        // A module asked for its annotations answers
+                        // with a map of its own, worked out by its own
+                        // __annotate__ where it has one and empty where
+                        // it has not, and kept from then on.
+                        None if self.lang.class_annotations.first().map_or(false, |word| word.as_str() == name.as_ref()) && self.module_holding(&Value::Object(o.clone())).is_some() => {
+                            let annotator_word = self.lang.class_details.get("code.fields").and_then(|v| v.get(10)).cloned().unwrap_or_default();
+                            let annotator = if annotator_word.is_empty() { None } else {
+                                o.fields.borrow().iter().find(|(n, _)| *n == annotator_word)
+                                    .map(|(_, held)| match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() })
+                            };
+                            let made = match annotator {
+                                Some(Value::Routine(routine)) => {
+                                    self.invoke(&routine, vec![Value::Small(1)])?;
+                                    self.drop_top()?
+                                }
+                                _ => Value::Map(Rc::new(Vec::new().into())),
+                            };
+                            o.fields.borrow_mut().push((name.to_string(), made.clone()));
+                            made
+                        }
                         // A module may answer for a name it does not
                         // hold, through a routine of its own so named.
                         None if self.module_reader(&o).is_some() => {
@@ -13907,6 +13927,15 @@ impl<'a> Engine<'a> {
         let part = |at: usize| words.get(at).cloned().unwrap_or_default();
         let row = match &args[0] {
             Value::Bytes(row, ..) => row.borrow().clone(),
+            Value::Object(obj) if obj.class_now().name == "memoryview" => {
+                let method = self.class_value(&obj.class_now(), "__bytes__").ok_or_else(|| self.byte_fault("arguments"))?;
+                let source = match self.class_apply(method, vec![args[0].clone()]) {
+                    Ok(bytes) => bytes,
+                    Err(Fault::Note(message)) => return Err(message),
+                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                };
+                self.byte_row(&source, false)?
+            }
             Value::Text(_) => return Err(part(0)),
             other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
         };
@@ -18948,7 +18977,7 @@ impl Engine<'_> {
             if message.starts_with("unterminated ") || (unclosed && source.lines().count() > row) { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if message == "cannot assign to function call" && source.lines().count() > row { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if mode != 0 && message == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { col = 0; finish = 0; }
-            let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("duplicate argument ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
+            let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("annotated name ") || message.starts_with("duplicate parameter ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
             // Symbol-table diagnostics retain UTF-8 spans; tokenizer
             // diagnostics count characters in the original source.
             if compiler_only {

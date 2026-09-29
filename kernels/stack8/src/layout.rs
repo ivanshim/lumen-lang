@@ -159,6 +159,30 @@ pub fn layout_position(tokens: Vec<Token>, lang: &Lang, before: usize) -> Result
 }
 
 
+fn missing_suite_message(tokens: &[Token], header: &Token) -> String {
+    let words: Vec<&Token> = tokens.iter().filter(|part| part.row == header.row && !matches!(part.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)).collect();
+    let next = words.get(1).map(|part| part.lexeme.as_str()).unwrap_or("");
+    let name_at = if header.lexeme == "async" && next == "def" { 2 } else { 1 };
+    if matches!(header.lexeme.as_str(), "def" | "async" | "class")
+        && words.get(name_at + 1).is_some_and(|part| part.lexeme == "[")
+        && words.get(name_at + 2).is_some_and(|part| part.lexeme == "]") {
+        return "SyntaxError: Type parameter list cannot be empty".into();
+    }
+    if (header.lexeme == "def" || header.lexeme == "async" && next == "def")
+        && !words.iter().any(|part| part.lexeme == "(") {
+        return "SyntaxError: expected '('".into();
+    }
+    let prefix = match header.lexeme.as_str() {
+        "async" if next == "for" || next == "with" => format!("'{next}' statement"),
+        "async" if next == "def" && words.iter().any(|part| part.lexeme == ")") => "function definition".into(),
+        "def" if words.iter().any(|part| part.lexeme == ")") => "function definition".into(),
+        "class" if !next.is_empty() && next != ":" => "class definition".into(),
+        "except" if next == "*" => "'except*' statement".into(),
+        other => format!("'{other}' statement"),
+    };
+    format!("IndentationError: expected an indented block after {prefix} on line {}", header.row)
+}
+
 /// Indentation widths are a stack of columns, not multiples of a unit.
 /// Keep a second width with tabs counted as one to detect ambiguous tabs.
 fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, usize)> {
@@ -178,9 +202,14 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                 let (previous, other) = *indents.last().unwrap();
                 if width > previous {
                     if header.is_none() {
-                        if let Some(previous) = last.filter(|t| matches!(t.lexeme.as_str(), "try" | "else" | "finally")) {
-                            if first.map_or(false, |t| std::ptr::eq(t, previous)) {
-                                return Err(("SyntaxError: expected ':'".into(), previous.row, previous.column + previous.lexeme.len()));
+                        if let (Some(start), Some(end)) = (first, last) {
+                            let head = start.lexeme.as_str();
+                            let complete = !matches!(head, "def" | "async") || end.lexeme == ")";
+                            let clause_has_context = !matches!(head, "elif" | "else" | "except" | "finally")
+                                || result.iter().any(|earlier| earlier.row < start.row && !matches!(earlier.shape, Shape::Lead | Shape::LineEnd | Shape::Open | Shape::Close));
+                            if !clause_has_context { return Err(("SyntaxError: invalid syntax".into(), start.row, start.column)); }
+                            if complete && matches!(head, "def" | "async" | "class" | "if" | "elif" | "else" | "for" | "while" | "with" | "try" | "except" | "finally" | "match" | "case") {
+                                return Err(("SyntaxError: expected ':'".into(), end.row, end.column + end.lexeme.len()));
                             }
                         }
                         return Err(error("IndentationError: unexpected indent".into()));
@@ -192,7 +221,7 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                 } else {
                     if let Some(h) = header {
                         let col = tokens.get(index + 1).map_or(1, |t| t.column);
-                        return Err((format!("IndentationError: expected an indented block after '{}' statement on line {}", h.lexeme, h.row), token.row, col));
+                        return Err((missing_suite_message(&tokens, h), token.row, col));
                     }
                     while indents.last().unwrap().0 > width {
                         indents.pop();
@@ -207,6 +236,17 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
             Shape::Lead => {}
             Shape::LineEnd if !brackets.is_empty() => {}
             Shape::LineEnd => {
+                if let Some(start) = first.filter(|start| start.lexeme == "case" && indents.len() == 1) {
+                    let line: Vec<&Token> = tokens.iter().filter(|part| part.row == start.row && !matches!(part.shape, Shape::Lead | Shape::LineEnd)).collect();
+                    let mut inside = 0usize;
+                    let arm = line.iter().any(|part| {
+                        match part.lexeme.as_str() { "(" | "[" | "{" => inside += 1, ")" | "]" | "}" => inside = inside.saturating_sub(1), _ => {} }
+                        part.lexeme == ":" && inside == 0
+                    });
+                    if line.get(1).is_some_and(|next| next.lexeme != ":") && arm {
+                        return Err(("SyntaxError: case statement must be inside match statement".into(), start.row, start.column));
+                    }
+                }
                 if last.map_or(false, |t| t.shape == Shape::Sign && t.lexeme == ":") { header = first; }
                 result.push(token.clone());
             }
@@ -219,7 +259,7 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                             return Err(("SyntaxError: invalid syntax".into(), line[2].row, line[2].column));
                         }
                     }
-                    return Err((format!("IndentationError: expected an indented block after '{}' statement on line {}", h.lexeme, h.row), h.row, token.column));
+                    return Err((missing_suite_message(&tokens, h), h.row, token.column));
                 }
                 while indents.len() > 1 {
                     indents.pop(); let mut close = token.clone(); close.shape = Shape::Close; result.push(close);
@@ -227,6 +267,9 @@ fn positioned_blocks(tokens: Vec<Token>) -> Result<Vec<Token>, (String, usize, u
                 result.push(token.clone());
             }
             _ => {
+                if token.lexeme == "not" && last.is_some_and(|earlier| earlier.shape == Shape::Sign && matches!(earlier.lexeme.as_str(), "+" | "-" | "*" | "**" | "~" | "<<" | ">>" | "/" | "//" | "%" | "&" | "|" | "^")) {
+                    return Err(("SyntaxError: 'not' after an operator must be parenthesized".into(), token.row, token.column));
+                }
                 if token.shape == Shape::Sign {
                     match token.lexeme.as_str() {
                         "(" | "[" | "{" => brackets.push(token),

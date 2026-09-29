@@ -9625,6 +9625,9 @@ impl<'a> Machine<'a> {
         let said = |at: usize| words.get(at).cloned().unwrap_or_default();
         let content = match &values[0] {
             Value::Octets { cell, .. } => cell.borrow().clone(),
+            Value::Thing(item) if item.blueprint().name == "memoryview" => {
+                self.octet_argument(&values[0])?.ok_or_else(|| self.octet_error("arguments"))?
+            }
             Value::Text(_) => return Err(said(0)),
             other => return Err(format!("{}{}{}", said(1), other.kind_word(), said(2))),
         };
@@ -13761,6 +13764,24 @@ impl<'a> Machine<'a> {
                             // between the names, not in the value.
                             Some(Value::Shared(cell)) => cell.borrow().clone(),
                             Some(x) => x,
+                            // A namespace asked for its annotations
+                            // answers with a dictionary of its own,
+                            // worked out by its own __annotate__ where
+                            // it has one and empty where it has not, and
+                            // kept from then on.
+                            None if self.table.strings("ext.stmt.class.annotations").first().map_or(false, |word| word == &called) && self.namespace_holding(&Value::Thing(thing.clone())).is_some() => {
+                                let annotator_word = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
+                                let annotator = if annotator_word.is_empty() { None } else {
+                                    thing.holds.borrow().iter().find(|(n, _)| *n == annotator_word)
+                                        .map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() })
+                                };
+                                let made = match annotator {
+                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::Small(1)]).map_err(|fault| self.suspension_fault(fault))?,
+                                    _ => Value::Dict(Rc::new(Vec::new().into())),
+                                };
+                                thing.holds.borrow_mut().push((called.clone(), made.clone()));
+                                made
+                            }
                             // A namespace may answer for a name it has not,
                             // through the routine the table names for it.
                             None if self.table.single("ext.system.module.getattr").map_or(false, |word| thing.holds.borrow().iter().any(|(n, _)| n == word)) => {
@@ -18698,7 +18719,7 @@ impl<'a> Machine<'a> {
                 if words.starts_with("unterminated ") || (needs_closer && source.lines().count() > line as usize) { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if words == "cannot assign to function call" && source.lines().count() > line as usize { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if mode > 0 && words == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { offset = 0; end_offset = 0; }
-                let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("duplicate argument ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
+                let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("annotated name ") || words.starts_with("duplicate parameter ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
                 if omit {
                     let first: String = text.chars().take(offset.saturating_sub(1) as usize).collect();
                     offset = first.len() as i64 + 1;

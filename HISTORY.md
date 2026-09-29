@@ -2145,3 +2145,20 @@ stderr, writes the prompt, and flushes stdout, ignoring either flush's error.
 Merged, the fifty files count 2578 on both stack8 and microcode7, up from
 2565 and 2566, with no passing test lost; microcode7's test_math, test_str
 and test_long were run whole on the build machine (80, 126 and 34).
+
+### 1an. Batch 20l merged as #519; batch 20m: memoryviews and compiler refusals
+
+Batch 20m folds three branches, integrated by a GPT-6 Sol worker.
+fix/memoryview (Sol; test_int +2, test_float +2 and test_str +1),
+fix/compile-refusals (Kimi K3; test_global 16 to 20 and test_grammar
+70 to 75, both complete, and test_positional_only_arg 24 to 27) and
+fix/syntax-doctest (Sol; test_syntax's module doctest falls from 375
+failing examples to 56 of 557 on both kernels after integration).
+The compiler merges retain both branches' refusals and error positions:
+parameter lists, annotated global and nonlocal names, __debug__ bindings,
+yield expressions and missing argument values. Every touched scratch
+record was measured again with scripts/suite/stderr_record.py's rule.
+
+Merged, the fifty files count 2595 on both stack8 and microcode7, up from
+2578 on both, with no passing test lost; microcode7's test_math, test_str
+and test_long were run whole on the build machine (80, 127 and 34).

@@ -192,6 +192,9 @@ struct Piece {
     /// Names a `global` statement bound to the global of that name, and
     /// names a `static` statement bound to a hidden global.
     globals: Vec<(String, String)>,
+    /// The names this unit read, wrote or annotated, in the order met:
+    /// a `global` or `nonlocal` naming one after the fact is a fault.
+    seen: Vec<(String, u8)>,
     /// Where the last parts of the open try statements begin: each runs
     /// before a return, a break or a continue leaves them.
     lasts: Vec<usize>,
@@ -246,6 +249,14 @@ pub struct Compiler<'a> {
     class_depth: usize,
     method_self: Option<String>,
     class_names: Vec<(usize, HashMap<String, String>)>,
+    /// What a class body's own statements read, wrote or annotated,
+    /// one list for each body under way, kept apart from the unit around
+    /// it as the reference keeps a class's own scope apart.
+    class_seen: Vec<Vec<(String, u8)>>,
+    /// Whether the binding being written is an import's: an import says
+    /// nothing about a name for the sake of a later `global`, as the
+    /// reference does not count one.
+    importing: bool,
     /// The names a class body being read has itself declared `global`,
     /// kept apart from `class_names`'s members and from the unit
     /// around the class: the declaration reaches only the body's own
@@ -332,6 +343,13 @@ enum Span {
 }
 
 const RESULT_CELL: &str = "#result";
+
+/// How a name stood in its block before a `global` or `nonlocal` named
+/// it: read, written, or annotated. A declaration coming after the fact
+/// is a fault, worded by what came first.
+const SEEN_READ: u8 = 0;
+const SEEN_WRITTEN: u8 = 1;
+const SEEN_ANNOTATED: u8 = 2;
 const TEMP_CELL: &str = "#t";
 /// What a class body gathers as it is read: its properties and how far
 /// each may be reached from, the values it keeps for itself, its
@@ -503,7 +521,7 @@ fn compile_pass(
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let mut top = Piece { asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+    let mut top = Piece { asynchronous_walk: false, asynchronous: table.allow_top_level_await, comprehension_kind: None, named_expressions: Vec::new(), parameters: Vec::new(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -546,7 +564,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -558,6 +576,12 @@ fn compile_pass(
         a.skip_seps();
         if !a.exhausted() {
             a.record_stop();
+            if a.pos > 0 && a.tokens[a.pos - 1].shape == Shape::Quote
+                && a.look().shape == Shape::Instr
+                && a.tokens[a.pos..].iter().take_while(|item| item.row == a.look().row)
+                    .any(|item| item.shape == Shape::Quote) {
+                return Err("SyntaxError: invalid syntax. Is this intended to be part of the string?".into());
+            }
             return Err(format!("Unexpected '{}'", a.look().lexeme));
         }
         a.note_syntax_warnings(0);
@@ -903,6 +927,32 @@ impl<'a> Compiler<'a> {
     /// one or more pieces deeper -- and the unit once the body is
     /// behind both fall through to whatever the function around held
     /// before the body was ever entered.
+    /// The list a name met in the block standing here is remembered
+    /// in: the class body's own where the statements are a class body's,
+    /// the unit's anywhere else.
+    fn block_seen(&mut self) -> &mut Vec<(String, u8)> {
+        if self.in_class_body() { return self.class_seen.last_mut().expect("the class body"); }
+        &mut self.pieces.last_mut().expect("a unit").seen
+    }
+
+    /// Remember a name the block standing here read, wrote or
+    /// annotated. A `global` or `nonlocal` naming it after the fact is
+    /// a fault, worded by what came first.
+    fn note_seen(&mut self, name: &str, kind: u8) {
+        if self.lang.syntax_members.is_empty() || name.starts_with('#') { return; }
+        let seen = self.block_seen();
+        if kind == SEEN_READ || !seen.iter().any(|(n, k)| n == name && *k == kind) { seen.push((name.to_string(), kind)); }
+    }
+
+    /// Take back the last reading remembered for a name: the target of
+    /// an annotation or of a compound assignment is no use of the name,
+    /// however it was read to get there.
+    fn unsee_last_read(&mut self, name: &str) {
+        if self.lang.syntax_members.is_empty() { return; }
+        let seen = self.block_seen();
+        if let Some(at) = seen.iter().rposition(|(n, k)| n == name && *k == SEEN_READ) { seen.remove(at); }
+    }
+
     fn global_cell(&mut self, name: &str) -> Option<Cell> {
         if let Some((depth, names)) = self.class_globals.last() {
             if *depth == self.pieces.len() && names.iter().any(|n| n == name) {
@@ -930,6 +980,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn cell_to_read(&mut self, name: &str, moving: bool) -> Cell {
+        self.note_seen(name, SEEN_READ);
         let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
         let name = renamed.as_deref().unwrap_or(name);
         if let Some(cell) = self.global_cell(name) {
@@ -953,6 +1004,7 @@ impl<'a> Compiler<'a> {
     /// a name outside every block is global; inside a block it is the
     /// block's own, forgotten on leaving.
     fn cell_to_write(&mut self, name: &str) -> Cell {
+        if !self.importing { self.note_seen(name, SEEN_WRITTEN); }
         // A name a class body knows is written where the body keeps
         // it, as it is read from there: so the loops, imports and
         // handlers of a body bind members by the ordinary writes.
@@ -1532,7 +1584,7 @@ impl<'a> Compiler<'a> {
         }
         formal_kinds.truncate(formals.len());
         let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
-        self.pieces.push(Piece { asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(),
+        self.pieces.push(Piece { asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -1830,7 +1882,95 @@ impl<'a> Compiler<'a> {
         Ok(true)
     }
 
+    fn python_type_scope_problem(&self) -> Option<String> {
+        if self.lang.syntax_members.is_empty() { return None; }
+        let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.lexeme.as_str());
+        let first = spelling(self.pos);
+        let mut name_at = self.pos + 1;
+        if first == "async" {
+            if spelling(name_at) != "def" { return None; }
+            name_at += 1;
+        } else if !["def", "class", "type"].contains(&first) { return None; }
+        if self.tokens.get(name_at)?.shape != Shape::Instr { return None; }
+        let alias = first == "type";
+        let mut at = name_at + 1;
+        let generic = spelling(at) == "[";
+        if generic {
+            at += 1;
+            if spelling(at) == "]" { return Some("SyntaxError: Type parameter list cannot be empty".into()); }
+            while at < self.tokens.len() {
+                let parameter_kind = match spelling(at) { "*" => { at += 1; "TypeVarTuple" }, "**" => { at += 1; "ParamSpec" }, _ => "TypeVar" };
+                if self.tokens.get(at)?.shape != Shape::Instr { break; }
+                at += 1;
+                let marker = spelling(at);
+                if marker == ":" || marker == "=" {
+                    at += 1;
+                    let begin = at;
+                    let mut depth = 0usize;
+                    while at < self.tokens.len() {
+                        let word = spelling(at);
+                        if depth == 0 && [",", "]"].contains(&word) { break; }
+                        if ["(", "[", "{"].contains(&word) { depth += 1; }
+                        else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }
+                        if depth == 0 && matches!(self.tokens[at].shape, Shape::LineEnd | Shape::Finish) { break; }
+                        at += 1;
+                    }
+                    let mut tuple_bound = false;
+                    if marker == ":" && spelling(begin) == "(" {
+                        let mut inner = 0usize;
+                        for item in begin..at {
+                            match spelling(item) {
+                                "(" | "[" | "{" => inner += 1,
+                                ")" | "]" | "}" => { inner = inner.saturating_sub(1); if inner == 0 { break; } },
+                                "," if inner == 1 => tuple_bound = true,
+                                _ => {}
+                            }
+                        }
+                    }
+                    let scope = if marker == "=" { format!("{parameter_kind} default") }
+                        else if tuple_bound { "TypeVar constraint".to_string() }
+                        else { "TypeVar bound".to_string() };
+                    for item in begin..at {
+                        let kind = match spelling(item) { ":=" => "named", "yield" => "yield", "await" => "await", _ => continue };
+                        return Some(format!("SyntaxError: {kind} expression cannot be used within a {scope}"));
+                    }
+                }
+                if spelling(at) == "]" { at += 1; break; }
+                if spelling(at) != "," { break; }
+                at += 1;
+            }
+        }
+        if first == "class" && generic && spelling(at) == "(" {
+            let mut depth = 0usize;
+            for item in at..self.tokens.len() {
+                let word = spelling(item);
+                if let Some(kind) = match word { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None } {
+                    return Some(format!("SyntaxError: {kind} expression cannot be used within the definition of a generic"));
+                }
+                if word == "(" { depth += 1; }
+                else if word == ")" { depth = depth.saturating_sub(1); if depth == 0 { break; } }
+                if matches!(self.tokens[item].shape, Shape::LineEnd | Shape::Finish) { break; }
+            }
+        }
+        if alias && spelling(at) == "=" {
+            let mut depth = 0usize;
+            for item in at + 1..self.tokens.len() {
+                let token = &self.tokens[item];
+                if depth == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
+                let kind = match token.lexeme.as_str() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                if !kind.is_empty() { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
+                match token.lexeme.as_str() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
     fn stmt(&mut self) -> Res<()> {
+        if let Some(issue) = self.python_type_scope_problem() { return Err(issue); }
         let began = self.pos;
         self.note_syntax_warnings(began);
         self.stmt_read()?;
@@ -1932,14 +2072,37 @@ impl<'a> Compiler<'a> {
                 Some(("str", past))
             }
             Shape::Bytes => Some(("bytes", at + 1)),
+            Shape::StringBegin => {
+                // A format string reads as text wherever it stands; a
+                // field within it opens a string of its own, so the
+                // ends and beginnings are counted through.
+                let mut deep = 1usize;
+                let mut past = at + 1;
+                while past < end && deep > 0 {
+                    match self.tokens[past].shape {
+                        Shape::StringBegin => deep += 1,
+                        Shape::StringEnd => deep -= 1,
+                        _ => {}
+                    }
+                    past += 1;
+                }
+                if deep > 0 { return None; }
+                let template = token.lexeme.chars().next().map_or(false, |c| self.lang.template_prefixes.contains(&c));
+                Some((if template { "string.templatelib.Template" } else { "str" }, past))
+            }
+
             Shape::Sign if ["(", "[", "{"].contains(&token.lexeme.as_str()) => {
                 let close = self.bracket_close(at, end)?;
                 let kind = match token.lexeme.as_str() {
                     "[" => "list",
                     "{" => if close == at + 1 || self.bracket_holds(at, close, &[":"]) { "dict" } else { "set" },
+                    // A lambda in parentheses stands for a function.
+                    _ if self.tokens.get(at + 1).map_or(false, |t| t.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &t.lexeme)) => "function",
                     _ if self.bracket_holds(at, close, &[","]) => "tuple",
                     // One literal in parentheses is that literal.
                     _ if close == at + 2 => self.literal_kind(at + 1, close)?.0,
+                    // Parentheses walking a comprehension hold a generator.
+                    _ if token.lexeme == "(" && self.bracket_walks(at, close) => "generator",
                     _ => return None,
                 };
                 Some((kind, close + 1))
@@ -1948,11 +2111,60 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Whether the bracketed stretch walks a comprehension: the word
+    /// for the walk standing at the bracket's own depth.
+    fn bracket_walks(&self, open: usize, close: usize) -> bool {
+        let fors = &self.lang.comprehension_for;
+        if fors.is_empty() { return false; }
+        let mut depth = 0usize;
+        for at in open + 1..close {
+            let token = &self.tokens[at];
+            if token.shape == Shape::Sign {
+                if ["(", "[", "{"].contains(&token.lexeme.as_str()) { depth += 1; }
+                else if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth = depth.saturating_sub(1); }
+            } else if depth == 0 && token.shape == Shape::Instr && Lang::spells(fors, &token.lexeme) { return true; }
+        }
+        false
+    }
+
     /// The reference's name for the kind of a number as it is spelled.
     fn number_kind(lexeme: &str) -> &'static str {
         let text = lexeme.to_ascii_lowercase();
         let based = text.starts_with("0x") || text.starts_with("0o") || text.starts_with("0b");
         if text.ends_with('j') { "complex" } else if !based && (text.contains('.') || text.contains('e')) { "float" } else { "int" }
+    }
+
+    /// The kind of the one expression between the index marks, as the
+    /// reference names it: a comma parting them makes a tuple, a cut
+    /// mark a slice that indexes fine, and an integer indexes fine. A
+    /// name or a larger expression says nothing.
+    fn index_kind(&self, open: usize, close: usize) -> Option<&'static str> {
+        if self.bracket_holds(open, close, &[","]) { return Some("tuple"); }
+        if self.bracket_holds(open, close, &[":"]) { return None; }
+        if open + 1 >= close { return None; }
+        if open + 2 == close {
+            let only = &self.tokens[open + 1];
+            if only.shape == Shape::Instr {
+                if Lang::spells(&self.lang.null_words, &only.lexeme) { return Some("NoneType"); }
+                if Lang::spells(&self.lang.true_words, &only.lexeme) || Lang::spells(&self.lang.false_words, &only.lexeme) { return Some("bool"); }
+            }
+            if only.shape == Shape::Sign && Lang::spells(&self.lang.ellipsis_words, &only.lexeme) { return Some("ellipsis"); }
+        }
+        let (kind, ends) = self.literal_kind(open + 1, close)?;
+        if ends != close { return None; }
+        Some(kind)
+    }
+
+    /// The kind a named constant is of, where one is written just
+    /// before the call's opening mark at `at`: a call upon it warns as
+    /// a call upon that kind.
+    fn constant_kind_called(&self, at: usize) -> Option<&'static str> {
+        let before = &self.tokens[at - 1];
+        if before.shape == Shape::Sign && Lang::spells(&self.lang.ellipsis_words, &before.lexeme) { return Some("ellipsis"); }
+        if before.shape != Shape::Instr { return None; }
+        if Lang::spells(&self.lang.null_words, &before.lexeme) { return Some("NoneType"); }
+        if Lang::spells(&self.lang.true_words, &before.lexeme) || Lang::spells(&self.lang.false_words, &before.lexeme) { return Some("bool"); }
+        None
     }
 
     /// The kind of the literal that ends just before `past`, if the
@@ -1974,6 +2186,23 @@ impl<'a> Compiler<'a> {
             open
         } else {
             let mut start = last;
+            if matches!(token.shape, Shape::StringEnd | Shape::StringField) {
+                // Fields open strings of their own within the string:
+                // walk back over each to the beginning of the whole.
+                let mut deep = 0usize;
+                while start > began {
+                    match self.tokens[start].shape {
+                        Shape::StringEnd => deep += 1,
+                        Shape::StringBegin => {
+                            if deep == 0 { break; }
+                            deep -= 1;
+                            if deep == 0 { break; }
+                        }
+                        _ => {}
+                    }
+                    start -= 1;
+                }
+            }
             while start > began && token.shape == Shape::Quote && self.tokens[start - 1].shape == Shape::Quote { start -= 1; }
             // A number reached through arithmetic signs from other numbers
             // is one folded number, back to the first of them.
@@ -2039,8 +2268,26 @@ impl<'a> Compiler<'a> {
                 }
             }
             if token.is_lexeme(Shape::Sign, "(") && at > began {
-                if let Some(kind) = self.literal_kind_before(at, began) {
+                // A function made on the spot is called on purpose: the
+                // reference warns of no call upon one, only of indexing.
+                let kind = self.literal_kind_before(at, began).or_else(|| self.constant_kind_called(at));
+                if let Some(kind) = kind.filter(|k| *k != "function") {
                     found.push((format!("'{kind}' object is not callable; perhaps you missed a comma?"), token.row, token.column));
+                }
+            }
+            // A set, a generator, a function or a template indexed right
+            // after it stands warns too, as does indexing a number or a
+            // named constant; text, tuples, lists and maps index fine.
+            if token.is_lexeme(Shape::Sign, "[") && at > began {
+                let kind = self.literal_kind_before(at, began).or_else(|| self.constant_kind_called(at));
+                if let Some(kind) = kind.filter(|k| !matches!(*k, "str" | "bytes" | "tuple" | "list" | "dict")) {
+                    found.push((format!("'{kind}' object is not subscriptable; perhaps you missed a comma?"), token.row, token.column));
+                } else if let Some(value_kind) = kind.filter(|k| matches!(*k, "str" | "bytes" | "tuple" | "list")) {
+                    // Text, tuples and lists index fine with an integer
+                    // or a slice; indexing one with anything else warns.
+                    if let Some(index) = self.bracket_close(at, end).and_then(|close| self.index_kind(at, close)).filter(|k| !matches!(*k, "int" | "bool")) {
+                        found.push((format!("{value_kind} indices must be integers or slices, not {index}; perhaps you missed a comma?"), token.row, token.column));
+                    }
                 }
             }
         }
@@ -2082,6 +2329,11 @@ impl<'a> Compiler<'a> {
                 return Err(format!("SyntaxError: Missing parentheses in call to '{0}'. Did you mean {0}(...)?", head.lexeme));
             }
         }
+        if last.shape == Shape::Quote && self.look().shape == Shape::Instr
+            && self.tokens[self.pos..].iter().take_while(|part| part.row == last.row)
+                .any(|part| part.shape == Shape::Quote) {
+            return Err("SyntaxError: invalid syntax. Is this intended to be part of the string?".into());
+        }
         Err("SyntaxError: invalid syntax".into())
     }
 
@@ -2089,6 +2341,30 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if !lang.syntax_members.is_empty() {
             let word = self.look().lexeme.clone();
+            let similar = [("fur", "for"), ("whille", "while"), ("iff", "if"),
+                ("elseif", "elif"), ("tyo", "try"), ("classe", "class"),
+                ("impor", "import"), ("form", "from"), ("frum", "from"),
+                ("defn", "def"), ("returm", "return"), ("lamda", "lambda"),
+                ("yeld", "yield"), ("globel", "global"), ("asynch", "async"),
+                ("awaid", "await"), ("raisee", "raise")];
+            if let Some((_, intended)) = similar.iter().find(|(written, _)| *written == word) {
+                let next = self.look_ahead(1);
+                if next.shape == Shape::Instr || word == "tyo" && next.lexeme == ":" && self.look_ahead(2).shape == Shape::LineEnd {
+                    return Err(format!("SyntaxError: invalid syntax. Did you mean '{intended}'?"));
+                }
+            }
+            if word == "elso" && self.look_ahead(1).lexeme == ":"
+                && self.look_ahead(2).shape == Shape::LineEnd {
+                return Err("SyntaxError: invalid syntax. Did you mean 'else'?".into());
+            }
+            if word == "case" && self.look_ahead(1).lexeme != ":" {
+                let mut depth = 0usize;
+                let has_arm = self.tokens[self.pos + 1..].iter().take_while(|item| !matches!(item.shape, Shape::LineEnd | Shape::Close | Shape::Finish)).any(|item| {
+                    match item.lexeme.as_str() { "(" | "[" | "{" => depth += 1, ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {} }
+                    item.lexeme == ":" && depth == 0
+                });
+                if has_arm { return Err("SyntaxError: case statement must be inside match statement".into()); }
+            }
             if word == "lazy" && ["import", "from"].contains(&self.look_ahead(1).lexeme.as_str()) {
                 let from = self.look_ahead(1).lexeme == "from";
                 let complaint = if self.in_class_body() { Some("inside classes") }
@@ -2116,12 +2392,23 @@ impl<'a> Compiler<'a> {
                 let origin = self.pos;
                 let parameters = self.piece().parameters.clone();
                 let declarations = self.piece().declarations.clone();
+                let seen = self.piece().seen.clone();
                 let names: Vec<String> = self.tokens[origin + 1..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) && t.lexeme != ";")
                     .filter(|t| t.shape == Shape::Instr).map(|t| t.lexeme.clone()).collect();
                 for name in names {
                     let conflict = declarations.iter().find(|(n, outer, _)| n == &name && *outer != global);
+                    // A declaration said again is no fault; said once,
+                    // what the name already did in this block words it.
+                    let said = declarations.iter().any(|(n, outer, _)| n == &name && *outer == global);
+                    let earlier = if said { None } else { [SEEN_READ, SEEN_ANNOTATED, SEEN_WRITTEN].into_iter().find(|kind| seen.iter().any(|(n, k)| n == &name && k == kind)) };
+                    let before = if global { "global" } else { "nonlocal" };
                     let message = if parameters.contains(&name) { Some(format!("name '{name}' is parameter and {}", if global { "global" } else { "nonlocal" })) }
-                        else if conflict.is_some() { Some(format!("name '{name}' is nonlocal and global")) } else { None };
+                        else if conflict.is_some() { Some(format!("name '{name}' is nonlocal and global")) }
+                        else { earlier.map(|kind| match kind {
+                            SEEN_READ => format!("name '{name}' is used prior to {before} declaration"),
+                            SEEN_ANNOTATED => format!("annotated name '{name}' can't be {before}"),
+                            _ => format!("name '{name}' is assigned to before {before} declaration"),
+                        }) };
                     if let Some(message) = message {
                         self.pos = conflict.map_or(origin, |(_, _, at)| *at);
                         let last = self.tokens[self.pos..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) && t.lexeme != ";").last().unwrap();
@@ -2135,6 +2422,7 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.if_words, &word) || Lang::spells(&lang.while_words, &word) {
                 let mut depth = 0usize;
                 let mut assignment = false;
+                let mut attribute = false;
                 for i in self.pos + 1..self.tokens.len() {
                     let token = &self.tokens[i];
                     if token.shape == Shape::LineEnd || token.shape == Shape::Finish { break; }
@@ -2145,11 +2433,15 @@ impl<'a> Compiler<'a> {
                             self.registry.stopped_end = if last.end_column != 0 { last.end_column } else { last.column + last.lexeme.chars().count() };
                             self.registry.stopped_end_row = if last.end_row != 0 { last.end_row } else { last.row };
                             self.pos += 1;
-                            return Err("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into());
+                            return Err(if attribute { "SyntaxError: cannot assign to attribute here. Maybe you meant '==' instead of '='?".into() }
+                                else { "SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into() });
                         }
                         break;
                     }
-                    if token.lexeme == "=" && depth == 0 { assignment = true; }
+                    if token.lexeme == "=" && depth == 0 {
+                        assignment = true;
+                        attribute = i >= 2 && self.tokens[i - 2].lexeme == "." && self.tokens[i - 1].shape == Shape::Instr;
+                    }
                     if ["(", "[", "{"].contains(&token.lexeme.as_str()) { depth += 1; }
                     if [")", "]", "}"].contains(&token.lexeme.as_str()) { depth = depth.saturating_sub(1); }
                 }
@@ -2168,13 +2460,26 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).shape == Shape::Instr {
             let old_rule = std::mem::replace(&mut self.forbids_await, true);
             self.take();
-            self.want_name("as the type alias")?;
+            let alias = self.want_name("as the type alias")?;
+            if !lang.syntax_members.is_empty() && alias == "__debug__" {
+                return Err("SyntaxError: cannot assign to __debug__".into());
+            }
             self.declaration_types()?;
             self.pending_types.clear();
             self.expect_assign("after the type alias")?;
-            let result = self.annotation_expression(&[]);
+            // What the alias stands for is worked out only when it is
+            // asked for, as names in it may not stand for anything yet:
+            // the name is bound to a routine answering it.
+            let made = self.routine(&alias, Vec::new(), 0, true, |a| {
+                a.scope_value()?;
+                a.piece().result_touched = true;
+                a.write(RESULT_CELL);
+                Ok(())
+            });
             self.forbids_await = old_rule;
-            return result;
+            self.constant(Value::Routine(made?));
+            self.write(&alias);
+            return Ok(());
         }
         if Lang::spells(&lang.ellipsis_words, &self.look().lexeme)
             && (matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Close | Shape::Finish)
@@ -2336,6 +2641,9 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.throw_words, &w) {
                 self.take();
+                if !lang.syntax_members.is_empty() && self.on_keyword(&lang.throw_from) {
+                    return Err("SyntaxError: did you forget an expression between 'raise' and 'from'?".into());
+                }
                 if !lang.throw_from.is_empty() && (self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
                     self.act(Action::Reraise, 0);
                 } else {
@@ -2343,6 +2651,9 @@ impl<'a> Compiler<'a> {
                     let mut count = 1;
                     if self.on_keyword(&lang.throw_from) {
                         self.take();
+                        if !lang.syntax_members.is_empty() && (self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
+                            return Err("SyntaxError: did you forget an expression after 'from'?".into());
+                        }
                         let from = self.mark();
                         self.expr(0)?;
                         if lang.exceptions.is_empty() { self.piece().instrs.truncate(from); } else { count = 2; }
@@ -2353,6 +2664,23 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.assert_words, &w) {
                 self.take();
+                if !lang.syntax_members.is_empty() {
+                    let (named, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.expression_assign);
+                    if !named.is_empty() {
+                        return Err("SyntaxError: cannot use named expression without parentheses here".into());
+                    }
+                    let (signs, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.assign_words);
+                    if let Some(&equal) = signs.first() {
+                        let target = &self.tokens[self.pos..equal];
+                        let kind = if target.first().is_some_and(|t| t.lexeme == "(") && target.iter().any(|t| t.lexeme == "yield") {
+                            Some("yield expression")
+                        } else if target.len() > 2 && target[0].shape == Shape::Instr && target[1].lexeme == "["
+                            && self.bracket_close(self.pos + 1, equal) == Some(equal - 1) { Some("subscript") }
+                        else if equal > self.pos && self.tokens[equal - 1].shape == Shape::Instr { Some("name") }
+                        else { None };
+                        if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
+                    }
+                }
                 self.expr(0)?;
                 self.act(Action::Not, 1);
                 let passed = self.skip();
@@ -2410,6 +2738,18 @@ impl<'a> Compiler<'a> {
     fn with_stmt(&mut self) -> Res<()> {
         self.take();
         let lang = self.lang;
+        if !lang.syntax_members.is_empty() {
+            let mut nesting = 0usize;
+            for item in self.tokens.iter().skip(self.pos) {
+                if nesting == 0 && item.lexeme == ":" { break; }
+                if nesting == 0 && matches!(item.shape, Shape::LineEnd | Shape::Finish) { return Err("SyntaxError: expected ':'".into()); }
+                match item.lexeme.as_str() {
+                    "(" | "[" | "{" => nesting += 1,
+                    ")" | "]" | "}" => nesting = nesting.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
         let asynchronous = std::mem::take(&mut self.asynchronous);
         let group = lang.grouping.clone().expect("group marks");
         let mut bracketed = false;
@@ -2483,14 +2823,26 @@ impl<'a> Compiler<'a> {
                     }
                     end += 1;
                 }
-                self.give_places(begin, end, &held)?;
+                if !lang.syntax_members.is_empty() && self.added_target_expression(begin, end) {
+                    return Err("SyntaxError: cannot assign to expression".into());
+                }
+                self.give_places(begin, end, &held).map_err(|e| self.loop_target_error(begin, end, e))?;
                 self.pos = end;
             } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
             self.take();
+            if !bracketed && !lang.syntax_members.is_empty() && self.on_any(&lang.block_intros) {
+                return Err("SyntaxError: the last 'with' item has a trailing comma".into());
+            }
             if bracketed && self.at_symbol(&group.close) { break; }
         }
         if bracketed { self.want_sign(&group.close, "after the with items")?; }
+        if !lang.syntax_members.is_empty() && self.look().lexeme == "ad" && self.look_ahead(1).shape == Shape::Instr {
+            return Err("SyntaxError: invalid syntax. Did you mean 'and'?".into());
+        }
+        if !lang.syntax_members.is_empty() && !self.on_any(&lang.block_intros) {
+            return Err("SyntaxError: expected ':'".into());
+        }
         self.body()?;
         let end = self.mark();
         for mark in watchers {
@@ -2946,6 +3298,9 @@ impl<'a> Compiler<'a> {
             self.pos = import_at;
             return Err("SyntaxError: from __future__ imports must occur at the beginning of the file".into());
         }
+        if !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+            return Err("SyntaxError: Expected one or more names after 'import'".into());
+        }
         let group = lang.grouping.as_ref().filter(|g| from && self.at_symbol(&g.open));
         if group.is_some() {
             self.take();
@@ -2966,9 +3321,25 @@ impl<'a> Compiler<'a> {
                 let aliased = self.on_keyword(&lang.import_as_words);
                 if self.on_keyword(&lang.import_as_words) {
                     self.take();
+                    if !lang.syntax_members.is_empty() {
+                        let token = self.look();
+                        let kind = match token.lexeme.as_str() { "(" => Some("tuple"), "[" => Some("list"), _ => None };
+                        if let Some(kind) = kind { return Err(format!("SyntaxError: cannot use {kind} as import target")); }
+                        if matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) {
+                            return Err("SyntaxError: cannot use literal as import target".into());
+                        }
+                    }
                     bound = self.look().lexeme.clone();
                     self.import_name(false)?;
+                    if !lang.syntax_members.is_empty() {
+                        let kind = if self.on_any(&lang.pipe_words) { Some("attribute") }
+                            else if lang.calling.as_ref().is_some_and(|call| self.at_symbol(&call.open)) { Some("function call") }
+                            else if lang.array_brackets.as_ref().is_some_and(|array| self.at_symbol(&array.open)) { Some("subscript") }
+                            else { None };
+                        if let Some(kind) = kind { return Err(format!("SyntaxError: cannot use {kind} as import target")); }
+                    }
                 }
+                if !lang.syntax_members.is_empty() && bound == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
                 if future && !["nested_scopes", "generators", "division", "absolute_import", "with_statement", "print_function", "unicode_literals", "barry_as_FLUFL", "generator_stop", "annotations"].contains(&original.as_str()) {
                     let last = &self.tokens[self.pos - 1];
                     self.registry.stopped_end = last.column + last.lexeme.chars().count();
@@ -2980,16 +3351,24 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Import(if from { module.clone() } else { original.clone() }, from.then_some(original), !from && !aliased), 0);
                 } else { self.constant(Value::Null); }
                 self.claim(&bound);
+                self.importing = true;
                 self.write(&bound);
+                self.importing = false;
                 let comma = lang.calling.as_ref().and_then(|g| g.between.as_ref());
                 if !comma.map_or(false, |mark| self.at_symbol(mark)) {
                     break;
                 }
                 self.take();
+                if from && group.is_none() && !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+                    return Err("SyntaxError: trailing comma not allowed without surrounding parentheses".into());
+                }
                 if group.map_or(false, |g| self.at_symbol(&g.close)) {
                     break;
                 }
             }
+        }
+        if !from && !lang.syntax_members.is_empty() && self.on_keyword(&lang.import_from_words) {
+            return Err("SyntaxError: Did you mean to use 'from ... import ...' instead?".into());
         }
         if let Some(g) = group {
             self.want_sign(&g.close, "after the imported names")?;
@@ -3003,6 +3382,7 @@ impl<'a> Compiler<'a> {
     /// `global a, b;`: the names mean the globals in this unit.
     fn global_stmt(&mut self) -> Res<()> {
         self.take();
+        let said_at = self.pos - 1;
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
         loop {
             // A name worked out as the run goes already spells one of
@@ -3052,6 +3432,24 @@ impl<'a> Compiler<'a> {
             // statements -- standing at that same depth, never a
             // routine entered from within it -- ever find it there.
             if self.in_class_body() {
+                if !self.lang.syntax_members.is_empty() {
+                    let kept = &self.class_globals.last().expect("the class body").1;
+                    let seen = &self.class_seen.last().expect("the class body");
+                    let earlier = if kept.iter().any(|n| *n == name) { None }
+                        else { [SEEN_READ, SEEN_ANNOTATED, SEEN_WRITTEN].into_iter().find(|kind| seen.iter().any(|(n, k)| n == &name && k == kind)) };
+                    if let Some(kind) = earlier {
+                        let message = match kind {
+                            SEEN_READ => format!("name '{name}' is used prior to global declaration"),
+                            SEEN_ANNOTATED => format!("annotated name '{name}' can't be global"),
+                            _ => format!("name '{name}' is assigned to before global declaration"),
+                        };
+                        let last = self.tokens[said_at..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) && t.lexeme != ";").last().unwrap();
+                        self.registry.stopped_end = last.column + last.lexeme.chars().count();
+                        self.registry.stopped_end_row = last.row;
+                        self.pos = said_at;
+                        return Err(format!("SyntaxError: {message}"));
+                    }
+                }
                 self.class_globals.last_mut().expect("the class body").1.push(name);
             } else {
                 self.piece().globals.push((name.clone(), name));
@@ -3433,7 +3831,7 @@ impl<'a> Compiler<'a> {
                 if self.target_names(began, end, &mut names) {
                     for name in names { self.claim(&name); }
                 }
-                self.give_places(began, end, value)?;
+                self.give_places(began, end, value).map_err(|e| self.loop_target_error(began, end, e))?;
             } else {
                 self.pos = began;
                 let from = self.mark();
@@ -3585,7 +3983,12 @@ impl<'a> Compiler<'a> {
         let tuple = self.match_subject()?;
         let subject = self.gensym("subject");
         self.write(&subject);
-        if !self.on_any(&self.lang.block_intros) { return Err(self.pattern_fault()); }
+        if !self.on_any(&self.lang.block_intros) {
+            if !self.lang.syntax_members.is_empty() && self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == ":" {
+                return Err("SyntaxError: invalid syntax".into());
+            }
+            return Err(self.pattern_fault());
+        }
         self.take();
         self.skip_seps();
         if self.look().shape != Shape::Open { return Err(self.pattern_fault()); }
@@ -3594,7 +3997,12 @@ impl<'a> Compiler<'a> {
         let mut ends = Vec::new();
         let mut count = 0;
         while self.look().shape != Shape::Close && !self.exhausted() {
-            if !self.on_keyword(&self.lang.match_cases) { return Err(self.pattern_fault()); }
+            if !self.on_keyword(&self.lang.match_cases) {
+                if !self.lang.syntax_members.is_empty() && self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "=" {
+                    return Err("SyntaxError: invalid syntax".into());
+                }
+                return Err(self.pattern_fault());
+            }
             self.take();
             self.pattern_values = 0;
             let pattern = self.case_pattern()?;
@@ -3700,6 +4108,9 @@ impl<'a> Compiler<'a> {
 
     fn pattern_capture(&mut self) -> Res<crate::code::Pattern> {
         let name = self.want_name("in a pattern")?;
+        if !self.lang.syntax_members.is_empty() && name == "__debug__" {
+            return Err("SyntaxError: cannot assign to __debug__".into());
+        }
         if self.lang.match_wildcards.contains(&name) { Ok(crate::code::Pattern::Any) }
         else if self.lang.true_words.contains(&name) || self.lang.false_words.contains(&name) || self.lang.null_words.contains(&name) { Err(self.pattern_fault()) }
         else { Ok(crate::code::Pattern::Capture(name)) }
@@ -3836,11 +4247,14 @@ impl<'a> Compiler<'a> {
                 while !self.at_symbol(&map.close) {
                     if let Some((capture_at, _)) = &rest {
                         self.pos = *capture_at;
-                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: invalid syntax".into() });
+                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: double star pattern must be the last (right-most) subpattern in the mapping pattern".into() });
                     }
                     if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Power)) {
                         self.take();
                         let capture_at = self.pos;
+                        if !lang.syntax_members.is_empty() && lang.match_wildcards.iter().any(|wild| self.at_lexeme(wild)) {
+                            return Err("SyntaxError: invalid syntax".into());
+                        }
                         let Pattern::Capture(name) = self.pattern_capture()? else { return Err(self.pattern_fault()) };
                         rest = Some((capture_at, name));
                     } else {
@@ -3884,11 +4298,14 @@ impl<'a> Compiler<'a> {
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
                 if keyword {
                     let name = self.take().lexeme;
-                    if keyed.iter().any(|(old, _)| *old == name) { return Err(self.pattern_fault()); }
+                    if !lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
+                    if keyed.iter().any(|(old, _)| *old == name) {
+                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { format!("SyntaxError: attribute name repeated in class pattern: {name}") });
+                    }
                     self.take();
                     keyed.push((name, self.pattern_part()?));
                 } else if !keyed.is_empty() {
-                    return Err(self.pattern_fault());
+                    return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: positional patterns follow keyword patterns".into() });
                 } else {
                     positional.push(self.pattern_part()?);
                 }
@@ -4157,6 +4574,15 @@ impl<'a> Compiler<'a> {
                 self.expect_closer()?;
             } else {
                 self.body()?;
+                let mut following = 0;
+                while self.look_ahead(following).shape == Shape::LineEnd {
+                    following += 1;
+                }
+                let next = self.look_ahead(following);
+                if !lang.syntax_members.is_empty() && next.shape == Shape::Instr
+                    && Lang::spells(&lang.elif_words, &next.lexeme) {
+                    return Err("SyntaxError: 'elif' block follows an 'else' block".into());
+                }
             }
         }
         self.land(over);
@@ -4245,6 +4671,16 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.take();
+        if !lang.syntax_members.is_empty() && self.look_ahead(1).lexeme == "im" {
+            return Err("SyntaxError: invalid syntax. Did you mean 'in'?".into());
+        }
+        if !lang.syntax_members.is_empty() {
+            let target_end = self.outer_marks(self.pos, self.tokens.len(), &lang.in_words).0.first().copied()
+                .or_else(|| self.outer_marks(self.pos, self.tokens.len(), &lang.block_intros).0.first().copied());
+            if target_end.is_some_and(|end| self.added_target_expression(self.pos, end)) {
+                return Err("SyntaxError: cannot assign to expression".into());
+            }
+        }
         if !lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { return Err("SyntaxError: cannot assign to literal".into()); }
         let target = if !lang.tuple_marks.is_empty() && !lang.unpack_words.is_empty() {
             let (marks, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.in_words);
@@ -4550,10 +4986,20 @@ impl<'a> Compiler<'a> {
             if tuple {
                 self.want_sign(lang.catch_tuple_close.as_deref().unwrap_or(")"), "after the classes caught")?;
             }
+            if !lang.syntax_members.is_empty() && !tuple && kinds.len() > 1 && self.on_keyword(&lang.catch_as) {
+                return Err("SyntaxError: multiple exception types must be parenthesized when using 'as'".into());
+            }
             let held = if self.on_keyword(&lang.catch_as) {
                 self.take();
+                if grouped && !lang.syntax_members.is_empty() {
+                    if self.at_symbol("(") { return Err("SyntaxError: cannot use except* statement with tuple".into()); }
+                    if matches!(self.look().shape, Shape::Numeral | Shape::Quote) { return Err("SyntaxError: cannot use except* statement with literal".into()); }
+                }
                 let binding_at = self.pos;
                 let name = self.want_name("after the caught value's binding word")?;
+                if !lang.syntax_members.is_empty() && name == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
                 if !lang.syntax_members.is_empty() && (self.at_symbol(".") || self.at_symbol("[")) {
                     let kind = if self.at_symbol(".") { "attribute" } else { "subscript" };
                     while !self.on_any(&lang.block_intros) && !self.on_sep() && !self.exhausted() { self.take(); }
@@ -4602,7 +5048,8 @@ impl<'a> Compiler<'a> {
             Some(body)
         } else { None };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
-            return Err("A try needs a catch or a last part".to_string());
+            return Err(if lang.syntax_members.is_empty() { "A try needs a catch or a last part".to_string() }
+                else { "SyntaxError: expected 'except' or 'finally' block".to_string() });
         }
         let after = self.mark();
         self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, async_context: false, body, clauses, otherwise, last, after }));
@@ -4919,6 +5366,7 @@ impl<'a> Compiler<'a> {
     /// conditional writes where the rest of the body reads; a name met
     /// for the first time is given a place of its own.
     fn member_place(&mut self, named: &str, purpose: &str) -> String {
+        self.note_seen(named, SEEN_WRITTEN);
         self.gathering().bindings.insert(named.to_string());
         match self.class_names.last().and_then(|(_, names)| names.get(named)).cloned() {
             Some(place) => place,
@@ -5338,6 +5786,10 @@ impl<'a> Compiler<'a> {
         let (writes, _) = self.outer_marks(begin, self.tokens.len(), &signs);
         let target = writes.first().copied().unwrap_or(begin);
         let mut deep = 0usize;
+        // What stands between an annotation's mark and the sign writing
+        // the annotated place is the annotation itself: its names bind
+        // nothing, as the reference reads them.
+        let mut annotated = false;
         for at in begin..self.tokens.len() {
             let word = &self.tokens[at];
             if deep == 0 && (matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close)
@@ -5345,11 +5797,12 @@ impl<'a> Compiler<'a> {
             match word.shape {
                 Shape::Sign if Lang::spells(&lang.expression_assign, &word.lexeme) => return true,
                 Shape::Sign => {
+                    if deep == 0 && !lang.annotation_marks.is_empty() && at < target && Lang::spells(&lang.annotation_marks, &word.lexeme) { annotated = true; }
                     for pair in [&lang.grouping, &lang.array_brackets, &lang.map_brackets].into_iter().flatten() {
                         if pair.open == word.lexeme { deep += 1; } else if pair.close == word.lexeme { deep = deep.saturating_sub(1); }
                     }
                 }
-                Shape::Instr if deep == 0 && at < target && !lang.keywords.contains(&word.lexeme)
+                Shape::Instr if deep == 0 && at < target && !annotated && !lang.keywords.contains(&word.lexeme)
                     && !(at > begin && Lang::spells(&lang.pipe_words, &self.tokens[at - 1].lexeme)) => {
                     let next = &self.tokens[at + 1];
                     let within = Lang::spells(&lang.pipe_words, &next.lexeme)
@@ -5368,6 +5821,7 @@ impl<'a> Compiler<'a> {
         self.take();
         let original_name = self.spelled[self.pos].lexeme.clone();
         let name = self.want_name("as the class name")?;
+        if !lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
         let mut further = Vec::new();
@@ -5411,6 +5865,9 @@ impl<'a> Compiler<'a> {
                 let mut names_maker = false;
                 if keyword {
                     let word = self.spelled[self.pos].lexeme.clone();
+                    if !lang.syntax_members.is_empty() && word == "__debug__" {
+                        return Err("SyntaxError: cannot assign to __debug__".into());
+                    }
                     self.take();
                     self.take();
                     if Lang::spells(&lang.metaclass_word, &word) { names_maker = true; }
@@ -5454,6 +5911,7 @@ impl<'a> Compiler<'a> {
         }
         self.class_names.push((self.pieces.len(), HashMap::new()));
         self.class_globals.push((self.pieces.len(), Vec::new()));
+        self.class_seen.push(Vec::new());
         let mut shared: Vec<(String, String)> = carried_words;
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
@@ -5505,6 +5963,7 @@ impl<'a> Compiler<'a> {
         let ClassBody { class_cell, methods, mut shared, mut order, annotated, uncertain, unready, book, book_tracked, .. } = self.gathered.pop().expect("the class body just read");
         self.class_names.pop();
         self.class_globals.pop();
+        self.class_seen.pop();
         self.within = outer;
         self.class_depth = outer_depth;
         if unready {
@@ -5588,6 +6047,7 @@ impl<'a> Compiler<'a> {
         loop {
             if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) { self.take(); }
             let name = self.want_name("as a type parameter")?;
+            if !lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
             if !names.insert(name) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
             if self.on_any(&lang.annotation_marks) { self.take(); self.expr_at(0, false)?; }
             if self.on_assign() { self.take(); self.expr(0)?; }
@@ -5877,10 +6337,13 @@ impl<'a> Compiler<'a> {
         while !self.at_symbol(&call.close) && !self.exhausted() {
             let mut rule = if named_only { 2 } else { 0 };
             if lang.bind_names {
-                if pairs { return Err(bad()); }
+                if pairs { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: parameters cannot follow var-keyword parameter".into() }); }
                 let sign = self.look().lexeme.clone();
                 if Lang::spells(&lang.positional_only, &sign) {
-                    if divided || named_only || formals.is_empty() { return Err(bad()); }
+                    if divided || named_only || formals.is_empty() {
+                        let phrase = if divided { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {phrase}") });
+                    }
                     divided = true;
                     rules.fill(1);
                     self.take();
@@ -5894,7 +6357,7 @@ impl<'a> Compiler<'a> {
                     pairs = true;
                     rule = 4;
                 } else if Lang::spells(&lang.carries_words, &sign) || Lang::spells(&lang.keyword_only, &sign) {
-                    if gather || named_only { return Err(bad()); }
+                    if gather || named_only { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: * may appear only once".into() }); }
                     if !lang.syntax_members.is_empty() && self.look_ahead(1).is_lexeme(Shape::Sign, &call.close) {
                         return Err("SyntaxError: named arguments must follow bare *".into());
                     }
@@ -5945,6 +6408,7 @@ impl<'a> Compiler<'a> {
                 self.formal_kinds.push(kind.clone());
                 kinded.push(kind);
                 formals.push(self.want_name("as a parameter name")?);
+                if !lang.syntax_members.is_empty() && formals.last().is_some_and(|name| name == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".into()); }
                 if call.close != lang.short_function.as_ref().map_or("", |(_, mark)| mark.as_str()) && self.on_any(&lang.annotation_marks) {
                     self.take();
                     let mut ends = lang.assign_words.clone();
@@ -5969,9 +6433,22 @@ impl<'a> Compiler<'a> {
                     return Err(said);
                 }
                 if self.on_assign() {
-                    if rule >= 3 { return Err(bad()); }
+                    if rule >= 3 {
+                        let phrase = if rule == 3 { "var-positional parameter cannot have default value" } else { "var-keyword parameter cannot have default value" };
+                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {phrase}") });
+                    }
                     if rule == 0 { default_seen = true; }
-                } else if rule == 0 && default_seen { return Err(bad()); }
+                } else if rule == 0 && default_seen {
+                    if !lang.syntax_members.is_empty() {
+                        // The complaint names the parameter that takes
+                        // nothing, standing over it as the reference
+                        // stands.
+                        let newest = formals.last().cloned().unwrap_or_default();
+                        if let Some(at) = (0..self.pos).rev().find(|i| self.tokens[*i].lexeme == newest) { self.pos = at; }
+                        return Err("SyntaxError: parameter without a default follows parameter with a default".into());
+                    }
+                    return Err(bad());
+                }
                 rules.push(rule);
             }
             if names_property {
@@ -5981,6 +6458,9 @@ impl<'a> Compiler<'a> {
             // leave it out.
             if self.on_assign() {
                 self.take();
+                if !lang.syntax_members.is_empty() && (self.at_symbol(&call.close) || call.between.as_ref().is_some_and(|mark| self.at_symbol(mark))) {
+                    return Err("SyntaxError: expected default value expression".into());
+                }
                 spares.push((formals.len() - 1, self.pos));
                 // Read once here only to step over it.
                 let spare = self.member_value()?;
@@ -6064,12 +6544,17 @@ impl<'a> Compiler<'a> {
         let mut closing: Vec<String> = Vec::new();
         let began = self.pos;
         while !self.exhausted() {
+            let outside_function = self.piece().outermost || self.in_class_body();
             let token = self.look();
             if closing.is_empty() && (self.on_sep() || self.on_any(ends)
                 || matches!(token.shape, Shape::Open | Shape::Close)) {
                 break;
             }
             if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }
+            if !lang.syntax_members.is_empty() && outside_function && token.shape == Shape::Instr && Lang::spells(&lang.yield_words, &token.lexeme) {
+                let operation = if self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.yield_from_words, &self.look_ahead(1).lexeme) { "yield from" } else { "yield" };
+                return Err(format!("SyntaxError: '{operation}' outside function"));
+            }
             if token.shape == Shape::Sign {
                 if let Some(pair) = pairs.iter().find(|pair| pair.open == token.lexeme) {
                     closing.push(pair.close.clone());
@@ -6126,6 +6611,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
+        if !self.lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         self.declaration_types()?;
         if matches!(self.lang.builtins.get(&name), Some(Builtin::Bytes(_))) {
             self.arg_names.entry(name.clone()).or_default();
@@ -6288,7 +6774,14 @@ impl<'a> Compiler<'a> {
                     rest = Some(formals.len());
                 }
                 let name = self.want_name("as a lambda parameter")?;
-                if formals.contains(&name) { return Err("Duplicate lambda parameter".to_string()); }
+                if formals.contains(&name) {
+                    let twice = &lang.parameters_duplicate;
+                    if !twice.is_empty() && !lang.syntax_members.is_empty() {
+                        self.pos -= 1;
+                        return Err(format!("{}{}{}", twice[0], name, twice.get(1).map_or("", String::as_str)));
+                    }
+                    return Err("Duplicate lambda parameter".to_string());
+                }
                 formals.push(name);
                 modes.push(mode);
                 if self.on_assign() {
@@ -6299,7 +6792,14 @@ impl<'a> Compiler<'a> {
                     self.expr(0)?;
                     self.write(&hidden);
                     defaults.push((formals.len() - 1, hidden));
-                } else if mode == 0 && default_seen { return Err(bad()); }
+                } else if mode == 0 && default_seen {
+                    if !lang.syntax_members.is_empty() {
+                        let newest = formals.last().cloned().unwrap_or_default();
+                        if let Some(at) = (0..self.pos).rev().find(|i| self.tokens[*i].lexeme == newest) { self.pos = at; }
+                        return Err("SyntaxError: parameter without a default follows parameter with a default".into());
+                    }
+                    return Err(bad());
+                }
             }
             if !self.at_symbol(&mark) { self.want_sign(&separator, "between lambda parameters")?; }
         }
@@ -6553,6 +7053,11 @@ impl<'a> Compiler<'a> {
                 .any(|p| self.at_symbol(&p.close));
             if closes || self.on_sep() || self.exhausted() || self.look().shape == Shape::Close
                 || self.on_any(&self.lang.block_intros) { break; }
+            // A yield expression joined by a comma it did not open is
+            // no element: the reference wants it parenthesised there.
+            if !self.lang.syntax_members.is_empty() && self.on_keyword(&self.lang.yield_words) {
+                return Err("SyntaxError: invalid syntax".into());
+            }
             if !self.tuple_piece(writable)? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
@@ -6560,14 +7065,66 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn annotated_statement(&mut self, from: usize) -> Res<()> {
+    /// Where a second writing sign stands at the statement's own
+    /// depth ahead: an annotated assignment takes the one sign only, a
+    /// second, as `x: int = y = 1` has, being invalid syntax.
+    fn second_assign_ahead(&self) -> Option<usize> {
         let lang = self.lang;
+        let mut depth = 0usize;
+        let mut at = self.pos + 1;
+        while let Some(token) = self.tokens.get(at) {
+            if matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish | Shape::Open) { break; }
+            if token.shape == Shape::Sign {
+                if lang.ends_stmt(&token.lexeme) || Lang::spells(&lang.block_intros, &token.lexeme) { break; }
+                match token.lexeme.as_str() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => depth = depth.saturating_sub(1),
+                    _ if depth == 0 && (Lang::spells(&lang.assign_words, &token.lexeme) || lang.compound.contains_key(&token.lexeme)) => return Some(at),
+                    _ => {}
+                }
+            }
+            at += 1;
+        }
+        None
+    }
+
+    fn annotated_statement(&mut self, from: usize, target_at: usize) -> Res<()> {
+        let lang = self.lang;
+        // A target in parentheses names nothing: no binding is made for
+        // it, nothing is annotated, and it says nothing for a `global`
+        // or `nonlocal` that names it later, as the reference has it.
+        let parenthesized = self.tokens.get(target_at).map_or(false, |t| t.is_lexeme(Shape::Sign, "("));
+        let named = match &self.piece().instrs[from..] {
+            [Instr::Read(cell)] => Some(cell.ident.to_string()),
+            _ => None,
+        };
         let words = &self.piece().instrs[from..];
-        let name = matches!(words, [Instr::Read(_)]);
+        let name = named.is_some();
         let index = matches!(words.last(), Some(Instr::Act(Action::At, 2)));
         let member = matches!(words.last(), Some(Instr::Act(Action::Grab(_), 1)));
         if !name && !index && !member {
             return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an assignment target".into()));
+        }
+        if !lang.syntax_members.is_empty() {
+            if let Some(named) = &named {
+                self.unsee_last_read(named);
+                if named == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
+                if !parenthesized {
+                    self.note_seen(named, SEEN_ANNOTATED);
+                    let declared = self.piece().declarations.iter().find(|(n, _, _)| n == named).map(|(_, outer, _)| *outer);
+                    let class_global = !declared.is_some() && self.class_globals.last().filter(|(depth, _)| *depth == self.pieces.len()).map_or(false, |(_, names)| names.iter().any(|n| n == named));
+                    if declared.is_some() || class_global {
+                        let token = self.tokens[target_at].clone();
+                        self.registry.stopped_end = token.column + token.lexeme.chars().count();
+                        self.registry.stopped_end_row = token.row;
+                        self.pos = target_at;
+                        let which = if declared == Some(false) { "nonlocal" } else { "global" };
+                        return Err(format!("SyntaxError: annotated name '{named}' can't be {which}"));
+                    }
+                }
+            }
         }
         if name && self.piece().outermost {
             if let Instr::Read(cell) = self.piece().instrs[from].clone() {
@@ -6584,9 +7141,15 @@ impl<'a> Compiler<'a> {
         }
         self.annotation_expression(&ends)?;
         if self.on_assign() {
+            if !lang.syntax_members.is_empty() {
+                if let Some(at) = self.second_assign_ahead() {
+                    self.pos = at;
+                    return Err("SyntaxError: invalid syntax".into());
+                }
+            }
             self.assignment(from, None)?;
         } else if name {
-            if lang.closes_over {
+            if lang.closes_over && !parenthesized {
                 if let Instr::Read(cell) = &self.piece().instrs[from] {
                     let named = cell.ident.to_string();
                     self.cell_to_write(&named);
@@ -6615,11 +7178,49 @@ impl<'a> Compiler<'a> {
         Ok(spread)
     }
 
+    fn added_target_expression(&self, begin: usize, end: usize) -> bool {
+        let mut protected = Vec::new();
+        for at in begin..end {
+            let word = &self.tokens[at];
+            match word.lexeme.as_str() {
+                "[" | "(" => {
+                    let nested = protected.last().copied().unwrap_or(false);
+                    let attached = at > begin && self.tokens[at - 1].shape == Shape::Instr;
+                    protected.push(nested || attached);
+                }
+                "]" | ")" => { protected.pop(); }
+                "+" if !protected.iter().any(|scope| *scope) => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn loop_target_error(&self, begin: usize, end: usize, message: String) -> String {
+        if self.lang.syntax_members.is_empty() || !message.starts_with("SyntaxError:") { return message; }
+        if self.added_target_expression(begin, end) {
+            return "SyntaxError: cannot assign to expression".into();
+        }
+        if self.tokens[begin..end].windows(2).any(|pair| pair[0].shape == Shape::Instr && pair[1].lexeme == "(") {
+            return "SyntaxError: cannot assign to function call".into();
+        }
+        message
+    }
+
     /// Give a held value to a target's places. The source spans are
     /// read only when their turn to be written has come.
     fn give_places(&mut self, mut begin: usize, mut end: usize, held: &str) -> Res<()> {
         let amiss = self.lang.unpack_amiss.clone().unwrap_or_else(|| "Invalid assignment target".to_string());
         if begin == end { return Err(amiss.clone()); }
+        if !self.lang.syntax_members.is_empty() && end == begin + 1 {
+            let word = &self.tokens[begin];
+            let kind = if word.lexeme == "__debug__" { Some("__debug__") }
+                else if [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words]
+                    .iter().any(|words| Lang::spells(words, &word.lexeme)) { Some(word.lexeme.as_str()) }
+                else if matches!(word.shape, Shape::Quote | Shape::Numeral | Shape::Bytes) { Some("literal") }
+                else { None };
+            if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind}")); }
+        }
         let mut listed = false;
         loop {
             let bracket = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
@@ -6723,6 +7324,9 @@ impl<'a> Compiler<'a> {
             .any(|pair| self.tokens[begin].is_lexeme(Shape::Sign, &pair.open));
         if signs.len() == 1 && !enclosed && self.outer_marks(begin, last, &self.lang.tuple_marks).0.is_empty() { return Ok(false); }
         if signs.len() > 1 && !self.lang.assign_chain { return Ok(false); }
+        if !self.lang.syntax_members.is_empty() && self.added_target_expression(begin, signs[0]) {
+            return Err("SyntaxError: cannot assign to expression".into());
+        }
         self.pos = last + 1;
         self.tuple_value()?;
         let held = self.gensym("assigned");
@@ -6783,9 +7387,49 @@ impl<'a> Compiler<'a> {
 
     fn assignment_expression(&mut self) -> Res<()> {
         if !self.lang.syntax_members.is_empty() {
+            if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
+                let begins = self.look();
+                let kind = if begins.shape == Shape::StringBegin { Some("f-string expression") }
+                    else if begins.lexeme == "{" && self.bracket_close(self.pos, equal) == Some(equal - 1) {
+                        let pair = self.lang.pair_mark.as_ref().map_or(Vec::new(), |mark| self.outer_marks(self.pos + 1, equal - 1, &[mark.clone()]).0);
+                        Some(if pair.is_empty() { "set display" } else { "dict literal" })
+                    } else if begins.shape == Shape::Instr && self.look_ahead(1).lexeme == "if" {
+                        return Err("SyntaxError: cannot assign to conditional expression".into());
+                    } else { None };
+                if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
+            }
+            if self.look().lexeme == "None" && self.lang.compound.contains_key(&self.look_ahead(1).lexeme) {
+                return Err("SyntaxError: 'None' is an illegal expression for augmented assignment".into());
+            }
+            if self.look().lexeme == "[" || self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "(" {
+                let opening = if self.look().lexeme == "[" { self.pos } else { self.pos + 1 };
+                if let Some(close) = self.bracket_close(opening, self.tokens.len()) {
+                    if self.tokens.get(close + 1).is_some_and(|next| self.lang.compound.contains_key(&next.lexeme)) {
+                        let kind = if opening == self.pos { "list" } else { "function call" };
+                        return Err(format!("SyntaxError: '{kind}' is an illegal expression for augmented assignment"));
+                    }
+                }
+            }
+            if self.look().lexeme == "__debug__" && self.lang.compound.contains_key(&self.look_ahead(1).lexeme) {
+                return Err("SyntaxError: cannot assign to __debug__".into());
+            }
             if let Some(colon) = self.statement_annotation() {
-                if !self.outer_marks(self.pos, colon, &self.lang.tuple_marks).0.is_empty() {
+                if colon >= self.pos + 2 && self.tokens[colon - 1].lexeme == "__debug__" && self.tokens[colon - 2].lexeme == "." {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
+                let mut head = self.pos;
+                let mut tail = colon;
+                while head + 1 < tail && self.tokens[head].lexeme == "(" && self.tokens[tail - 1].lexeme == ")" { head += 1; tail -= 1; }
+                if head == tail || !self.outer_marks(head, tail, &self.lang.tuple_marks).0.is_empty() {
                     return Err("SyntaxError: only single target (not tuple) can be annotated".into());
+                }
+                if self.tokens[head].lexeme == "[" && self.bracket_close(head, tail) == Some(tail - 1) {
+                    return Err("SyntaxError: only single target (not list) can be annotated".into());
+                }
+                let first = &self.tokens[head];
+                let generator = self.tokens[self.pos].lexeme == "(" && self.tokens[head..colon].iter().any(|word| word.lexeme == "for");
+                if matches!(first.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) || first.lexeme == "-" || generator {
+                    return Err("SyntaxError: illegal target for annotation".into());
                 }
             }
             if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
@@ -6875,6 +7519,7 @@ impl<'a> Compiler<'a> {
                     names.push(self.take().lexeme);
                 }
                 self.take();
+                for name in &names { self.unsee_last_read(name); }
                 self.scope_value()?;
                 let value = self.gensym("chain");
                 self.write(&value);
@@ -6902,7 +7547,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if starts_here && self.on_any(&self.lang.annotation_marks) {
-            return self.annotated_statement(from);
+            return self.annotated_statement(from, target_at);
         }
         // Stores through attributes or call results can be read before
         // scopes can keep them. Their fault belongs to the run.
@@ -7100,6 +7745,15 @@ impl<'a> Compiler<'a> {
             });
             from += 1;
         }
+        // A bare name read only to be stored over was no use of the
+        // name: the store says it was written, as the reference counts
+        // it against a later declaration.
+        if !self.lang.syntax_members.is_empty() {
+            if let [Instr::Read(cell)] = target.as_slice() {
+                let named = cell.ident.to_string();
+                self.unsee_last_read(&named);
+            }
+        }
         // The name a method knows its own thing by is bound by the call
         // and by nothing else: a language naming one refuses a write to
         // it outright, and calls that a fault of the run.
@@ -7157,8 +7811,10 @@ impl<'a> Compiler<'a> {
             [Instr::Read(slot)] if !slot.moving => {
                 let name = slot.ident.to_string();
                 if let Some(op) = compound {
-                    // x op= e is x = x op e.
+                    // x op= e is x = x op e, and yet the name is only
+                    // ever written by it, as the reference counts it.
                     self.read(&name);
+                    if !self.lang.syntax_members.is_empty() { self.unsee_last_read(&name); }
                     self.stood_before();
                     self.addend()?;
                     self.compound_act(op);
@@ -7487,6 +8143,9 @@ impl<'a> Compiler<'a> {
             }
             // The read of a member turns into a write of it.
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
+                if !self.lang.syntax_members.is_empty() && member.as_ref() == "__debug__" {
+                    return Err("SyntaxError: cannot assign to __debug__".into());
+                }
                 let (member, rest) = (member.clone(), rest.to_vec());
                 for w in relocated(rest, 0) {
                     self.put(w);
@@ -7623,6 +8282,35 @@ impl<'a> Compiler<'a> {
         instrs.len() == from + 1 && operand_of(&instrs[from]).is_some()
     }
 
+    fn display_assignment(&self, start: usize) -> bool {
+        let mut groups = Vec::new();
+        let mut lambda_formals = Vec::new();
+        for at in start..self.tokens.len() {
+            let word = &self.tokens[at];
+            if groups.is_empty() && matches!(word.shape, Shape::LineEnd | Shape::Close | Shape::Finish) { break; }
+            if word.lexeme == "lambda" { if let Some(formals) = lambda_formals.last_mut() { *formals = true; } }
+            if word.shape != Shape::Sign { continue; }
+            match word.lexeme.as_str() {
+                "(" => {
+                    let call = at > 0 && self.tokens[at - 1].lexeme != "assert" && (self.tokens[at - 1].shape == Shape::Instr || [")", "]"].contains(&self.tokens[at - 1].lexeme.as_str()));
+                    groups.push(call);
+                    lambda_formals.push(false);
+                }
+                "[" | "{" => { groups.push(false); lambda_formals.push(false); }
+                ")" | "]" | "}" => {
+                    groups.pop();
+                    lambda_formals.pop();
+                    if groups.is_empty() { break; }
+                }
+                ":" => { if let Some(formals) = lambda_formals.last_mut() { *formals = false; } }
+                "=" if groups.last() == Some(&false) && lambda_formals.last() != Some(&true)
+                    && at > start && self.tokens[at - 1].shape == Shape::Instr => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// An expression. Where a language counts an assignment as one, a
     /// target followed by a sign that writes is read as an assignment
     /// whose value is what was written — but not where the assignment
@@ -7631,6 +8319,10 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let begins = self.pos;
         let from = self.mark();
+        if floor == 0 && !lang.syntax_members.is_empty() && ["(", "[", "{"].contains(&self.look().lexeme.as_str())
+            && self.display_assignment(begins) {
+            return Err("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?".into());
+        }
         if floor == 0 && self.look().shape == Shape::Instr && Lang::spells(&lang.expression_assign, &self.look_ahead(1).lexeme) {
             let at = self.look().clone();
             let named = self.take().lexeme;
@@ -7652,6 +8344,7 @@ impl<'a> Compiler<'a> {
             self.expr(0)?;
             self.write(&named);
             self.read(&named);
+            self.unsee_last_read(&named);
             return Ok(());
         }
         if floor == 0 && !lang.syntax_members.is_empty()
@@ -7670,6 +8363,7 @@ impl<'a> Compiler<'a> {
             self.expr(0)?;
             self.write(&name);
             self.read(&name);
+            self.unsee_last_read(&name);
             return Ok(());
         }
         if floor == 0 && may_write && lang.assign_gives_value && self.on_writing() {
@@ -7712,7 +8406,9 @@ impl<'a> Compiler<'a> {
                 self.land(no);
                 let other = lang.if_else_words.get(1).ok_or("Conditional expression needs two words")?;
                 if !self.at_lexeme(other) {
-                    return Err(format!("Expected '{}' in conditional expression", other));
+                    return Err(if lang.syntax_members.is_empty() || self.on_any(&lang.block_intros) {
+                        format!("Expected '{}' in conditional expression", other)
+                    } else { "SyntaxError: expected 'else' after 'if' expression".into() });
                 }
                 self.take();
                 if !lang.syntax_members.is_empty() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().lexeme.as_str()) {
@@ -8088,6 +8784,9 @@ impl<'a> Compiler<'a> {
             self.piece().generator = true;
             let delegated = self.on_keyword(&lang.yield_from_words);
             if delegated { self.take(); }
+            if delegated && !lang.syntax_members.is_empty() && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest) {
+                return Err("SyntaxError: invalid syntax".into());
+            }
             let begin = self.mark();
             let outer_operand = std::mem::replace(&mut self.yield_operand, true);
             let ended = |r: &Self| r.on_sep() || r.exhausted() || r.look().shape == Shape::Close
@@ -8095,18 +8794,55 @@ impl<'a> Compiler<'a> {
                 || r.lang.array_brackets.as_ref().map_or(false, |g| r.at_symbol(&g.close));
             let mut count = 0;
             let mut tuple = false;
+            // A spread unpacks into the tuple a yield of several values
+            // yields, as it does into any display; a spread standing
+            // alone as the whole answer is refused below, as the
+            // reference refuses it.
+            let mut spread_seen = false;
+            let mut star_at = self.pos;
             if delegated || !ended(self) {
-                loop {
-                    self.expr(0)?;
-                    count += 1;
-                    if delegated || !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                let spread = !delegated && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
+                if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                self.expr(0)?;
+                if spread {
+                    self.act(Action::Unpack(1, Some(0)), 1);
+                    self.constant(Value::Small(0));
+                    self.act(Action::Apart, 2);
+                }
+                count += 1;
+                if !delegated && lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) {
                     tuple = true;
-                    self.take();
-                    if ended(self) { break; }
+                    if !spread { self.act(Action::MakeArray, 1); }
+                    loop {
+                        self.take();
+                        if ended(self) { break; }
+                        let spread = !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
+                        if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                        self.expr(0)?;
+                        count += 1;
+                        if spread {
+                            self.act(Action::Unpack(1, Some(0)), 1);
+                            self.constant(Value::Small(0));
+                            self.act(Action::Apart, 2);
+                        } else {
+                            self.act(Action::MakeArray, 1);
+                        }
+                        self.act(Action::TupleJoin, 2);
+                        if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    }
                 }
             }
             self.yield_operand = outer_operand;
             if !lang.syntax_members.is_empty() {
+                // A delegated yield answers one expression only: a comma
+                // past it parts no tuple of its, as a plain yield's does.
+                if delegated && lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) {
+                    return Err("SyntaxError: invalid syntax".into());
+                }
+                if spread_seen && !tuple {
+                    self.pos = star_at;
+                    return Err("SyntaxError: can't use starred expression here".into());
+                }
                 if let Some(message) = invalid {
                     let end = &self.tokens[self.pos - 1];
                     self.registry.stopped_end = end.column + end.lexeme.chars().count();
@@ -8116,8 +8852,11 @@ impl<'a> Compiler<'a> {
                 }
             }
             if lang.yield_suspends {
-                if tuple { self.act(Action::MakeTuple, count); }
-                else if count == 0 { self.constant(Value::Null); }
+                // The elements joined into one array as they were read;
+                // a language with a tuple word makes the tuple of it, as
+                // a display does, and any other keeps the array.
+                if tuple && lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1); }
+                if !tuple && count == 0 { self.constant(Value::Null); }
                 self.act(if delegated { Action::Delegate } else { Action::Suspend }, 1);
             } else {
                 self.piece().instrs.truncate(begin);
@@ -8538,6 +9277,10 @@ impl<'a> Compiler<'a> {
                                 else { self.scope_fault(&lang.scope_unready.clone()); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
+                            if !lang.syntax_members.is_empty()
+                                && matches!(self.look().shape, Shape::Instr | Shape::Numeral) {
+                                return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
+                            }
                             self.want_sign(&group.close, "to close a group")?;
                         }
                         }
@@ -8669,6 +9412,14 @@ impl<'a> Compiler<'a> {
                 return Err(format!("Expected '{}'", call.close));
             }
             if targets && !self.lang.syntax_members.is_empty() {
+                if self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "[" && self.look_ahead(2).lexeme == "*"
+                    && self.look_ahead(3).lexeme == "(" {
+                    if let Some(end) = self.bracket_close(self.pos + 3, self.tokens.len()) {
+                        if self.tokens[self.pos + 4..end].iter().any(|part| part.lexeme == ":") {
+                            return Err("SyntaxError: Invalid star expression".into());
+                        }
+                    }
+                }
                 let word = self.look().lexeme.as_str();
                 let kind = if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("literal") }
                     else if ["None", "True", "False"].contains(&word) { Some(word) }
@@ -8696,6 +9447,12 @@ impl<'a> Compiler<'a> {
             let from = self.mark();
             self.awkward_place = false;
             if targets { self.block_place()?; self.called_on_value()?; } else { self.expr(0)?; }
+            if targets && !self.lang.syntax_members.is_empty() {
+                if let [Instr::Read(cell)] = &self.piece().instrs[from..] {
+                    let named = cell.ident.to_string();
+                    self.unsee_last_read(&named);
+                }
+            }
             if targets && !self.lang.syntax_members.is_empty() {
                 if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) { return Err("SyntaxError: cannot delete function call".into()); }
                 let next = self.look().lexeme.as_str();
@@ -9529,6 +10286,26 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             self.take();
+            if !lang.syntax_members.is_empty() {
+                let grouped = if self.at_symbol(":") && self.look_ahead(1).lexeme == "(" { Some(self.pos + 1) }
+                    else if self.at_symbol("(") { Some(self.pos) } else { None };
+                if let Some(opened) = grouped {
+                    if let Some(closed) = self.bracket_close(opened, self.tokens.len()) {
+                        let starred = self.tokens.get(opened + 1).is_some_and(|t| t.lexeme == "*");
+                        let comma = self.tokens[opened..closed].iter().any(|t| t.lexeme == ",");
+                        let slice = self.tokens.get(closed + 1).is_some_and(|t| t.lexeme == ":") || opened > self.pos;
+                        if starred && !comma && slice { return Err("SyntaxError: cannot use starred expression here".into()); }
+                    }
+                }
+            }
+            if !lang.syntax_members.is_empty() && self.at_symbol("*") {
+                let next = self.look_ahead(1).lexeme.as_str();
+                let empty = next == index.close || next == ":";
+                let starred_slice = next == "(" && self.tokens[self.pos + 2..].iter()
+                    .take_while(|word| word.lexeme != ")")
+                    .any(|word| word.lexeme == ":");
+                if empty || starred_slice { return Err("SyntaxError: Invalid star expression".into()); }
+            }
             let began = self.mark();
             let separator = self.lang.calling.as_ref().and_then(|b| b.between.clone());
             self.slice_part(&index.close, separator.as_deref())?;
@@ -9617,6 +10394,22 @@ impl<'a> Compiler<'a> {
     /// Each part is worked out before the literal is enlarged by it.
     fn extended_literal(&mut self, pair: &Brackets, braces: bool) -> Res<()> {
         let map = braces && (!self.lang.set_literals || self.literal_is_map(pair));
+        if !self.lang.syntax_members.is_empty() {
+            let mut depth = 0usize;
+            let mut separated = false;
+            for token in self.tokens.iter().skip(self.pos) {
+                let word = token.lexeme.as_str();
+                if depth == 0 && token.shape == Shape::Sign && word == pair.close { break; }
+                if depth == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
+                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                }
+                if token.shape == Shape::Sign {
+                    if ["(", "[", "{"].contains(&word) { depth += 1; }
+                    else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }
+                }
+            }
+        }
         if let Some(clause) = self.comprehension_ahead() {
             return self.comprehension(pair, clause, map);
         }
@@ -9628,10 +10421,22 @@ impl<'a> Compiler<'a> {
             self.expr(0)?;
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
+                if !self.lang.syntax_members.is_empty() && (self.at_symbol(&pair.close) || pair.between.as_ref().is_some_and(|sep| self.at_symbol(sep))) {
+                    return Err("SyntaxError: ':' expected after dictionary key".into());
+                }
                 self.want_sign(&mark, "between a map key and value")?;
                 item_at = self.pos;
+                if !self.lang.syntax_members.is_empty() && (self.at_symbol(&pair.close) || pair.between.as_ref().is_some_and(|sep| self.at_symbol(sep))) {
+                    return Err("SyntaxError: expression expected after dictionary key and ':'".into());
+                }
+                if !self.lang.syntax_members.is_empty() && self.at_symbol("*") {
+                    return Err("SyntaxError: cannot use a starred expression in a dictionary value".into());
+                }
                 self.expr(0)?;
                 self.act(Action::Tie, 2);
+            }
+            if !self.lang.syntax_members.is_empty() && self.look().lexeme == "fur" && self.look_ahead(1).shape == Shape::Instr {
+                return Err("SyntaxError: invalid syntax. Did you mean 'for'?".into());
             }
             if !self.lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Instr | Shape::Numeral | Shape::Quote | Shape::Bytes) {
                 let next = self.look();
@@ -9655,7 +10460,7 @@ impl<'a> Compiler<'a> {
         if !self.lang.yield_suspends { return self.comprehension(pair, clause, false); }
         let head = self.pos;
         self.pos = clause;
-        self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or("Expected a comprehension source")? + 1;
+        self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })? + 1;
         let source_at = self.pos;
         self.expr(1)?;
         let source_end = self.pos;
@@ -9706,7 +10511,7 @@ impl<'a> Compiler<'a> {
         if self.lang.closes_over && (self.in_class_body() || !self.lang.syntax_members.is_empty()) {
             let entry = self.pos;
             self.pos = clause;
-            self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or("Expected a comprehension source")? + 1;
+            self.pos = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in).0.first().copied().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })? + 1;
             let source_at = self.pos;
             let start = self.mark();
             self.expr(1)?;
@@ -9760,6 +10565,9 @@ impl<'a> Compiler<'a> {
         self.pos = clause;
         self.comprehension_clause(head, &result, map)?;
         self.comprehension_names.truncate(bindings);
+        if !self.lang.syntax_members.is_empty() && self.look().lexeme == "of" && self.look_ahead(1).shape == Shape::Instr {
+            return Err("SyntaxError: invalid syntax. Did you mean 'if'?".into());
+        }
         self.want_sign(&pair.close, "after a comprehension")?;
         let kind = if map { "dict comprehension" } else if pair.close == "]" { "list comprehension" } else { "set comprehension" };
         self.comprehension_store_error(kind)?;
@@ -9826,7 +10634,7 @@ impl<'a> Compiler<'a> {
             if token.shape == Shape::Finish { break; }
             if nesting == 0 && token.shape == Shape::Instr && Lang::spells(&self.lang.comprehension_for, &token.lexeme) {
                 let (joins, _) = self.outer_marks(at + 1, self.tokens.len(), &self.lang.comprehension_in);
-                let end = *joins.first().ok_or("Expected a comprehension source")?;
+                let end = *joins.first().ok_or(if self.lang.syntax_members.is_empty() { "Expected a comprehension source" } else { "SyntaxError: 'in' expected after for-loop variables" })?;
                 self.comprehension_locals(at + 1, end, floor)?;
                 at = end + 1;
                 continue;
@@ -9859,7 +10667,10 @@ impl<'a> Compiler<'a> {
             self.take();
             let target_start = self.pos;
             let (joins, _) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.comprehension_in);
-            let target_end = *joins.first().ok_or("Expected the comprehension's collection word")?;
+            let target_end = *joins.first().ok_or(if self.lang.syntax_members.is_empty() { "Expected the comprehension's collection word" } else { "SyntaxError: 'in' expected after for-loop variables" })?;
+            if !self.lang.syntax_members.is_empty() && self.added_target_expression(target_start, target_end) {
+                return Err("SyntaxError: cannot assign to expression".into());
+            }
             self.comprehension_locals(target_start, target_end, 0)?;
             self.pos = target_end + 1;
             let expression_start = self.pos;
@@ -9901,7 +10712,8 @@ impl<'a> Compiler<'a> {
             let item = self.gensym("comprehension_item");
             self.write(&item);
             let resume = self.pos;
-            if let Err(message) = self.give_places(target_start, target_end, &item) {
+            if let Err(error) = self.give_places(target_start, target_end, &item) {
+                let message = self.loop_target_error(target_start, target_end, error);
                 if message.starts_with("SyntaxError: cannot assign to") { self.pos = target_start; }
                 return Err(message);
             }
@@ -10037,6 +10849,10 @@ impl<'a> Compiler<'a> {
             if !matches!(t.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = t.lexeme.as_str();
             if depth == 0 && word == "=" && (i != start + 1 || self.tokens[start].shape != Shape::Instr) {
+                if !self.lang.syntax_members.is_empty() && i > start + 1 {
+                    let kind = match self.tokens[start].lexeme.as_str() { "*" => Some("iterable"), "**" => Some("keyword"), _ => None };
+                    if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} argument unpacking")); }
+                }
                 if i > start + 1 && self.tokens[start..i - 1].iter().all(|part| part.shape == Shape::Quote) {
                     self.pos = i - 2;
                     return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
@@ -10100,6 +10916,10 @@ impl<'a> Compiler<'a> {
             let spread = marker && self.lang.bind_names && !labelled
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
+            if spread && !named_spread && !self.lang.syntax_members.is_empty()
+                && matches!(self.look_ahead(1).lexeme.as_str(), ")" | ":") {
+                return Err("SyntaxError: Invalid star expression".into());
+            }
             if let [follows, unpacking, spread_late] = self.lang.call_order.as_slice() {
                 if !tagged && !named_spread && after_pairs {
                     return Err(if spread { spread_late.clone() } else { format!("{follows}{unpacking}") });
@@ -10110,6 +10930,11 @@ impl<'a> Compiler<'a> {
             after_pairs |= named_spread && self.lang.bind_names;
             if tagged {
                 let word = self.spelled[self.pos].lexeme.clone();
+                if !self.lang.syntax_members.is_empty() {
+                    let reserved = word == "__debug__" || [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words]
+                        .iter().any(|words| Lang::spells(words, &word));
+                    if reserved { return Err(format!("SyntaxError: cannot assign to {word}")); }
+                }
                 let twice = &self.lang.call_keyword_repeated;
                 if spelled.contains(&word) && !twice.is_empty() {
                     return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
@@ -10120,7 +10945,18 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::Flag(Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme)));
                 self.take();
             }
+            if !self.lang.syntax_members.is_empty() && !spread {
+                let value_at = if labelled { self.pos + 2 } else { self.pos };
+                if self.tokens.get(value_at).map_or(false, |t| t.shape == Shape::Instr && Lang::spells(&self.lang.yield_words, &t.lexeme)) {
+                    self.pos = value_at;
+                    return Err("SyntaxError: invalid syntax".into());
+                }
+            }
             if labelled { self.pos += 2; }
+            if tagged && !self.lang.syntax_members.is_empty()
+                && (self.at_symbol(&pair.close) || pair.between.as_ref().is_some_and(|sep| self.at_symbol(sep))) {
+                return Err("SyntaxError: expected argument value expression".into());
+            }
             self.expr(0)?;
             if tagged || spread { self.act(Action::Tie, 2); }
             if self.lang.bind_names {

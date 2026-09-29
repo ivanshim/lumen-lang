@@ -34,4 +34,13 @@ class array:
     def tobytes(self):
         if self.typecode == 'B':
             return bytes(self.data)
-        raise 'NotImplementedError: array byte buffers are not supported'
+        result = b''
+        for value in self.data:
+            result += value.to_bytes(4, 'little', signed=True)
+        return result
+
+    def __int__(self):
+        return int(self.tobytes())
+
+    def __float__(self):
+        return float(self.tobytes())
