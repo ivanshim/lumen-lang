@@ -20583,7 +20583,7 @@ impl Machine<'_> {
                 let integral = |v: &Value| matches!(v, Value::Huge(_) | Value::Small(_));
                 if integral(&one) && integral(&two) {
                     let divisor = two.as_big()?;
-                    if divisor.is_zero() { return Err(self.core_complaint("core.zero", "")); }
+                    if divisor.is_zero() { return Err("ZeroDivisionError: division by zero".to_owned()); }
                     let dividend = one.as_big()?;
                     return Ok(Value::Tuple(Rc::new(vec![Value::from_big(dividend.div_floor(&divisor)),Value::from_big(dividend.mod_floor(&divisor))])));
                 }
@@ -20591,7 +20591,7 @@ impl Machine<'_> {
                 let right = math::ratio_of(&two).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let x = crate::data::nearest_binary(&left.above,&left.beneath);
                 let y = crate::data::nearest_binary(&right.above,&right.beneath);
-                if y == 0.0 { return Err(self.core_complaint("core.zero", "")); }
+                if y == 0.0 { return Err("ZeroDivisionError: division by zero".to_owned()); }
                 let residue = x % y;
                 let corrected = residue != 0.0 && residue.is_sign_negative() != y.is_sign_negative();
                 let remain = if residue == 0.0 { 0.0f64.copysign(y) } else if corrected { residue+y } else { residue };

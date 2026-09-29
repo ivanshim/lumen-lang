@@ -18028,7 +18028,7 @@ impl Engine<'_> {
                 let (a,z) = (number(&args[0]), number(&args[1]));
                 if matches!(a, Value::Small(_) | Value::Huge(_)) && matches!(z, Value::Small(_) | Value::Huge(_)) {
                     let divisor = z.as_big()?;
-                    if divisor.is_zero() { return Err(self.core_fault("core.zero", "")); }
+                    if divisor.is_zero() { return Err("ZeroDivisionError: division by zero".into()); }
                     let (q,r) = a.as_big()?.div_mod_floor(&divisor);
                     Value::Tuple(Rc::new(vec![Value::of_big(q),Value::of_big(r)]))
                 } else {
@@ -18050,7 +18050,7 @@ impl Engine<'_> {
                     }
                     let (r,s) = arith::parts(&z).ok_or_else(|| self.core_fault("core.unready", name))?;
                     let (x,y) = (crate::value::as_binary(&p,&q),crate::value::as_binary(&r,&s));
-                    if y == 0.0 { return Err(self.core_fault("core.zero", "")); }
+                    if y == 0.0 { return Err("ZeroDivisionError: division by zero".into()); }
                     let mut rem = x % y;
                     let mut div = (x-rem)/y;
                     if rem != 0.0 && rem.is_sign_negative() != y.is_sign_negative() { rem += y; div -= 1.0; }
