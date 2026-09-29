@@ -1968,7 +1968,8 @@ impl<'a> Builder<'a> {
         };
         if self.tokens.get(named)?.shape != Shape::Bare { return None; }
         let mut cursor = named + 1;
-        if word(cursor) == "[" {
+        let has_types = word(cursor) == "[";
+        if has_types {
             cursor += 1;
             if word(cursor) == "]" { return Some(String::from("SyntaxError: Type parameter list cannot be empty")); }
             loop {
@@ -2017,6 +2018,20 @@ impl<'a> Builder<'a> {
                     "," => cursor += 1,
                     _ => break,
                 }
+            }
+        }
+        if head == "class" && has_types && word(cursor) == "(" {
+            let mut openings = 0usize;
+            for token in self.tokens.iter().skip(cursor) {
+                if let Some(kind) = match token.lexeme.as_str() { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None } {
+                    return Some(format!("SyntaxError: {kind} expression cannot be used within the definition of a generic"));
+                }
+                match token.lexeme.as_str() {
+                    "(" => openings += 1,
+                    ")" => { openings = openings.saturating_sub(1); if openings == 0 { break; } },
+                    _ => {}
+                }
+                if matches!(token.shape, Shape::LineEnd | Shape::Finish) { break; }
             }
         }
         if head == "type" && word(cursor) == "=" {

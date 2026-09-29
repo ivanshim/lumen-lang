@@ -1842,7 +1842,8 @@ impl<'a> Compiler<'a> {
         if self.tokens.get(name_at)?.shape != Shape::Instr { return None; }
         let alias = first == "type";
         let mut at = name_at + 1;
-        if spelling(at) == "[" {
+        let generic = spelling(at) == "[";
+        if generic {
             at += 1;
             if spelling(at) == "]" { return Some("SyntaxError: Type parameter list cannot be empty".into()); }
             while at < self.tokens.len() {
@@ -1885,6 +1886,18 @@ impl<'a> Compiler<'a> {
                 if spelling(at) == "]" { at += 1; break; }
                 if spelling(at) != "," { break; }
                 at += 1;
+            }
+        }
+        if first == "class" && generic && spelling(at) == "(" {
+            let mut depth = 0usize;
+            for item in at..self.tokens.len() {
+                let word = spelling(item);
+                if let Some(kind) = match word { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None } {
+                    return Some(format!("SyntaxError: {kind} expression cannot be used within the definition of a generic"));
+                }
+                if word == "(" { depth += 1; }
+                else if word == ")" { depth = depth.saturating_sub(1); if depth == 0 { break; } }
+                if matches!(self.tokens[item].shape, Shape::LineEnd | Shape::Finish) { break; }
             }
         }
         if alias && spelling(at) == "=" {
