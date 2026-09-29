@@ -3561,3 +3561,60 @@ static CHANGES: &[(u32, &str, &str, &str, &str)] = &[
     (125250, "\u{1e942}", "\u{1e920}", "\u{1e920}", "\u{1e942}"),
     (125251, "\u{1e943}", "\u{1e921}", "\u{1e921}", "\u{1e943}"),
 ];
+
+
+/// Resolve a Unicode 16.0 name from the UCD, including aliases.
+/// UAX #44 defines the Hangul, CJK and Tangut algorithmic names.
+/// Source: https://www.unicode.org/Public/16.0.0/ucd/ ; license:
+/// https://www.unicode.org/license.txt .
+pub fn name_value(word: &str) -> Option<String> {
+    use std::collections::BTreeMap;
+    use std::sync::OnceLock;
+    static INDEX: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    let index = INDEX.get_or_init(|| {
+        let mut index = BTreeMap::new();
+        let mut first = None;
+        for record in include_str!("../../../unicode-data/UnicodeData.txt").lines() {
+            let columns: Vec<_> = record.split(';').collect();
+            let Ok(point) = u32::from_str_radix(columns[0], 16) else { continue };
+            let title = columns[1];
+            if title.ends_with(", First>") {
+                first = Some((point, title.to_string()));
+                continue;
+            }
+            if title.ends_with(", Last>") {
+                if let Some((start, description)) = first.take() {
+                    let prefix = match description.as_str() {
+                        s if s.starts_with("<CJK Ideograph") => "CJK UNIFIED IDEOGRAPH",
+                        s if s.starts_with("<Tangut Ideograph") => "TANGUT IDEOGRAPH",
+                        _ => continue,
+                    };
+                    for value in start..=point {
+                        if let Some(symbol) = char::from_u32(value) {
+                            index.insert(format!("{prefix}-{value:04X}"), symbol.to_string());
+                        }
+                    }
+                }
+            } else if !title.starts_with('<') {
+                if let Some(symbol) = char::from_u32(point) { index.insert(title.to_string(), symbol.to_string()); }
+            }
+        }
+        let initials = ["G", "GG", "N", "D", "DD", "R", "M", "B", "BB", "S", "SS", "", "J", "JJ", "C", "K", "T", "P", "H"];
+        let medials = ["A", "AE", "YA", "YAE", "EO", "E", "YEO", "YE", "O", "WA", "WAE", "OE", "YO", "U", "WEO", "WE", "WI", "YU", "EU", "YI", "I"];
+        let finals = ["", "G", "GG", "GS", "N", "NJ", "NH", "D", "L", "LG", "LM", "LB", "LS", "LT", "LP", "LH", "M", "B", "BS", "S", "SS", "NG", "J", "C", "K", "T", "P", "H"];
+        for number in 0..11172usize {
+            let syllable = char::from_u32(0xAC00 + number as u32).expect("Hangul range");
+            let title = format!("HANGUL SYLLABLE {}{}{}", initials[number / 588], medials[number % 588 / 28], finals[number % 28]);
+            index.insert(title, syllable.to_string());
+        }
+        for record in include_str!("../../../unicode-data/NameAliases.txt").lines().filter(|r| !r.starts_with('#')) {
+            let cells: Vec<_> = record.split(';').collect();
+            if cells.len() < 2 { continue; }
+            if let Ok(number) = u32::from_str_radix(cells[0], 16) {
+                if let Some(symbol) = char::from_u32(number) { index.insert(cells[1].to_string(), symbol.to_string()); }
+            }
+        }
+        index
+    });
+    index.get(&word.to_ascii_uppercase()).cloned()
+}
