@@ -5844,6 +5844,9 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
+        if table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).lexeme == "im" {
+            return Err(String::from("SyntaxError: invalid syntax. Did you mean 'in'?"));
+        }
         if table.has_any("ext.builtin.exceptions.syntax") {
             let limit = self.divided_at(self.pos, self.tokens.len(), "stmt.for.in").first().copied()
                 .or_else(|| self.divided_at(self.pos, self.tokens.len(), "block.intro").first().copied());
@@ -9369,6 +9372,9 @@ impl<'a> Builder<'a> {
                 let right = self.expr(0)?;
                 item = prim_call(Prim::Couple, vec![item, right]);
             }
+            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "fur" && self.glance(1).shape == Shape::Bare {
+                return Err(String::from("SyntaxError: invalid syntax. Did you mean 'for'?"));
+            }
             if self.table.has_any("ext.builtin.exceptions.syntax") && matches!(self.look().shape, Shape::Bare | Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
                 let t = self.look();
                 let ending = if t.end_column == 0 { t.column + t.lexeme.chars().count() } else { t.end_column };
@@ -9470,6 +9476,9 @@ impl<'a> Builder<'a> {
         let start = self.write(&name, empty);
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);
+        if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "of" && self.glance(1).shape == Shape::Bare {
+            return Err(String::from("SyntaxError: invalid syntax. Did you mean 'if'?"));
+        }
         self.need_sign(end, "to finish a comprehension")?;
         self.reject_gathering_assignment(if dictionary { "dict comprehension" } else if end == "]" { "list comprehension" } else { "set comprehension" })?;
         let answer = self.read(&name);

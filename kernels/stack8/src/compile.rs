@@ -4428,6 +4428,9 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.take();
+        if !lang.syntax_members.is_empty() && self.look_ahead(1).lexeme == "im" {
+            return Err("SyntaxError: invalid syntax. Did you mean 'in'?".into());
+        }
         if !lang.syntax_members.is_empty() {
             let target_end = self.outer_marks(self.pos, self.tokens.len(), &lang.in_words).0.first().copied()
                 .or_else(|| self.outer_marks(self.pos, self.tokens.len(), &lang.block_intros).0.first().copied());
@@ -9972,6 +9975,9 @@ impl<'a> Compiler<'a> {
                 self.expr(0)?;
                 self.act(Action::Tie, 2);
             }
+            if !self.lang.syntax_members.is_empty() && self.look().lexeme == "fur" && self.look_ahead(1).shape == Shape::Instr {
+                return Err("SyntaxError: invalid syntax. Did you mean 'for'?".into());
+            }
             if !self.lang.syntax_members.is_empty() && matches!(self.look().shape, Shape::Instr | Shape::Numeral | Shape::Quote | Shape::Bytes) {
                 let next = self.look();
                 self.registry.stopped_end = if next.end_column != 0 { next.end_column } else { next.column + next.lexeme.chars().count() };
@@ -10099,6 +10105,9 @@ impl<'a> Compiler<'a> {
         self.pos = clause;
         self.comprehension_clause(head, &result, map)?;
         self.comprehension_names.truncate(bindings);
+        if !self.lang.syntax_members.is_empty() && self.look().lexeme == "of" && self.look_ahead(1).shape == Shape::Instr {
+            return Err("SyntaxError: invalid syntax. Did you mean 'if'?".into());
+        }
         self.want_sign(&pair.close, "after a comprehension")?;
         let kind = if map { "dict comprehension" } else if pair.close == "]" { "list comprehension" } else { "set comprehension" };
         self.comprehension_store_error(kind)?;
