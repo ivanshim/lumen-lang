@@ -9038,6 +9038,14 @@ impl<'a> Compiler<'a> {
                 return Err(format!("Expected '{}'", call.close));
             }
             if targets && !self.lang.syntax_members.is_empty() {
+                if self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "[" && self.look_ahead(2).lexeme == "*"
+                    && self.look_ahead(3).lexeme == "(" {
+                    if let Some(end) = self.bracket_close(self.pos + 3, self.tokens.len()) {
+                        if self.tokens[self.pos + 4..end].iter().any(|part| part.lexeme == ":") {
+                            return Err("SyntaxError: Invalid star expression".into());
+                        }
+                    }
+                }
                 let word = self.look().lexeme.as_str();
                 let kind = if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::Bytes) { Some("literal") }
                     else if ["None", "True", "False"].contains(&word) { Some(word) }
@@ -9898,6 +9906,18 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             self.take();
+            if !lang.syntax_members.is_empty() {
+                let grouped = if self.at_symbol(":") && self.look_ahead(1).lexeme == "(" { Some(self.pos + 1) }
+                    else if self.at_symbol("(") { Some(self.pos) } else { None };
+                if let Some(opened) = grouped {
+                    if let Some(closed) = self.bracket_close(opened, self.tokens.len()) {
+                        let starred = self.tokens.get(opened + 1).is_some_and(|t| t.lexeme == "*");
+                        let comma = self.tokens[opened..closed].iter().any(|t| t.lexeme == ",");
+                        let slice = self.tokens.get(closed + 1).is_some_and(|t| t.lexeme == ":") || opened > self.pos;
+                        if starred && !comma && slice { return Err("SyntaxError: cannot use starred expression here".into()); }
+                    }
+                }
+            }
             if !lang.syntax_members.is_empty() && self.at_symbol("*") {
                 let next = self.look_ahead(1).lexeme.as_str();
                 let empty = next == index.close || next == ":";

@@ -8550,6 +8550,14 @@ impl<'a> Builder<'a> {
                 return Err(format!("Expected '{}'", close));
             }
             if targets && table.has_any("ext.builtin.exceptions.syntax") {
+                if self.look().shape == Shape::Bare && self.glance(1).lexeme == "[" && self.glance(2).lexeme == "*"
+                    && self.glance(3).lexeme == "(" {
+                    if let Some(closed) = self.pair_close(self.pos + 3, self.tokens.len()) {
+                        if self.tokens[self.pos + 4..closed].iter().any(|word| word.lexeme == ":") {
+                            return Err(String::from("SyntaxError: Invalid star expression"));
+                        }
+                    }
+                }
                 let token = self.look();
                 let description = match token.lexeme.as_str() {
                     "None" | "False" | "True" | "__debug__" => Some(token.lexeme.as_str()),
@@ -9321,6 +9329,18 @@ impl<'a> Builder<'a> {
                 continue;
             }
             self.advance();
+            if self.table.has_any("ext.builtin.exceptions.syntax") {
+                let begin = if self.sign(":") && self.glance(1).lexeme == "(" { Some(self.pos + 1) }
+                    else if self.sign("(") { Some(self.pos) } else { None };
+                if let Some(start) = begin {
+                    if let Some(stop) = self.pair_close(start, self.tokens.len()) {
+                        let spread = self.tokens.get(start + 1).is_some_and(|part| part.lexeme == "*");
+                        let has_comma = self.tokens[start..stop].iter().any(|part| part.lexeme == ",");
+                        let has_colon = start != self.pos || self.tokens.get(stop + 1).is_some_and(|part| part.lexeme == ":");
+                        if spread && !has_comma && has_colon { return Err(String::from("SyntaxError: cannot use starred expression here")); }
+                    }
+                }
+            }
             if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
                 let next = self.glance(1).lexeme.as_str();
                 let incomplete = next == close || next == ":";
