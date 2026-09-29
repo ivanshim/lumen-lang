@@ -6677,8 +6677,17 @@ impl<'a> Machine<'a> {
         if at == 72 {
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
             let given = arguments[0].settled();
-            let Value::Text(spec) = &given else { return Err(layout.complain("ext.text.format.spec.type", &[layout.typename(&given)]).into()) };
-            return Ok(Value::text(&layout.present(&receiver.settled(), spec, "")?));
+            let spec = match &given {
+                Value::Text(spec) => spec.to_string(),
+                other => match Self::underlying(other).map(|worth| worth.settled()) {
+                    Some(Value::Text(held)) => held.to_string(),
+                    _ => {
+                        let words = self.table.strings("ext.stmt.class.format.argument");
+                        return Err(format!("{}{}", words.first().map_or("", String::as_str), Self::format_spec_complaint_kind(other)).into());
+                    }
+                },
+            };
+            return Ok(Value::text(&layout.present(&receiver.settled(), &spec, "")?));
         }
         // A whole and a remainder answered together, either way about.
         if matches!(at, 60 | 61) {
@@ -11572,7 +11581,13 @@ impl<'a> Machine<'a> {
     pub(super) fn thing_in_spec(&mut self, item: &Value, spec: &str) -> Result<String, String> {
         match self.ask_special(item, 72, &[Value::text(spec)])? {
             Some(Value::Text(shown)) => return Ok(shown.to_string()),
-            Some(_) => return Err(self.bad_answer()),
+            Some(answer) => match Self::underlying(&answer).map(|worth| worth.settled()) {
+                Some(Value::Text(held)) => return Ok(held.to_string()),
+                _ => {
+                    let words = self.table.strings("ext.stmt.class.format.result");
+                    return Err(format!("{}{}", words.first().map_or("", String::as_str), answer.kind_word()));
+                }
+            },
             None => (),
         }
         if spec.is_empty() { return self.object_words(item, false); }
@@ -11993,8 +12008,17 @@ impl<'a> Machine<'a> {
             // that is not itself a thing, so the road falls through to
             // the thing-aware text below rather than the plain one.
             (Prim::FormatValue, [item]) if Self::carries_instance(item) => Value::text(&self.thing_in_spec(item, "")?),
-            (Prim::FormatValue, [item, Value::Text(spec)]) if Self::carries_instance(item) => {
-                let spec = spec.to_string();
+            (Prim::FormatValue, [item, given]) if Self::carries_instance(item) => {
+                let spec = match given {
+                    Value::Text(spec) => spec.to_string(),
+                    other => match Self::underlying(other).map(|worth| worth.settled()) {
+                        Some(Value::Text(held)) => held.to_string(),
+                        _ => {
+                            let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+                            return Err(layout.complain("ext.text.format.spec.type", &[&Self::format_spec_complaint_kind(other)]));
+                        }
+                    },
+                };
                 Value::text(&self.thing_in_spec(item, &spec)?)
             }
             (Prim::RenderField, [item, spec, conversion]) if Self::carries_instance(item) => {
@@ -15339,11 +15363,14 @@ impl<'a> Machine<'a> {
                 let layout = crate::formatting::Layout { table: self.table, names: w };
                 if v.is_empty() || v.len() > 2 { return Err(self.table.single("ext.syntax.call.amiss").unwrap_or_default().to_owned()); }
                 let spec = match v.get(1) {
-                    Some(Value::Text(s)) => s.as_ref(),
-                    Some(item) => return Err(layout.complain("ext.text.format.spec.type", &[layout.typename(item)])),
-                    None => "",
+                    Some(Value::Text(s)) => s.to_string(),
+                    Some(item) => match Self::underlying(item).map(|worth| worth.settled()) {
+                        Some(Value::Text(held)) => held.to_string(),
+                        _ => return Err(layout.complain("ext.text.format.spec.type", &[&Self::format_spec_complaint_kind(item)])),
+                    },
+                    None => String::new(),
                 };
-                Value::text(&layout.present(&v[0], spec, "")?)
+                Value::text(&layout.present(&v[0], &spec, "")?)
             }
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,

@@ -2852,9 +2852,15 @@
   "ext.stmt.class.detail.varnames": [
     "co_varnames"
   ],
+  "ext.stmt.class.format.argument": [
+    "TypeError: __format__() argument must be str, not "
+  ],
   "ext.stmt.class.format.amiss": [
     "TypeError: unsupported format string passed to ",
     ".__format__"
+  ],
+  "ext.stmt.class.format.result": [
+    "TypeError: __format__ must return a str, not "
   ],
   "ext.stmt.class.index.amiss": [
     "TypeError: __index__ returned non-int (type ",
