@@ -506,7 +506,10 @@ def _is_expression(source):
         return False
     if body[0] in ['@', '#']:
         return False
-    if _first_word(body) in _STATEMENT_WORDS:
+    first = _first_word(body)
+    if first in _STATEMENT_WORDS:
+        return False
+    if first in ['impor', 'form', 'frum', 'raisee'] and body[len(first):len(first) + 1].isspace():
         return False
     return not _has_assignment(body)
 

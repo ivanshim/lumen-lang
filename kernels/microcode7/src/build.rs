@@ -2391,6 +2391,21 @@ impl<'a> Builder<'a> {
 
     fn plain_or_kind(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
+            let correction = match self.look().lexeme.as_str() {
+                "fur" => Some("for"), "whille" => Some("while"), "iff" => Some("if"),
+                "elseif" => Some("elif"), "tyo" => Some("try"), "classe" => Some("class"),
+                "impor" => Some("import"), "form" | "frum" => Some("from"),
+                "defn" => Some("def"), "returm" => Some("return"), "lamda" => Some("lambda"),
+                "yeld" => Some("yield"), "globel" => Some("global"),
+                "asynch" => Some("async"), "awaid" => Some("await"),
+                "raisee" => Some("raise"), _ => None,
+            };
+            if let Some(target) = correction {
+                let following = self.glance(1);
+                if following.shape == Shape::Bare || self.look().lexeme == "tyo" && following.lexeme == ":" && self.glance(2).shape == Shape::LineEnd {
+                    return Err(format!("SyntaxError: invalid syntax. Did you mean '{target}'?"));
+                }
+            }
             if self.look().lexeme == "elso" && self.glance(1).lexeme == ":"
                 && self.glance(2).shape == Shape::LineEnd {
                 return Err(String::from("SyntaxError: invalid syntax. Did you mean 'else'?"));

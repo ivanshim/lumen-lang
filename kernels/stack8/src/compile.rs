@@ -2177,6 +2177,18 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if !lang.syntax_members.is_empty() {
             let word = self.look().lexeme.clone();
+            let similar = [("fur", "for"), ("whille", "while"), ("iff", "if"),
+                ("elseif", "elif"), ("tyo", "try"), ("classe", "class"),
+                ("impor", "import"), ("form", "from"), ("frum", "from"),
+                ("defn", "def"), ("returm", "return"), ("lamda", "lambda"),
+                ("yeld", "yield"), ("globel", "global"), ("asynch", "async"),
+                ("awaid", "await"), ("raisee", "raise")];
+            if let Some((_, intended)) = similar.iter().find(|(written, _)| *written == word) {
+                let next = self.look_ahead(1);
+                if next.shape == Shape::Instr || word == "tyo" && next.lexeme == ":" && self.look_ahead(2).shape == Shape::LineEnd {
+                    return Err(format!("SyntaxError: invalid syntax. Did you mean '{intended}'?"));
+                }
+            }
             if word == "elso" && self.look_ahead(1).lexeme == ":"
                 && self.look_ahead(2).shape == Shape::LineEnd {
                 return Err("SyntaxError: invalid syntax. Did you mean 'else'?".into());
