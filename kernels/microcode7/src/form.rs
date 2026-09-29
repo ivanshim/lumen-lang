@@ -62,6 +62,8 @@ pub enum Prim {
     StartAsyncContext,
     DistinctObjects,
     Repr,
+    /// Present an interactive expression through the current hook.
+    Display,
     Iterate,
     NextOne,
     FormatValue,

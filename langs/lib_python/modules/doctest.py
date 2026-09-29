@@ -66,15 +66,6 @@ PS2 = '...'
 _TRACEBACK_HEADERS = ['Traceback (most recent call last):',
                       'Traceback (innermost last):']
 
-# A line opening one of these begins a statement, never an expression, so
-# its value is never shown.
-_STATEMENT_WORDS = ['assert', 'async', 'await', 'break', 'class', 'continue',
-                    'def', 'del', 'elif', 'else', 'except', 'finally', 'for',
-                    'from', 'global', 'if', 'import', 'match', 'nonlocal', 'pass',
-                    'raise', 'return', 'try', 'while', 'with', 'yield']
-
-_OPEN_BRACKETS = ['(', '[', '{']
-_CLOSE_BRACKETS = [')', ']', '}']
 
 _unittest_reportflags = 0
 
@@ -421,99 +412,6 @@ def _docstring_of_module(names):
 
 # ---------------------------------------------------------------- running
 
-def _first_word(text):
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if not (char == '_' or char.isalnum()):
-            break
-        index += 1
-    return text[:index]
-
-
-def _has_assignment(text):
-    """Whether a top-level assignment, annotation or semicolon makes this
-    source a statement. Quoted text, comments and brackets are passed by."""
-    depth = 0
-    index = 0
-    total = len(text)
-    quote = ''
-    while index < total:
-        char = text[index]
-        if quote != '':
-            if char == '\\':
-                index += 2
-                continue
-            if text[index:index + len(quote)] == quote:
-                index += len(quote)
-                quote = ''
-                continue
-            index += 1
-            continue
-        if char == '"' or char == "'":
-            if text[index:index + 3] == char * 3:
-                quote = char * 3
-                index += 3
-            else:
-                quote = char
-                index += 1
-            continue
-        if char == '#':
-            while index < total and text[index] != '\n':
-                index += 1
-            continue
-        if char in _OPEN_BRACKETS:
-            depth += 1
-            index += 1
-            continue
-        if char in _CLOSE_BRACKETS:
-            depth -= 1
-            index += 1
-            continue
-        if char == ':' and depth <= 0 and _first_word(text.strip()) != 'lambda':
-            return True                         # variable annotation
-        if char == '=' and depth <= 0:
-            after = ''
-            if index + 1 < total:
-                after = text[index + 1]
-            before = ''
-            if index > 0:
-                before = text[index - 1]
-            if after == '=':
-                index += 2                      # ==
-                continue
-            if before == '=' or before == '!' or before == ':':
-                index += 1                      # ==, !=, :=
-                continue
-            if before == '<' or before == '>':
-                earlier = ''
-                if index > 1:
-                    earlier = text[index - 2]
-                if earlier == before:
-                    return True                 # <<= or >>=
-                index += 1                      # <= or >=
-                continue
-            return True                         # = or an augmented form
-        if char == ';' and depth <= 0:
-            return True                         # more than one statement
-        index += 1
-    return False
-
-
-def _is_expression(source):
-    body = source.strip()
-    if body == '':
-        return False
-    if body[0] in ['@', '#']:
-        return False
-    first = _first_word(body)
-    if first in _STATEMENT_WORDS:
-        return False
-    if first in ['impor', 'form', 'frum', 'raisee'] and body[len(first):len(first) + 1].isspace():
-        return False
-    return not _has_assignment(body)
-
-
 def _exception_detail(error, message, namespace=None):
     """The last line of a traceback: the kind and, after it, the message."""
     if isinstance(error, BaseException):
@@ -536,14 +434,11 @@ def _exception_detail(error, message, namespace=None):
 
 
 class _Attempt:
-    """One example, ready to be run under a guard that catches whatever
-    stops it. An expression keeps its value, to be shown afterwards."""
+    """Run one example with interactive expression display."""
 
     def __init__(self, source, globs):
         self.source = source
         self.globs = globs
-        self.expression = _is_expression(source)
-        self.value = None
 
     def call(self):
         # A `break` or `continue` written outside a loop belongs to no loop,
@@ -554,10 +449,7 @@ class _Attempt:
         rounds = 0
         while rounds < 1:
             rounds += 1
-            if self.expression:
-                self.value = eval(self.source, self.globs)
-            else:
-                exec(self.source, self.globs)
+            exec(compile(self.source, '<doctest>', 'single'), self.globs)
             break
 
 
@@ -572,8 +464,6 @@ def _run_example(source, globs):
     sys.stdout = saved
     got = buffer.getvalue()
     if outcome[0]:
-        if attempt.value is not None:
-            got = got + repr(attempt.value) + '\n'
         if got and not got.endswith('\n'):
             got += '\n'
         return (got, None, None)

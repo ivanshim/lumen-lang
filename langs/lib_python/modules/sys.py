@@ -301,6 +301,18 @@ def unraisablehook(unraisable):
 __unraisablehook__ = unraisablehook
 
 
+def displayhook(value):
+    if value is None:
+        return
+    import builtins
+    builtins._ = None
+    stdout.write(repr(value) + '\n')
+    builtins._ = value
+
+
+__displayhook__ = displayhook
+
+
 def _report_unraisable(exc_value, exc_traceback, about, kind):
     if exc_traceback is None:
         try:

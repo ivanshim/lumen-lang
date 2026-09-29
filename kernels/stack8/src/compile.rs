@@ -48,6 +48,8 @@ pub struct Registry {
     /// handed over to be weighed is: nothing may follow it. The mark is
     /// spent by that reading.
     pub value_only: bool,
+    /// Whether bare statements at this text's top level use the display hook.
+    pub interactive: bool,
     pub allow_top_level_await: bool,
     pub top_level_coroutine: bool,
     /// The names the outermost statements declared global, for text
@@ -239,6 +241,7 @@ pub struct Compiler<'a> {
     awkward_place: bool,
     for_binding: Option<(String, usize)>,
     writing_place: bool,
+    interactive: bool,
     comprehension_names: Vec<(String, String)>,
     generator_source: Option<(usize, usize, String)>,
     /// The class being read, and what it stands on: what `self` and
@@ -399,10 +402,11 @@ pub fn compile_within(
     table.stopped_end_row = 0;
     let mut plans = HashMap::new();
     let wants_value = std::mem::take(&mut table.value_only);
+    let interactive = std::mem::take(&mut table.interactive);
     if lang.closes_over {
         let mut survey = Registry::default();
         survey.allow_top_level_await = table.allow_top_level_await;
-        if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value) {
+        if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value, interactive) {
             table.stopped_at = survey.stopped_at;
             table.stopped_column = survey.stopped_column;
             table.stopped_end = survey.stopped_end;
@@ -413,7 +417,7 @@ pub fn compile_within(
         table.builtin_exports.extend(survey.builtin_exports);
         table.program_bound.extend(survey.program_bound);
     }
-    compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false, wants_value)
+    compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false, wants_value, interactive)
 }
 
 /// Every name a `global` statement names anywhere in this text, however
@@ -514,6 +518,7 @@ fn compile_pass(
     plans: &mut HashMap<usize, BindingPlan>,
     discovering: bool,
     wants_value: bool,
+    interactive: bool,
 ) -> Res<Rc<Routine>> {
     let spelled = tokens;
     let renamed = private_tokens(tokens, lang);
@@ -564,7 +569,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -7494,6 +7499,9 @@ impl<'a> Compiler<'a> {
             self.tuple_read(false)?;
             if self.on_writing() { return Err("SyntaxError: 'tuple' is an illegal expression for augmented assignment".into()); }
             self.piece().result_touched = true;
+            if self.interactive && self.pieces.len() == 1 && !self.in_class_body() {
+                self.act(Action::Display, 1);
+            }
             self.write(RESULT_CELL);
             return Ok(());
         }
@@ -7604,6 +7612,9 @@ impl<'a> Compiler<'a> {
             self.assignment(from, None)
         } else {
             self.piece().result_touched = true;
+            if self.interactive && self.pieces.len() == 1 && !self.in_class_body() {
+                self.act(Action::Display, 1);
+            }
             self.write(RESULT_CELL);
             Ok(())
         };

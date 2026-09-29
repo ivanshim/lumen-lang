@@ -9697,6 +9697,11 @@ impl<'a> Engine<'a> {
                 self.data.pop();
                 Value::array(items)
             }
+            Action::Display => {
+                let value = self.data.last().cloned().ok_or_else(|| Fault::Note("Stack underflow".into()))?;
+                self.display_interactive(value.contents())?;
+                return Ok(());
+            }
             Action::StringFault => {
                 let message = self.drop_top()?.plain();
                 return Err(message.into());
@@ -19269,6 +19274,7 @@ impl Engine<'_> {
         self.source_escape_warnings(&source, &file, None)?;
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
+        trial.interactive = mode == 2;
         trial.allow_top_level_await = allow_top_await;
         if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
@@ -19633,15 +19639,9 @@ impl Engine<'_> {
         {
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
             registry.allow_top_level_await = top_await;
-            if mode == 2 {
-                registry.value_only = true;
-                if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
-                    noted = std::mem::take(&mut registry.warnings);
-                    compiled = Some((program, true));
-                }
-            }
             if compiled.is_none() {
                 registry.value_only = mode == 1;
+                registry.interactive = mode == 2;
                 match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
                     Ok(program) => { noted = std::mem::take(&mut registry.warnings); compiled = Some((program, false)); }
                     Err(said) => amiss = (said, registry.stopped_at, registry.stopped_column, (registry.stopped_end_row, registry.stopped_end)),
@@ -19662,6 +19662,13 @@ impl Engine<'_> {
 
     /// Run a text's program as standing in its file, and answer what it
     /// left: a value weighed, else nothing.
+    fn display_interactive(&mut self, value: Value) -> Flow<()> {
+        let sys = self.import_module("sys")?;
+        let hook = self.import_member(&sys, "sys", "displayhook")?;
+        self.class_apply(hook, vec![value])?;
+        Ok(())
+    }
+
     fn text_finished(&mut self, program: &Rc<Routine>, file: &Rc<str>, shown: bool) -> Res<Value> {
         let (was_written_in, was_on) = (self.source.clone(), self.line);
         self.source = file.clone();
@@ -19676,10 +19683,12 @@ impl Engine<'_> {
         }
         let answer = if self.data.len() > base { self.drop_top()? } else { Value::Null };
         self.data.truncate(base);
-        if shown && !matches!(answer, Value::Null) {
-            let written = self.core_call(Builtin::Repr, "repr", vec![answer], Vec::new())?;
-            self.utter(&format!("{}\n", written.plain()));
-            return Ok(Value::Null);
+        if shown {
+            match self.display_interactive(answer.contents()) {
+                Ok(()) => return Ok(Value::Null),
+                Err(Fault::Note(told)) => return Err(told),
+                Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
+            }
         }
         Ok(answer)
     }
