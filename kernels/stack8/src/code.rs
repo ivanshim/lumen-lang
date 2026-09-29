@@ -204,6 +204,8 @@ pub enum Action {
     BindValueMethod(Rc<str>),
     /// Text whose reading succeeded but whose value cannot be held.
     StringFault,
+    /// Pass an interactive statement's value to the current display hook.
+    Display,
     At,
     /// The three bounds of a span, kept until its array is known.
     Slice,

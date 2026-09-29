@@ -15597,6 +15597,10 @@ impl<'a> Machine<'a> {
                 }
                 Value::text(&String::from_utf8(drawn).map_err(|_| failed())?)
             }
+            Prim::Display => {
+                self.display_interactive(v[0].settled())?;
+                Value::Nil
+            }
             Prim::Say => {
                 self.utter(&format!("{}\n", self.show(v)));
                 Value::Nil
@@ -19334,14 +19338,21 @@ impl<'a> Machine<'a> {
     fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
         if mode == 2 {
-            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), globe.clone(), born.clone(), true, shadowed, top_await) { return Ok((built, true)); }
+            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), globe.clone(), born.clone(), true, shadowed, top_await, false) { return Ok((built, true)); }
         }
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, mode == 1, shadowed, top_await)
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, mode == 1, shadowed, top_await, mode == 2)
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 
     /// Run a built text as standing in its file, and answer what it
     /// left: the value weighed, else nothing.
+    fn display_interactive(&mut self, value: Value) -> Result<(), String> {
+        let sys = self.load_namespace("sys")?;
+        let hook = self.attribute(&sys, "displayhook").ok_or_else(|| self.source_refused())?;
+        self.core_run(&hook, vec![value])?;
+        Ok(())
+    }
+
     fn text_concluded(&mut self, built: &crate::build::Built, file: &str, mode: usize, shown: bool) -> Result<Value, String> {
         let (was_in, was_on) = (self.written_in.clone(), self.row);
         self.written_in = Rc::from(file);
@@ -19359,9 +19370,8 @@ impl<'a> Machine<'a> {
             Err(Escape::Yield(answer)) => answer,
             Err(other) => { self.got_away = Some(other); return Err("the source read in did not finish".to_owned()); }
         };
-        if shown && !matches!(answer, Value::Nil | Value::Unset) {
-            let quoted = self.core_primitive(Prim::Quoted, "repr", vec![answer], Vec::new())?;
-            self.utter(&format!("{}\n", quoted.bare()));
+        if shown {
+            self.display_interactive(answer.settled())?;
             return Ok(Value::Nil);
         }
         Ok(if mode == 1 || built.program.generator { answer } else { Value::Nil })
