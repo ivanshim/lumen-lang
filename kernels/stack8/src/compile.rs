@@ -6991,11 +6991,15 @@ impl<'a> Compiler<'a> {
                 return Err("SyntaxError: cannot assign to __debug__".into());
             }
             if let Some(colon) = self.statement_annotation() {
-                if !self.outer_marks(self.pos, colon, &self.lang.tuple_marks).0.is_empty() {
+                let mut head = self.pos;
+                let mut tail = colon;
+                while head + 1 < tail && self.tokens[head].lexeme == "(" && self.tokens[tail - 1].lexeme == ")" { head += 1; tail -= 1; }
+                if head == tail || !self.outer_marks(head, tail, &self.lang.tuple_marks).0.is_empty() {
                     return Err("SyntaxError: only single target (not tuple) can be annotated".into());
                 }
-                let mut head = self.pos;
-                while head + 1 < colon && self.tokens[head].lexeme == "(" && self.tokens[colon - 1].lexeme == ")" { head += 1; }
+                if self.tokens[head].lexeme == "[" && self.tokens[tail - 1].lexeme == "]" {
+                    return Err("SyntaxError: only single target (not list) can be annotated".into());
+                }
                 let first = &self.tokens[head];
                 let generator = self.tokens[self.pos].lexeme == "(" && self.tokens[head..colon].iter().any(|word| word.lexeme == "for");
                 if matches!(first.shape, Shape::Numeral | Shape::Quote | Shape::Bytes) || first.lexeme == "-" || generator {
