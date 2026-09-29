@@ -2026,6 +2026,9 @@ impl<'a> Machine<'a> {
                         if !matches!(worth, Value::Text(_)) { return Err(format!("TypeError: can only assign string to {}.__qualname__, not '{}'", b.name, worth.kind_word()).into()); }
                     } else { return Err(self.class_unready()); }
                 } else if ["name","kind","bases","mro","namespace","order"].iter().any(|part|key==self.detail(part)){return Err(self.class_unready());}
+                if key == self.detail("module") {
+                    b.shared.borrow_mut().retain(|entry| entry.0 != "__firstlineno__");
+                }
                 Self::change_entry(&mut b.shared.borrow_mut(),key,replacement)
             },
             Value::Routine(_)|Value::Bound(..)=>{

@@ -1961,6 +1961,9 @@ impl<'a> Engine<'a> {
                         None => return Err(self.class_refusal()),
                     }
                 } else if ["name","kind","bases","mro","namespace","order"].iter().any(|key|name==self.class_word(key)){return Err(self.class_refusal());}
+                if name == self.class_word("module") {
+                    c.shared.borrow_mut().retain(|(member, _)| member != "__firstlineno__");
+                }
                 Self::write_members(&mut c.shared.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
             Value::Routine(_) => {
