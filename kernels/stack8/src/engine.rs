@@ -11149,6 +11149,9 @@ impl<'a> Engine<'a> {
         if !self.lang.division_zero.is_empty() && matches!(op, Action::Div | Action::DivReal | Action::IntDiv | Action::Mod) {
             if arith::Exact::from_value(b).map_or(false, |e| e.p == BigInt::from(0) && e.q != BigInt::from(0)) || matches!(b, Value::Flag(false)) {
                 let real = matches!(a, Value::Real(_)) || matches!(b, Value::Real(_));
+                if self.lang.python_numbers && matches!(op, Action::IntDiv) && !real {
+                    return Err("ZeroDivisionError: integer division or modulo by zero".into());
+                }
                 let words = match (op, real) {
                     (Action::Mod, true) => &self.lang.remainder_real_zero,
                     (Action::Mod, false) => return Err(self.lang.fault_modulo.clone().unwrap_or_default()),

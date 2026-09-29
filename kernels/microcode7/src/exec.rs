@@ -13001,6 +13001,9 @@ impl<'a> Machine<'a> {
             };
             if zero {
                 let reals = v.iter().any(|x| matches!(x, Value::Frac(r) if r.places.is_some()));
+                if op == Prim::IntDiv && !reals && self.table.flag("ext.op.arithmetic.python_numbers") {
+                    return Err("ZeroDivisionError: integer division or modulo by zero".to_owned());
+                }
                 let label = match op {
                     Prim::IntDiv if reals => "ext.op.quot.real_zero",
                     Prim::IntDiv => "ext.op.quot.zero",
