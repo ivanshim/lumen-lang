@@ -898,7 +898,7 @@ impl<'a> Engine<'a> {
             7 | 8 => match &subject {
                 Value::Object(o) if place == 7 => {
                     let module = self.class_word("main");
-                    Value::text(&if o.class_now().name == "object" { "<object object at 0x1>".to_owned() }
+                    Value::text(&if o.class_now().base.is_none() && o.class_now().name == "object" { "<object object at 0x1>".to_owned() }
                         else if module.is_empty() { format!("<{} object>", o.class_now().name) }
                         else { format!("<{module}.{} object at 0x1>", o.class_now().name) })
                 }

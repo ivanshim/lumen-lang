@@ -1202,7 +1202,7 @@ impl<'a> Machine<'a> {
             Some(7)=>match &first{
                 Value::Thing(t)=>{
                     let module=self.detail("main");
-                    Value::text(&if t.blueprint().name == "object" { "<object object at 0x1>".to_string() }
+                    Value::text(&if t.blueprint().under.is_none() && t.blueprint().name == "object" { "<object object at 0x1>".to_string() }
                         else if module.is_empty() { format!("<{} object>", t.blueprint().name) }
                         else { format!("<{module}.{} object at 0x1>", t.blueprint().name) })
                 }
