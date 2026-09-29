@@ -1,1 +1,1 @@
-PythonError: SyntaxError: asynchronous comprehension outside of an asynchronous function
+  File "scratch/comprehensions/12.py", line 1
