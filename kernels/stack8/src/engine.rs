@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use num_bigint::BigInt;
+use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
 use num_traits::{ToPrimitive, Signed, Zero};
@@ -3719,6 +3720,10 @@ impl<'a> Engine<'a> {
 
     pub(super) fn iterator(&mut self, source: Value) -> Flow<Value> {
         if matches!(source, Value::Generator(_)) { return Ok(source); }
+        if self.lang.python_numbers {
+            let value = source.contents();
+            if matches!(value, Value::Counted(_)) { return Ok(self.core_iterator(&value)?); }
+        }
         let items = self.comprehension_items(&source)?;
         Ok(self.watched_walk(&source, items))
     }
@@ -4531,8 +4536,13 @@ impl<'a> Engine<'a> {
                             Action::Ge => Some(Value::Flag(x >= y)),
                             Action::Eq => Some(Value::Flag(x == y)),
                             Action::Ne => Some(Value::Flag(x != y)),
-                            Action::Mod if *y != 0 => x.checked_rem(*y).map(Value::Small),
-                            Action::IntDiv if *y != 0 => x.checked_div(*y).map(Value::Small),
+                            Action::Mod if *y != 0 => x.checked_rem(*y).and_then(|r| {
+                                if self.lang.python_numbers && r != 0 && (r < 0) != (*y < 0) { r.checked_add(*y) } else { Some(r) }
+                            }).map(Value::Small),
+                            Action::IntDiv if *y != 0 => x.checked_div(*y).and_then(|q| {
+                                let r = x.checked_rem(*y)?;
+                                if self.lang.python_numbers && r != 0 && (r < 0) != (*y < 0) { q.checked_sub(1) } else { Some(q) }
+                            }).map(Value::Small),
                             _ => None,
                         },
                         _ => None,
@@ -7070,7 +7080,11 @@ impl<'a> Engine<'a> {
             // handed over does.
             Builtin::Round if matches!(args.first(), Some(Value::Object(_))) => {
                 let asked: Vec<Value> = if matches!(args.get(1), Some(Value::Null)) { Vec::new() } else { args[1..].to_vec() };
-                match self.special_call(&args[0], 73, asked)? { Some(answer) => answer, None => return Ok(None) }
+                match self.special_call(&args[0], 73, asked)? {
+                    Some(answer) => answer,
+                    None if self.lang.python_numbers => return Err(format!("TypeError: type {} doesn't define __round__ method", Self::shown_kind(&args[0]))),
+                    None => return Ok(None),
+                }
             }
             // Division with remainder asks the left thing, then the right
             // one reflected; power with a modulus likewise, the modulus
@@ -8287,6 +8301,10 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
+                if self.lang.python_numbers {
+                    let plain = source.contents();
+                    if matches!(plain, Value::Counted(_)) { let walk = self.core_iterator(&plain)?; self.data.push(walk); return Ok(()); }
+                }
                 // A cursor is not gathered here, nor a generator: each
                 // is walked one member at a time, so a loop that breaks
                 // off leaves the rest, and what a body says before a
@@ -11213,6 +11231,29 @@ impl<'a> Engine<'a> {
                     Action::Mod => Operation::Remainder,
                     _ => Operation::Raise,
                 };
+                if self.lang.python_numbers && matches!(op, Action::IntDiv | Action::Mod) {
+                    if let (Some(x), Some(y)) = (arith::Exact::from_value(a), arith::Exact::from_value(b)) {
+                        if matches!(a, Value::Real(_)) || matches!(b, Value::Real(_)) {
+                            let mut dividend = crate::value::as_binary(&x.p, &x.q);
+                            let mut divisor = crate::value::as_binary(&y.p, &y.q);
+                            if dividend == 0.0 && x.below { dividend = -0.0; }
+                            if divisor == 0.0 && y.below { divisor = -0.0; }
+                            let mut rem = dividend % divisor;
+                            let mut div = (dividend - rem) / divisor;
+                            if rem != 0.0 && rem.is_sign_negative() != divisor.is_sign_negative() {
+                                rem += divisor;
+                                div -= 1.0;
+                            } else if rem == 0.0 { rem = 0.0f64.copysign(divisor); }
+                            let mut floor = div.floor();
+                            if div - floor > 0.5 { floor += 1.0; }
+                            if div == 0.0 { floor = 0.0f64.copysign(dividend / divisor); }
+                            return Ok(crate::value::real_of(if matches!(op, Action::Mod) { rem } else { floor }, arith::DEFAULT_PLACES));
+                        }
+                        if x.q == BigInt::from(1) && y.q == BigInt::from(1) && !y.p.is_zero() {
+                            return Ok(Value::of_big(if matches!(op, Action::Mod) { x.p.mod_floor(&y.p) } else { x.p.div_floor(&y.p) }));
+                        }
+                    }
+                }
                 let result = if self.lang.arithmetic_binary { arith::binary_work(calc, a, b) } else { None };
                 match result.or_else(|| arith::calculate(calc, a, b)) {
                     // A language may tell taking the remainder by
@@ -18030,33 +18071,32 @@ impl Engine<'_> {
                     let (q,r) = a.as_big()?.div_mod_floor(&divisor);
                     Value::Tuple(Rc::new(vec![Value::of_big(q),Value::of_big(r)]))
                 } else {
-                    let (p,q) = arith::parts(&a).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    if let Value::Real(real) = &z {
-                        if real.q.is_zero() {
-                            let x = crate::value::as_binary(&p, &q);
-                            let y = crate::value::as_binary(&real.p, &real.q);
-                            if y.is_infinite() && x.is_finite() {
-                                let opposite = x != 0.0 && x.is_sign_negative() != y.is_sign_negative();
-                                let quotient = if opposite { -1.0 } else { 0.0 };
-                                let remainder = if opposite { y } else { x };
-                                return Ok(Value::Tuple(Rc::new(vec![
-                                    crate::value::real_of(quotient, arith::DEFAULT_PLACES),
-                                    crate::value::real_of(remainder, arith::DEFAULT_PLACES),
-                                ])));
-                            }
-                        }
+                    let dividend = arith::Exact::from_value(&a).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    let divisor = arith::Exact::from_value(&z).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    let mut x = crate::value::as_binary(&dividend.p, &dividend.q);
+                    let mut y = crate::value::as_binary(&divisor.p, &divisor.q);
+                    if self.lang.python_numbers && x == 0.0 && dividend.below { x = -0.0; }
+                    if self.lang.python_numbers && y == 0.0 && divisor.below { y = -0.0; }
+                    if y.is_infinite() && x.is_finite() && (!self.lang.python_numbers || x != 0.0) {
+                        let opposite = x != 0.0 && x.is_sign_negative() != y.is_sign_negative();
+                        let quotient = if opposite { -1.0 } else { 0.0 };
+                        let remainder = if opposite { y } else { x };
+                        return Ok(Value::Tuple(Rc::new(vec![
+                            crate::value::real_of(quotient, arith::DEFAULT_PLACES),
+                            crate::value::real_of(remainder, arith::DEFAULT_PLACES),
+                        ])));
                     }
-                    let (r,s) = arith::parts(&z).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    let (x,y) = (crate::value::as_binary(&p,&q),crate::value::as_binary(&r,&s));
-                    if y == 0.0 { return Err(self.core_fault("core.zero", "")); }
+                    if y == 0.0 { return Err(if self.lang.python_numbers { "ZeroDivisionError: float divmod()".to_string() } else { self.core_fault("core.zero", "") }); }
                     let mut rem = x % y;
-                    let mut div = (x-rem)/y;
-                    if rem != 0.0 && rem.is_sign_negative() != y.is_sign_negative() { rem += y; div -= 1.0; }
-                    if rem == 0.0 { rem = 0.0f64.copysign(y); }
+                    let mut div = (x - rem) / y;
+                    if rem != 0.0 && rem.is_sign_negative() != y.is_sign_negative() {
+                        rem += y;
+                        div -= 1.0;
+                    } else if rem == 0.0 { rem = 0.0f64.copysign(y); }
                     let mut floor = div.floor();
                     if div - floor > 0.5 { floor += 1.0; }
-                    if div == 0.0 { floor = 0.0f64.copysign(x/y); }
-                    Value::Tuple(Rc::new(vec![crate::value::real_of(floor,arith::DEFAULT_PLACES), crate::value::real_of(rem,arith::DEFAULT_PLACES)]))
+                    if div == 0.0 { floor = 0.0f64.copysign(x / y); }
+                    Value::Tuple(Rc::new(vec![crate::value::real_of(floor, arith::DEFAULT_PLACES), crate::value::real_of(rem, arith::DEFAULT_PLACES)]))
                 }
             }
             Builtin::Power => {
@@ -18109,8 +18149,15 @@ impl Engine<'_> {
                     if let Some(n) = &ndigits_big {
                         if *n > BigInt::from(323) { return Ok(args[0].clone()); }
                         if *n < BigInt::from(-308) {
-                            return Ok(crate::value::real_of(if f.p.is_negative() { -0.0 } else { 0.0 }, arith::DEFAULT_PLACES));
+                            return Ok(crate::value::real_of(if f.p.is_negative() || f.below { -0.0 } else { 0.0 }, arith::DEFAULT_PLACES));
                         }
+                    }
+                }
+                if self.lang.python_numbers && matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    if let Some(n) = &ndigits_big {
+                        if n >= &BigInt::from(0) { return Ok(Value::of_big(args[0].as_big()?)); }
+                        let width = args[0].as_big()?.abs().to_str_radix(10).len();
+                        if -n > BigInt::from(width) { return Ok(Value::Small(0)); }
                     }
                 }
                 let digits = match &ndigits_big { None => 0, Some(n) => n.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
@@ -18138,13 +18185,13 @@ impl Engine<'_> {
                     let scale = BigInt::from(10).pow(places);
                     let (top, bottom) = if digits < 0 { (p.abs(), &q * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32)) } else { (p.abs() * &scale, q.clone()) };
                     let (mut whole, remainder) = top.div_rem(&bottom);
-                    if remainder * 2 >= bottom { whole += 1; }
+                    if &remainder * 2 > bottom || (&remainder * 2 == bottom && (!self.lang.python_numbers || whole.is_odd())) { whole += 1; }
                     if p.is_negative() { whole = -whole; }
                     if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { return Ok(Value::of_big(whole)); }
                     let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
                     let result = crate::value::as_binary(&above, &beneath);
                     if result.is_infinite() { return Err("OverflowError: rounded value too large to represent".to_string()); }
-                    return Ok(crate::value::real_of(if result == 0.0 && p.is_negative() { -0.0 } else { result }, arith::DEFAULT_PLACES));
+                    return Ok(crate::value::real_of(if result == 0.0 && (p.is_negative() || matches!(&x, Value::Real(real) if real.below)) { -0.0 } else { result }, arith::DEFAULT_PLACES));
                 }
                 // Keep the library's scale, signed half, and truncating quotient.
                 let scale = Value::of_big(BigInt::from(10).pow(places));

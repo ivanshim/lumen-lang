@@ -381,8 +381,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.round.whole.even`: a switch; a whole number rounded to a
   count of places after the point is itself, and rounded to places
   before the point a half goes to the even neighbour, as CPython rounds
-  whole numbers. Reals keep the language floor's rounding, half away
-  from nought.
+  whole numbers. Python's real rounding also chooses the even neighbour
+  when `ext.op.arithmetic.python_numbers` is enabled.
 - `ext.builtin.to_real.infinity` and `.nan`: lists of words the real
   reader takes without regard to case, with a sign before them if given.
   They stand for the number past all finite numbers and the value no
@@ -1226,7 +1226,8 @@ only. The extension labels so far, all from PHP:
   to stand before all the digits or after them, as in `.5` and `5.`.
 - `ext.op.arithmetic.binary`: a switch selecting binary arithmetic for
   real addition, subtraction, multiplication and division. Python enables
-  it; quotient and remainder keep the shared truncating rule.
+  it; Python selects its own quotient and remainder rule with
+  `ext.op.arithmetic.python_numbers`.
 - `ext.op.arithmetic.flags`: a switch making flags count as nought and
   one in arithmetic, numeric comparison and conversion to a real.
   Identity keeps the kinds apart, and bit operations keep their own
@@ -1244,14 +1245,13 @@ only. The extension labels so far, all from PHP:
   Repetition and writing into text keep their own refusals, which name
   what they were handed. With the switch off a kernel reads both as it
   always did.
-- Python keeps the shared arithmetic at this stage: `//` truncates toward
-  zero and `%` is `a - b * (a // b)`. Thus `-17 // 5` is `-3` and
-  `-17 % 5` is `-2`, unlike CPython's `-4` and `3`. The shared library's
-  `round(x, decimals)` rounds halfway away from zero: `round(2.5, 0)`
-  is `3`, unlike CPython's ties-to-even result `2`. Both arguments are
-  required; negative decimal counts act like zero, and CPython's omitted
-  or null places and `ndigits` keyword are not provided. The examples
-  require these shared rules across all six kernels.
+- `ext.op.arithmetic.python_numbers`: a Python-only switch. `//` floors,
+  `%` has the divisor's sign, and `divmod()` returns the same pair. Floats
+  use the binary remainder and quotient correction of CPython, including
+  signed zero. `round()` chooses the even neighbour at a tie and accepts
+  omitted or negative `ndigits`; float ties use the exact binary value.
+  With this switch off, the shared core retains truncating quotient and
+  half-away rounding for the other languages.
   Python retains 64-bit real arithmetic but uses the existing kernel
   rendering, not CPython's shortest round-trip spelling: whole reals
   omit `.0`, powers of ten remain expanded, and negative zero is `-0`.
@@ -2259,10 +2259,10 @@ only. The extension labels so far, all from PHP:
   following; `ext.builtin.bool.base` refuses a class built on the flag
   class, as CPython refuses one.
 - `ext.builtin.abs`, `.round`, `.divmod` and `.pow`: absolute worth,
-  rounding, quotient with remainder, and exponentiation. Rounding keeps
-  the shared library behavior: halfway values go away from zero, unlike
-  CPython, whose ties go to even. Negative decimal counts act as zero
-  places, as in the library; CPython instead rounds to tens or higher.
+  rounding, quotient with remainder, and exponentiation. Python selects
+  its floor, remainder and half-even rounding rules with
+  `ext.op.arithmetic.python_numbers`; the shared core retains its default
+  behavior for the other languages.
   `ext.builtin.round.number` and `.ndigits` name the number and its places;
   `ext.builtin.pow.base`, `.exp` and `.mod` name the power's arguments.
   A modulus keeps whole powers bounded, and a negative exponent asks for
@@ -4930,6 +4930,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.literal.unimplemented` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.binary` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.flags` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.arithmetic.python_numbers` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.strict` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
@@ -5029,7 +5030,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.pow.real_exponent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.pow.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
 | `ext.op.quot.real_zero` | - | - | `ZeroDivisionError: float floor division by zero` | - | - | - | - | - | - | - |
-| `ext.op.quot.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
+| `ext.op.quot.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | `Only variable references should be returned by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |

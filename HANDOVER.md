@@ -260,8 +260,8 @@ is run alone with a long cap.
   (`langs/lib_python/modules/manifest.rs`, `include_str!`): rebuild after
   any library edit, and a binary built mid-experiment carries the
   experiment.
-- Documented divergences not to chase: `//` truncates, `round()` rounds
-  half away from zero, `divmod` floors differently (§4).
+- The shared core keeps truncating quotient and half-away rounding for
+  other languages; Python selects its own arithmetic rules (§4).
 
 ---
 
@@ -314,9 +314,10 @@ the release binary itself.
   reference kernels read past every `ext.*` label, so a Python-only
   behaviour must sit behind an `ext.*` label, and a behaviour every
   language shares behind a core label all six read.
-- **`//` truncates and `round` rounds half away from zero** for every
-  language (the examples depend on it); CPython's flooring and
-  half-to-even are documented divergences in `langs/README.md`.
+- **The shared core truncates `//` and rounds halves away from zero** by
+  default (the other languages' examples depend on it). Python selects
+  its own floor, divisor-signed remainder, and half-to-even rules through
+  `ext.op.arithmetic.python_numbers`.
 - **Every roster line is one long line**, so a merge can take one side
   whole and drop the other side's labels without a conflict. After a
   merge, check each side's new labels are all still present.

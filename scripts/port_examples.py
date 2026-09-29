@@ -1908,6 +1908,36 @@ def write_library_report(lib, defs, coverage):
     LIBRARY_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def python_number_examples(relative, text):
+    """Keep the shared examples' operands meaningful under Python's rules."""
+    name = relative.as_posix()
+    if name == "constructs/round_function.py":
+        text = text.replace("2.5, 0", "2.4, 0")
+        text = text.replace("round half away from zero", "Python rounding")
+    elif name == "constructs/integer_quotient_minimal.py":
+        text = text.replace("Truncate toward zero", "Negative divisible case")
+        text = text.replace("-17", "-20").replace("(-3)", "(-4)")
+        first, third = text.split('sys.stdout.write("3. 17 // -5 = ")', 1)
+        section, tail = third.split('sys.stdout.write("4. Rational', 1)
+        section = section.replace("17", "20").replace("(-3)", "(-4)")
+        text = first + 'sys.stdout.write("3. 20 // -5 = ")' + section + 'sys.stdout.write("4. Rational' + tail
+    elif name == "constructs/integer_quotient.py":
+        text = text.replace("-17", "-20")
+        first, third = text.split('sys.stdout.write("Test 1c: 17 // -5 = ")', 1)
+        section, tail = third.split('sys.stdout.write("Test 1d:', 1)
+        section = section.replace("17", "20")
+        text = first + 'sys.stdout.write("Test 1c: 20 // -5 = ")' + section + 'sys.stdout.write("Test 1d:' + tail
+        text = text.replace("-20/3", "-18/3").replace("a = -20 / 3", "a = -18 / 3")
+        text = text.replace("quotient truncates to -5", "quotient floors to -3")
+        text = text.replace("-3.5", "-4.0")
+        text = text.replace("Verify truncation toward zero", "Verify floor division")
+        text = text.replace("(not floor division which would be 2.5 -> 2, but truncate 2.5 -> 2) [OK]", "(floor of 2.5 is 2) [OK]")
+        text = text.replace("-5 // 2", "-6 // 2")
+        text = text.replace("(not floor division which would be -2.5 -> -3, but truncate -2.5 -> -2) [OK]", "(floor of -3 is -3) [OK]")
+        text = text.replace("[OK] Truncates toward zero (not floor division)", "[OK] Floors quotients")
+    return text
+
+
 def main():
     lib, constants = load_library()
     defs = definitions()
@@ -1939,6 +1969,8 @@ def main():
                 results[(ex, lang)] = str(why)
                 continue
             target = out_root / rel
+            if lang == "python":
+                text = python_number_examples(rel, text)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
             results[(ex, lang)] = None

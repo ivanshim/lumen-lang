@@ -2161,6 +2161,7 @@
   "ext.literal.ellipsis.unready": [
     "NotImplementedError: ellipsis values are not supported"
   ],
+  "ext.op.arithmetic.python_numbers": true,
   "ext.op.arithmetic.binary": true,
   "ext.op.arithmetic.flags": true,
   "ext.op.arithmetic.strict": true,
@@ -2361,7 +2362,7 @@
     "ZeroDivisionError: float floor division by zero"
   ],
   "ext.op.quot.zero": [
-    "ZeroDivisionError: division by zero"
+    "ZeroDivisionError: integer division or modulo by zero"
   ],
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"

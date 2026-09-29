@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use num_bigint::BigInt;
+use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
 use num_traits::{ToPrimitive, Zero};
@@ -3100,6 +3101,10 @@ impl<'a> Machine<'a> {
 
     pub(super) fn make_iterator(&mut self, source: Value) -> Res {
         if let Value::Generator(_) = source { return Ok(source); }
+        if self.table.flag("ext.op.arithmetic.python_numbers") {
+            let naked = source.settled();
+            if matches!(naked, Value::Progression(_)) { return Ok(self.iterated_value(&naked)?); }
+        }
         let members = self.gathered_members(&source)?;
         Ok(self.walk_over(&source, members))
     }
@@ -4382,8 +4387,15 @@ impl<'a> Machine<'a> {
                         Prim::Ge => Some(Value::Flag(x >= y)),
                         Prim::Eq => Some(Value::Flag(x == y)),
                         Prim::Ne => Some(Value::Flag(x != y)),
-                        Prim::Mod if *y != 0 => x.checked_rem(*y).map(Value::Small),
-                        Prim::IntDiv if *y != 0 => x.checked_div(*y).map(Value::Small),
+                        Prim::Mod if *y != 0 => match x.checked_rem(*y) {
+                            Some(r) if r != 0 && (r < 0) != (*y < 0) && self.table.flag("ext.op.arithmetic.python_numbers") => r.checked_add(*y).map(Value::Small),
+                            other => other.map(Value::Small),
+                        },
+                        Prim::IntDiv if *y != 0 => match (x.checked_div(*y), x.checked_rem(*y)) {
+                            (Some(q), Some(r)) if r != 0 && (r < 0) != (*y < 0) && self.table.flag("ext.op.arithmetic.python_numbers") => q.checked_sub(1).map(Value::Small),
+                            (Some(q), _) => Some(Value::Small(q)),
+                            _ => None,
+                        },
                         _ => None,
                     },
                     _ => None,
@@ -11856,6 +11868,7 @@ impl<'a> Machine<'a> {
                 let places: &[Value] = if matches!(rest, [Value::Nil]) { &[] } else { rest };
                 match self.ask_special(item, 73, places)? {
                     Some(answer) => answer,
+                    None if self.table.flag("ext.op.arithmetic.python_numbers") => return Err(format!("TypeError: type {} doesn't define __round__ method", item.kind_word())),
                     None => return Ok(None),
                 }
             }
@@ -13335,6 +13348,9 @@ impl<'a> Machine<'a> {
             // An iterator or a generator is not gathered: the loop steps
             // it a member at a time, so what its body said before a later
             // step raised stands said, and a loop broken off leaves the rest.
+            Prim::Iterated if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(v[0].settled(), Value::Progression(_)) => {
+                self.iterated_value(&v[0].settled())?
+            }
             Prim::Iterated => match self.begin_set_walk(&v[0]) {
                 None if matches!(v[0], Value::Iterator(_) | Value::Generator(_)) => v[0].clone(),
                 None => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
@@ -15454,6 +15470,28 @@ impl<'a> Machine<'a> {
                     }
                     false => (v[0].clone(), v[1].clone()),
                 };
+                if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(sum, Calc::IntDiv | Calc::Remainder) {
+                    if let (Some(a), Some(b)) = (math::ratio_of(&left), math::ratio_of(&right)) {
+                        if a.places.is_some() || b.places.is_some() {
+                            let mut u = crate::data::nearest_binary(&a.above, &a.beneath);
+                            let mut v = crate::data::nearest_binary(&b.above, &b.beneath);
+                            if a.above.is_zero() && a.under { u = -0.0; }
+                            if b.above.is_zero() && b.under { v = -0.0; }
+                            let raw = u % v;
+                            let correction = raw != 0.0 && raw.is_sign_negative() != v.is_sign_negative();
+                            let residue = if raw == 0.0 { 0.0f64.copysign(v) } else if correction { raw + v } else { raw };
+                            let quotient = (u - raw) / v - if correction { 1.0 } else { 0.0 };
+                            let lower = quotient.floor();
+                            let floor = if quotient == 0.0 { 0.0f64.copysign(u / v) } else if quotient - lower > 0.5 { lower + 1.0 } else { lower };
+                            let answer = if sum == Calc::IntDiv { floor } else { residue };
+                            return Ok(crate::data::worth_of_binary(answer, math::DEFAULT_PLACES));
+                        }
+                        if b.above != BigInt::from(0) && a.beneath == BigInt::from(1) && b.beneath == BigInt::from(1) {
+                            let answer = if sum == Calc::IntDiv { a.above.div_floor(&b.above) } else { a.above.mod_floor(&b.above) };
+                            return Ok(Value::from_big(answer));
+                        }
+                    }
+                }
                 let binary = if self.table.flag("ext.op.arithmetic.binary") { math::binary_work(sum, &left, &right) } else { None };
                 let worked = match binary.or_else(|| math::compute(sum, &left, &right)) {
                     // A language may tell the remainder by nought apart
@@ -20585,9 +20623,13 @@ impl Machine<'_> {
                 }
                 let left = math::ratio_of(&one).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let right = math::ratio_of(&two).ok_or_else(|| self.core_complaint("core.unready", name))?;
-                let x = crate::data::nearest_binary(&left.above,&left.beneath);
-                let y = crate::data::nearest_binary(&right.above,&right.beneath);
-                if y == 0.0 { return Err(self.core_complaint("core.zero", "")); }
+                let mut x = crate::data::nearest_binary(&left.above,&left.beneath);
+                let mut y = crate::data::nearest_binary(&right.above,&right.beneath);
+                if self.table.flag("ext.op.arithmetic.python_numbers") && left.above.is_zero() && left.under { x = -0.0; }
+                if self.table.flag("ext.op.arithmetic.python_numbers") && right.above.is_zero() && right.under { y = -0.0; }
+                if y == 0.0 {
+                    return Err(if self.table.flag("ext.op.arithmetic.python_numbers") { "ZeroDivisionError: float divmod()".to_string() } else { self.core_complaint("core.zero", "") });
+                }
                 let residue = x % y;
                 let corrected = residue != 0.0 && residue.is_sign_negative() != y.is_sign_negative();
                 let remain = if residue == 0.0 { 0.0f64.copysign(y) } else if corrected { residue+y } else { residue };
@@ -20649,9 +20691,16 @@ impl Machine<'_> {
                     if let Some(n) = &ndigits {
                         if *n > BigInt::from(323) { return Ok(input[0].clone()); }
                         if *n < BigInt::from(-308) {
-                            let negative = r.above.is_negative();
+                            let negative = r.above.is_negative() || r.under;
                             return Ok(crate::data::worth_of_binary(if negative { -0.0 } else { 0.0 }, math::DEFAULT_PLACES));
                         }
+                    }
+                }
+                if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(input[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    if let Some(n) = &ndigits {
+                        if n >= &BigInt::from(0) { return Ok(Value::from_big(input[0].as_big()?)); }
+                        let figures = input[0].as_big()?.abs().to_str_radix(10).len();
+                        if -n > BigInt::from(figures) { return Ok(Value::Small(0)); }
                     }
                 }
                 let places = match &ndigits { None => 0, Some(n) => n.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
@@ -20676,12 +20725,13 @@ impl Machine<'_> {
                 let fraction = math::ratio_of(&value).filter(|r| !r.beneath.is_zero()).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 if self.table.lone("system.real.render") == Some("shortest") && fraction.places.is_some() {
                     let factor = BigInt::from(10).pow(places.unsigned_abs().min(100000) as u32);
-                    let negative = fraction.above.is_negative();
+                    let negative = fraction.above.is_negative() || fraction.under;
                     let mut numerator = fraction.above.abs();
                     let mut denominator = fraction.beneath;
                     if places < 0 { denominator *= &factor; } else { numerator *= &factor; }
                     let mut rounded = &numerator / &denominator;
-                    if (&numerator % &denominator) * 2 >= denominator { rounded += 1; }
+                    let twice = (&numerator % &denominator) * 2;
+                    if twice > denominator || (twice == denominator && (!self.table.flag("ext.op.arithmetic.python_numbers") || rounded.is_odd())) { rounded += 1; }
                     if negative { rounded = -rounded; }
                     if input.len() < 2 || matches!(input[1], Value::Nil) { return Ok(Value::from_big(rounded)); }
                     let worth = if places < 0 { crate::data::nearest_binary(&(rounded * factor), &BigInt::from(1)) }
