@@ -508,40 +508,38 @@ impl<'a> Cursor<'a> {
     /// same kind (`bb''`) names no two kinds to blame, so it reads as
     /// the language's plain word for text it cannot read; two
     /// differing kinds that do not belong together (raw and plain,
-    /// byte and plain, byte and format) are named the way `about_two`
-    /// reads `ext.lexical.string.prefix.incompatible`, 'u' picked
-    /// first among a plain letter's conflicts and 'b' first among the
-    /// rest, matching the reference reading the letters together
-    /// rather than the first pair it meets.
+    /// byte and plain, byte and format, or format and template) name
+    /// the incompatible pair by Python's prefix precedence.
     fn prefix_conflict(&self) -> Option<String> {
         let lang = self.lang;
-        let mut flags: u8 = 0;
+        let mut present = [false; 5];
         let mut repeated = false;
-        let mut count = 0usize;
+        let mut count = 0;
         loop {
             let c = self.look(count)?;
             if lang.quotes.contains(&c) { break; }
             let kind = if lang.raw_prefixes.contains(&c) { 0 }
                 else if lang.byte_prefixes.contains(&c) { 1 }
                 else if lang.plain_prefixes.contains(&c) { 2 }
-                else if lang.format_prefixes.contains(&c) || lang.template_prefixes.contains(&c) { 3 }
+                else if lang.format_prefixes.contains(&c) { 3 }
+                else if lang.template_prefixes.contains(&c) { 4 }
                 else { return None; };
-            let bit = 1u8 << kind;
-            if flags & bit != 0 { repeated = true; }
-            flags |= bit;
+            repeated |= present[kind];
+            present[kind] = true;
             count += 1;
-            if count > 4 { return None; }
+            if count > 5 { return None; }
         }
-        if count == 0 || !lang.quotes.contains(&self.look(count)?) { return None; }
-        let valid = matches!(flags, 0b0001 | 0b0010 | 0b0100 | 0b1000 | 0b0011 | 0b1001);
+        if count == 0 { return None; }
+        let [raw, bytes, plain, format, template] = present;
+        let valid = count == 1 || count == 2 && raw && (bytes || format || template);
         if valid && !repeated { return None; }
         if repeated { return Some(lang.source_syntax.clone().unwrap_or_default()); }
-        let has = |kind: u8| flags & (1 << kind) != 0;
-        let pair = if has(2) {
-            if has(1) { ('u', 'b') } else if has(0) { ('u', 'r') } else { ('u', 'f') }
-        } else {
-            ('b', 'f')
-        };
+        let pair = if plain {
+            if bytes { ('u', 'b') } else if raw { ('u', 'r') }
+            else if format { ('u', 'f') } else { ('u', 't') }
+        } else if bytes {
+            if format { ('b', 'f') } else { ('b', 't') }
+        } else { ('f', 't') };
         Some(match &lang.prefix_incompatible {
             Some((before, between, after)) => format!("{before}{}{between}{}{after}", pair.0, pair.1),
             None => lang.source_syntax.clone().unwrap_or_default(),

@@ -802,42 +802,36 @@ fn quoted_start(src: &[char], offset: usize, table: &Table) -> Option<(usize, Ve
 /// (`bb''`) names no two kinds to blame, so it reads as the
 /// language's plain word for text it cannot read; two differing
 /// kinds that do not belong together (raw and plain, byte and plain,
-/// byte and format) are named by ext.lexical.string.prefix.incompatible,
-/// 'u' picked first among a plain letter's conflicts and 'b' first
-/// among the rest, reading the letters together rather than the
-/// first pair met.
+/// byte and format, or format and template) name the conflicting
+/// pair in Python's prefix order.
 fn prefix_conflict(src: &[char], offset: usize, table: &Table) -> Option<String> {
-    let quotes = table.letters("lexical.string_quotes");
-    let mut flags = 0u8;
-    let mut repeated = false;
+    let mut seen = 0u8;
+    let mut duplicate = false;
     let mut at = offset;
-    loop {
-        let c = *src.get(at)?;
-        if quotes.contains(&c) { break; }
-        let letter = c.to_string();
-        let kind = ["raw", "bytes", "plain", "format"].iter().position(|part|
-            table.spells(&format!("ext.lexical.string.prefix.{part}"), &letter))
-            .or_else(|| table.spells("ext.lexical.string.prefix.template", &letter).then_some(3))?;
-        let bit = 1u8 << kind;
-        if flags & bit != 0 { repeated = true; }
-        flags |= bit;
+    let quotes = table.letters("lexical.string_quotes");
+    while !quotes.contains(src.get(at)?) {
+        let character = src[at].to_string();
+        let family = ["raw", "bytes", "plain", "format", "template"]
+            .iter().position(|name| table.spells(&format!("ext.lexical.string.prefix.{name}"), &character))?;
+        let bit = 1u8 << family;
+        duplicate |= seen & bit != 0;
+        seen |= bit;
         at += 1;
-        if at - offset > 4 { return None; }
+        if at - offset > 5 { return None; }
     }
-    if at == offset || !quotes.contains(src.get(at)?) { return None; }
-    let valid = matches!(flags, 0b0001 | 0b0010 | 0b0100 | 0b1000 | 0b0011 | 0b1001);
-    if valid && !repeated { return None; }
+    let width = at - offset;
+    if width == 0 { return None; }
+    let has = |bit| seen & (1u8 << bit) != 0u8;
+    let permitted = width == 1 || width == 2 && has(0) && (has(1) || has(3) || has(4));
+    if permitted && !duplicate { return None; }
     let generic = || table.single("ext.builtin.source.syntax").unwrap_or_default().to_owned();
-    if repeated { return Some(generic()); }
-    let has = |kind: u8| flags & (1 << kind) != 0;
-    let pair = if has(2) {
-        if has(1) { ('u', 'b') } else if has(0) { ('u', 'r') } else { ('u', 'f') }
-    } else {
-        ('b', 'f')
-    };
-    let pieces = table.strings("ext.lexical.string.prefix.incompatible");
-    Some(match pieces {
-        [before, between, after] => format!("{before}{}{between}{}{after}", pair.0, pair.1),
+    if duplicate { return Some(generic()); }
+    let first = if has(2) { 'u' } else if has(1) { 'b' } else { 'f' };
+    let second = if has(2) {
+        if has(1) { 'b' } else if has(0) { 'r' } else if has(3) { 'f' } else { 't' }
+    } else if has(1) && has(3) { 'f' } else { 't' };
+    Some(match table.strings("ext.lexical.string.prefix.incompatible") {
+        [before, between, after] => format!("{before}{first}{between}{second}{after}"),
         _ => generic(),
     })
 }
