@@ -109,7 +109,7 @@ const REQUEST_PARTS: [(&str, &str); 8] = [
 /// and the row the reading stopped on. Where the language has no word
 /// for such a stopping, nothing is written and the fault goes back as
 /// it came, for the host to tell in its own way.
-fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str, column: Option<usize>) -> String {
+fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str, column: Option<usize>, end: Option<(u32, usize)>) -> String {
     let mut message = said.to_owned();
     if before != 0 && table.has_any("ext.builtin.exceptions.syntax") {
         let marker = " (detected at line ";
@@ -156,7 +156,16 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
         if let Some(col) = column {
             if !markless {
                 let indent = written.chars().count() - bare.chars().count();
-                eprintln!("    {}^", " ".repeat(col.saturating_sub(indent + 1)));
+                let start = col.saturating_sub(indent + 1);
+                // A span ending on the row is marked across; one
+                // reaching past the row is marked to the row's end, as
+                // the reference marks it; a bare place takes one mark.
+                let span = match end {
+                    Some((end_row, end_col)) if end_row == row => end_col.saturating_sub(col).max(1),
+                    Some((end_row, _)) if end_row > row => bare.chars().count().saturating_sub(start).max(1),
+                    _ => 1,
+                };
+                eprintln!("    {}{}", " ".repeat(start), "^".repeat(span));
             }
         }
         eprintln!("{kind}: {wording}");
@@ -299,8 +308,8 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let joined = import_rejoined(source, table, ahead);
     let source = joined.as_deref().unwrap_or(source);
     escape_notices_ahead_of_run(source, table, ahead, request);
-    let read = scan::scan_position(source, table).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col)));
-    let shaped = indent::indent_position(read?, table, ahead).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col)));
+    let read = scan::scan_position(source, table).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col), None));
+    let shaped = indent::indent_position(read?, table, ahead).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col), None));
     let tokens = shaped?;
     let system = ["system.args", "ext.system.args.list", "ext.system.args.count", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null",
@@ -321,7 +330,9 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         .unwrap_or(0);
     let reduced = if !table.rpn {
         build::build_at(&tokens, table, &seeded, HashMap::new(), true, before)
-            .map_err(|(said, row, hard)| cannot_read(table, &said, row, request, ahead, hard, source, None))?
+            .map_err(|(said, row, hard, span)| cannot_read(table, &said, row, request, ahead, hard, source,
+                if span.0 > 0 { Some(span.0) } else { None },
+                if span.1 > 0 { Some((span.2, span.1)) } else { None }))?
     } else {
         // Read leniently until the named programs' arities settle, then strictly.
         let mut assumed: HashMap<String, build::Signature> = HashMap::new();
