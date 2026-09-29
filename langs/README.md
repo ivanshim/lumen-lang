@@ -4442,7 +4442,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.unreversible` | - | - | `TypeError: '` `' object is not reversible` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unsized` | - | - | `TypeError: object of type '` `' has no len()` | - | - | - | - | - | - | - |
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
-| `ext.builtin.core.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
+| `ext.builtin.core.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
 | `ext.builtin.default` | - | - | `default` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
@@ -5414,7 +5414,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.index` | - | - | `list index out of range` | - | - | - | - | - | - | - |
 | `ext.system.fault.index.assign` | - | - | `list assignment index out of range` | - | - | - | - | - | - | - |
 | `ext.system.fault.kind` | - | - | `unsupported operand types` | - | - | - | - | - | - | - |
-| `ext.system.fault.modulo` | - | - | `ZeroDivisionError: integer modulo by zero` | - | `Modulo by zero` | - | - | - | - | - |
+| `ext.system.fault.modulo` | - | - | `ZeroDivisionError: division by zero` | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.name` | - | - | `name '` `' is not defined` | - | - | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
 | `ext.system.fault.shift` | - | - | `ValueError: negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |

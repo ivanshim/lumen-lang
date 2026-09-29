@@ -768,7 +768,7 @@
     "TypeError: vars() argument must have __dict__ attribute"
   ],
   "ext.builtin.core.zero": [
-    "ZeroDivisionError: integer division or modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.builtin.default": [
     "default"
@@ -3492,7 +3492,7 @@
     "unsupported operand types"
   ],
   "ext.system.fault.modulo": [
-    "ZeroDivisionError: integer modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.system.fault.name": [
     "name '",
