@@ -6934,6 +6934,19 @@ impl<'a> Builder<'a> {
 
     fn binding_or_value(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if let Some(&equal) = self.divided_at(self.pos, self.tokens.len(), "stmt.assign").first() {
+                let word = self.look();
+                let target = if word.shape == Shape::Woven { Some("f-string expression") }
+                    else if word.lexeme == "{" && self.pair_close(self.pos, equal) == Some(equal - 1) {
+                        Some(if self.divided_at(self.pos + 1, equal - 1, "syntax.map.pair").is_empty() { "set display" } else { "dict literal" })
+                    } else { None };
+                if word.shape == Shape::Bare && self.glance(1).lexeme == "if" {
+                    return Err(String::from("SyntaxError: cannot assign to conditional expression"));
+                }
+                if let Some(description) = target {
+                    return Err(format!("SyntaxError: cannot assign to {description} here. Maybe you meant '==' instead of '='?"));
+                }
+            }
             if self.look().lexeme == "None" && self.table.compound.contains_key(&self.glance(1).lexeme) {
                 return Err(String::from("SyntaxError: 'None' is an illegal expression for augmented assignment"));
             }
