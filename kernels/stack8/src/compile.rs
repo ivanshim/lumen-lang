@@ -7019,6 +7019,18 @@ impl<'a> Compiler<'a> {
 
     fn assignment_expression(&mut self) -> Res<()> {
         if !self.lang.syntax_members.is_empty() {
+            if self.look().lexeme == "None" && self.lang.compound.contains_key(&self.look_ahead(1).lexeme) {
+                return Err("SyntaxError: 'None' is an illegal expression for augmented assignment".into());
+            }
+            if self.look().lexeme == "[" || self.look().shape == Shape::Instr && self.look_ahead(1).lexeme == "(" {
+                let opening = if self.look().lexeme == "[" { self.pos } else { self.pos + 1 };
+                if let Some(close) = self.bracket_close(opening, self.tokens.len()) {
+                    if self.tokens.get(close + 1).is_some_and(|next| self.lang.compound.contains_key(&next.lexeme)) {
+                        let kind = if opening == self.pos { "list" } else { "function call" };
+                        return Err(format!("SyntaxError: '{kind}' is an illegal expression for augmented assignment"));
+                    }
+                }
+            }
             if self.look().lexeme == "__debug__" && self.lang.compound.contains_key(&self.look_ahead(1).lexeme) {
                 return Err("SyntaxError: cannot assign to __debug__".into());
             }

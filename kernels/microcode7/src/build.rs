@@ -6909,6 +6909,20 @@ impl<'a> Builder<'a> {
 
     fn binding_or_value(&mut self) -> Res<Form> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.look().lexeme == "None" && self.table.compound.contains_key(&self.glance(1).lexeme) {
+                return Err(String::from("SyntaxError: 'None' is an illegal expression for augmented assignment"));
+            }
+            let list = self.on_any("syntax.array.open");
+            let call = self.look().shape == Shape::Bare && self.glance(1).lexeme == "(";
+            if list || call {
+                let began = self.pos + usize::from(call);
+                if let Some(end) = self.pair_close(began, self.tokens.len()) {
+                    if self.tokens.get(end + 1).is_some_and(|next| self.table.compound.contains_key(&next.lexeme)) {
+                        let name = if list { "list" } else { "function call" };
+                        return Err(format!("SyntaxError: '{name}' is an illegal expression for augmented assignment"));
+                    }
+                }
+            }
             if self.look().lexeme == "__debug__" && self.table.compound.contains_key(&self.glance(1).lexeme) {
                 return Err(String::from("SyntaxError: cannot assign to __debug__"));
             }
