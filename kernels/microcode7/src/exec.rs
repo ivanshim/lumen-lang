@@ -9625,6 +9625,9 @@ impl<'a> Machine<'a> {
         let said = |at: usize| words.get(at).cloned().unwrap_or_default();
         let content = match &values[0] {
             Value::Octets { cell, .. } => cell.borrow().clone(),
+            Value::Thing(item) if item.blueprint().name == "memoryview" => {
+                self.octet_argument(&values[0])?.ok_or_else(|| self.octet_error("arguments"))?
+            }
             Value::Text(_) => return Err(said(0)),
             other => return Err(format!("{}{}{}", said(1), other.kind_word(), said(2))),
         };
