@@ -12469,6 +12469,94 @@ impl<'a> Machine<'a> {
         }
     }
 
+    // A binary total holds a low-order correction while the iterator
+    // continues to yield built-in numbers.
+    fn sum_pair(hi: f64, lo: f64, item: f64) -> (f64, f64) {
+        let combined = hi + item;
+        let lost = if hi.abs() >= item.abs() { (hi - combined) + item } else { (item - combined) + hi };
+        (combined, lo + lost)
+    }
+
+    fn sum_value(hi: f64, lo: f64) -> f64 {
+        if lo.is_finite() && lo != 0.0 { hi + lo } else { hi }
+    }
+
+    fn total_step(&mut self, total: &mut Value, balance: &mut Option<((f64, f64), Option<(f64, f64)>)>, item: Value) -> Result<(), String> {
+        if balance.is_none() {
+            if matches!(&item, Value::Frac(r) if r.places.is_some()) || matches!(&item, Value::Complex(_)) {
+                // A plain whole number meets the first binary operand at the
+                // binary width before the two values are added.
+                let first = match total {
+                    Value::Small(n) => Some(*n as f64),
+                    Value::Huge(n) => Some(n.to_f64().filter(|n| n.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_owned())?),
+                    Value::Flag(b) => Some(if *b { 1.0 } else { 0.0 }),
+                    _ => None,
+                };
+                if let Some(first) = first {
+                    let second = match &item {
+                        Value::Frac(r) if r.places.is_some() => Some((if r.under && r.above.is_zero() && !r.beneath.is_zero() { -0.0 } else { crate::data::nearest_binary(&r.above, &r.beneath) }, None)),
+                        Value::Complex(z) => Some((z.0, Some(z.1))),
+                        _ => None,
+                    };
+                    if let Some((real, imaginary)) = second {
+                        *balance = Some(((first + real, 0.0), imaginary.map(|part| (part, 0.0))));
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        if balance.is_none() {
+            *balance = match total {
+                Value::Frac(r) if r.places.is_some() => {
+                    let initial = if r.under && r.above.is_zero() && !r.beneath.is_zero() { -0.0 } else { crate::data::nearest_binary(&r.above, &r.beneath) };
+                    Some(((initial, 0.0), None))
+                }
+                Value::Complex(z) => Some(((z.0, 0.0), Some((z.1, 0.0)))),
+                _ => None,
+            };
+        }
+        if let Some((real, imaginary)) = balance.as_mut() {
+            let coordinates = match &item {
+                Value::Small(n) => Some((*n as f64, None)),
+                Value::Huge(n) => Some((n.to_f64().filter(|n| n.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_owned())?, None)),
+                Value::Flag(b) => Some((if *b { 1.0 } else { 0.0 }, None)),
+                Value::Frac(r) if r.places.is_some() => Some((if r.under && r.above.is_zero() && !r.beneath.is_zero() { -0.0 } else { crate::data::nearest_binary(&r.above, &r.beneath) }, None)),
+                Value::Complex(z) if imaginary.is_some() => Some((z.0, Some(z.1))),
+                Value::Thing(t) => {
+                    let origin = Self::native_beneath(&t.blueprint());
+                    let underlying = Self::underlying(&item);
+                    match (origin.as_deref(), underlying) {
+                        (Some("int"), Some(Value::Small(n))) => Some((n as f64, None)),
+                        (Some("int"), Some(Value::Huge(n))) => Some((n.to_f64().filter(|v| v.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_owned())?, None)),
+                        (Some("float"), Some(Value::Frac(r))) if imaginary.is_some() => Some((if r.under && r.above.is_zero() && !r.beneath.is_zero() { -0.0 } else { crate::data::nearest_binary(&r.above, &r.beneath) }, None)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some((x, y)) = coordinates {
+                *real = Self::sum_pair(real.0, real.1, x);
+                if let (Some(im), Some(y)) = (imaginary.as_mut(), y) { *im = Self::sum_pair(im.0, im.1, y); }
+                return Ok(());
+            }
+            *total = match imaginary {
+                Some(im) => crate::complex::pair(self.table, Self::sum_value(real.0, real.1), Self::sum_value(im.0, im.1)),
+                None => crate::data::worth_of_binary(Self::sum_value(real.0, real.1), math::DEFAULT_PLACES),
+            };
+            *balance = None;
+        }
+        *total = self.sum_added(total, &item)?;
+        Ok(())
+    }
+
+    fn total_result(&self, total: Value, balance: Option<((f64, f64), Option<(f64, f64)>)>) -> Value {
+        match balance {
+            Some((r, Some(i))) => crate::complex::pair(self.table, Self::sum_value(r.0, r.1), Self::sum_value(i.0, i.1)),
+            Some((r, None)) => crate::data::worth_of_binary(Self::sum_value(r.0, r.1), math::DEFAULT_PLACES),
+            None => total,
+        }
+    }
+
     /// One member added into `sum`'s running total: the exact reckoning
     /// where the two are numbers, and the plain working of `+`
     /// otherwise, so a member `+` itself refuses is refused in the
@@ -15691,7 +15779,22 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Total => {
-                if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                if v.is_empty() { return Err(format!("TypeError: {name}() takes at least 1 positional argument (0 given)")); }
+                if v.len() > 2 { return Err(format!("TypeError: {name}() takes at most 2 arguments ({} given)", v.len())); }
+                let mut answer = v.get(1).cloned().unwrap_or(Value::Small(0));
+                // The integer-only range path can answer from its bounds;
+                // other starts need each individual addition in order.
+                if matches!(answer, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    if let Value::Progression(row) = v[0].settled() {
+                        let length = row.count();
+                        if length.is_zero() { return Ok(answer); }
+                        let exact = (&row.first + (&row.first + (&length - 1) * &row.stride)) * &length / 2;
+                        return self.sum_added(&answer, &Value::from_big(exact));
+                    }
+                }
+                let walk = if self.table.flag("ext.stmt.yield.suspends") {
+                    Some(self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))?)
+                } else { None };
                 // A start already text or a row of octets is refused
                 // before a single member is read, in the words naming
                 // the very kind it is, the way CPython refuses summing
@@ -15700,6 +15803,12 @@ impl<'a> Machine<'a> {
                     Some(Value::Text(_)) => Some(0),
                     Some(Value::Octets { changeable: false, .. }) => Some(1),
                     Some(Value::Octets { changeable: true, .. }) => Some(2),
+                    Some(Value::Thing(t)) => match Self::native_beneath(&t.blueprint()).as_deref() {
+                        Some("str") => Some(0),
+                        Some("bytes") => Some(1),
+                        Some("bytearray") => Some(2),
+                        _ => None,
+                    },
                     _ => None,
                 };
                 if let Some(at) = word_at {
@@ -15710,31 +15819,19 @@ impl<'a> Machine<'a> {
                 // them: a flag turns to a whole number only where an
                 // addition actually asks that of it, never merely for
                 // standing where a sum might have needed one.
-                // The total of a stepped walk follows from its three
-                // numbers; the places are never laid out, so a walk of
-                // a thousand million adds up as quickly as a short one.
-                if let Value::Progression(walk) = v[0].settled() {
-                    let how_many = walk.count();
-                    let opening = v.get(1).cloned().unwrap_or(Value::Small(0));
-                    if how_many == BigInt::from(0) { return Ok(opening); }
-                    let added = (&walk.first + (&walk.first + (&how_many - 1) * &walk.stride)) * &how_many / 2;
-                    return self.sum_added(&opening, &Value::from_big(added));
-                }
-                if self.table.flag("ext.stmt.yield.suspends") {
-                    let Value::Generator(walk) = self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? else { unreachable!() };
-                    let counted = |value| if let Value::Flag(flag) = value { Value::Small(flag as i64) } else { value };
-                    let mut answer = v.get(1).cloned().unwrap_or(Value::Small(0));
+                let mut balance = None;
+                if let Some(Value::Generator(walk)) = walk {
                     loop {
                         let item = self.resume(&walk, Value::Nil).map_err(|fault| self.suspension_fault(fault))?;
-                        let Some(item) = item else { return Ok(answer) };
-                        answer = self.sum_added(&answer, &counted(item))?;
+                        let Some(item) = item else { break };
+                        self.total_step(&mut answer, &mut balance, item)?;
+                    }
+                } else {
+                    for item in self.gathered_members(&v[0])? {
+                        self.total_step(&mut answer, &mut balance, item)?;
                     }
                 }
-                let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
-                let members = self.gathered_members(&v[0])?;
-                let mut total = v.get(1).cloned().unwrap_or(Value::Small(0));
-                for item in members { total = self.sum_added(&total, &number(item))?; }
-                total
+                self.total_result(answer, balance)
             }
             Prim::Span if self.table.flag("ext.builtin.range.value") => {
                 if v.is_empty() { return Err("TypeError: range expected at least 1 argument, got 0".to_string()); }
