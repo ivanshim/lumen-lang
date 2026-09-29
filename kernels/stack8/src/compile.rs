@@ -7421,8 +7421,9 @@ impl<'a> Compiler<'a> {
         if !self.lang.syntax_members.is_empty() {
             if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
                 let begins = self.look();
-                let kind = if begins.shape == Shape::StringBegin { Some("f-string expression") }
-                    else if begins.lexeme == "{" && self.bracket_close(self.pos, equal) == Some(equal - 1) {
+                let kind = if begins.shape == Shape::StringBegin {
+                    Some(if begins.lexeme.chars().next().map_or(false, |c| self.lang.template_prefixes.contains(&c)) { "t-string expression" } else { "f-string expression" })
+                } else if begins.lexeme == "{" && self.bracket_close(self.pos, equal) == Some(equal - 1) {
                         let pair = self.lang.pair_mark.as_ref().map_or(Vec::new(), |mark| self.outer_marks(self.pos + 1, equal - 1, &[mark.clone()]).0);
                         Some(if pair.is_empty() { "set display" } else { "dict literal" })
                     } else if begins.shape == Shape::Instr && self.look_ahead(1).lexeme == "if" {
