@@ -9699,6 +9699,12 @@ impl<'a> Builder<'a> {
             let word = token.lexeme.as_str();
             if nesting.is_empty() {
                 if word == "=" && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
+                    if at > begins + 1 && self.table.has_any("ext.builtin.exceptions.syntax") {
+                        let spreading = match self.tokens[begins].lexeme.as_str() {
+                            "*" => Some("iterable"), "**" => Some("keyword"), _ => None,
+                        };
+                        if let Some(kind) = spreading { return Err(format!("SyntaxError: cannot assign to {kind} argument unpacking")); }
+                    }
                     let strings = &self.tokens[begins..at.saturating_sub(1).max(begins)];
                     if !strings.is_empty() && strings.iter().all(|entry| entry.shape == Shape::Quote) {
                         self.pos = at - 2;

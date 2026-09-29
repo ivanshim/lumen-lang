@@ -10343,6 +10343,10 @@ impl<'a> Compiler<'a> {
             if !matches!(t.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = t.lexeme.as_str();
             if depth == 0 && word == "=" && (i != start + 1 || self.tokens[start].shape != Shape::Instr) {
+                if !self.lang.syntax_members.is_empty() && i > start + 1 {
+                    let kind = match self.tokens[start].lexeme.as_str() { "*" => Some("iterable"), "**" => Some("keyword"), _ => None };
+                    if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} argument unpacking")); }
+                }
                 if i > start + 1 && self.tokens[start..i - 1].iter().all(|part| part.shape == Shape::Quote) {
                     self.pos = i - 2;
                     return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
