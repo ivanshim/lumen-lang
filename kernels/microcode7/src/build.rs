@@ -5828,7 +5828,15 @@ impl<'a> Builder<'a> {
                 self.need_closer()?;
                 arm
             } else {
-                self.body_limb(Traps::Naught)?
+                let arm = self.body_limb(Traps::Naught)?;
+                let mut later = 0;
+                while self.glance(later).shape == Shape::LineEnd { later += 1; }
+                let token = self.glance(later);
+                if self.table.has_any("ext.builtin.exceptions.syntax") && token.shape == Shape::Bare
+                    && self.table.spells("stmt.elif", &token.lexeme) {
+                    return Err(String::from("SyntaxError: 'elif' block follows an 'else' block"));
+                }
+                arm
             }
         } else {
             if keyword {

@@ -4368,6 +4368,15 @@ impl<'a> Compiler<'a> {
                 self.expect_closer()?;
             } else {
                 self.body()?;
+                let mut following = 0;
+                while self.look_ahead(following).shape == Shape::LineEnd {
+                    following += 1;
+                }
+                let next = self.look_ahead(following);
+                if !lang.syntax_members.is_empty() && next.shape == Shape::Instr
+                    && Lang::spells(&lang.elif_words, &next.lexeme) {
+                    return Err("SyntaxError: 'elif' block follows an 'else' block".into());
+                }
             }
         }
         self.land(over);
