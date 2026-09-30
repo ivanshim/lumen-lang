@@ -212,6 +212,26 @@ impl Layout<'_> {
             return self.plain(item);
         }
         let mut shape = self.description(pattern, item)?;
+        // A separator belongs to the presentation letter, even if the
+        // receiver cannot use that letter. Check it before flags and type.
+        if let Some(separator) = shape.separator {
+            let letter = shape.letter.unwrap_or(if matches!(item, Value::Text(_)) { 's' } else { '\0' });
+            let permitted = if separator == ',' {
+                matches!(letter, '\0' | 'd' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%')
+            } else {
+                matches!(letter, '\0' | 'd' | 'b' | 'o' | 'x' | 'X' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%')
+            };
+            if !permitted {
+                let mark = format!("'{separator}'");
+                let code = format!("'{letter}'");
+                return Err(self.complain("ext.text.format.group.type", &[&mark, &code]));
+            }
+        }
+        if shape.letter == Some('n') {
+            if let Some(separator) = shape.fraction_separator {
+                return Err(self.complain("ext.text.format.group.type", &[&format!("'{separator}'"), "'n'"]));
+            }
+        }
         // The locale presentation writes the figures the plain ones
         // write, this run keeping a single locale: a whole number
         // stays with the tens and everything else takes the general
@@ -232,7 +252,6 @@ impl Layout<'_> {
                 else if shape.alternative { Some("alternate") }
                 else if shape.justify == Some('=') { Some("align") } else { None };
             if let Some(why) = bad { return Err(self.complain(&format!("ext.text.format.{why}.string"), &[])); }
-            if shape.separator.is_some() || shape.fraction_separator.is_some() { return Err(self.invalid()); }
             let kept: String = text.chars().take(shape.digits.unwrap_or(usize::MAX)).collect();
             return Ok(shape.padded(String::new(), kept, '<'));
         }
@@ -241,9 +260,9 @@ impl Layout<'_> {
         // where no presentation was named. Nought padding and the '='
         // justification carry no meaning across two numbers.
         if let Some((re, im)) = complex_parts(item) {
+            if shape.letter.map_or(false, |c| !"eEfFgG".contains(c)) { return Err(unknown()); }
             if shape.padding == '0' { return Err(self.complain("ext.text.format.complex.zero", &[])); }
             if shape.justify == Some('=') { return Err(self.complain("ext.text.format.complex.align", &[])); }
-            if shape.letter.map_or(false, |c| !"eEfFgG".contains(c)) { return Err(unknown()); }
             // Nothing named is the writing the representation gives:
             // the figures that read back again, in brackets, with a
             // real part that is a plain nought left out of them. A
@@ -271,17 +290,15 @@ impl Layout<'_> {
             return Err(self.complain("ext.stmt.class.format.amiss", &[self.typename(item)]));
         }
         if integer && shape.letter.map_or(true, |c| "dboxXc".contains(c)) {
-            if shape.no_minus_zero { return Err(self.complain("ext.text.format.zero.integer", &[])); }
             if shape.digits.is_some() { return Err(self.complain("ext.text.format.precision.integer", &[])); }
+            if shape.no_minus_zero { return Err(self.complain("ext.text.format.zero.integer", &[])); }
             if shape.letter == Some('c') {
                 if shape.polarity.is_some() { return Err(self.complain("ext.text.format.sign.character", &[])); }
                 if shape.alternative { return Err(self.complain("ext.text.format.alternate.character", &[])); }
-                if shape.separator.is_some() { return Err(self.invalid()); }
                 let text = self.character(item, false)?;
                 return Ok(shape.padded(String::new(), text, '>'));
             }
             let radix = match shape.letter { Some('b') => 2, Some('o') => 8, Some('x' | 'X') => 16, _ => 10 };
-            if shape.fraction_separator.is_some() || radix != 10 && shape.separator == Some(',') { return Err(self.invalid()); }
             let n = item.as_big()?;
             let mut digits = n.abs().to_str_radix(radix);
             if shape.letter == Some('X') { digits = digits.to_ascii_uppercase(); }
@@ -822,9 +839,12 @@ fn complex_parts(item: &Value) -> Option<(f64, f64)> {
 /// whole of it and not to either number.
 fn side(number: f64, form: &Presentation, polarity: Option<char>) -> String {
     let size = number.abs();
-    let body = if form.letter.is_none() && form.digits.is_none() {
+    let mut body = if form.letter.is_none() && form.digits.is_none() {
         if size.is_nan() { "nan".to_owned() } else if size.is_infinite() { "inf".to_owned() } else { crate::data::brief_decimal(size) }
     } else { form.real_digits(size) };
+    if form.alternative && form.letter.is_none() && size.is_finite() && !body.contains(['.', 'e', 'E']) {
+        body.push('.');
+    }
     // A part that rounds to nought loses its minus where the
     // presentation asks for no signed nought.
     let nought = form.no_minus_zero && body.parse::<f64>().ok() == Some(0.0);
@@ -842,7 +862,7 @@ fn side(number: f64, form: &Presentation, polarity: Option<char>) -> String {
 }
 
 pub fn is_complaint(table: &Table, message: &str) -> bool {
-    let labels = "ext.text.format.complex.zero ext.text.format.complex.align ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.invalid.detail ext.text.format.group.conflict ext.text.format.unknown ext.text.format.unready ext.text.format.digits ext.text.format.width.big ext.text.format.precision.big ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.mapping.key ext.op.rem.format.mapping.star ext.op.rem.format.width.big ext.op.rem.format.precision.big ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.character.range ext.op.rem.format.star ext.op.rem.format.star.big ext.op.rem.format.incomplete ext.op.rem.format.key.incomplete ext.op.rem.format.unexpected ext.op.rem.format.code";
+    let labels = "ext.text.format.complex.zero ext.text.format.complex.align ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.invalid.detail ext.text.format.group.conflict ext.text.format.group.type ext.text.format.unknown ext.text.format.unready ext.text.format.digits ext.text.format.width.big ext.text.format.precision.big ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.mapping.key ext.op.rem.format.mapping.star ext.op.rem.format.width.big ext.op.rem.format.precision.big ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.character.range ext.op.rem.format.star ext.op.rem.format.star.big ext.op.rem.format.incomplete ext.op.rem.format.key.incomplete ext.op.rem.format.unexpected ext.op.rem.format.code";
     labels.split_whitespace().filter_map(|label| table.single(label))
         .any(|opening| !opening.is_empty() && message.starts_with(opening))
 }

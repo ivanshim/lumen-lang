@@ -3767,6 +3767,8 @@ only. The extension labels so far, all from PHP:
 - `ext.text.format.invalid`: the complaint for an ill-formed specification.
 - `ext.text.format.invalid.detail`: the invalid specification and value type.
 - `ext.text.format.group.conflict`: the incompatible grouping marks.
+  `ext.text.format.group.type` names a grouping mark and the presentation
+  letter with which it cannot be used, before other type checks.
   `ext.text.format.unknown` holds the words before a presentation letter,
   between that letter and the value's kind, and after the kind.
   `ext.text.format.kinds` names whole, real, text, flag, list, map, nothing,
@@ -5499,6 +5501,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.digits` | - | - | `ValueError: Too many decimal digits in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.group.conflict` | - | - | `ValueError: Cannot specify ` `.` | - | - | - | - | - | - | - |
+| `ext.text.format.group.type` | - | - | `ValueError: Cannot specify ` ` with ` `.` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid` | - | - | `ValueError: Invalid format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid.detail` | - | - | `ValueError: Invalid format specifier '` `' for object of type '` `'` | - | - | - | - | - | - | - |
