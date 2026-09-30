@@ -2079,7 +2079,7 @@ impl<'a> Machine<'a> {
                 }
                 let mapping = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
                 if let Some(mapping) = mapping {
-                    let native = Self::underlying(&mapping).unwrap_or(mapping);
+                    let native = Self::underlying(&mapping).unwrap_or_else(|| mapping.keep(false));
                     if let Some(item) = replacement {
                         let patch = Value::Dict(Rc::new(vec![(Value::text(key), item)].into()));
                         self.value_member(&native, "update", vec![patch], Vec::new())?;

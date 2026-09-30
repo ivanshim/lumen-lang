@@ -1963,25 +1963,33 @@ impl<'a> Machine<'a> {
     /// while another is being let go is let go in its own turn.
     pub fn let_things_go(&mut self) {
         self.attend_to_gone();
-        let destructor = self.table.single("ext.stmt.class.destructor").map(str::to_string);
-        let mut reached = 0;
-        while let Some(loosely) = { let all = self.things.borrow(); all.get(reached).cloned() } {
-            reached += 1;
-            let Some(thing) = loosely.upgrade() else { continue };
+        if let Some(named) = self.table.single("ext.stmt.class.destructor").map(str::to_string).as_deref() {
             // The words a thing says as it goes: the destructor the
-            // language names outright, or its finaliser's farewell,
-            // whichever the language has.
-            if let Some(named) = destructor.as_deref() {
+            // language names outright. One made while another is being
+            // let go is let go in its own turn.
+            let mut reached = 0;
+            while let Some(loosely) = { let all = self.things.borrow(); all.get(reached).cloned() } {
+                reached += 1;
+                let Some(thing) = loosely.upgrade() else { continue };
                 let Some(program) = thing.blueprint().program(named).cloned() else { continue };
                 if !crate::ghost::first_farewell(&thing) { continue; }
                 let _ = self.invoke(program, self.outermost.clone(), vec![Value::Thing(thing)]);
-            } else {
-                let Some(farewell) = crate::ghost::farewell_of(&thing.of) else { continue };
-                if !crate::ghost::first_farewell(&thing) { continue; }
-                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
             }
+            self.things.borrow_mut().clear();
+            return;
         }
+        // A language with no destructor lets its finaliser-capable
+        // things bid farewell once, from a snapshot of what stood when
+        // the run ended: a thing a farewell makes is not swept up in its
+        // own turn, so the shutdown cannot grow without end while a
+        // farewell holds on to new allocations.
+        let snapshot: Vec<Rc<Thing>> = self.things.borrow().iter().filter_map(|held| held.upgrade()).collect();
         self.things.borrow_mut().clear();
+        for thing in snapshot {
+            let Some(farewell) = crate::ghost::farewell_of(&thing.blueprint()) else { continue };
+            if !crate::ghost::first_farewell(&thing) { continue; }
+            self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
+        }
     }
 
     /// Whatever is still being kept when the run ends is let go,
@@ -6914,7 +6922,12 @@ impl<'a> Machine<'a> {
         }
         match value {
             Value::Thing(t) if names.get(35).map_or(false, |s| s == name) => return Some(Value::Blueprint(t.blueprint().clone())),
-            Value::Thing(t) if names.get(36).map_or(false, |s| s == name) => return Some(Value::Attributes(t.clone())),
+            Value::Thing(t) if names.get(36).map_or(false, |s| s == name) => {
+                if let Some((_, mapping)) = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").cloned() {
+                    return Some(mapping);
+                }
+                return Some(Value::Attributes(t.clone()));
+            }
             Value::Blueprint(c) if names.get(37).map_or(false, |s| s == name) => return Some(Value::text(&c.name)),
             _ => (),
         }
@@ -6984,6 +6997,14 @@ impl<'a> Machine<'a> {
                 if self.is_fault_kind(&thing.blueprint()) && self.table.single("ext.builtin.exceptions.args") == Some(name) {
                     let arguments = fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone());
                     return arguments.or_else(|| Some(Value::Arguments(Rc::new(fields.iter().filter(|(key, _)| key == "message").map(|(_, value)| value.clone()).collect()))));
+                }
+                if let Some(mapping) = fields.iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone()) {
+                    let native = Self::underlying(&mapping).unwrap_or(mapping);
+                    if let Value::Dict(entries) = native.settled() {
+                        for (word, item) in entries.iter() {
+                            if matches!(word, Value::Text(word) if word.as_ref() == name) { return Some(item.clone()); }
+                        }
+                    }
                 }
                 if let Some(at) = self.member_place(&fields, name) {
                     return Some(match &fields[at].1 {
@@ -18706,17 +18727,23 @@ impl<'a> Machine<'a> {
     }
 
     /// The main program's own module, registered under the name the
-    /// language gives it so that `sys.modules[__name__]` answers with
-    /// the very dictionary `globals()` answers with. A language with no
-    /// such name, or no cache of modules, is left alone. The book is
-    /// made here, before the program runs, so that the dictionary an
-    /// import of the main module later returns is the selfsame one the
-    /// program has been writing through all along.
+    /// language gives it so that `sys.modules[__name__]` answers with a
+    /// real module whose `__dict__` is the very dictionary `globals()`
+    /// answers with. A language with no such name, or no cache of
+    /// modules, is left alone. The module and the book are made here,
+    /// before the program runs, sharing the selfsame cells the program
+    /// has been writing through all along.
     pub fn register_main_module(&mut self) {
         let main = self.detail("main").to_string();
         if main.is_empty() { return; }
         let book = self.world_kept();
-        self.imported.insert(main, Value::Shared(book));
+        let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
+            name: main.clone(), under: None, methods: Vec::new(), constants: Vec::new(),
+            shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), sealed: std::cell::Cell::new(false),
+        };
+        self.made += 1;
+        let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of: Rc::new(kind), holds: RefCell::new(vec![("\0dictionary".to_string(), Value::Shared(book))]), turn: self.made }));
+        self.imported.insert(main, value);
         self.refresh_import_table();
     }
 

@@ -1488,32 +1488,40 @@ impl<'a> Engine<'a> {
     /// order the objects were made, each by the method its class names
     /// for it. An object made by one of those is let go in its turn.
     pub fn let_things_go(&mut self) {
-        let destructor = self.lang.destructor.clone();
-        let mut at = 0;
-        loop {
-            let standing = {
-                let made = self.things_made.borrow();
-                match made.get(at) {
-                    Some(loosely) => loosely.upgrade(),
-                    None => break,
-                }
-            };
-            at += 1;
-            let Some(thing) = standing else { continue };
+        if let Some(named) = self.lang.destructor.clone().as_deref() {
             // The words an object says as it goes: the destructor the
-            // language names outright, or its finaliser's last words,
-            // whichever the language has.
-            if let Some(named) = destructor.as_deref() {
+            // language names outright. An object made while another is
+            // being let go is let go in its own turn.
+            let mut at = 0;
+            loop {
+                let standing = {
+                    let made = self.things_made.borrow();
+                    match made.get(at) {
+                        Some(loosely) => loosely.upgrade(),
+                        None => break,
+                    }
+                };
+                at += 1;
+                let Some(thing) = standing else { continue };
                 let Some(method) = thing.class_now().method(named).cloned() else { continue };
                 if !crate::faint::first_words(&thing) { continue; }
                 let _ = self.invoke(&method, vec![Value::Object(thing)]);
-            } else {
-                let Some(words) = crate::faint::last_word_of(&thing.class_now()) else { continue };
-                if !crate::faint::first_words(&thing) { continue; }
-                self.speak_ignoring(words, vec![Value::Object(thing)], "deallocator");
             }
+            self.things_made.borrow_mut().clear();
+            return;
         }
+        // A language with no destructor lets its finaliser-capable
+        // objects say their last words once, from a snapshot of what
+        // stood when the run ended: an object a finaliser makes is not
+        // swept up in its own turn, so the shutdown cannot grow without
+        // end while a finaliser holds on to new allocations.
+        let snapshot: Vec<Rc<Instance>> = self.things_made.borrow().iter().filter_map(|held| held.upgrade()).collect();
         self.things_made.borrow_mut().clear();
+        for thing in snapshot {
+            let Some(words) = crate::faint::last_word_of(&thing.class_now()) else { continue };
+            if !crate::faint::first_words(&thing) { continue; }
+            self.speak_ignoring(words, vec![Value::Object(thing)], "deallocator");
+        }
     }
 
     /// What is still being kept when the run ends is let go, outermost
@@ -8925,6 +8933,18 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(o) => {
                     if let Some(value) = self.frame_member(&o, name) { self.data.push(value); return Ok(()); }
+                    // A module whose namespace is a shared dictionary
+                    // (the main program's own globals) reads its
+                    // members through that dictionary, so an attribute
+                    // answers the live global of that name.
+                    if let Some((_, dictionary)) = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").cloned() {
+                        if let Value::Map(entries) = dictionary.contents() {
+                            if let Some((_, value)) = entries.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == name.as_ref())) {
+                                self.data.push(value.clone());
+                                return Ok(());
+                            }
+                        }
+                    }
                     let found = if self.exception_class(&o.class_now()) && self.lang.exception_cause.as_deref() == Some(name.as_ref()) {
                         Some(o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone()).unwrap_or(Value::Null))
                     } else if self.exception_class(&o.class_now()) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
@@ -18995,17 +19015,22 @@ impl Engine<'_> {
     }
 
     /// The main program's own module, registered under the name the
-    /// language gives it so that `sys.modules[__name__]` answers with
-    /// the very dictionary `globals()` answers with. A language with no
-    /// such name, or no cache of modules, is left alone. The book is
-    /// made here, before the program runs, so that the dictionary an
-    /// import of the main module later returns is the selfsame one the
-    /// program has been writing through all along.
+    /// language gives it so that `sys.modules[__name__]` answers with a
+    /// real module whose `__dict__` is the very dictionary `globals()`
+    /// answers with. A language with no such name, or no cache of
+    /// modules, is left alone. The module and the book are made here,
+    /// before the program runs, sharing the selfsame cells the program
+    /// has been writing through all along.
     pub fn register_main_module(&mut self) {
         let main = self.class_word("main").to_string();
         if main.is_empty() { return; }
         let book = self.outer_book_made();
-        self.modules.insert(main, Value::Bond(book));
+        self.made += 1;
+        let object = Rc::new(Instance {replacement_class: RefCell::new(None),
+            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: main.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false) }),
+            fields: RefCell::new(vec![("\0namespace".to_string(), Value::Bond(book))]), mark: self.made,
+        });
+        self.modules.insert(main, Value::Object(object));
         self.refresh_module_cache();
     }
 

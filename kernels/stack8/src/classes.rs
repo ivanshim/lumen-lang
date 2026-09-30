@@ -1983,7 +1983,7 @@ impl<'a> Engine<'a> {
                 }
                 let dictionary = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, value)| value.clone());
                 if let Some(dictionary) = dictionary {
-                    let raw = Self::worth_of(&dictionary).unwrap_or(dictionary);
+                    let raw = Self::worth_of(&dictionary).unwrap_or_else(|| dictionary.held(false));
                     match value {
                         Some(value) => { self.value_method(&raw, "update", vec![Value::Map(Rc::new(vec![(Value::text(name), value)].into()))], vec![])?; }
                         None => { self.value_method(&raw, "pop", vec![Value::text(name)], vec![])?; }
