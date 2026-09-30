@@ -1620,6 +1620,8 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.async.generator.fields` names its code, live frame, running
   state and current await target; `ext.stmt.async.generator.close.ignored`
   reports a body that yields after `aclose` has thrown its exit fault.
+  `ext.stmt.async.generator.escaped` names the faults raised when a body
+  lets StopIteration or StopAsyncIteration escape, preserving the original cause.
   `ext.stmt.class.special.unready` gives the words for a special operation
   whose meaning the run cannot yet honour. A fault handed to a with
   exit carries an opaque traceback; looking within it stops with these
@@ -5113,6 +5115,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assign.names.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.close.ignored` | - | - | `RuntimeError: async generator ignored GeneratorExit` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.escaped` | - | - | `RuntimeError: async generator raised StopIteration` `RuntimeError: async generator raised StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.fields` | - | - | `ag_code` `ag_frame` `ag_running` `ag_await` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.methods` | - | - | `asend` `athrow` `aclose` `__await__` | - | - | - | - | - | - | - |
 | `ext.stmt.async.stop` | - | - | `StopAsyncIteration` | - | - | - | - | - | - | - |

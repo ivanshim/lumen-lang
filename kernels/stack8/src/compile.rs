@@ -8825,7 +8825,8 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
-            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
+            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1))
+                && (self.in_class_body() || self.piece().comprehension_kind.is_some());
             if self.forbids_await || !self.piece().asynchronous || class_expression {
                 let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {phrase}"));

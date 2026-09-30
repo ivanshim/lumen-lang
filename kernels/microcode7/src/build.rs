@@ -8484,7 +8484,8 @@ impl<'a> Builder<'a> {
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
-            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1));
+            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1))
+                && (self.in_class_body() || self.layers.last().is_some_and(|scope| scope.gathering_kind.is_some()));
             if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression {
                 let scope = if self.layers.len() == 1 || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {scope}"));

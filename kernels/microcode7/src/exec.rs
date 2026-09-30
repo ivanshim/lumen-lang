@@ -3,6 +3,9 @@ thread_local! {
 }
 
 pub struct OctetLease { address: usize }
+
+/// A handed-out await token keeps the operation open; its item completes it.
+enum AsyncStep { Waiting(Value), Finished(Option<Value>) }
 impl OctetLease {
     fn new(bytes: &Rc<RefCell<Vec<u8>>>) -> Self {
         let address = Rc::as_ptr(bytes) as usize;
@@ -39,7 +42,7 @@ impl Drop for OctetLease {
 // that traps them stops them.
 
 use std::collections::HashMap;
-use std::cell::RefCell;
+use std::cell::{Cell as StateCell, RefCell};
 use num_bigint::BigInt;
 use std::rc::{Rc, Weak};
 
@@ -155,8 +158,11 @@ enum Owed {
     HandOut,
     From,
     Await,
+    WalkNext(Value),
     Finish,
     Truth(Prim, Form),
+    AssertTest(Form),
+    AssertRaise,
     /// A try whose body is under way: what may take what the body
     /// raises, how deep the found values stood when it began and how
     /// many faults were held then.
@@ -318,7 +324,7 @@ pub struct Machine<'a> {
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
-    async_generators: HashMap<usize, Weak<RefCell<Suspension>>>,
+    async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>)>,
     code_handles: HashMap<usize, (Rc<Routine>, Value)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
@@ -3147,6 +3153,24 @@ impl<'a> Machine<'a> {
     /// body is handed what was sent in, and anything else is asked for
     /// its next member, which is all such a walk knows how to be asked.
     fn delegated_step(&mut self, walk: &Value, sent: Value) -> Res<Option<Value>> {
+        if let Value::Wrapped(63, parts) = walk {
+            let [source, Value::Shared(returned), Value::Shared(done)] = parts.as_slice() else { return Err(self.bad_answer().into()) };
+            if matches!(*done.borrow(), Value::Flag(true)) { return Ok(None); }
+            if matches!(source, Value::Iterator(_) | Value::Cursor(_)) && matches!(sent, Value::Nil) { return self.delegated_step(source, sent); }
+            let name = if matches!(sent, Value::Nil) { self.table.strings("ext.stmt.class.special")[16].clone() }
+                else { self.table.strings("ext.stmt.yield.send")[0].clone() };
+            let member = self.read_class_member(source.clone(), &name, false)?;
+            let outcome = self.apply_class_member(member, if matches!(sent, Value::Nil) { Vec::new() } else { vec![sent] });
+            return match outcome {
+                Ok(item) => Ok(Some(item)),
+                Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => {
+                    *returned.borrow_mut() = self.read_class_member(fault, "value", false)?;
+                    *done.borrow_mut() = Value::Flag(true); Ok(None)
+                }
+                Err(away) => Err(away),
+            };
+        }
+
         if let Value::Generator(inner) = walk { return self.resume(inner, sent); }
         match self.next_value(walk) {
             Ok(item) => Ok(item),
@@ -3157,7 +3181,7 @@ impl<'a> Machine<'a> {
     /// What a walk gives back where it ends: a sleeping body gives what
     /// it returned, and a plain walk gives nothing.
     fn delegated_result(walk: &Value) -> Value {
-        match walk { Value::Generator(inner) => inner.borrow().result.clone(), _ => Value::Nil }
+        match walk { Value::Generator(inner) => inner.borrow().result.clone(), Value::Wrapped(63, parts) => match &parts[1] { Value::Shared(value) => value.borrow().clone(), _ => Value::Nil }, _ => Value::Nil }
     }
 
     /// The thing of the program's own a walk steps through, where the
@@ -3197,6 +3221,16 @@ impl<'a> Machine<'a> {
     /// is ended, and a walk of the program's own is told to end where it
     /// knows how, since it may have a last part of its own.
     fn end_delegate(&mut self, walk: &Value) -> Res<()> {
+        if let Value::Wrapped(63, parts) = walk {
+            if matches!(&parts[0], Value::Iterator(_) | Value::Cursor(_)) { return Ok(()); }
+            let name = self.table.strings("ext.stmt.yield.close")[0].clone();
+            match self.read_class_member(parts[0].clone(), &name, false) {
+                Ok(member) => { self.apply_class_member(member, Vec::new())?; }
+                Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if t.blueprint().goes_by("AttributeError", false)) => {}
+                Err(away) => return Err(away),
+            }
+            return Ok(());
+        }
         if let Value::Generator(inner) = walk { self.shut_generator(inner)?; return Ok(()); }
         let thing = Self::walked_thing(walk);
         let shutting = thing.as_ref().and_then(|held| self.named_within(held, &self.table.strings("ext.stmt.yield.close").to_vec()));
@@ -3541,6 +3575,37 @@ impl<'a> Machine<'a> {
                 }
             };
             match waited {
+                Some(Value::Wrapped(63, parts)) => {
+                    let walk = Value::Wrapped(63, parts.clone());
+                    let source = parts[0].clone();
+                    if self.is_exit(&value) {
+                        self.end_delegate(&walk)?;
+                        generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None;
+                    } else {
+                        let name = self.table.strings("ext.stmt.yield.throw")[0].clone();
+                        let member = self.read_class_member(source, &name, false);
+                        let member = match member {
+                            Err(Escape::Error(words)) => Err(self.as_raised(&words).map(Escape::Thrown).unwrap_or(Escape::Error(words))),
+                            other => other,
+                        };
+                        match member {
+                            Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if t.blueprint().goes_by("AttributeError", false)) => {
+                                generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None;
+                            }
+                            Err(away) => return Err(away),
+                            Ok(member) => match self.apply_class_member(member, if given.is_empty() { vec![value] } else { given.to_vec() }) {
+                                Ok(item) => return Ok(Some(item)),
+                                Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => {
+                                    if let Value::Shared(returned) = &parts[1] { *returned.borrow_mut() = self.read_class_member(fault, "value", false)?; }
+                                    if let Value::Shared(done) = &parts[2] { *done.borrow_mut() = Value::Flag(true); }
+                                    hurled = None;
+                                }
+                                Err(Escape::Thrown(fault)) => { generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None; hurled = Some(fault); }
+                                Err(away) => return Err(away),
+                            }
+                        }
+                    }
+                }
                 Some(Value::Generator(inner)) => {
                     let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
                     let saved = std::mem::replace(&mut self.active_trace, parent);
@@ -3692,6 +3757,12 @@ impl<'a> Machine<'a> {
         // The stop kind raised in the body is the generator's fault,
         // not the end of its walk.
         let outcome = match outcome {
+            Err(Escape::Thrown(Value::Thing(t))) if named.as_ref().is_some_and(|body| body.flags & 512 != 0)
+                && self.table.has_any("ext.stmt.async.generator.escaped")
+                && (self.is_stop_kind(&t.blueprint()) || self.table.strings("ext.stmt.async.stop").iter().any(|name| matches!(self.fault_kinds.get(name), Some(Value::Blueprint(kind)) if Self::fault_descends(&t.blueprint(), kind)))) => {
+                let index = usize::from(!self.is_stop_kind(&t.blueprint()));
+                Err(self.stop_got_out_words(Value::Thing(t), self.table.strings("ext.stmt.async.generator.escaped")[index].clone()))
+            }
             Err(Escape::Thrown(Value::Thing(t))) if self.table.has_any("ext.stmt.yield.escaped") && self.is_stop_kind(&t.blueprint()) => Err(self.stop_got_out(Value::Thing(t))),
             Err(Escape::Error(said)) if self.table.has_any("ext.stmt.yield.escaped") && self.table.single("ext.builtin.core.exhausted") == Some(said.as_str()) => { let original = self.as_raised(&said).unwrap_or(Value::Nil); Err(self.stop_got_out(original)) },
             other => other,
@@ -3717,7 +3788,10 @@ impl<'a> Machine<'a> {
 
     /// The fault a generator raises when its body raised the stop kind.
     fn stop_got_out(&mut self, original: Value) -> Escape {
-        let said = self.generator_words("escaped");
+        self.stop_got_out_words(original, self.generator_words("escaped"))
+    }
+
+    fn stop_got_out_words(&mut self, original: Value, said: String) -> Escape {
         match self.as_raised(&said) {
             Some(value) => {
                 if let Value::Thing(thing) = &value {
@@ -3825,6 +3899,10 @@ impl<'a> Machine<'a> {
                         let form = |input| match input { Input::Form(f) => *f, Input::Address(a) => Form::Read(a), Input::Const(v) => Form::Const(v) };
                         state.owed.push(Owed::Find(Form::Apply(Callee::Prim(op, name), vec![form(a), form(b)])));
                     }
+                    Form::Assert { condition, message } => {
+                        state.owed.push(Owed::AssertTest(*message));
+                        state.owed.push(Owed::Find(*condition));
+                    }
                     Form::Attempt { context, async_context, body, clauses, last, otherwise } => {
                         // A try with no suspension anywhere inside it, and
                         // a gathered clause, are left to the plain
@@ -3856,7 +3934,16 @@ impl<'a> Machine<'a> {
                 Owed::Store(place) => self.store(&place, &frame, state.found.last().cloned().unwrap_or(Value::Nil))?,
                 Owed::Drop => { state.found.pop(); }
                 Owed::Apply(callee, count) => {
-                    let args = state.found.split_off(state.found.len() - count).into_iter().map(Form::Const).collect();
+                    let values = state.found.split_off(state.found.len() - count);
+                    if matches!(&callee, Callee::Prim(Prim::MoreYet, _)) && !self.table.strings("ext.stmt.async.generator.methods").is_empty() {
+                        if let Some(walk @ Value::Traversal(source, _)) = values.first() {
+                            if matches!(source.as_ref(), Value::Wrapped(61, _)) {
+                                state.owed.push(Owed::WalkNext(walk.clone()));
+                                return Ok(Stepped::Going);
+                            }
+                        }
+                    }
+                    let args = values.into_iter().map(Form::Const).collect();
                     state.found.push(self.value_of(&Form::Apply(callee, args), &frame)?);
                 }
                 Owed::Into(callee, place, count) => {
@@ -3883,6 +3970,20 @@ impl<'a> Machine<'a> {
                         if !whole { state.owed.push(Owed::Apply(Callee::Prim(Prim::AsTruth, Rc::from("")), 1)); }
                         state.owed.push(Owed::Find(unwrapped_arm(right)));
                     }
+                }
+                Owed::AssertTest(message) => {
+                    let tested = state.found.pop().unwrap_or(Value::Nil);
+                    if self.object_truth(&tested)? { state.found.push(Value::Nil); }
+                    else {
+                        state.owed.push(Owed::AssertRaise);
+                        state.owed.push(Owed::Find(message));
+                    }
+                }
+                Owed::AssertRaise => {
+                    let message = state.found.pop().unwrap_or(Value::Unset);
+                    let assertion = Form::Assert { condition: Box::new(Form::Const(Value::Flag(false))),
+                        message: Box::new(Form::Const(message)) };
+                    state.found.push(self.value_of(&assertion, &frame)?);
                 }
                 Owed::Test(cycle) => {
                     if let Some(over) = self.past_its_time() { return Err(over); }
@@ -3924,36 +4025,39 @@ impl<'a> Machine<'a> {
                     state.found.push(Self::delegated_result(&inner));
                     state.inner = None;
                 }
+                Owed::WalkNext(walk) => {
+                    let Value::Traversal(source, present) = &walk else { return Err(self.bad_answer().into()) };
+                    let Value::Wrapped(61, parts) = source.as_ref() else { return Err(self.bad_answer().into()) };
+                    let outcome = (|| {
+                        if state.inner.is_none() {
+                            state.inner = Some(self.next_awaited_walk(&parts[0])?);
+                            *sent = Value::Nil;
+                        }
+                        let inner = state.inner.as_ref().expect("next awaitable").clone();
+                        match self.delegated_step(&inner, std::mem::replace(sent, Value::Nil))? {
+                            Some(token) => Ok((Some(token), true)),
+                            None => Ok((Some(Self::delegated_result(&inner)), false)),
+                        }
+                    })();
+                    let item = match outcome {
+                        Ok((Some(token), true)) => { state.owed.push(Owed::WalkNext(walk)); return Ok(Stepped::Handed(token)); }
+                        Ok((item, false)) => item,
+                        Err(away) if self.async_exhausted(&away) => None,
+                        Err(away) => { state.inner = None; return Err(away); }
+                        _ => unreachable!(),
+                    };
+                    state.inner = None;
+                    state.found.push(Value::Flag(item.is_some()));
+                    *present.borrow_mut() = item;
+                }
                 Owed::Await => {
                     if state.inner.is_none() {
                         let subject = state.found.pop().unwrap_or(Value::Nil);
-                        let awaited = match subject {
-                            Value::Generator(ref generator) if !self.is_async_generator(&subject)
-                                && generator.borrow().of.as_ref().is_some_and(|body| body.flags & 128 != 0) => subject,
-                            Value::Thing(_) => {
-                                let name = self.table.strings("ext.stmt.async.generator.methods")[3].clone();
-                                let member = self.read_class_member(subject.clone(), &name, false)?;
-                                let offered = self.apply_class_member(member, Vec::new())?;
-                                if !matches!(offered, Value::Generator(_) | Value::Cursor(_)) {
-                                    return Err(format!("TypeError: __await__() returned non-iterator of type '{}'", offered.kind_word()).into());
-                                }
-                                offered
-                            }
-                            Value::Wrapped(62, _) => subject,
-                            other => return Err(format!("TypeError: object {} can't be used in 'await' expression", other.kind_word()).into()),
-                        };
+                        let awaited = self.awaited_walk(subject)?;
                         state.inner = Some(awaited);
                         *sent = Value::Nil;
                     }
                     let inner = state.inner.clone().expect("the awaited walk");
-                    if let Value::Wrapped(62, parts) = &inner {
-                        match self.drive_async(parts, std::mem::replace(sent, Value::Nil))? {
-                            (Some(item), true) => { state.owed.push(Owed::Await); return Ok(Stepped::Handed(item)); }
-                            (Some(item), false) => { state.found.push(item); state.inner = None; return Ok(Stepped::Going); }
-                            (None, false) => return Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new())),
-                            (None, true) => unreachable!(),
-                        }
-                    }
                     if let Some(item) = self.delegated_step(&inner, std::mem::replace(sent, Value::Nil))? {
                         state.owed.push(Owed::Await);
                         return Ok(Stepped::Handed(item));
@@ -6936,13 +7040,13 @@ impl<'a> Machine<'a> {
         if let Value::Generator(state) = value {
             if self.is_async_generator(value) {
                 if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == name) {
-                    if index == 2 { return Some(Value::Flag(state.try_borrow().is_err())); }
+                    if index == 2 { return Some(Value::Flag(self.async_running(value))); }
                     let held = state.try_borrow().ok()?;
                     return Some(match index {
                         0 => held.of.as_ref().and_then(|body| self.code_handles.get(&(Rc::as_ptr(body) as usize)).map(|(_, handle)| handle.clone())).unwrap_or(Value::Nil),
                         1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
                         2 => Value::Flag(false),
-                        _ => held.inner.clone().unwrap_or(Value::Nil),
+                        _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
                     });
                 }
                 if self.table.strings("ext.stmt.async.generator.methods").iter().take(3).any(|word| word == name) {
@@ -7491,60 +7595,25 @@ impl<'a> Machine<'a> {
             }
             if name == "close" {
                 if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                if let Value::Shared(stage) = &parts[3] {
-                    if matches!(*stage.borrow(), Value::Small(0 | 1)) {
-                        *stage.borrow_mut() = Value::Small(2);
-                        if let Value::Generator(generator) = &parts[0] { self.shut_generator(generator)?; }
-                    }
-                }
-                return Ok(Value::Nil);
+                if matches!(&parts[3], Value::Shared(stage) if matches!(*stage.borrow(), Value::Small(2))) { return Ok(Value::Nil); }
+                let exit = self.exit_value().ok_or_else(|| self.bad_answer())?;
+                return match self.drive_async_with(&parts, Value::Nil, Some(exit)) {
+                    Ok(AsyncStep::Finished(None)) => Ok(Value::Nil),
+                    Err(Escape::Thrown(value)) if self.is_exit(&value) || matches!(&value, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => Ok(Value::Nil),
+                    Ok(_) => Err(String::from("RuntimeError: coroutine ignored GeneratorExit").into()),
+                    Err(away) => Err(away),
+                };
             }
-            if name == "throw" {
+            let outcome = if name == "throw" {
                 if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
-                if let Value::Shared(stage) = &parts[3] {
-                    if matches!(*stage.borrow(), Value::Small(2)) {
-                        let mode = matches!(parts.get(1), Some(Value::Small(0 | 1)));
-                        return Err(format!("RuntimeError: cannot reuse already awaited {}", if mode { "__anext__()/asend()" } else { "aclose()/athrow()" }).into());
-                    }
-                    if matches!(*stage.borrow(), Value::Small(1)) {
-                        let Value::Generator(generator) = &parts[0] else { unreachable!() };
-                        let thrown = self.thrown_into(vec![arguments[0].clone()], &self.outermost.clone())?;
-                        let stepped = self.step_into(generator, Value::Nil, Some(thrown), &[arguments[0].clone()]);
-                        let pending = generator.try_borrow().is_ok_and(|state| state.inner.is_some());
-                        *stage.borrow_mut() = Value::Small(if pending && stepped.as_ref().is_ok_and(Option::is_some) { 1 } else { 2 });
-                        return match stepped {
-                            Ok(Some(value)) if pending => Ok(value),
-                            Ok(Some(value)) => Err(self.async_fault(&self.table.strings("ext.stmt.class.special.stop")[0].clone(), vec![value])),
-                            Ok(None) => Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new())),
-                            Err(fault) => Err(fault),
-                        };
-                    }
-                }
-                let thrown_parts = [parts[0].clone(), Value::Small(2), arguments[0].clone(), parts[3].clone()];
-                return match self.drive_async(&thrown_parts, Value::Nil) {
-                    Ok((Some(value), true)) => Ok(value),
-                    Ok((Some(value), false)) => Err(self.async_fault(&self.table.strings("ext.stmt.class.special.stop")[0].clone(),
-                        if matches!(value, Value::Nil) { Vec::new() } else { vec![value] })),
-                    Ok((None, false)) => Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new())),
-                    Ok((_, true)) => unreachable!(),
-                    Err(error) => Err(error),
-                };
-            }
-            if name == "send" || self.table.strings("ext.stmt.class.special").get(16).is_some_and(|word| word == name) {
-                if arguments.len() != usize::from(name == "send") { return Err(self.method_fault("arguments").into()); }
-                if arguments.first().is_some_and(|value| !matches!(value, Value::Nil))
-                    && matches!(&parts[3], Value::Shared(stage) if matches!(*stage.borrow(), Value::Small(0))) {
-                    return Err(String::from("TypeError: can't send non-None value to a just-started coroutine").into());
-                }
-                return match self.drive_async(&parts, arguments.first().cloned().unwrap_or(Value::Nil)) {
-                    Ok((Some(value), true)) => Ok(value),
-                    Ok((Some(value), false)) => Err(self.async_fault(&self.table.strings("ext.stmt.class.special.stop")[0].clone(),
-                        if matches!(value, Value::Nil) { Vec::new() } else { vec![value] })),
-                    Ok((None, false)) => Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new())),
-                    Ok((_, true)) => unreachable!(),
-                    Err(error) => Err(error),
-                };
-            }
+                let fault = self.thrown_into(vec![arguments[0].clone()], &self.outermost.clone())?;
+                self.drive_async_with(&parts, Value::Nil, Some(fault))
+            } else if self.table.spells("ext.stmt.yield.send", name)
+                || self.table.strings("ext.stmt.class.special").get(16).is_some_and(|word| word == name) {
+                if arguments.len() != usize::from(self.table.spells("ext.stmt.yield.send", name)) { return Err(self.method_fault("arguments").into()); }
+                self.drive_async(&parts, arguments.first().cloned().unwrap_or(Value::Nil))
+            } else { return Err(self.bad_answer().into()); };
+            return self.operation_answer(outcome);
         }
         if matches!(receiver.settled(), Value::Generator(_)) &&
             ["ext.stmt.yield.throw", "ext.stmt.yield.close", "ext.stmt.yield.send"].iter().any(|label| self.table.spells(label, name)) {
@@ -9052,7 +9121,7 @@ impl<'a> Machine<'a> {
         state.trace_state = self.activation(program, &state.frame, None);
         let walk = Rc::new(RefCell::new(state));
         if !self.table.strings("ext.stmt.async.generator.methods").is_empty() && program.flags & 512 != 0 {
-            self.async_generators.insert(Rc::as_ptr(&walk) as usize, Rc::downgrade(&walk));
+            self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false))));
         }
         if crate::ghost::bidding() {
             crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
@@ -9143,7 +9212,7 @@ impl<'a> Machine<'a> {
             suspension.trace_state = self.activation(&program, &frame, None);
             let walk = Rc::new(RefCell::new(suspension));
             if !self.table.strings("ext.stmt.async.generator.methods").is_empty() && program.flags & 512 != 0 {
-                self.async_generators.insert(Rc::as_ptr(&walk) as usize, Rc::downgrade(&walk));
+                self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false))));
             }
             if crate::ghost::bidding() {
                 crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
@@ -9259,7 +9328,7 @@ impl<'a> Machine<'a> {
                         suspension.trace_state = self.activation(&p, &f, None);
                         let walk = Rc::new(RefCell::new(suspension));
                         if !self.table.strings("ext.stmt.async.generator.methods").is_empty() && p.flags & 512 != 0 {
-                            self.async_generators.insert(Rc::as_ptr(&walk) as usize, Rc::downgrade(&walk));
+                            self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false))));
                         }
                         if crate::ghost::bidding() {
                             crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
@@ -11527,7 +11596,7 @@ impl<'a> Machine<'a> {
     fn async_walk(&mut self, v: &[Value]) -> Result<Value, Escape> {
         let [subject] = v else { return Err(Escape::Error(format!("an asynchronous walk expects 1 argument, got {}", v.len()))) };
         let subject = subject.settled();
-        if matches!(&subject, Value::Generator(state) if state.borrow().of.as_ref().map_or(false, |program| program.flags & 512 != 0)) {
+        if self.is_async_generator(&subject) {
             return Ok(Value::Wrapped(61, Rc::new(vec![subject])));
         }
         let asked = self.ask_special(&subject, 83, &[]).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)))?;
@@ -11543,7 +11612,7 @@ impl<'a> Machine<'a> {
     fn is_async_generator(&self, value: &Value) -> bool {
         let Value::Generator(state) = value else { return false };
         self.async_generators.get(&(Rc::as_ptr(state) as usize))
-            .and_then(Weak::upgrade).is_some_and(|known| Rc::ptr_eq(&known, state))
+            .and_then(|entry| entry.0.upgrade()).is_some_and(|known| Rc::ptr_eq(&known, state))
     }
 
     fn async_awaitable(&self, generator: Value, operation: i64, argument: Value) -> Value {
@@ -11558,57 +11627,158 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Advance an async generator operation through either an inner await
-    /// or the generator's own yield, retaining its one-shot state.
-    fn drive_async(&mut self, parts: &[Value], sent: Value) -> Res<(Option<Value>, bool)> {
+    pub(super) fn async_running(&self, value: &Value) -> bool {
+        let Value::Generator(body) = value else { return false };
+        self.async_generators.get(&(Rc::as_ptr(body) as usize))
+            .is_some_and(|(_, owner, _)| owner.borrow().is_some())
+    }
+
+    fn operation_answer(&mut self, outcome: Res<AsyncStep>) -> Res<Value> {
+        match outcome {
+            Ok(AsyncStep::Waiting(item)) => Ok(item),
+            Ok(AsyncStep::Finished(item)) => Err(self.async_fault(
+                &self.table.strings("ext.stmt.class.special.stop")[0].clone(), item.into_iter().collect())),
+            Err(away) => Err(away),
+        }
+    }
+
+    /// The shared claim outlives a frame step, including inner-await pauses.
+    fn drive_async(&mut self, parts: &[Value], sent: Value) -> Res<AsyncStep> {
+        self.drive_async_with(parts, sent, None)
+    }
+
+    fn drive_async_with(&mut self, parts: &[Value], sent: Value, thrown: Option<Value>) -> Res<AsyncStep> {
         let [Value::Generator(generator), Value::Small(operation), argument, Value::Shared(stage)] = parts else {
             return Err(self.bad_answer().into());
         };
         let phase = match &*stage.borrow() { Value::Small(n) => *n, _ => 2 };
         if phase == 2 {
-            let message = if *operation < 2 { "cannot reuse already awaited __anext__()/asend()" }
-                else { "cannot reuse already awaited aclose()/athrow()" };
-            return Err(format!("RuntimeError: {message}").into());
+            let suffix = if *operation < 2 { "__anext__()/asend()" } else { "aclose()/athrow()" };
+            return Err(format!("RuntimeError: cannot reuse already awaited {suffix}").into());
         }
-        if generator.borrow().ended {
+        if phase == 0 && *operation >= 2 && thrown.is_none() && !matches!(sent, Value::Nil) {
+            return Err(String::from("RuntimeError: can't send non-None value to a just-started coroutine").into());
+        }
+        let (_, claim, closing) = self.async_generators.get(&(Rc::as_ptr(generator) as usize))
+            .cloned().ok_or_else(|| self.bad_answer())?;
+        if claim.borrow().as_ref().is_some_and(|active| !Rc::ptr_eq(active, stage)) {
             *stage.borrow_mut() = Value::Small(2);
-            return Ok((if *operation == 2 || *operation == 3 { Some(Value::Nil) } else { None }, false));
+            let verb = match operation { 2 => "athrow", 3 => "aclose", _ => "anext" };
+            return Err(format!("RuntimeError: {verb}(): asynchronous generator is already running").into());
         }
-        if phase == 0 && *operation == 1 && !matches!(argument, Value::Nil) && !generator.borrow().begun {
-            *stage.borrow_mut() = Value::Small(2);
-            return Err(String::from("TypeError: can't send non-None value to a just-started async generator").into());
-        }
-        let stepped = if phase == 1 { self.resume(generator, sent) } else {
-            match *operation {
-                0 => self.resume(generator, Value::Nil),
-                1 => self.resume(generator, argument.clone()),
-                2 => {
-                    let thrown = self.thrown_into(vec![argument.clone()], &self.outermost.clone())?;
-                    self.step_into(generator, Value::Nil, Some(thrown), &[argument.clone()])
-                }
-                3 => { self.shut_generator(generator)?; Ok(Some(Value::Nil)) }
-                _ => Err(self.bad_answer().into()),
+        let (ended, begun) = match generator.try_borrow() {
+            Ok(held) => (held.ended, held.begun),
+            Err(_) => {
+                *stage.borrow_mut() = Value::Small(2);
+                *claim.borrow_mut() = None;
+                return Err("ValueError: async generator already executing".to_string().into());
             }
         };
-        match stepped {
-            Ok(Some(item)) => {
-                let pending = generator.try_borrow().is_ok_and(|state| state.inner.is_some());
-                *stage.borrow_mut() = Value::Small(if pending { 1 } else { 2 });
-                Ok((Some(item), pending))
+        *claim.borrow_mut() = Some(stage.clone());
+        let outcome = (|| {
+            if ended {
+                if let Some(value) = thrown {
+                    let fault = Escape::Thrown(value.clone());
+                    return if *operation == 3 && (self.is_exit(&value) || self.async_exhausted(&fault)) {
+                        Ok(AsyncStep::Finished(None))
+                    } else { Err(fault) };
+                }
+                return if *operation >= 2 { Ok(AsyncStep::Finished(None)) }
+                    else { Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new())) };
             }
-            Ok(None) => { *stage.borrow_mut() = Value::Small(2); Ok((None, false)) }
-            Err(fault) => { *stage.borrow_mut() = Value::Small(2); Err(fault) }
+            if phase == 0 && *operation >= 2 && closing.get() && thrown.is_none() {
+                return Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new()));
+            }
+            let advanced = if let Some(value) = thrown {
+                self.step_into(generator, Value::Nil, Some(value.clone()), &[value])
+            } else if phase == 1 {
+                self.resume(generator, sent)
+            } else if *operation < 2 {
+                let offered = if !matches!(sent, Value::Nil) { sent } else if *operation == 1 { argument.clone() } else { Value::Nil };
+                if !begun && !matches!(offered, Value::Nil) {
+                    return Err(String::from("TypeError: can't send non-None value to a just-started async generator").into());
+                }
+                self.resume(generator, offered)
+            } else if *operation == 2 {
+                let fault = self.thrown_into(vec![argument.clone()], &self.outermost.clone())?;
+                self.step_into(generator, Value::Nil, Some(fault), &[argument.clone()])
+            } else {
+                closing.set(true);
+                if !begun { self.end_generator(generator)?; return Ok(AsyncStep::Finished(None)); }
+                let fault = self.exit_value().ok_or_else(|| self.bad_answer())?;
+                self.step_into(generator, Value::Nil, Some(fault), &[])
+            };
+            match advanced {
+                Ok(Some(item)) if generator.try_borrow().is_ok_and(|held| held.inner.is_some()) => Ok(AsyncStep::Waiting(item)),
+                Ok(Some(_)) if *operation == 3 => Err(self.table.single("ext.stmt.async.generator.close.ignored").unwrap_or_default().to_owned().into()),
+                Ok(Some(item)) => Ok(AsyncStep::Finished(Some(item))),
+                Ok(None) if *operation >= 2 => Ok(AsyncStep::Finished(None)),
+                Ok(None) => Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new())),
+                Err(Escape::Thrown(fault)) if *operation == 3 && self.is_exit(&fault) => Ok(AsyncStep::Finished(None)),
+                Err(away) => Err(away),
+            }
+        })();
+        if matches!(outcome, Ok(AsyncStep::Waiting(_))) { *stage.borrow_mut() = Value::Small(1); }
+        else { *stage.borrow_mut() = Value::Small(2); *claim.borrow_mut() = None; }
+        outcome
+    }
+
+    fn await_iterator(&mut self, offered: Value) -> Res<Value> {
+        if let Value::Generator(body) = &offered {
+            if self.is_async_generator(&offered) {
+                return Err(format!("TypeError: __await__() returned non-iterator of type '{}'", offered.kind_word()).into());
+            }
+            if body.try_borrow().is_ok_and(|held| held.of.as_ref().is_some_and(|program| program.flags & 128 != 0)) {
+                return Err(String::from("TypeError: __await__() returned a coroutine").into());
+            }
+            return Ok(offered);
         }
+        let native = matches!(&offered, Value::Iterator(_) | Value::Cursor(_) | Value::Wrapped(62, _));
+        if !native && self.appointed(&offered, 16).is_none() {
+            return Err(format!("TypeError: __await__() returned non-iterator of type '{}'", offered.kind_word()).into());
+        }
+        Ok(Value::Wrapped(63, Rc::new(vec![offered, Value::Shared(Rc::new(RefCell::new(Value::Nil))),
+            Value::Shared(Rc::new(RefCell::new(Value::Flag(false))))])))
+    }
+
+    fn awaited_walk(&mut self, subject: Value) -> Res<Value> {
+        match subject {
+            Value::Generator(ref body) if !self.is_async_generator(&subject)
+                && body.try_borrow().is_ok_and(|held| held.of.as_ref().is_some_and(|program| program.flags & 128 != 0)) => Ok(subject),
+            Value::Wrapped(62, _) => self.await_iterator(subject),
+            Value::Thing(_) => {
+                let name = self.table.strings("ext.stmt.async.generator.methods")[3].clone();
+                let member = self.read_class_member(subject.clone(), &name, false).map_err(|away| {
+                    if matches!(&away, Escape::Thrown(Value::Thing(t)) if t.blueprint().goes_by("AttributeError", false)) {
+                        Escape::Error(format!("TypeError: object {} can't be used in 'await' expression", subject.kind_word()))
+                    } else { away }
+                })?;
+                let offered = self.apply_class_member(member, Vec::new())?;
+                self.await_iterator(offered)
+            }
+            other => Err(format!("TypeError: object {} can't be used in 'await' expression", other.kind_word()).into()),
+        }
+    }
+
+    fn next_awaited_walk(&mut self, walker: &Value) -> Res<Value> {
+        if self.is_async_generator(walker) {
+            return self.await_iterator(self.async_awaitable(walker.clone(), 0, Value::Nil));
+        }
+        let (body, scope) = self.appointed_within(walker, 84).ok_or_else(|| self.bad_answer())?;
+        let operation = self.invoke(body, scope, vec![walker.clone()])?;
+        self.awaited_walk(operation)
+    }
+
+    fn async_exhausted(&self, away: &Escape) -> bool {
+        matches!(away, Escape::Thrown(Value::Thing(t)) if self.table.strings("ext.stmt.async.stop").iter().any(|word| t.blueprint().goes_by(word, false)))
     }
 
     fn await_completion(&mut self, value: Value) -> Res<Value> {
         if let Value::Wrapped(62, parts) = &value {
             return loop {
                 match self.drive_async(parts, Value::Nil)? {
-                    (Some(_), true) => continue,
-                    (Some(item), false) => break Ok(item),
-                    (None, false) => break Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new())),
-                    (None, true) => unreachable!(),
+                    AsyncStep::Waiting(_) => continue,
+                    AsyncStep::Finished(item) => break Ok(item.unwrap_or(Value::Nil)),
                 }
             };
         }
@@ -11623,24 +11793,15 @@ impl<'a> Machine<'a> {
     }
 
     fn awaited_step(&mut self, walker: &Value) -> Result<Option<Value>, String> {
-        if self.is_async_generator(walker) {
-            let Value::Generator(state) = walker else { unreachable!() };
-            return match self.resume(state, Value::Nil) {
-                Ok(item) => Ok(item),
-                Err(Escape::Error(message)) => Err(message),
-                Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
-            };
-        }
-        let (routine, scope) = self.appointed_within(walker, 84).ok_or_else(|| self.bad_answer())?;
-        let result = self.invoke(routine, scope, vec![walker.clone()]).and_then(|value| self.await_completion(value));
-        let stepped = match result {
-            Err(Escape::Error(_)) if self.got_away.is_some() => Err(self.got_away.take().expect("what got away")),
-            other => other,
-        };
-        match stepped {
-            Ok(v) => Ok(Some(v)),
-            Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.async.stop").iter().any(|name| t.blueprint().goes_by(name, false)) => Ok(None),
-            Err(Escape::Error(s)) => Err(s),
+        let outcome = (|| {
+            let walk = self.next_awaited_walk(walker)?;
+            while self.delegated_step(&walk, Value::Nil)?.is_some() {}
+            Ok(Self::delegated_result(&walk))
+        })();
+        match outcome {
+            Ok(item) => Ok(Some(item)),
+            Err(away) if self.async_exhausted(&away) => Ok(None),
+            Err(Escape::Error(words)) => Err(words),
             Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
         }
     }
@@ -12587,16 +12748,18 @@ impl<'a> Machine<'a> {
             },
             (Prim::NextItem, [Value::Wrapped(62, parts)]) => {
                 let stepped = self.drive_async(parts, Value::Nil);
-                if let Ok((Some(value), true)) = &stepped { return Ok(Some(value.clone())); }
-                let fault = match stepped {
-                    Ok((Some(value), false)) => self.async_fault(&self.table.strings("ext.stmt.class.special.stop")[0].clone(),
-                        if matches!(value, Value::Nil) { Vec::new() } else { vec![value] }),
-                    Ok((None, false)) => self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new()),
-                    Ok((_, true)) => unreachable!(),
-                    Err(error) => error,
+                return match self.operation_answer(stepped) {
+                    Ok(value) => Ok(Some(value)),
+                    Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
                 };
-                self.got_away = Some(fault);
-                return Err(self.bad_answer());
+            }
+            (Prim::NextItem, [Value::Wrapped(62, parts), otherwise]) => {
+                let stepped = self.drive_async(parts, Value::Nil);
+                if matches!(stepped, Ok(AsyncStep::Finished(_))) { return Ok(Some(otherwise.clone())); }
+                return match self.operation_answer(stepped) {
+                    Ok(value) => Ok(Some(value)),
+                    Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
+                };
             }
             (Prim::NextItem, [one, otherwise]) => self.advance_object(one)?.unwrap_or_else(|| otherwise.clone()),
             (Prim::NextItem, [Value::Cursor(cursor)]) => {
@@ -18408,7 +18571,7 @@ fn unwrapped_arm(form: Form) -> Form {
 
 fn suspension_within(form: &Form) -> bool {
     match form {
-        Form::Apply(Callee::Prim(Prim::Suspend | Prim::Delegate, _), _) => true,
+        Form::Apply(Callee::Prim(Prim::Suspend | Prim::Delegate | Prim::AwaitResult | Prim::AsyncWalk, _), _) => true,
         Form::Apply(Callee::Prim(_, _), args) => args.iter().any(suspension_within),
         Form::Apply(Callee::Code(target), args) => suspension_within(target) || args.iter().any(suspension_within),
         Form::Const(Value::Routine(body)) if body.frameless => suspension_within(&body.body),
@@ -20928,16 +21091,13 @@ impl Machine<'_> {
                 require(1, 2)?;
                 if let Value::Wrapped(62, parts) = &input[0] {
                     let stepped = self.drive_async(parts, Value::Nil);
-                    if let Ok((Some(value), true)) = &stepped { return Ok(value.clone()); }
-                    let fault = match stepped {
-                        Ok((Some(value), false)) => self.async_fault(&self.table.strings("ext.stmt.class.special.stop")[0].clone(),
-                            if matches!(value, Value::Nil) { Vec::new() } else { vec![value] }),
-                        Ok((None, false)) => self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new()),
-                        Ok((_, true)) => unreachable!(),
-                        Err(error) => error,
+                    if matches!(stepped, Ok(AsyncStep::Finished(_))) {
+                        if let Some(default) = input.get(1) { return Ok(default.clone()); }
+                    }
+                    return match self.operation_answer(stepped) {
+                        Ok(value) => Ok(value),
+                        Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
                     };
-                    self.got_away = Some(fault);
-                    return Err(self.bad_answer());
                 }
                 match self.next_value(&input[0])?.or_else(|| input.get(1).cloned()) {
                     Some(item) => Ok(item),

@@ -2530,6 +2530,10 @@
   "ext.stmt.async.stop": [
     "StopAsyncIteration"
   ],
+  "ext.stmt.async.generator.escaped": [
+    "RuntimeError: async generator raised StopIteration",
+    "RuntimeError: async generator raised StopAsyncIteration"
+  ],
   "ext.stmt.async.generator.close.ignored": [
     "RuntimeError: async generator ignored GeneratorExit"
   ],

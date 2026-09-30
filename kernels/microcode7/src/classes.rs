@@ -1764,13 +1764,13 @@ impl<'a> Machine<'a> {
         }else if let Value::Generator(state)=&value {
             if self.is_async_generator(&value) {
                 if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == key) {
-                    if index == 2 { return Ok(Value::Flag(state.try_borrow().is_err())); }
+                    if index == 2 { return Ok(Value::Flag(self.async_running(&value))); }
                     let held = state.try_borrow().map_err(|_| self.class_unready())?;
                     return Ok(match index {
                         0 => held.of.as_ref().map_or(Value::Nil, |body| self.code_handle(body)),
                         1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
                         2 => Value::Flag(false),
-                        _ => held.inner.clone().unwrap_or(Value::Nil),
+                        _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
                     });
                 }
                 if let Some(method) = self.attribute(&value, key) { return Ok(method); }
@@ -1875,6 +1875,12 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        if matches!(&subject, Value::Wrapped(62, _)) {
+            let known = self.attribute(&subject, key).is_some() || ["__class__", "__doc__"].contains(&key);
+            let message = if known { format!("AttributeError: '{}' object attribute '{}' is read-only", subject.kind_word(), key) }
+                else { format!("AttributeError: '{}' object has no attribute '{}' and no __dict__ for setting new attributes", subject.kind_word(), key) };
+            return Err(message.into());
+        }
         if let Value::Generator(g) = &subject {
             if self.table.single("ext.stmt.yield.running") == Some(key) {
                 let words = self.table.strings("ext.stmt.class.detail.method.fixed");

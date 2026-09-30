@@ -1109,13 +1109,13 @@ impl<'a> Engine<'a> {
         if let Value::Generator(generator) = &subject {
             if self.is_async_generator(&subject) {
                 if let Some(index) = self.lang.async_generator_fields.iter().position(|word| word == name) {
-                    if index == 2 { return Ok(Value::Flag(generator.try_borrow().is_err())); }
+                    if index == 2 { return Ok(Value::Flag(self.async_generator_running(&subject))); }
                     let state = generator.try_borrow().map_err(|_| self.class_refusal())?;
                     return Ok(match index {
                         0 => state.program.as_ref().map_or(Value::Null, |body| self.routine_code(body)),
                         1 => if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) },
                         2 => Value::Flag(false),
-                        _ => state.delegate.clone().unwrap_or(Value::Null),
+                        _ => match state.delegate.clone().unwrap_or(Value::Null) { Value::Adapter(parts) if parts.0 == 33 => parts.1[0].clone(), other => other },
                     });
                 }
                 if self.lang.trace_fields.iter().position(|key| key == name).is_some_and(|at| matches!(at, 14 | 15 | 19..=25)) {
@@ -2061,12 +2061,13 @@ impl<'a> Engine<'a> {
             // A cell takes what it holds, and taking that away leaves it
             // empty; it keeps nothing else.
             Value::Adapter(w) if w.0==32 => {
-                if ["send", "throw", "close"].contains(&name)
+                let known = ["send", "throw", "close", "__class__", "__doc__"].contains(&name)
                     || self.lang.class_special.get(15).is_some_and(|word| word == name)
                     || self.lang.class_special.get(16).is_some_and(|word| word == name)
-                    || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name) {
-                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
-                }
+                    || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name);
+                let message = if known { format!("AttributeError: '{}' object attribute '{}' is read-only", subject.core_kind(), name) }
+                    else { format!("AttributeError: '{}' object has no attribute '{}' and no __dict__ for setting new attributes", subject.core_kind(), name) };
+                return Err(message.into());
             }
             Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
                 let (Some(Value::Binding(held)) | Some(Value::Bond(held)))=w.1.first() else {return Err(absent)};
