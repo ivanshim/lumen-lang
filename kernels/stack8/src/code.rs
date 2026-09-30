@@ -912,6 +912,12 @@ pub struct Routine {
     /// The builtins in force where such a routine was built, kept for
     /// the case that its own dictionary names none of its own.
     pub born: Option<Value>,
+    /// The name of the namespace a routine read from text handed a
+    /// dictionary was made in, caught when it was made: its module, as
+    /// the reference takes a function's module from the globals it was
+    /// made with. The inner Nothing where that namespace named nothing;
+    /// the outer for every routine a file or the run itself wrote.
+    pub home: Option<Option<Rc<str>>>,
     /// The line the program was written on, which a fault raised on the
     /// way into it names: such a fault belongs where the program is
     /// written and not where the call stood.

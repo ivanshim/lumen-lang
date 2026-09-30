@@ -17,7 +17,7 @@ impl<'a> Engine<'a> {
         let name = self.class_word("root").to_string();
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![], lineage: vec![], base: None, answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]) });
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
         self.class_root = Some(c.clone());
         c
     }
@@ -29,7 +29,7 @@ impl<'a> Engine<'a> {
         let root = self.root_class();
         let c = Rc::new(Class { outline: Some(format!("<class '{word}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]) });
+            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
         self.kind_classes.push((word.to_string(), c.clone()));
         c
     }
@@ -42,7 +42,7 @@ impl<'a> Engine<'a> {
         let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::SortOf).map_or(String::new(), |(w, _)| w.clone());
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]) });
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
         self.class_maker = Some(c.clone());
         c
     }
@@ -100,9 +100,10 @@ impl<'a> Engine<'a> {
     }
     /// Whether the class was sealed against change: a sealed class
     /// refuses writes and removals among its members and cannot stand
-    /// as a base. Only the library's own sealing builtin sets the mark.
+    /// as a base. Only the library's own sealing builtin sets the mark,
+    /// which no member of the class can stand for.
     pub(super) fn class_sealed(c: &Class) -> bool {
-        c.shared.borrow().iter().any(|(n, _)| n == "\0sealed")
+        c.sealed.get()
     }
     /// The worth a thing keeps of the builtin kind its class stands on,
     /// as it is kept: a row or a map in its cell, so that what is done
@@ -280,7 +281,7 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default(),
-            shared: RefCell::new(members) });
+            shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
         self.furnish_slots(&c)?;
         // Each member that asks to be told its name is told it, once the
         // class stands, before any forebear hears of the new class.
@@ -402,7 +403,7 @@ impl<'a> Engine<'a> {
         }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(members) });
+            methods: vec![], constants: vec![], shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
         self.property_class = Some(c.clone());
         c
     }
@@ -1432,7 +1433,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("name") {return Ok(self.routine_held(&subject,name,Value::text(&f.ident)));}
                 if name==self.class_word("qualified") {return Ok(self.routine_held(&subject,name,Value::text(&f.qualified)));}
                 if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
-                if name==self.class_word("module") {let place=self.routine_home(f);return Ok(self.routine_held(&subject,name,Value::text(&place)));}
+                if name==self.class_word("module") {let home=self.routine_module(f);return Ok(self.routine_held(&subject,name,home));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
                     if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
@@ -1545,6 +1546,16 @@ impl<'a> Engine<'a> {
         f.written_in.as_ref()
             .and_then(|place| self.module_slots.get(place))
             .map_or_else(|| self.class_word("main").to_string(), |(_, path)| path.clone())
+    }
+    /// The module a routine answers as its own before anything the
+    /// program set on it: the name of the namespace a routine made by
+    /// hand was made in, caught when it was made (None where that
+    /// namespace named nothing), else the module its file was read as.
+    pub(super) fn routine_module(&self, f: &Routine) -> Value {
+        match &f.home {
+            Some(named) => named.as_ref().map_or(Value::Null, |word| Value::text(word)),
+            None => Value::text(&self.routine_home(f)),
+        }
     }
     /// The word the definition gives the module the builtin names live in.
     pub(super) fn home_module_word(&self) -> &str {

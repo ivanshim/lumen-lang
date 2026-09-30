@@ -1649,6 +1649,11 @@ pub struct Class {
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: RefCell<Vec<(String, Value)>>,
+    /// Whether the class was sealed against change by the sealing
+    /// builtin: a sealed class refuses writes and removals among its
+    /// members and cannot stand as a base. Kept out of the members so
+    /// that no program write can reach it.
+    pub sealed: std::cell::Cell<bool>,
 }
 
 impl Class {
