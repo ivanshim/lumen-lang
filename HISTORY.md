@@ -2255,3 +2255,23 @@ Merged, the fifty files count 2615 on both stack8 and microcode7, up from
 2612 on both, with no passing test lost. Complete build-machine runs
 confirm microcode7's test_math, test_str and test_long at 82, 127 and 34
 where Lambda reaches its time limit.
+
+### 1as. Batch 20q merged as #524; batch 20r: numeric format and sentinels
+
+Batch 20r folds two branches, integrated by a GPT-6 Sol worker.
+fix/numeric-format (Sol) validates grouping against presentation codes
+before other numeric flags and type errors, corrects precision precedence,
+and preserves valid fractional grouping and complex alternate formatting.
+The isolated integer-format test now passes, taking test_long from 34 to 35.
+fix/sentinel-semantics (Kimi K3) captures the caller function's real module,
+including exec namespaces and explicit module assignments, and seals the
+sentinel class through internal class state. Type flags reflect its actual
+immutability, base refusal and collector participation. An ordinary
+attribute named with a NUL cannot forge that state. test_builtin gains one.
+
+The merged count is 2617 on both stack8 and microcode7, up from 2615;
+test_builtin is 105 and test_long is 35. The language-table conflict keeps
+both additions, and the shared builtin stderr record was remeasured from
+the worktree root. No test or input is weakened. Complete final-build
+runs confirm microcode7 math and str at 82 and 127 where Lambda times out.
+Sentinel unions and weak references to string subclasses remain unfinished.
