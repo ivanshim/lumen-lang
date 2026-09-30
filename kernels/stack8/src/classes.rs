@@ -17,7 +17,7 @@ impl<'a> Engine<'a> {
         let name = self.class_word("root").to_string();
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![], lineage: vec![], base: None, answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), declares_slots: false, sealed: std::cell::Cell::new(false) });
         self.class_root = Some(c.clone());
         c
     }
@@ -35,7 +35,7 @@ impl<'a> Engine<'a> {
         let mut ancestry = vec![root.clone()]; ancestry.extend(root.lineage.iter().cloned());
         let c = Rc::new(Class { outline: Some(format!("<class '{word}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: ancestry, base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]), declares_slots: false, sealed: std::cell::Cell::new(false) });
         self.kind_classes.push((word.to_string(), c.clone()));
         c
     }
@@ -48,7 +48,7 @@ impl<'a> Engine<'a> {
         let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::SortOf).map_or(String::new(), |(w, _)| w.clone());
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), declares_slots: false, sealed: std::cell::Cell::new(false) });
         self.class_maker = Some(c.clone());
         c
     }
@@ -294,12 +294,7 @@ impl<'a> Engine<'a> {
         Self::own_kind(&class).and_then(|word| self.spelled_kind(&word)).unwrap_or(Value::Class(class))
     }
     fn solid_parent(&self, class: &Rc<Class>) -> Rc<Class> {
-        let slots = Self::own_class_value(class, self.class_word("slots"));
-        let adds_slots = slots.is_some_and(|v| {
-            let entries = match v.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), one => vec![one] };
-            entries.iter().any(|slot| !matches!(slot, Value::Text(word) if word.as_ref() == "__dict__" || word.as_ref() == "__weakref__"))
-        });
-        if Self::own_kind(class).is_some() || self.is_metaclass_root(class) || adds_slots { return class.clone(); }
+        if Self::own_kind(class).is_some() || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
         class.base.as_ref().map_or_else(|| class.clone(), |parent| self.solid_parent(parent))
     }
     fn layout_parent(&self, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
@@ -352,10 +347,17 @@ impl<'a> Engine<'a> {
             if !matches!(held.contents(), Value::Text(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", held.core_kind()).into()); }
         }
         let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
+        // Slot storage is fixed when the class is made, independently of
+        // later replacement or mutation of its public declaration.
+        let owns_storage = members.iter().find(|(key, _)| key == self.class_word("slots")).is_some_and(|(_, value)| {
+            let slots = match value.contents() { Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(), single => vec![single] };
+            slots.iter().any(|slot| !matches!(slot, Value::Text(key) if key.as_ref() == "__dict__" || key.as_ref() == "__weakref__"))
+        });
+        let constants = maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default();
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: primary, direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default(),
-            shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants,
+            shared: RefCell::new(members), declares_slots: owns_storage, sealed: std::cell::Cell::new(false) });
         self.furnish_slots(&c)?;
         // Each member that asks to be told its name is told it, once the
         // class stands, before any forebear hears of the new class.
@@ -477,7 +479,7 @@ impl<'a> Engine<'a> {
         }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants: vec![], shared: RefCell::new(members), declares_slots: false, sealed: std::cell::Cell::new(false) });
         self.property_class = Some(c.clone());
         c
     }
@@ -1289,6 +1291,14 @@ impl<'a> Engine<'a> {
                 _ => None,
             };
             if let Some(c) = class {
+                if let Some(maker) = Self::maker_beneath(&c) {
+                    if let Some(member) = self.class_value(&maker, name) {
+                        if !self.takes_writes(&member) {
+                            if let Some(own) = self.class_value(&c, name) { return self.bind_class_value(own, None, c); }
+                        }
+                        return self.bind_class_value(member, Some(subject.clone()), maker);
+                    }
+                }
                 return Ok(if name == self.class_word("base") { c.base.clone().map_or(Value::Null, |base| self.public_class(base)) }
                     else { Value::Tuple(Rc::new(c.direct.iter().cloned().map(|base| self.public_class(base)).collect())) });
             }
@@ -2117,7 +2127,19 @@ impl<'a> Engine<'a> {
                 if matches!(Self::own_kind(c).as_deref(), Some("NotImplementedType") | Some("ellipsis")) {
                     return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
                 }
-                if name == self.class_word("base") { return Err("AttributeError: readonly attribute".into()); }
+                if !self.class_word("base").is_empty() && name == self.class_word("base") {
+                    if let Some(member) = Self::maker_beneath(c).and_then(|maker| self.class_value(&maker, name)) {
+                        if self.takes_writes(&member) {
+                            let part = if value.is_some() { "descriptor.set" } else { "descriptor.delete" };
+                            let hook = self.descriptor_hook(&member, part).ok_or_else(|| self.missing_member(&subject, name))?;
+                            let mut given = vec![subject.clone()]; given.extend(value);
+                            return self.call_descriptor(&member, hook, given);
+                        }
+                        Self::write_members(&mut c.shared.borrow_mut(), name, value, false).map_err(|_| absent)?;
+                        return Ok(Value::Null);
+                    }
+                    return Err("AttributeError: readonly attribute".into());
+                }
                 if name == self.class_word("qualified") {
                     match value.as_ref().map(Value::contents) {
                         Some(Value::Text(_)) => {},

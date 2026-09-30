@@ -5593,3 +5593,9 @@ Class layout selection and dynamic type argument validation share the class
 construction functions with class documentation handling. This change does
 not import the parallel class-documentation or held type-metadata work;
 documentation values retain the existing implementation.
+
+Instance slot storage is fixed when a class is constructed; later namespace
+edits to `__slots__` do not change base selection or layout conflicts.
+Metaclass descriptors take precedence when reading or writing `__base__`.
+Python special-method lookup follows C3 order, separately from the primary
+allocation parent, so native layout does not bypass namespace mixins.

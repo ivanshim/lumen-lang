@@ -1553,6 +1553,8 @@ pub struct Blueprint {
     /// program's can reach it: the class takes no write to a member of
     /// it and stands as no class's base.
     pub sealed: Cell<bool>,
+    /// Instance slot storage established when the class was constructed.
+    pub has_slot_storage: bool,
 }
 
 impl Blueprint {

@@ -15,7 +15,7 @@ impl<'a> Machine<'a> {
             let title=self.detail("root").to_owned();
             self.ancestor=Some(Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
                 parents:Vec::new(),ancestry:Vec::new(),under:None,answers:Vec::new(),fields:Vec::new(),
-                reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),sealed:Cell::new(false)}));
+                reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),has_slot_storage: false, sealed:Cell::new(false)}));
         }
         self.ancestor.as_ref().unwrap().clone()
     }
@@ -32,7 +32,7 @@ impl<'a> Machine<'a> {
         let mut ranks=vec![root.clone()];ranks.extend_from_slice(&root.ancestry);
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{word}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:ranks,under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(Vec::new()),sealed:Cell::new(false)});
+            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(Vec::new()),has_slot_storage: false, sealed:Cell::new(false)});
         self.native_kinds.push((word.to_owned(),kind.clone()));
         kind
     }
@@ -65,7 +65,7 @@ impl<'a> Machine<'a> {
         let title=self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map(|(w,_)|w.to_string()).unwrap_or_default();
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),sealed:Cell::new(false)});
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),has_slot_storage: false, sealed:Cell::new(false)});
         self.builder_kind=Some(kind.clone());
         kind
     }
@@ -294,9 +294,8 @@ impl<'a> Machine<'a> {
     }
     fn storage_ancestor(&self,blueprint:&Rc<Blueprint>)->Rc<Blueprint> {
         if Self::native_word(blueprint).is_some()||self.builds_classes(blueprint){return blueprint.clone();}
-        if let Some(declared)=Self::own_entry(blueprint,self.detail("slots")) {
-            let slots=match declared.settled(){Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),item=>vec![item]};
-            if slots.iter().any(|item|!matches!(item,Value::Text(key) if key.as_ref()=="__dict__"||key.as_ref()=="__weakref__")){return blueprint.clone();}
+        if blueprint.has_slot_storage {
+            return blueprint.clone();
         }
         match &blueprint.under {Some(parent)=>self.storage_ancestor(parent),None=>blueprint.clone()}
     }
@@ -356,10 +355,18 @@ impl<'a> Machine<'a> {
             if !matches!(candidate.settled(), Value::Text(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", candidate.kind_word()).into()); }
         }
         let shown=entries.iter().find(|(k,_)|k==self.detail("qualified")).map_or(title.clone(),|(_,v)|v.bare());
+        // Keep the allocation decision separate from the writable slot
+        // declaration: editing that declaration cannot resize a class.
+        let storage = entries.iter().find(|entry| entry.0 == self.detail("slots")).map(|entry| {
+            let declared = match entry.1.settled() { Value::Tuple(items) | Value::Vector(items) => items.as_ref().clone(), one => vec![one] };
+            declared.into_iter().any(|item| match item { Value::Text(name) => name.as_ref() != "__dict__" && name.as_ref() != "__weakref__", _ => true })
+        }).unwrap_or(false);
+        let mut fixed = Vec::new();
+        if let Some(owner) = builder { fixed.push(("\0metaclass".to_owned(), Value::Blueprint(owner))); }
         let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:primary,parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
-            methods:vec![],constants:builder.map(|m|vec![("\0metaclass".to_owned(),Value::Blueprint(m))]).unwrap_or_default(),
-            shared:RefCell::new(entries),sealed:Cell::new(false)});
+            methods:vec![],constants:fixed,
+            shared:RefCell::new(entries),has_slot_storage: storage, sealed:Cell::new(false)});
         self.name_slots(&class)?;
         // Every entry whose blueprint wants its name is given it now, the
         // class standing, and before the forebears hear of it.
@@ -488,7 +495,7 @@ impl<'a> Machine<'a> {
         }
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(entries),sealed:Cell::new(false)});
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(entries),has_slot_storage: false,sealed:Cell::new(false)});
         self.property_kind=Some(kind.clone());
         kind
     }
@@ -1627,6 +1634,14 @@ impl<'a> Machine<'a> {
                 _=>None,
             };
             if let Some(class)=blueprint {
+                if let Some(owner) = Self::builder_over(&class) {
+                    if let Some(entry) = self.inherited_entry(&owner, key) {
+                        if !self.writes_too(&entry) {
+                            if let Some(own)=self.inherited_entry(&class,key){return self.member_binding(own,None,class);}
+                        }
+                        return self.member_binding(entry, Some(value.clone()), owner);
+                    }
+                }
                 if key==self.detail("base"){return Ok(class.under.clone().map_or(Value::Nil,|p|self.visible_blueprint(p)));}
                 return Ok(Value::Tuple(Rc::new(class.parents.iter().cloned().map(|p|self.visible_blueprint(p)).collect())));
             }
@@ -2219,7 +2234,19 @@ impl<'a> Machine<'a> {
                 if matches!(Self::native_word(b).as_deref(),Some("NotImplementedType")|Some("ellipsis")) {
                     return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", b.name).into());
                 }
-                if key == self.detail("base") {return Err("AttributeError: readonly attribute".to_owned().into());}
+                if !self.detail("base").is_empty()&&key==self.detail("base") {
+                    if let Some(entry)=Self::builder_over(b).and_then(|owner|self.inherited_entry(&owner,key)) {
+                        if self.writes_too(&entry) {
+                            let action=if replacement.is_some(){"descriptor.set"}else{"descriptor.delete"};
+                            let method=self.protocol_entry(&entry,action).ok_or_else(||self.absent_attribute(&subject,key))?;
+                            let mut handed=vec![subject.clone()];handed.extend(replacement);
+                            return self.through_descriptor(&entry,method,handed);
+                        }
+                        if !Self::change_entry(&mut b.shared.borrow_mut(),key,replacement){return Err(self.absent_attribute(&subject,key));}
+                        return Ok(Value::Nil);
+                    }
+                    return Err("AttributeError: readonly attribute".to_owned().into());
+                }
                 if key == self.detail("qualified") {
                     if let Some(worth) = replacement.as_ref().map(Value::settled) {
                         if !matches!(worth, Value::Text(_)) { return Err(format!("TypeError: can only assign string to {}.__qualname__, not '{}'", b.name, worth.kind_word()).into()); }
