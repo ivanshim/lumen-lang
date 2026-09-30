@@ -701,8 +701,16 @@ impl<'a> Engine<'a> {
                 17 if args.len() == 2 => self.slot_write(&args[0], &w.1, Some(args[1].clone())),
                 18 if args.len() == 1 => self.slot_write(&args[0], &w.1, None),
                 19 if args.len() == 2 => {
-                    let Value::Text(spec) = &args[1] else { return Err(self.class_refusal()) };
-                    let spec = spec.to_string();
+                    let spec = match &args[1] {
+                        Value::Text(spec) => spec.to_string(),
+                        other => match Self::worth_of(other).map(|worth| worth.contents()) {
+                            Some(Value::Text(spec)) => spec.to_string(),
+                            _ => {
+                                let word = Self::format_given_kind(other);
+                                return Err(Fault::Note(format!("{}{}", self.lang.format_argument.first().map_or("", String::as_str), word)));
+                            }
+                        },
+                    };
                     if spec.is_empty() { self.special_text(&args[0], false).map(|shown| Value::text(&shown)).map_err(Fault::Note) }
                     else { Err(Fault::Note(format!("TypeError: unsupported format string passed to {}.__format__", args[0].core_kind()))) }
                 }

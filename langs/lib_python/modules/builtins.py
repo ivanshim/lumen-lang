@@ -644,6 +644,7 @@ class memoryview:
         else:
             raise TypeError("memoryview: a bytes-like object is required, not '" + type(object).__name__ + "'")
         self._released = False
+        self._export = _export(self._source) if isinstance(self._source, bytearray) else None
 
     def _check(self):
         if self._released:
@@ -789,6 +790,7 @@ class memoryview:
 
     def release(self):
         self._released = True
+        self._export = None
 
     def __enter__(self):
         self._check()

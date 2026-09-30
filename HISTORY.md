@@ -2231,3 +2231,27 @@ Merged, the fifty files count 2612 on both stack8 and microcode7, up from
 2610 on both, with no passing test lost. Complete build-machine runs
 confirm microcode7's test_math, test_str and test_long at 82, 127 and 34
 where Lambda reaches its time limit.
+
+### 1ar. Batch 20p merged as #523; batch 20q: buffer exports, format and sum
+
+Batch 20q folds three branches, integrated by a GPT-6 Sol worker.
+fix/bytearray-exports (Sol) gives mutable buffers real export leases:
+join holds the separator while consuming its iterator, and memoryviews
+hold an export until release or destruction. Resizing an exported buffer
+raises BufferError; equal-length updates remain allowed.
+fix/object-format (Kimi K3) validates object.__format__ arguments and
+results, accepts string-subclass specifications and reports ordinary
+TypeErrors instead of an unsupported class operation.
+fix/sum-accuracy (Sol) uses compensated real and complex accumulation,
+handles overflow and special values, and preserves exact integer sums,
+custom addition and iterator behavior.
+
+Each branch contributes one distinct test_builtin pass, taking it from
+101 to 104 on both kernels. The shared stderr record was remeasured from
+the worktree root after all merges. The language-label conflict retains
+both buffer exports and format validation. No test or input is weakened.
+
+Merged, the fifty files count 2615 on both stack8 and microcode7, up from
+2612 on both, with no passing test lost. Complete build-machine runs
+confirm microcode7's test_math, test_str and test_long at 82, 127 and 34
+where Lambda reaches its time limit.

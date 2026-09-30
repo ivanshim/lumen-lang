@@ -1,3 +1,30 @@
+thread_local! {
+    static BYTE_EXPORTS: std::cell::RefCell<std::collections::HashMap<usize, usize>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[derive(Debug)]
+pub struct ByteExport(usize);
+impl ByteExport {
+    fn acquire(cell: &Rc<RefCell<Vec<u8>>>) -> Self {
+        let key = Rc::as_ptr(cell) as usize;
+        BYTE_EXPORTS.with(|counts| *counts.borrow_mut().entry(key).or_default() += 1);
+        Self(key)
+    }
+    fn active(cell: &Rc<RefCell<Vec<u8>>>) -> bool {
+        BYTE_EXPORTS.with(|counts| counts.borrow().contains_key(&(Rc::as_ptr(cell) as usize)))
+    }
+}
+impl Drop for ByteExport {
+    fn drop(&mut self) {
+        BYTE_EXPORTS.with(|counts| {
+            let mut counts = counts.borrow_mut();
+            let count = counts.get_mut(&self.0).expect("active byte export");
+            *count -= 1;
+            if *count == 0 { counts.remove(&self.0); }
+        });
+    }
+}
+
 // The engine: one loop over the words of a routine, one data stack for
 // the whole run. A call runs the callee's words on the same stack with a
 // fresh frame of cells; globals are one table. Fused words read their
@@ -5566,8 +5593,17 @@ impl<'a> Engine<'a> {
         if place == 72 {
             let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
             let given = args[0].contents();
-            let Value::Text(spec) = &given else { return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(&given)])) };
-            return Ok(Value::text(&writer.field(&receiver.contents(), spec, "")?));
+            let spec = match &given {
+                Value::Text(spec) => spec.to_string(),
+                other => match Self::worth_of(other).map(|worth| worth.contents()) {
+                    Some(Value::Text(held)) => held.to_string(),
+                    _ => {
+                        let word = Self::format_given_kind(other);
+                        return Err(format!("{}{}", self.lang.format_argument.first().map_or("", String::as_str), word));
+                    }
+                },
+            };
+            return Ok(Value::text(&writer.field(&receiver.contents(), &spec, "")?));
         }
         // A whole and a remainder taken at once, either way round.
         if matches!(place, 60 | 61) {
@@ -5616,6 +5652,7 @@ impl<'a> Engine<'a> {
                 let grown = self.special_dyad(&plain, &held, &args[0].contents())?;
                 let Value::Bytes(source, ..) = grown.contents() else { return Err(self.special_fault()); };
                 let taken = source.borrow().clone();
+                if ByteExport::active(cell) && cell.borrow().len() != taken.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 *cell.borrow_mut() = taken;
                 return Ok(held.clone());
             }
@@ -6064,6 +6101,14 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// The name a complaint of the formatting protocol gives what was
+    /// handed it where text was wanted: the reference's own word for
+    /// nothing, and the plain kind of anything else.
+    pub(super) fn format_given_kind(value: &Value) -> String {
+        if matches!(value, Value::Null) { return "None".to_string(); }
+        Self::shown_kind(value)
+    }
+
     /// The sign the language writes a dyadic action with. Under a
     /// compound write the sign named is the compound one the program
     /// wrote, and not the plain working it falls back to.
@@ -6281,7 +6326,13 @@ impl<'a> Engine<'a> {
     /// by the worth it keeps, or as its text where nothing was asked.
     fn special_format(&mut self, value: &Value, spec: &str) -> Res<String> {
         if let Some(answer) = self.special_call(value, 72, vec![Value::text(spec)])? {
-            return match answer { Value::Text(text) => Ok(text.to_string()), _ => Err(self.special_fault()) };
+            return match answer {
+                Value::Text(text) => Ok(text.to_string()),
+                other => match Self::worth_of(&other).map(|worth| worth.contents()) {
+                    Some(Value::Text(text)) => Ok(text.to_string()),
+                    _ => Err(format!("{}{}", self.lang.format_result.first().map_or("", String::as_str), Self::shown_kind(&other))),
+                },
+            };
         }
         if spec.is_empty() { return self.special_text(value, false); }
         if let Some(worth) = Self::worth_of(value) {
@@ -7135,10 +7186,14 @@ impl<'a> Engine<'a> {
                 let spec = match args.get(1) {
                     None => String::new(),
                     Some(Value::Text(s)) => s.to_string(),
-                    Some(other) => {
-                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-                        return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(other)]));
-                    }
+                    Some(other) => match Self::worth_of(other).map(|worth| worth.contents()) {
+                        Some(Value::Text(s)) => s.to_string(),
+                        _ => {
+                            let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                            let word = Self::format_given_kind(other);
+                            return Err(writer.fault("ext.text.format.spec.type", &[&word]));
+                        }
+                    },
                 };
                 Value::text(&self.special_format(&args[0], &spec)?)
             }
@@ -7615,6 +7670,7 @@ impl<'a> Engine<'a> {
                 }
                 let result = self.dyadic(if *repeat { &Action::Mul } else { &Action::Add }, &operands[0], &operands[1])?;
                 if let (Value::Bytes(target, true, _), Value::Bytes(source, ..)) = (&operands[0], &result) {
+                    if ByteExport::active(target) && target.borrow().len() != source.borrow().len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     *target.borrow_mut() = source.borrow().clone();
                     operands[0].clone()
                 } else { result }
@@ -11146,6 +11202,92 @@ impl<'a> Engine<'a> {
         Ok(Some(crate::value::real_of(raised, arith::DEFAULT_PLACES)))
     }
 
+    // `sum` keeps the low bits lost by each binary addition until it must
+    // return a Python float or delegate to ordinary addition.
+    fn sum_piece(mut pair: (f64, f64), x: f64) -> (f64, f64) {
+        let next = pair.0 + x;
+        pair.1 += if pair.0.abs() >= x.abs() { (pair.0 - next) + x } else { (x - next) + pair.0 };
+        (next, pair.1)
+    }
+
+    fn sum_finish(pair: (f64, f64)) -> f64 {
+        if pair.1 != 0.0 && pair.1.is_finite() { pair.0 + pair.1 } else { pair.0 }
+    }
+
+    fn sum_step(&mut self, total: &mut Value, running: &mut Option<((f64, f64), Option<(f64, f64)>)>, item: Value) -> Res<()> {
+        if running.is_none() {
+            if matches!(&item, Value::Real(r) if r.places > 0) || matches!(&item, Value::Complex(_)) {
+                // The first crossing from exact integers to binary numbers
+                // rounds the integer before adding, just as Python's numeric
+                // addition does. Retain later rounding losses separately.
+                let whole = match total {
+                    Value::Small(n) => Some(*n as f64),
+                    Value::Huge(n) => Some(n.to_f64().filter(|v| v.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_string())?),
+                    Value::Flag(b) => Some(f64::from(u8::from(*b))),
+                    _ => None,
+                };
+                if let Some(whole) = whole {
+                    let next = match &item {
+                        Value::Real(r) if r.places > 0 => Some((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, None)),
+                        Value::Complex(z) => Some((z.real, Some(z.imag))),
+                        _ => None,
+                    };
+                    if let Some((real, imag)) = next {
+                        *running = Some(((whole + real, 0.0), imag.map(|part| (part, 0.0))));
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        if running.is_none() {
+            *running = match total {
+                Value::Real(r) if r.places > 0 => Some(((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, 0.0), None)),
+                Value::Complex(z) => Some(((z.real, 0.0), Some((z.imag, 0.0)))),
+                _ => None,
+            };
+        }
+        if let Some((real, imag)) = running.as_mut() {
+            let number = match &item {
+                Value::Small(n) => Some((*n as f64, None)),
+                Value::Huge(n) => Some((n.to_f64().filter(|v| v.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_string())?, None)),
+                Value::Flag(b) => Some((f64::from(u8::from(*b)), None)),
+                Value::Real(r) if r.places > 0 => Some((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, None)),
+                Value::Complex(z) if imag.is_some() => Some((z.real, Some(z.imag))),
+                Value::Object(o) => {
+                    let kind = Self::kind_beneath(&o.class_now());
+                    let native = Self::worth_of(&item);
+                    match (kind.as_deref(), native) {
+                        (Some("int"), Some(Value::Small(n))) => Some((n as f64, None)),
+                        (Some("int"), Some(Value::Huge(n))) => Some((n.to_f64().filter(|v| v.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_string())?, None)),
+                        (Some("float"), Some(Value::Real(r))) if imag.is_some() => Some((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, None)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some((x, y)) = number {
+                *real = Self::sum_piece(*real, x);
+                if let (Some(part), Some(y)) = (imag.as_mut(), y) { *part = Self::sum_piece(*part, y); }
+                return Ok(());
+            }
+            *total = match imag {
+                Some(part) => crate::complex::made(self.lang, Self::sum_finish(*real), Self::sum_finish(*part)),
+                None => crate::value::real_of(Self::sum_finish(*real), crate::arith::DEFAULT_PLACES),
+            };
+            *running = None;
+        }
+        *total = self.sum_added(total, &item)?;
+        Ok(())
+    }
+
+    fn sum_result(&self, total: Value, running: Option<((f64, f64), Option<(f64, f64)>)>) -> Value {
+        match running {
+            Some((real, Some(imag))) => crate::complex::made(self.lang, Self::sum_finish(real), Self::sum_finish(imag)),
+            Some((real, None)) => crate::value::real_of(Self::sum_finish(real), crate::arith::DEFAULT_PLACES),
+            None => total,
+        }
+    }
+
     /// One member added into `sum`'s running total: the exact reckoning
     /// where the two are numbers, and the plain working of `+`
     /// otherwise — the very working a bare `total + item` already
@@ -11630,7 +11772,10 @@ impl<'a> Engine<'a> {
             let replacement = self.byte_row(&given, false)?;
             let (start, stop, step, places) = self.slice_places(parts, row.borrow().len())?;
             if step != 1 && places.len() != replacement.len() { return Err(self.byte_fault("arguments")); }
-            if step == 1 { row.borrow_mut().splice(start..stop, replacement); }
+            if step == 1 {
+                if ByteExport::active(row) && stop - start != replacement.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                row.borrow_mut().splice(start..stop, replacement);
+            }
             else { for (at, byte) in places.into_iter().zip(replacement) { row.borrow_mut()[at] = byte; } }
             return Ok(target);
         }
@@ -13733,9 +13878,14 @@ impl<'a> Engine<'a> {
                 let (_, _, _, mut picked) = self.slice_places(bounds, held.len())?;
                 picked.sort_unstable();
                 picked.dedup();
+                if !picked.is_empty() && ByteExport::active(content) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 for place in picked.into_iter().rev() { held.remove(place); }
             }
-            key => { let place = self.byte_position(key, held.len(), true)?; held.remove(place); }
+            key => {
+                let place = self.byte_position(key, held.len(), true)?;
+                if ByteExport::active(content) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                held.remove(place);
+            }
         }
         drop(held);
         Ok(row.clone())
@@ -14143,12 +14293,13 @@ impl<'a> Engine<'a> {
             let rest = &args[1..];
             let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(bad()) };
             match task {
-                52 => { counted(1)?; let byte = self.byte_number(&rest[0], false)?; cell.borrow_mut().push(byte); }
-                53 => { counted(1)?; let more = self.byte_taken(&rest[0])?; cell.borrow_mut().extend(more); }
+                52 => { counted(1)?; let byte = self.byte_number(&rest[0], false)?; if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                53 => { counted(1)?; let more = self.byte_taken(&rest[0])?; if !more.is_empty() && ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().extend(more); }
                 54 => {
                     counted(2)?;
                     let asked = self.byte_whole(&rest[0])?;
                     let byte = self.byte_number(&rest[1], false)?;
+                    if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     let mut held = cell.borrow_mut();
                     let at = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
                     held.insert(at, byte);
@@ -14160,6 +14311,7 @@ impl<'a> Engine<'a> {
                     if held.is_empty() { return Err(self.byte_said("index", 2)); }
                     let at = if asked < 0 { asked.saturating_add(held.len() as i64) } else { asked };
                     if at < 0 || at as usize >= held.len() { return Err(self.byte_said("index", 1)); }
+                    if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     return Ok(Value::Small(i64::from(held.remove(at as usize))));
                 }
                 56 => {
@@ -14167,13 +14319,20 @@ impl<'a> Engine<'a> {
                     let byte = self.byte_number(&rest[0], false)?;
                     let mut held = cell.borrow_mut();
                     let Some(at) = held.iter().position(|kept| *kept == byte) else { return Err(self.byte_said("missing", 1)); };
+                    if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     held.remove(at);
                 }
-                57 => { counted(0)?; cell.borrow_mut().clear(); }
+                57 => { counted(0)?; if ByteExport::active(cell) && !cell.borrow().is_empty() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().clear(); }
                 58 => { counted(0)?; cell.borrow_mut().reverse(); }
                 _ => { counted(0)?; let copy = cell.borrow().clone(); return Ok(self.byte_make(copy, true)); }
             }
             return Ok(Value::Null);
+        }
+        if task == 60 {
+            let [source] = args else { return Err(unready()); };
+            let held = Self::worth_of(source).unwrap_or_else(|| source.contents());
+            let Value::Bytes(cell, true, _) = &held else { return Err(unready()); };
+            return Ok(Value::Export(Rc::new(ByteExport::acquire(cell))));
         }
         if task == 40 {
             let [from, to] = args else { return Err(bad()); };
@@ -14265,12 +14424,17 @@ impl<'a> Engine<'a> {
                 return Ok(Value::array(parts));
             }
             9 if given.len() == 1 => {
+                let _export = if *mutable { Some(ByteExport::acquire(cell)) } else { None };
                 let parts = self.core_members(&given[0])?;
                 let mut joined = Vec::new();
                 for (at, part) in parts.iter().enumerate() {
-                    if at > 0 { joined.extend(&row); }
+                    if at > 0 { joined.extend(cell.borrow().iter().copied()); }
                     match part {
                         Value::Bytes(piece, ..) => joined.extend(piece.borrow().iter().copied()),
+                        Value::Object(object) if object.class_now().name == "memoryview" => {
+                            let piece = self.bytes_argument(part)?.ok_or_else(|| self.byte_fault("arguments"))?;
+                            joined.extend(piece);
+                        }
                         _ => return Err(self.byte_fault("arguments")),
                     }
                 }
@@ -14485,11 +14649,17 @@ impl<'a> Engine<'a> {
                 if args.is_empty() || args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
                 let writer = crate::formatting::Writer { lang: self.lang, words: sp };
                 let spec = match args.get(1) {
-                    None => "",
-                    Some(Value::Text(s)) => s.as_ref(),
-                    Some(v) => return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(v)])),
+                    None => String::new(),
+                    Some(Value::Text(s)) => s.to_string(),
+                    Some(other) => match Self::worth_of(other).map(|worth| worth.contents()) {
+                        Some(Value::Text(s)) => s.to_string(),
+                        _ => {
+                            let word = Self::format_given_kind(other);
+                            return Err(writer.fault("ext.text.format.spec.type", &[&word]));
+                        }
+                    },
                 };
-                Value::text(&writer.field(&args[0], spec, "")?)
+                Value::text(&writer.field(&args[0], &spec, "")?)
             }
             // Bytes are made of the numbers they are handed, and a walk
             // stands for its numbers as plainly as a list does. Gather
@@ -15645,8 +15815,23 @@ impl<'a> Engine<'a> {
                 Value::Flag(false)
             }
             Builtin::Sum => {
-                if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
+                if args.is_empty() { return Err(format!("TypeError: {name}() takes at least 1 positional argument (0 given)")); }
+                if args.len() > 2 { return Err(format!("TypeError: {name}() takes at most 2 arguments ({} given)", args.len())); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
+                // A built-in integer range has no user code at its steps.
+                // Retain its exact closed form for very large ranges only
+                // while the start also remains an exact built-in integer.
+                if matches!(total, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    if let Value::Counted(row) = args[0].contents() {
+                        let length = row.length();
+                        if length.is_zero() { return Ok(total); }
+                        let added = (&row.start + (&row.start + (&length - 1) * &row.step)) * &length / 2;
+                        return self.sum_added(&total, &Value::of_big(added));
+                    }
+                }
+                let walk = if self.lang.yield_suspends {
+                    Some(self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))?)
+                } else { None };
                 // A start already text or a row of bytes is refused
                 // before a single member is read, in the words naming
                 // the very kind it is, the way CPython refuses summing
@@ -15655,6 +15840,12 @@ impl<'a> Engine<'a> {
                     Value::Text(_) => Some(0),
                     Value::Bytes(_, false, _) => Some(1),
                     Value::Bytes(_, true, _) => Some(2),
+                    Value::Object(o) => match Self::kind_beneath(&o.class_now()).as_deref() {
+                        Some("str") => Some(0),
+                        Some("bytes") => Some(1),
+                        Some("bytearray") => Some(2),
+                        _ => None,
+                    },
                     _ => None,
                 };
                 if let Some(at) = word_at { return Err(self.lang.sum_non_number.get(at).cloned().unwrap_or_default()); }
@@ -15663,28 +15854,17 @@ impl<'a> Engine<'a> {
                 // flag turns to a whole number only where an addition
                 // actually asks that of it, not merely for standing
                 // where a sum might have needed one.
-                // A counted row is added up from its bounds alone. The
-                // places are never made, so a row of a thousand million
-                // costs no more than a row of three.
-                if let Value::Counted(row) = args[0].contents() {
-                    let length = row.length();
-                    if length == BigInt::from(0) { return Ok(total); }
-                    let gathered = (&row.start + (&row.start + (&length - 1) * &row.step)) * &length / 2;
-                    return self.sum_added(&total, &Value::of_big(gathered));
-                }
-                if self.lang.yield_suspends {
-                    let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
+                let mut running = None;
+                if let Some(Value::Generator(walk)) = walk {
                     while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
-                        let number = match item { Value::Flag(flag) => Value::Small(i64::from(flag)), other => other };
-                        total = self.sum_added(&total, &number)?;
+                        self.sum_step(&mut total, &mut running, item)?;
                     }
-                    return Ok(total);
+                } else {
+                    for item in self.comprehension_items(&args[0])? {
+                        self.sum_step(&mut total, &mut running, item)?;
+                    }
                 }
-                for item in self.comprehension_items(&args[0])? {
-                    let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
-                    total = self.sum_added(&total, &item)?;
-                }
-                total
+                self.sum_result(total, running)
             }
             Builtin::Span if self.lang.range_value => {
                 if args.is_empty() { return Err("TypeError: range expected at least 1 argument, got 0".to_string()); }
