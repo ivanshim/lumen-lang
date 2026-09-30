@@ -1549,6 +1549,9 @@ pub struct Blueprint {
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: RefCell<Vec<(String, Value)>>,
+    /// Set from the declared layout before class-creation hooks run;
+    /// subsequent edits to members do not add or remove weak storage.
+    pub weak_slot: Cell<Option<bool>>,
     /// The seal builtin's mark, kept where no member write of the
     /// program's can reach it: the class takes no write to a member of
     /// it and stands as no class's base.

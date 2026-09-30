@@ -1651,6 +1651,9 @@ pub struct Class {
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: RefCell<Vec<(String, Value)>>,
+    /// The weak-reference layout fixed when a Python class is created.
+    /// Namespace writes cannot change an already allocated layout.
+    pub weak_storage: std::cell::Cell<Option<bool>>,
     /// Whether the class was sealed against change by the sealing
     /// builtin: a sealed class refuses writes and removals among its
     /// members and cannot stand as a base. Kept out of the members so

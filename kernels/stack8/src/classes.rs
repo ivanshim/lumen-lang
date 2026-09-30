@@ -17,7 +17,7 @@ impl<'a> Engine<'a> {
         let name = self.class_word("root").to_string();
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![], lineage: vec![], base: None, answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
         self.class_root = Some(c.clone());
         c
     }
@@ -29,7 +29,7 @@ impl<'a> Engine<'a> {
         let root = self.root_class();
         let c = Rc::new(Class { outline: Some(format!("<class '{word}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
         self.kind_classes.push((word.to_string(), c.clone()));
         c
     }
@@ -42,7 +42,7 @@ impl<'a> Engine<'a> {
         let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::SortOf).map_or(String::new(), |(w, _)| w.clone());
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
         self.class_maker = Some(c.clone());
         c
     }
@@ -281,7 +281,7 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default(),
-            shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
+            shared: RefCell::new(members), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
         self.furnish_slots(&c)?;
         // Each member that asks to be told its name is told it, once the
         // class stands, before any forebear hears of the new class.
@@ -305,11 +305,14 @@ impl<'a> Engine<'a> {
     /// so that two classes of one line naming the same slot keep two.
     fn furnish_slots(&mut self, c: &Rc<Class>) -> Flow<()> {
         if self.class_word("descriptor.get").is_empty() { return Ok(()); }
+        c.weak_storage.set(Some(self.weak_layout(c)));
         let Some(slots) = Self::own_class_value(c, self.class_word("slots")) else { return Ok(()) };
-        if Self::kind_beneath(c).as_deref() == Some("int") && !matches!(slots.contents(), Value::Tuple(ref v) if v.is_empty()) {
-            return Err("TypeError: nonempty __slots__ not supported for subtype of 'int'".to_string().into());
-        }
         let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), single => vec![single] };
+        if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
+            if !named.is_empty() {
+                return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
+            }
+        }
         // Every slot is a name of its own: a string holding a plain
         // identifier, never another kind of value and never one that
         // could not be written after `self.`. `__dict__` and
@@ -333,7 +336,11 @@ impl<'a> Engine<'a> {
         if dict_seen == 1 || weakref_seen == 1 {
             let root = self.root_class();
             let slots_word = self.class_word("slots").to_string();
-            let already = c.lineage.iter().any(|b| !Rc::ptr_eq(b, &root) && Self::own_kind(b).is_none() && Self::own_class_value(b, &slots_word).is_none());
+            let already = if weakref_seen == 1 {
+                c.direct.iter().any(|b| self.weak_layout(b))
+            } else {
+                c.lineage.iter().any(|b| !Rc::ptr_eq(b, &root) && Self::own_kind(b).is_none() && Self::own_class_value(b, &slots_word).is_none())
+            };
             if already {
                 let which = if dict_seen == 1 { "__dict__" } else { "__weakref__" };
                 return Err(format!("TypeError: {which} slot disallowed: we already got one").into());
@@ -403,7 +410,7 @@ impl<'a> Engine<'a> {
         }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
+            methods: vec![], constants: vec![], shared: RefCell::new(members), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
         self.property_class = Some(c.clone());
         c
     }
@@ -2111,6 +2118,23 @@ impl<'a> Engine<'a> {
         Self::own_class_value(c,self.class_word("slots")).is_some()
             || c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_named(b))
     }
+    /// Weak storage belongs to the instance layout, independently of its
+    /// dictionary and of the native value kept in its fields.
+    pub(super) fn weak_layout(&self, c: &Class) -> bool {
+        if let Some(layout) = c.weak_storage.get() { return layout; }
+        if matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
+        if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "set" | "frozenset"); }
+        if c.direct.is_empty() { return false; }
+        match Self::own_class_value(c, self.class_word("slots")) {
+            None => true,
+            Some(slots) => {
+                let names = slots.contents();
+                let weak = |v: &Value| matches!(v, Value::Text(s) if s.as_ref() == "__weakref__");
+                let declared = match &names { Value::Tuple(v) | Value::Array(v) => v.iter().any(weak), v => weak(v) };
+                declared || c.direct.iter().any(|base| self.weak_layout(base))
+            }
+        }
+    }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
         let own=Self::own_class_value(c,self.class_word("slots"));
         let Some(own)=own else{return Self::own_kind(c).is_none();};
@@ -2136,6 +2160,10 @@ impl<'a> Engine<'a> {
         match value.contents() {
             Value::Class(class) if Self::class_sealed(&class) => Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()),
             Value::Class(class) => Ok(class),
+            Value::ByteKind(mutable, _) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
+                let word = self.byte_kind_word(mutable).to_string();
+                Ok(self.kind_class(&word))
+            }
             Value::Native(Builtin::SortOf, _) => Ok(self.metaclass_root()),
             Value::Native(Builtin::Bool, _) => Err(self.lang.bool_base.clone().unwrap_or_default().into()),
             Value::Native(_, name) if Lang::spells(&self.lang.builtin_bases, &name) => Ok(self.kind_class(&name)),

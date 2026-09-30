@@ -15,7 +15,7 @@ impl<'a> Machine<'a> {
             let title=self.detail("root").to_owned();
             self.ancestor=Some(Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
                 parents:Vec::new(),ancestry:Vec::new(),under:None,answers:Vec::new(),fields:Vec::new(),
-                reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),sealed:Cell::new(false)}));
+                reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),weak_slot:Cell::new(None),sealed:Cell::new(false)}));
         }
         self.ancestor.as_ref().unwrap().clone()
     }
@@ -27,7 +27,7 @@ impl<'a> Machine<'a> {
         let root=self.common_ancestor();
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{word}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(Vec::new()),sealed:Cell::new(false)});
+            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(Vec::new()),weak_slot:Cell::new(None),sealed:Cell::new(false)});
         self.native_kinds.push((word.to_owned(),kind.clone()));
         kind
     }
@@ -60,7 +60,7 @@ impl<'a> Machine<'a> {
         let title=self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map(|(w,_)|w.to_string()).unwrap_or_default();
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),sealed:Cell::new(false)});
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),weak_slot:Cell::new(None),sealed:Cell::new(false)});
         self.builder_kind=Some(kind.clone());
         kind
     }
@@ -280,7 +280,7 @@ impl<'a> Machine<'a> {
         let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:parents.first().cloned(),parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
             methods:vec![],constants:builder.map(|m|vec![("\0metaclass".to_owned(),Value::Blueprint(m))]).unwrap_or_default(),
-            shared:RefCell::new(entries),sealed:Cell::new(false)});
+            shared:RefCell::new(entries),weak_slot:Cell::new(None),sealed:Cell::new(false)});
         self.name_slots(&class)?;
         // Every entry whose blueprint wants its name is given it now, the
         // class standing, and before the forebears hear of it.
@@ -308,12 +308,13 @@ impl<'a> Machine<'a> {
     /// same slot keeps its own.
     fn name_slots(&mut self,class:&Rc<Blueprint>)->Result<(),Escape> {
         if !self.protocol_spelled(){return Ok(());}
+        class.weak_slot.set(Some(self.admits_weak(class)));
         let Some(declared)=Self::own_entry(class,self.detail("slots")) else{return Ok(())};
-        if Self::native_beneath(class).as_deref() == Some("int") {
-            let empty = matches!(declared.settled(), Value::Tuple(ref items) if items.is_empty());
-            if !empty { return Err("TypeError: nonempty __slots__ not supported for subtype of 'int'".to_owned().into()); }
-        }
         let words=match declared.settled(){Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),alone=>vec![alone]};
+        let native = Self::native_beneath(class);
+        if !words.is_empty() && matches!(native.as_deref(), Some("tuple" | "bytes" | "int")) {
+            return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{}'", native.unwrap()).into());
+        }
         // Every slot is a name of its own: a string holding a plain
         // identifier, never another kind of value and never one that
         // could not be written after `self.`. `__dict__` and
@@ -337,7 +338,10 @@ impl<'a> Machine<'a> {
         if dict_seen==1||weakref_seen==1 {
             let root=self.common_ancestor();
             let slots_word=self.detail("slots").to_owned();
-            let already=class.ancestry.iter().any(|b|!Rc::ptr_eq(b,&root)&&Self::native_word(b).is_none()&&Self::own_entry(b,&slots_word).is_none());
+            let weak_parent = class.parents.iter().find(|b| self.admits_weak(b));
+            let already = if weakref_seen == 1 { weak_parent.is_some() } else {
+                class.ancestry.iter().any(|b|!Rc::ptr_eq(b,&root)&&Self::native_word(b).is_none()&&Self::own_entry(b,&slots_word).is_none())
+            };
             if already {
                 let which=if dict_seen==1{"__dict__"}else{"__weakref__"};
                 return Err(format!("TypeError: {which} slot disallowed: we already got one").into());
@@ -409,7 +413,7 @@ impl<'a> Machine<'a> {
         }
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(entries),sealed:Cell::new(false)});
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(entries),weak_slot:Cell::new(None),sealed:Cell::new(false)});
         self.property_kind=Some(kind.clone());
         kind
     }
@@ -1887,6 +1891,25 @@ impl<'a> Machine<'a> {
         if Self::own_entry(b,self.detail("slots")).is_some(){return true;}
         b.parents.iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
     }
+    /// A weak-reference slot is inherited even when a child declares no
+    /// new storage. Variable-sized integer, tuple and byte layouts cannot add it.
+    pub(super) fn admits_weak(&self, b: &Blueprint) -> bool {
+        if let Some(stored) = b.weak_slot.get() { return stored; }
+        let underlying = Self::native_beneath(b);
+        if matches!(underlying.as_deref(), Some("bytes" | "int" | "tuple")) { return false; }
+        match Self::native_word(b) {
+            Some(word) => return word == "frozenset" || word == "set",
+            None if b.parents.is_empty() => return false,
+            None => {}
+        }
+        let Some(storage) = Self::own_entry(b, self.detail("slots")) else { return true; };
+        let has_slot = match storage.settled() {
+            Value::Tuple(items) | Value::Vector(items) => items.iter().any(|v| matches!(v, Value::Text(s) if &**s == "__weakref__")),
+            Value::Text(name) => &*name == "__weakref__",
+            _ => false
+        };
+        has_slot || b.parents.iter().any(|parent| self.admits_weak(parent))
+    }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
         let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
         let slots=declared.settled();
@@ -2186,6 +2209,10 @@ impl<'a> Machine<'a> {
         if let Value::Blueprint(class) = settled {
             if Self::sealed(&class) { return Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()); }
             return Ok(class);
+        }
+        if let Value::OctetKind { changeable, .. } = &settled {
+            let word = self.octet_kind_word(*changeable).to_owned();
+            if self.table.spells("ext.stmt.class.builtin", &word) { return Ok(self.native_kind(&word)); }
         }
         if let Value::Intrinsic(operation, word) = settled {
             if operation == Prim::SortOf { return Ok(self.builder_blueprint()); }

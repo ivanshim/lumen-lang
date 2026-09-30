@@ -178,15 +178,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
 pub fn ghost_of(value: &Value) -> Option<Ghost> {
     Some(match value {
         Value::Shared(cell) | Value::Mutable(cell, _) => return ghost_of(&cell.borrow()),
-        Value::Thing(t) | Value::Attributes(t) => {
-            // Built on a kind with no room for a weak hold -- a tuple, a
-            // number, text, bytes -- a thing has none either.
-            let no_room = t.holds.borrow().iter().any(|(n, v)| n == "\0underlying" && matches!(v.settled(),
-                Value::Tuple(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_)
-                | Value::Text(_) | Value::Unpaired(_) | Value::Octets { .. }));
-            if no_room { return None; }
-            Ghost::Thing(Rc::downgrade(t))
-        }
+        Value::Thing(t) => Ghost::Thing(Rc::downgrade(t)),
         Value::Blueprint(b) => Ghost::Blueprint(Rc::downgrade(b)),
         Value::Generator(g) => Ghost::Walk(Rc::downgrade(g)),
         Value::Set(s) => Ghost::Set(Rc::downgrade(s)),
