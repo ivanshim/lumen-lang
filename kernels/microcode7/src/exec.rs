@@ -322,6 +322,7 @@ pub struct Machine<'a> {
     pub library_directory: Option<std::path::PathBuf>,
     pub library_files: HashMap<String, String>,
     pub library_aliases: HashMap<String, String>,
+    library_origins: std::collections::HashSet<String>,
     imported: HashMap<String, Value>,
     wildcard_names: Vec<(Rc<str>, String, usize)>,
     loaded_spaces: HashMap<Rc<str>, String>,
@@ -1251,6 +1252,7 @@ impl<'a> Machine<'a> {
             library_directory: None,
             library_files: HashMap::new(),
             library_aliases: HashMap::new(),
+            library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
             wildcard_names: Vec::new(),
@@ -18372,16 +18374,19 @@ impl Machine<'_> {
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
         let split = path.rsplit_once('.');
+        let mut initializing_alias = false;
         if let Some(attribute) = self.table.single("ext.system.module.path").map(str::to_owned) {
             if let Some((parent_name, _)) = split {
                 let parent_value = self.load_namespace(parent_name)?;
-                let has_directories = if let Value::Thing(parent) = parent_value {
+                let has_directories = if let Value::Thing(parent) = &parent_value {
                     parent.holds.borrow().iter().any(|entry| entry.0 == attribute)
                 } else { false };
                 if let Some(cached) = self.imported.get(path) {
                     if self.import_cache_names(path) { return Ok(cached.clone()); }
                 }
-                if !has_directories {
+                initializing_alias = self.library_origins.contains(parent_name) && self.importing.contains(parent_name)
+                    && self.library_aliases.get(path).is_some_and(|member| matches!(&parent_value, Value::Thing(parent) if parent.holds.borrow().iter().any(|entry| &entry.0 == member)));
+                if !has_directories && !initializing_alias {
                     let missing = self.table.strings("ext.stmt.import.missing");
                     let suffix = self.table.strings("ext.stmt.import.nonpackage");
                     if let ([head, tail], [before, after]) = (missing, suffix) {
@@ -18396,7 +18401,7 @@ impl Machine<'_> {
                 Some(embedded) if self.table.single("ext.system.module.path").is_some() && embedded == *location => self.library_sources.get(path).cloned().unwrap_or_else(|| text.clone()),
                 _ => text.clone(),
             },
-            None => self.library_sources.get(path).filter(|_| split.is_none() || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
+            None => self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
                 let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
                 format!("{before}{path}{after}")
             })?,
@@ -18481,6 +18486,9 @@ impl Machine<'_> {
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
         self.imported.insert(path.into(), value.clone());
+        let from_library = self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
+        self.library_origins.remove(path);
+        if from_library { self.library_origins.insert(path.to_owned()); }
         self.loaded_spaces.insert(Rc::from(filename), path.to_owned());
         self.importing.insert(path.into());
         let scope = self.outermost.clone();
@@ -18493,8 +18501,8 @@ impl Machine<'_> {
         self.frames_named.pop();
         self.active_trace = caller_activation;
         (self.written_in, self.row) = caller_location;
-        self.importing.remove(path);
         if let Err(stopped) = stopped {
+            self.importing.remove(path); self.library_origins.remove(path);
             self.imported.remove(path);
             self.refresh_import_table();
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
@@ -18508,20 +18516,25 @@ impl Machine<'_> {
                 } else { holdings.push((name.into(), value.clone())); }
             }
         }
-        // Aliases of ordinary embedded modules are entered in the cache
-        // using the parent's real exported value, never by name alone.
-        if self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref()) {
-            for (full, member) in &self.library_aliases {
-                let Some((owner, _)) = full.rsplit_once('.') else { continue; };
-                if owner != path { continue; }
+        // These are source-backed module aliases, initialized with their
+        // genuine library parent rather than borrowed helper instances.
+        if from_library {
+            let aliases: Vec<String> = self.library_aliases.iter().filter_map(|(full, member)| {
+                let (owner, _) = full.rsplit_once('.')?;
+                if owner != path { return None; }
                 if let Value::Thing(parent) = &value {
-                    if let Some((_, held)) = parent.holds.borrow().iter().find(|entry| &entry.0 == member) {
-                        let alias = match held { Value::Shared(link) => link.borrow().clone(), other => other.clone() };
-                        self.imported.insert(full.clone(), alias);
-                    }
+                    if parent.holds.borrow().iter().any(|entry| &entry.0 == member) { return Some(full.clone()); }
+                }
+                None
+            }).collect();
+            for full in aliases {
+                if let Err(message) = self.load_namespace(&full) {
+                    self.importing.remove(path); self.library_origins.remove(path);
+                    self.imported.remove(path); self.refresh_import_table(); return Err(message);
                 }
             }
         }
+        self.importing.remove(path);
         self.refresh_import_table();
         Ok(value)
     }
@@ -18590,9 +18603,6 @@ impl Machine<'_> {
                 let read = match cell { Value::Shared(link) => link.borrow().clone(), worth => worth.clone() };
                 if !matches!(read, Value::Unset) { return Ok(read); }
             }
-        }
-        if self.table.single("ext.system.module.path").is_some() && self.library_aliases.contains_key(path) {
-            if let Some(member) = self.member_for_case(value, wanted)? { return Ok(member); }
         }
         let full = format!("{path}.{wanted}");
         if (self.table.single("ext.system.module.path").is_none() && self.library_sources.contains_key(&full)) || self.sys_path_source(&full).is_some() || (self.imported.contains_key(&full) && self.import_cache_names(&full)) { return self.load_namespace(&full); }

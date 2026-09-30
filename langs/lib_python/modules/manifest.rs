@@ -92,7 +92,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("weakref", include_str!("weakref.py"), "weakref.py"),
 ];
 
-// Non-package module aliases are registered from the actual parent value.
+// Non-package aliases initialize real source with their embedded parent.
 pub static MODULE_ALIASES: &[(&str, &str)] = &[
     ("os.path", "path"),
 ];

@@ -111,6 +111,7 @@ pub struct Engine<'a> {
     pub library_root: Option<String>,
     pub module_files: HashMap<String, String>,
     pub module_aliases: HashMap<String, String>,
+    embedded_names: std::collections::HashSet<String>,
     modules: HashMap<String, Value>,
     // Only names actually supplied by an import need a runtime check;
     // an empty table leaves ordinary builtin calls on their fast path.
@@ -1198,6 +1199,7 @@ impl<'a> Engine<'a> {
             library_root: None,
             module_files: HashMap::new(),
             module_aliases: HashMap::new(),
+            embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
             wildcard_slots: HashMap::new(),
             module_slots: HashMap::new(),
@@ -18639,6 +18641,7 @@ impl Engine<'_> {
         // in, in the order it stands there, ahead of the library: a
         // name found there is read straight off the disk instead.
         let parent = path.rsplit_once('.');
+        let mut registering_alias = false;
         if let Some(word) = self.lang.module_path.clone() {
             if let Some((above, _)) = parent {
                 let owner = self.import_module(above)?;
@@ -18646,7 +18649,9 @@ impl Engine<'_> {
                 if let Some(held) = self.modules.get(path) {
                     if self.module_cache_names(path) { return Ok(held.clone()); }
                 }
-                if !package {
+                registering_alias = self.importing.contains(above) && self.embedded_names.contains(above)
+                    && self.module_aliases.get(path).is_some_and(|member| matches!(&owner, Value::Object(module) if module.fields.borrow().iter().any(|(name, _)| name == member)));
+                if !package && !registering_alias {
                     if let [opening, closing] = self.lang.import_nonpackage.as_slice() {
                         return Err(format!("{}{opening}{above}{closing}", Self::named_fault(&self.lang.import_missing, path)).into());
                     }
@@ -18660,7 +18665,7 @@ impl Engine<'_> {
                     self.module_sources.get(path).cloned().unwrap_or_else(|| source.clone())
                 } else { source.clone() }
             },
-            None => match self.module_sources.get(path).filter(|_| parent.is_none() || self.lang.module_path.is_none()).cloned() {
+            None => match self.module_sources.get(path).filter(|_| parent.is_none() || registering_alias || self.lang.module_path.is_none()).cloned() {
                 Some(source) => source,
                 None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
             },
@@ -18742,13 +18747,18 @@ impl Engine<'_> {
         });
         let module = Value::Object(object);
         self.modules.insert(path.to_string(), module.clone());
+        let embedded = self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
+        self.embedded_names.remove(path);
+        if embedded { self.embedded_names.insert(path.to_string()); }
         self.module_slots.insert(Rc::from(filename), (offset, path.to_string()));
         self.importing.insert(path.to_string());
         let saved_depth = self.data.len();
         let result = self.invoke(&program, Vec::new());
         self.data.truncate(saved_depth);
-        self.importing.remove(path);
-        if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(); return Err(fault); }
+        if let Err(fault) = result {
+            self.importing.remove(path); self.embedded_names.remove(path);
+            self.modules.remove(path); self.refresh_module_cache(); return Err(fault);
+        }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 let mut fields = parent.fields.borrow_mut();
@@ -18759,19 +18769,21 @@ impl Engine<'_> {
                 }
             }
         }
-        // Only an embedded parent can register its manifest-declared aliases.
-        // A shadowing filesystem module never acquires these cached children.
-        if self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref()) {
-            for (child, member) in &self.module_aliases {
-                if child.rsplit_once('.').map(|(owner, _)| owner) != Some(path) { continue; }
-                if let Value::Object(parent) = &module {
-                    if let Some((_, value)) = parent.fields.borrow().iter().find(|(name, _)| name == member) {
-                        let held = match value { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
-                        self.modules.insert(child.clone(), held);
-                    }
+        // Register real source modules while their embedded parent initializes.
+        // The temporary registration privilege is gone after initialization.
+        if embedded {
+            let aliases: Vec<String> = self.module_aliases.iter().filter(|(child, member)| {
+                child.rsplit_once('.').map(|(owner, _)| owner) == Some(path)
+                    && matches!(&module, Value::Object(parent) if parent.fields.borrow().iter().any(|(name, _)| name == *member))
+            }).map(|(child, _)| child.clone()).collect();
+            for child in aliases {
+                if let Err(fault) = self.import_module(&child) {
+                    self.importing.remove(path); self.embedded_names.remove(path);
+                    self.modules.remove(path); self.refresh_module_cache(); return Err(fault);
                 }
             }
         }
+        self.importing.remove(path);
         self.refresh_module_cache();
         Ok(module)
     }
@@ -18842,13 +18854,6 @@ impl Engine<'_> {
             if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
                 let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
                 if !matches!(value, Value::Blank) { return Ok(value); }
-            }
-        }
-        if self.lang.module_path.is_some() && self.module_aliases.contains_key(path) {
-            match self.class_get(module.clone(), name, false) {
-                Ok(value) => return Ok(value),
-                Err(fault) if self.attribute_fault(&fault) => {},
-                Err(fault) => return Err(fault),
             }
         }
         let child = format!("{path}.{name}");

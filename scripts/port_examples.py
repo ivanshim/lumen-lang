@@ -1851,7 +1851,7 @@ def write_mirror(lang, d, files, reasons):
         (modules / "manifest.rs").write_text(
             "// Modules kept as source until a program asks for them.\n"
             "pub static MODULES: &[(&str, &str, &str)] = &[\n" + "".join(packed) + "];\n\n"
-            "// Non-package module aliases are registered from the actual parent value.\n"
+            "// Non-package aliases initialize real source with their embedded parent.\n"
             "pub static MODULE_ALIASES: &[(&str, &str)] = &[\n"
             + "".join(f'    ({json.dumps(name)}, {json.dumps(member)}),\n' for name, member in sorted(aliases.items()))
             + "];\n", encoding="utf-8")
