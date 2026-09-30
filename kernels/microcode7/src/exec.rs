@@ -20337,7 +20337,18 @@ impl Machine<'_> {
                 // A class whose metaclass speaks for the kind is asked first.
                 if let Some(told) = self.builder_answers(expected, item, false).map_err(|e| self.suspension_fault(e))? { return Ok(told); }
                 // Every value at all is of the class every value is of.
-                if class.name == self.detail("root") { return Ok(true); }
+                if self.has_class_order() {
+                    let root=self.common_ancestor();
+                    if Rc::ptr_eq(&root,class){return Ok(true);}
+                    let actual=match item {
+                        Value::Thing(thing)=>Some(thing.blueprint().clone()),
+                        Value::Blueprint(held)=>Some(Self::builder_over(held).unwrap_or_else(||self.builder_blueprint())),
+                        _=>None,
+                    };
+                    if let Some(actual)=actual {
+                        return Ok(std::iter::once(&actual).chain(actual.ancestry.iter()).any(|ancestor|Rc::ptr_eq(ancestor,class)));
+                    }
+                } else if class.name == self.detail("root") { return Ok(true); }
                 // A blueprint standing for a native kind the table
                 // spells no word of its own for is asked about by the
                 // kind's own name, no word standing in its place.

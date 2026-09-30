@@ -2516,11 +2516,17 @@ impl<'a> Machine<'a> {
                 // is what is asked about.
                 if class_only && !self.counts_as_class(subject){return Err(self.not_a_class("core.issubclass.subject"));}
                 // Everything lies under the class everything lies under.
-                if c.name==self.detail("root"){return Ok(true);}
+                if Rc::ptr_eq(c,&self.common_ancestor()){return Ok(true);}
                 match (class_only, subject, Self::native_word(c)) {
                     (false, Value::Thing(_), _) => {},
                     (false, _, Some(word)) => return Ok(subject.kind_word()==word),
                     _ => {},
+                }
+                if !class_only {
+                    if let Value::Blueprint(held)=subject {
+                        let builder=Self::builder_over(held).unwrap_or_else(||self.builder_blueprint());
+                        return Ok(std::iter::once(&builder).chain(builder.ancestry.iter()).any(|ancestor|Rc::ptr_eq(ancestor,c)));
+                    }
                 }
                 let b=match subject{Value::Blueprint(b) if class_only=>Some(b),Value::Thing(t) if !class_only=>Some(&t.blueprint()),_=>None};
                 Ok(b.map_or(false,|b|Rc::ptr_eq(b,c)||b.ancestry.iter().any(|a|Rc::ptr_eq(a,c))))

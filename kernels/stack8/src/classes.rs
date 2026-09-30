@@ -2456,9 +2456,15 @@ impl<'a> Engine<'a> {
         if let Value::Class(c)=wanted {
             if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
             // Everything stands beneath the class every other one does.
-            if c.name==self.class_word("root"){return Ok(true);}
+            if Rc::ptr_eq(c, &self.root_class()){return Ok(true);}
             if !subclass && !matches!(value, Value::Object(_)) {
                 if let Some(word)=Self::own_kind(c) { return Ok(value.core_kind()==word); }
+            }
+            if !subclass {
+                if let Value::Class(held) = value {
+                    let maker = Self::maker_beneath(held).unwrap_or_else(|| self.metaclass_root());
+                    return Ok(Rc::ptr_eq(&maker, c) || maker.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, c)));
+                }
             }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class_now()),Value::Class(c) if subclass=>Some(c),_=>None};
             return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));

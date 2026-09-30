@@ -17778,7 +17778,18 @@ impl Engine<'_> {
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
             // Every value whatever is of the class every other one is of.
-            if class.name == self.class_word("root") { return Ok(true); }
+            if self.fuller_classes() {
+                let root = self.root_class();
+                if Rc::ptr_eq(class, &root) { return Ok(true); }
+                if let Value::Object(object) = value {
+                    let actual = object.class_now();
+                    return Ok(Rc::ptr_eq(&actual, class) || actual.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, class)));
+                }
+                if let Value::Class(held) = value {
+                    let maker = Self::maker_beneath(held).unwrap_or_else(|| self.metaclass_root());
+                    return Ok(Rc::ptr_eq(&maker, class) || maker.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, class)));
+                }
+            } else if class.name == self.class_word("root") { return Ok(true); }
             // A class standing for a builtin kind the definition spells
             // no word of its own for is asked about by the kind's own
             // name, there being no builtin word to ask in its place.
