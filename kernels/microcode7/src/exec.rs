@@ -363,6 +363,7 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    reaping: bool,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
     /// routine was, kept so the pair stays its own, what calls of it now
@@ -1262,7 +1263,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), reaping: false, written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -2109,62 +2110,73 @@ impl<'a> Machine<'a> {
         let _ = self.apply_held(report, vec![raised, traceback, about.clone(), Value::text(reason)]);
     }
 
-    /// The program asked for the rounds nothing reaches to be found and
-    /// cut. Their things bid farewell first and the web is woven again,
-    /// since a farewell may keep a thing about; then every knot still
-    /// unreachable is emptied, counting frees the rest, and the
-    /// listeners are told.
+    /// Weave the ownership web, leaving the reaper's retained knots out
+    /// of the program's outside holds.
+    fn round_web(&self, retained: &[crate::ghost::Knot]) -> crate::ghost::Web {
+        use crate::ghost::{Knot, Web};
+        let books = self.readings.iter().flat_map(|book| {
+            std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
+                .chain(book.outer.iter().cloned().map(|outer| Knot::Held(Value::Shared(outer))))
+        });
+        let original = retained.iter().map(|knot| match knot {
+            Knot::Held(value) => Knot::Held(value.clone()),
+            Knot::Frame(frame) => Knot::Frame(frame.clone()),
+        });
+        let bookkeeping = self.routine_members.iter().flat_map(|(function, holder)| [Knot::Held(function.clone()), Knot::Held(Value::Thing(holder.clone()))])
+            .chain(books).chain(crate::ghost::anchored_values()).chain(original).collect();
+        let live = self.imported.values().chain(self.memo.values()).chain(self.fault_kinds.values())
+            .chain(&self.holding_fault).cloned().map(Knot::Held)
+            .chain(std::iter::once(Knot::Frame(self.outermost.clone())))
+            .chain(self.world_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
+            .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
+            .collect();
+        Web::from_notable(bookkeeping, live)
+    }
+
+    /// Silence the whole lost group before its notices and farewells.
+    /// Keep the group intact while those run, then weave ownership again
+    /// and cut only its still-lost knots. Reentrant requests do no work;
+    /// knots first made during these calls wait for the next collection.
     fn reap_rounds(&mut self) -> usize {
         use crate::ghost::{Knot, Web};
-        loop {
-            let books = self.readings.iter().flat_map(|book| {
-                std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
-                    .chain(book.outer.iter().cloned().map(|outer| Knot::Held(Value::Shared(outer))))
-            });
-            let bookkeeping = self.routine_members.iter().flat_map(|(function, holder)| [Knot::Held(function.clone()), Knot::Held(Value::Thing(holder.clone()))])
-                .chain(books).chain(crate::ghost::anchored_values()).collect();
-            let live = self.imported.values().chain(self.memo.values()).chain(self.fault_kinds.values())
-                .chain(&self.holding_fault).cloned().map(Knot::Held)
-                .chain(std::iter::once(Knot::Frame(self.outermost.clone())))
-                .chain(self.world_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
-                .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
-                .collect();
-            let mut web = Web::from_notable(bookkeeping, live);
-            let lost = web.unreachable();
-            let mut bade = false;
-            for knot in &lost {
-                match knot {
-                    Knot::Held(Value::Thing(thing)) => {
-                        let Some(farewell) = crate::ghost::farewell_of(&thing.of) else { continue };
+        if self.reaping { return 0; }
+        self.reaping = true;
+        let mut web = self.round_web(&[]);
+        let original = web.unreachable();
+        let notices = crate::ghost::silence_group(&original);
+        for (notify, bearer) in notices {
+            self.call_unheard(notify, vec![bearer], "callback");
+        }
+        for knot in &original {
+            match knot {
+                Knot::Held(Value::Thing(thing)) => {
+                    if let Some(farewell) = crate::ghost::farewell_of(&thing.of) {
                         if crate::ghost::first_farewell(thing) {
-                            crate::ghost::invalidate_thing(thing);
-                            self.attend_to_gone();
-                            bade = true;
                             self.call_unheard(farewell, vec![Value::Thing(thing.clone())], "deallocator");
                             crate::ghost::release_anchor(thing);
                         }
                     }
-                    Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |w| w.asleep()) => {
-                        crate::ghost::invalidate_walk(walk);
-                        self.attend_to_gone();
-                        bade = true;
-                        if let Err(away) = self.shut_departed_generator(walk) {
-                            self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
-                        }
-                    }
-                    _ => {}
                 }
+                Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |state| state.asleep()) => {
+                    if let Err(away) = self.shut_departed_generator(walk) {
+                        self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
+                    }
+                }
+                _ => {}
             }
-            if bade { continue; }
-            let found = lost.len();
-            self.routine_members.retain(|(function, _)| !web.unowned(function));
-            let taken = Web::cut(&lost);
-            drop(lost);
-            drop(web);
-            drop(taken);
-            self.attend_to_gone();
-            return found;
         }
+        drop(web);
+        let mut checked = self.round_web(&original);
+        let lost = checked.remaining(original);
+        let found = lost.len();
+        self.routine_members.retain(|(function, _)| !checked.unowned(function));
+        let taken = Web::cut(&lost);
+        drop(lost);
+        drop(checked);
+        drop(taken);
+        self.attend_to_gone();
+        self.reaping = false;
+        found
     }
 
     fn hand_over_unheard(&mut self) -> Res<()> {

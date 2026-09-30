@@ -105,32 +105,47 @@ thread_local! {
     static CANDIDATES: RefCell<(Vec<Hold>, usize)> = const { RefCell::new((Vec::new(), 8)) };
 }
 
-pub fn invalidate_object(object: &Rc<Instance>) {
-    let target = Rc::downgrade(object);
+/// Clear the old weak references of an entire unreachable group before
+/// any Python callback can observe another member. The group owns real
+/// graph nodes; the addresses here only identify those retained nodes.
+/// References made by a finalizer are not part of this clearing phase.
+pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
+    let places: HashSet<usize> = group.iter().filter_map(place_of).collect();
+    let lost = |hold: &Hold| match hold {
+        Hold::Object(w) => places.contains(&(w.as_ptr() as usize)),
+        Hold::Class(w) => places.contains(&(w.as_ptr() as usize)),
+        Hold::Generator(w) => places.contains(&(w.as_ptr() as usize)),
+        Hold::Set(w) => places.contains(&(w.as_ptr() as usize)),
+        Hold::Routine(w) => places.contains(&(w.as_ptr() as usize)),
+        Hold::Method(o, r) => places.contains(&(o.as_ptr() as usize)) || places.contains(&(r.as_ptr() as usize)),
+    };
     let _ = REFERENCES.try_with(|all| {
         all.borrow_mut().retain(|weak| {
             let Some(reference) = weak.upgrade() else { return false };
-            if let Hold::Object(held) = &reference.hold {
-                if Weak::ptr_eq(held, &target) { reference.dead.set(true); }
-            }
+            if lost(&reference.hold) { reference.dead.set(true); }
             true
         });
     });
-    note_death();
-}
-
-pub fn invalidate_walk(walk: &Rc<RefCell<Generator>>) {
-    let target = Rc::downgrade(walk);
-    let _ = REFERENCES.try_with(|all| {
-        all.borrow_mut().retain(|weak| {
-            let Some(reference) = weak.upgrade() else { return false };
-            if let Hold::Generator(held) = &reference.hold {
-                if Weak::ptr_eq(held, &target) { reference.dead.set(true); }
+    let mut notices = WATCHED.try_with(|all| {
+        let mut watched = all.borrow_mut();
+        let mut kept = Vec::new();
+        let mut notices = Vec::new();
+        for reference in watched.drain(..) {
+            if !reference.dead.get() { kept.push(reference); continue; }
+            // An unreachable weakref is cleared too, but its callback
+            // is not kept alive or called on the group's behalf.
+            if places.contains(&(reference.bearer.as_ptr() as usize)) { continue; }
+            if let (Some(bearer), Some(callback)) = (reference.bearer.upgrade(), &reference.told) {
+                notices.push((callback.clone(), Value::Object(bearer)));
             }
-            true
-        });
-    });
-    note_death();
+        }
+        let _ = WATCHING.try_with(|count| count.set(kept.len()));
+        *watched = kept;
+        notices
+    }).unwrap_or_default();
+    // Registrations for each target are delivered newest first.
+    notices.reverse();
+    notices
 }
 
 pub fn anchor(object: &Rc<Instance>) {
@@ -294,6 +309,9 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
             *watched = kept;
         });
     }
+    // A target released by counting has the same newest-first weakref
+    // callback order as one released by cyclic collection.
+    gone.reverse();
     (words, walks, gone)
 }
 
@@ -664,6 +682,14 @@ impl Graph {
             }
         }
         self.nodes.values().filter(|n| !n.marked).map(|n| n.held.clone()).collect()
+    }
+
+    /// Recheck ownership after finalization, retaining only the original
+    /// collection group. The caller counts its retained nodes as collector
+    /// bookkeeping, so those real holds cannot conceal resurrection.
+    pub fn still_unreached(&mut self, original: Vec<Value>) -> Vec<Value> {
+        drop(self.unreached());
+        original.into_iter().filter(|value| self.unowned(value)).collect()
     }
 
     /// Break every unreachable round: empty each mutable value in it, so

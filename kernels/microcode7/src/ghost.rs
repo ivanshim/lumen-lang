@@ -85,32 +85,45 @@ thread_local! {
     static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
 }
 
-pub fn invalidate_thing(thing: &Rc<Thing>) {
-    let target = Rc::downgrade(thing);
-    let _ = REFERENCES.try_with(|all| {
-        all.borrow_mut().retain(|weak| {
-            let Some(reference) = weak.upgrade() else { return false };
-            if let Ghost::Thing(held) = &reference.ghost {
-                if Weak::ptr_eq(held, &target) { reference.dead.set(true); }
-            }
-            true
+/// Mark every reference to a lost knot before handing any callback to
+/// the machine. The knots remain owned until resurrection has been
+/// checked, so their pointer identities cannot be reused during this pass.
+pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
+    let lost: HashSet<_> = knots.iter().filter_map(Knot::place).collect();
+    let in_group = |ghost: &Ghost| -> bool {
+        match ghost {
+            Ghost::Thing(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Blueprint(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Walk(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Set(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Bound(body, frame) => lost.contains(&(body.as_ptr() as usize)) || lost.contains(&(frame.as_ptr() as usize)),
+            Ghost::Routine(target) => lost.contains(&(target.as_ptr() as usize)),
+            Ghost::Method(body, receiver) => lost.contains(&(body.as_ptr() as usize)) || lost.contains(&(receiver.as_ptr() as usize)),
+        }
+    };
+    let _ = REFERENCES.try_with(|references| {
+        references.borrow_mut().retain(|entry| match entry.upgrade() {
+            None => false,
+            Some(dim) => { if in_group(&dim.ghost) { dim.dead.set(true); } true }
         });
     });
-    anything_departing();
-}
-
-pub fn invalidate_walk(walk: &Rc<RefCell<Suspension>>) {
-    let target = Rc::downgrade(walk);
-    let _ = REFERENCES.try_with(|all| {
-        all.borrow_mut().retain(|weak| {
-            let Some(reference) = weak.upgrade() else { return false };
-            if let Ghost::Walk(held) = &reference.ghost {
-                if Weak::ptr_eq(held, &target) { reference.dead.set(true); }
+    LISTENERS.try_with(|listeners| {
+        let mut listeners = listeners.borrow_mut();
+        let mut notices = Vec::new();
+        listeners.retain(|dim| {
+            if !dim.dead.get() { return true; }
+            // A listener in the same lost group has no live owner to
+            // receive a notice, even though the web still holds it.
+            if !lost.contains(&(dim.bearer.as_ptr() as usize)) {
+                if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), &dim.notify) {
+                    notices.push((notify.clone(), Value::Thing(bearer)));
+                }
             }
-            true
+            false
         });
-    });
-    anything_departing();
+        let _ = LISTENING.try_with(|number| number.set(listeners.len()));
+        notices.into_iter().rev().collect()
+    }).unwrap_or_default()
 }
 
 pub fn anchor(thing: &Rc<Thing>) {
@@ -245,6 +258,9 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
             *all = still;
         });
     }
+    // Listeners are registered in time order; departure tells the most
+    // recent listener on a target before its earlier listeners.
+    notices.reverse();
     (farewells, walks, notices)
 }
 
@@ -682,6 +698,16 @@ impl Web {
             });
         }
         lost
+    }
+
+    /// Determine which original knots remain lost after farewells. New
+    /// rounds made during a farewell wait until another reaping; retained
+    /// original knots are accounted for as the machine's bookkeeping.
+    pub fn remaining(&mut self, original: Vec<Knot>) -> Vec<Knot> {
+        drop(self.unreachable());
+        original.into_iter().filter(|knot| {
+            knot.place().and_then(|at| self.strands.get(&at)).is_some_and(|strand| !strand.reached)
+        }).collect()
     }
 
     /// Cuts every unreachable round: each knot that can be emptied is,

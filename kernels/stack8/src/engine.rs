@@ -51,6 +51,7 @@ pub struct Engine<'a> {
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
     function_members: Vec<(Value, Rc<Instance>)>,
+    collecting_cycles: bool,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
@@ -1106,7 +1107,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), collecting_cycles: false,
             native_exceptions,
             lang,
             world,
@@ -1622,60 +1623,64 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// The program asked for the rounds nothing reaches to be found and
-    /// broken. Their objects say their last words first, and the rounds
-    /// are looked for again afterwards, since last words may keep an
-    /// object alive; then every round still unreached is emptied, the
-    /// counting frees the rest, and the watchers are told.
+    /// Build ownership including any nodes retained by this collection.
+    fn cycle_graph(&self, retained: &[Value]) -> crate::faint::Graph {
+        let books = self.text_books.iter().flat_map(|book| {
+            std::iter::once(Value::Bond(book.near.clone()))
+                .chain(book.outer.iter().cloned().map(Value::Bond))
+        });
+        let bookkeeping = self.function_members.iter().flat_map(|(function, holder)| [function.clone(), Value::Object(holder.clone())])
+            .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).collect();
+        let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
+            .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
+            .chain(self.native_exceptions.values()).cloned()
+            .chain(self.outer_book.iter().cloned().map(Value::Bond))
+            .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
+        crate::faint::Graph::from_candidates(bookkeeping, live)
+    }
+
+    /// Clear a collection group's weakrefs, call its callbacks, then run
+    /// its finalizers. Recheck the same retained group for resurrection
+    /// before severing it; cycles created by those calls belong to a later
+    /// collection. A nested collect never enters these phases again.
     fn collect_cycles(&mut self) -> usize {
-        loop {
-            let books = self.text_books.iter().flat_map(|book| {
-                std::iter::once(Value::Bond(book.near.clone()))
-                    .chain(book.outer.iter().cloned().map(Value::Bond))
-            });
-            let bookkeeping = self.function_members.iter().flat_map(|(function, holder)| [function.clone(), Value::Object(holder.clone())])
-                .chain(books).chain(crate::faint::anchored_values()).collect();
-            let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
-                .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
-                .chain(self.native_exceptions.values()).cloned()
-                .chain(self.outer_book.iter().cloned().map(Value::Bond))
-                .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
-            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live);
-            let unreached = graph.unreached();
-            let mut spoke = false;
-            for value in &unreached {
-                match value {
-                    Value::Object(o) => {
-                        let Some(words) = crate::faint::last_word_of(&o.class) else { continue };
-                        if crate::faint::first_words(o) {
-                            crate::faint::invalidate_object(o);
-                            self.settle_departed();
-                            spoke = true;
-                            self.speak_ignoring(words, vec![Value::Object(o.clone())], "deallocator");
-                            crate::faint::release_anchor(o);
-                        }
-                    }
-                    Value::Generator(g) if crate::faint::asleep(g) => {
-                        crate::faint::invalidate_walk(g);
-                        self.settle_departed();
-                        spoke = true;
-                        if let Err(fault) = self.close_departed_generator(g) {
-                            self.ignore_fault(fault, value, "generator");
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if spoke { continue; }
-            let count = unreached.len();
-            self.function_members.retain(|(function, _)| !graph.unowned(function));
-            let grave = crate::faint::Graph::sever(&unreached);
-            drop(unreached);
-            drop(graph);
-            drop(grave);
-            self.settle_departed();
-            return count;
+        if self.collecting_cycles { return 0; }
+        self.collecting_cycles = true;
+        let mut graph = self.cycle_graph(&[]);
+        let group = graph.unreached();
+        for (callback, bearer) in crate::faint::clear_group(&group) {
+            self.speak_ignoring(callback, vec![bearer], "callback");
         }
+        for value in &group {
+            match value {
+                Value::Object(object) => {
+                    if let Some(words) = crate::faint::last_word_of(&object.class) {
+                        if crate::faint::first_words(object) {
+                            self.speak_ignoring(words, vec![Value::Object(object.clone())], "deallocator");
+                            crate::faint::release_anchor(object);
+                        }
+                    }
+                }
+                Value::Generator(walk) if crate::faint::asleep(walk) => {
+                    if let Err(fault) = self.close_departed_generator(walk) {
+                        self.ignore_fault(fault, value, "generator");
+                    }
+                }
+                _ => {}
+            }
+        }
+        drop(graph);
+        let mut after = self.cycle_graph(&group);
+        let unreached = after.still_unreached(group);
+        let count = unreached.len();
+        self.function_members.retain(|(function, _)| !after.unowned(function));
+        let grave = crate::faint::Graph::sever(&unreached);
+        drop(unreached);
+        drop(after);
+        drop(grave);
+        self.settle_departed();
+        self.collecting_cycles = false;
+        count
     }
 
     fn hand_over_complaints(&mut self) -> Flow<()> {
