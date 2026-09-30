@@ -3588,7 +3588,8 @@ impl<'a> Machine<'a> {
     fn step_into_body(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Res<Option<Value>> {
         if !self.table.strings("ext.stmt.async.generator.methods").is_empty() && generator.try_borrow().is_ok_and(|body|
             body.ended && body.of.as_ref().is_some_and(|program| program.flags & 128 != 0)) {
-            return Err("RuntimeError: cannot reuse already awaited coroutine".to_string().into());
+            let words = "RuntimeError: cannot reuse already awaited coroutine".to_owned();
+            return Err(self.as_raised(&words).map(Escape::Thrown).unwrap_or(Escape::Error(words)));
         }
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
@@ -3654,11 +3655,21 @@ impl<'a> Machine<'a> {
                 Some(Value::Generator(inner)) => {
                     let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
                     let saved = std::mem::replace(&mut self.active_trace, parent);
-                    let stepped = self.step_into_mode(&inner, Value::Nil, Some(value), given, close_on_exit);
+                    let python = self.table.has_any("ext.stmt.async.generator.methods");
+                    // Synchronous close ends the child before GeneratorExit
+                    // reaches the parent's own exception/finally continuation.
+                    let closing = python && close_on_exit && self.is_exit(&value);
+                    let stepped = if closing {
+                        self.shut_generator(&inner).map(|_| None)
+                    } else {
+                        self.step_into_mode(&inner, Value::Nil, Some(value), given, close_on_exit)
+                    };
+                    let stepped = if python { stepped.map_err(|fault| self.delegated_fault(fault)) } else { stepped };
                     self.active_trace = saved;
                     let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
                     match stepped {
                         Ok(Some(item)) => return Ok(Some(item)),
+                        Ok(None) if closing => { state.inner = None; }
                         Ok(None) => { hurled = None; }
                         Err(Escape::Thrown(raised)) => { state.inner = None; hurled = Some(raised); }
                         Err(other) => { state.inner = None; return Err(other); }

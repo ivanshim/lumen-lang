@@ -3914,7 +3914,8 @@ impl<'a> Engine<'a> {
     fn step_generator_body(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, mut hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Flow<Option<Value>> {
         if !self.lang.async_generator_methods.is_empty() && held.try_borrow().is_ok_and(|body|
             body.closed && body.program.as_ref().is_some_and(|program| program.code_flags & 128 != 0)) {
-            return Err("RuntimeError: cannot reuse already awaited coroutine".into());
+            let words = "RuntimeError: cannot reuse already awaited coroutine".to_owned();
+            return Err(self.as_fault(&words).map(Fault::Thrown).unwrap_or(Fault::Note(words)));
         }
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
@@ -3980,11 +3981,21 @@ impl<'a> Engine<'a> {
                 Some(Value::Generator(inner)) => {
                     let parent = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.trace_frame.clone();
                     let before = std::mem::replace(&mut self.trace_frame, parent);
-                    let stepped = self.step_generator_mode(&inner, Value::Null, Some(value), given, close_on_exit);
+                    let python = !self.lang.async_generator_methods.is_empty();
+                    // Synchronous close ends the child before GeneratorExit
+                    // reaches the parent's own exception/finally continuation.
+                    let closing = python && close_on_exit && self.is_exit(&value);
+                    let stepped = if closing {
+                        self.close_generator(&inner).map(|_| None)
+                    } else {
+                        self.step_generator_mode(&inner, Value::Null, Some(value), given, close_on_exit)
+                    };
+                    let stepped = if python { stepped.map_err(|fault| self.delegated_fault(fault)) } else { stepped };
                     self.trace_frame = before;
                     let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
                     match stepped {
                         Ok(Some(item)) => return Ok(Some(item)),
+                        Ok(None) if closing => { state.delegate = None; }
                         Ok(None) => { hurled = None; }
                         Err(Fault::Thrown(raised)) => { state.delegate = None; hurled = Some(raised); }
                         Err(other) => { state.delegate = None; return Err(other); }
