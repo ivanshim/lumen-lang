@@ -18552,8 +18552,9 @@ impl Machine<'_> {
             let choices = if self.table.single("ext.system.module.path").is_some() { vec![package, ordinary] } else { vec![ordinary] };
             for location in choices {
                 let absolute = made_absolute(&location.to_string_lossy());
-                if self.table.single("ext.system.module.path").is_some() && self.library_module_file(path).as_deref() == Some(absolute.as_str()) {
-                    if let Some(text) = self.library_sources.get(path) { return Some((absolute, text.clone())); }
+                if self.table.single("ext.system.module.path").is_some() {
+                    let stored = self.library_files.keys().find(|name| self.library_module_file(name).as_deref() == Some(absolute.as_str()));
+                    if let Some(text) = stored.and_then(|name| self.library_sources.get(name)) { return Some((absolute, text.clone())); }
                 }
                 if let Ok(text) = std::fs::read_to_string(&location) {
                     return Some((made_absolute(&location.to_string_lossy()), text));

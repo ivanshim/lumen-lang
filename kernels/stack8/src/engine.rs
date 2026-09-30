@@ -18805,8 +18805,13 @@ impl Engine<'_> {
             for file in candidates {
                 // Embedded text has a location, just like disk text. It is
                 // eligible only at a directory in the actual search list.
-                if self.lang.module_path.is_some() && self.library_module_file(path).as_deref() == Some(made_absolute(&file).as_str()) {
-                    if let Some(source) = self.module_sources.get(path) { return Some((made_absolute(&file), source.clone())); }
+                if self.lang.module_path.is_some() {
+                    let absolute = made_absolute(&file);
+                    for name in self.module_files.keys() {
+                        if self.library_module_file(name).as_deref() == Some(absolute.as_str()) {
+                            if let Some(source) = self.module_sources.get(name) { return Some((absolute, source.clone())); }
+                        }
+                    }
                 }
                 if let Ok(source) = std::fs::read_to_string(&file) {
                     return Some((made_absolute(&file), source));
