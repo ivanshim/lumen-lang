@@ -1297,6 +1297,19 @@ impl Value {
         Some(padded)
     }
 
+    /// Internal storage is a string only when its blueprint descends from str.
+    pub(super) fn type_text(&self) -> Value {
+        let value = self.settled();
+        if let Value::Thing(thing) = &value {
+            let class = thing.blueprint();
+            let string = std::iter::once(class.as_ref()).chain(class.ancestry.iter().map(Rc::as_ref))
+                .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
+            if string {
+                if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
+            }
+        }
+        value
+    }
     pub fn bare(&self) -> String {
         match self {
             Value::Complex(pair) => crate::complex::written(pair),
@@ -1376,13 +1389,7 @@ impl Value {
             Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => {
-                if let Some(names) = b.type_names.borrow().as_ref() {
-                    let module = b.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
-                    let full = if let Value::Thing(thing) = names.full.settled() {
-                        thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying").map_or_else(|| names.full.bare(), |entry| entry.1.bare())
-                    } else { names.full.bare() };
-                    return format!("<class '{}'>", module.filter(|word| word != "builtins").map_or(full.clone(), |word| format!("{word}.{full}")));
-                }
+                if let Some(title) = b.python_title() { return format!("<class '{title}'>"); }
                 b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name))
             },
             // A method or a data member carried by a native kind and
@@ -1548,7 +1555,7 @@ pub struct TypeNames {
     pub short: Value,
     pub full: Value,
     pub module_key: String,
-    /// The declaration reference used by a compiled super call.
+    /// Original qualification for the inherited string-based super lookup.
     pub declared: Value,
 }
 
@@ -1576,6 +1583,14 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
+    pub(super) fn python_title(&self) -> Option<String> {
+        let kept = self.type_names.borrow();
+        let names = kept.as_ref()?;
+        let module = self.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
+        let full = names.full.type_text().bare();
+        Some(module.filter(|word| word != "builtins").map_or(full.clone(), |word| format!("{word}.{full}")))
+    }
+
     pub fn program(&self, name: &str) -> Option<&Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
             Some((_, p)) => Some(p),

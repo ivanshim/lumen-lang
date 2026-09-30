@@ -247,11 +247,19 @@ impl<'a> Engine<'a> {
         let members = entries.iter().map(|(k, v)| (k.plain(), v.clone())).collect();
         self.forge_class(title, parents, members, by, named, plain[1].contents())
     }
+    fn type_argument_kind(value: &Value) -> String {
+        if let Value::Object(object) = value.contents() {
+            if let Some(names) = object.class_now().python_names.borrow().as_ref() {
+                return names.0.type_text().plain();
+            }
+        }
+        value.core_kind()
+    }
     fn type_title(&mut self, value: &Value) -> Flow<String> {
-        let text = Self::worth_of(value).unwrap_or_else(|| value.contents());
-        if self.class_word("name").is_empty() { return Ok(text.plain()); }
+        if self.class_word("name").is_empty() { return Ok(Self::worth_of(value).unwrap_or_else(|| value.contents()).plain()); }
+        let text = value.type_text();
         self.type_utf8(&text)?;
-        let Value::Text(title) = text else { return Err(format!("TypeError: type.__new__() argument 1 must be str, not {}", value.core_kind()).into()); };
+        let Value::Text(title) = text else { return Err(format!("TypeError: type.__new__() argument 1 must be str, not {}", Self::type_argument_kind(value)).into()); };
         if title.contains('\0') { return Err("ValueError: type name must not contain null characters".into()); }
         Ok(title.to_string())
     }
@@ -298,13 +306,13 @@ impl<'a> Engine<'a> {
             members.push((self.class_word("module").to_string(), Value::text(&module)));
         }
         if let Some((_, held)) = members.iter().find(|(n, _)| n == self.class_word("qualified")) {
-            if !matches!(Self::worth_of(held).unwrap_or_else(|| held.contents()), Value::Text(_) | Value::Codepoints(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", held.core_kind()).into()); }
+            if !matches!(if self.class_word("name").is_empty() { Self::worth_of(held).unwrap_or_else(|| held.contents()) } else { held.type_text() }, Value::Text(_) | Value::Codepoints(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", Self::type_argument_kind(held)).into()); }
         }
         let python_names = if !self.class_word("name").is_empty() {
             self.type_title(&Value::text(&name))?;
             let qualified = members.iter().find(|(key, _)| key == self.class_word("qualified")).map(|(_, v)| v.clone()).unwrap_or_else(|| title_value.clone());
             if let Some((_, doc)) = members.iter().find(|(key, _)| key == self.class_word("doc")) {
-                let raw = Self::worth_of(doc).unwrap_or_else(|| doc.contents());
+                let raw = doc.type_text();
                 self.type_utf8(&raw)?;
             } else { members.push((self.class_word("doc").to_string(), Value::Null)); }
             members.retain(|(key, _)| key != self.class_word("qualified"));
@@ -947,6 +955,7 @@ impl<'a> Engine<'a> {
                 Value::Object(o) if place == 7 => {
                     let module = self.class_word("main");
                     Value::text(&if o.class_now().base.is_none() && o.class_now().name == "object" { "<object object at 0x1>".to_owned() }
+                        else if let Some(title) = o.class_now().python_title() { format!("<{title} object at 0x1>") }
                         else if module.is_empty() { format!("<{} object>", o.class_now().name) }
                         else { format!("<{module}.{} object at 0x1>", o.class_now().name) })
                 }
@@ -2029,12 +2038,12 @@ impl<'a> Engine<'a> {
                     return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
                 }
                 if c.python_names.borrow().is_some() && name == self.class_word("doc") && value.is_none() {
-                    return Err(format!("TypeError: cannot delete '{name}' attribute of immutable type '{}'", Self::worth_of(&c.python_names.borrow().as_ref().unwrap().0).unwrap_or_else(|| c.python_names.borrow().as_ref().unwrap().0.contents()).plain()).into());
+                    return Err(format!("TypeError: cannot delete '{name}' attribute of immutable type '{}'", c.python_names.borrow().as_ref().unwrap().0.type_text().plain()).into());
                 }
                 if c.python_names.borrow().is_some() && (name == self.class_word("name") || name == self.class_word("qualified")) {
-                    let Some(candidate) = value.as_ref() else { return Err(format!("TypeError: cannot delete '{name}' attribute of immutable type '{}'", Self::worth_of(&c.python_names.borrow().as_ref().unwrap().0).unwrap_or_else(|| c.python_names.borrow().as_ref().unwrap().0.contents()).plain()).into()); };
-                    let raw = Self::worth_of(candidate).unwrap_or_else(|| candidate.contents());
-                    if !matches!(raw, Value::Text(_) | Value::Codepoints(_)) { return Err(format!("TypeError: can only assign string to {}.{name}, not '{}'", Self::worth_of(&c.python_names.borrow().as_ref().unwrap().0).unwrap_or_else(|| c.python_names.borrow().as_ref().unwrap().0.contents()).plain(), candidate.core_kind()).into()); }
+                    let Some(candidate) = value.as_ref() else { return Err(format!("TypeError: cannot delete '{name}' attribute of immutable type '{}'", c.python_names.borrow().as_ref().unwrap().0.type_text().plain()).into()); };
+                    let raw = candidate.type_text();
+                    if !matches!(raw, Value::Text(_) | Value::Codepoints(_)) { return Err(format!("TypeError: can only assign string to {}.{name}, not '{}'", c.python_names.borrow().as_ref().unwrap().0.type_text().plain(), Self::type_argument_kind(candidate)).into()); }
                     if name == self.class_word("name") {
                         self.type_title(&raw)?;
                         c.python_names.borrow_mut().as_mut().unwrap().0 = candidate.contents();
@@ -2536,7 +2545,7 @@ impl<'a> Engine<'a> {
 
     pub(super) fn class_super(&mut self,subject:Value,owner:&str,name:&str,args:Vec<Value>)->Flow<Value> {
         let receiver=match &subject{Value::Object(o)=>o.class_now().clone(),Value::Class(c)=>c.clone(),_=>return Err(self.class_refusal())};
-        let owned=|a:&Self,c:&Rc<Class>|c.name==owner || c.python_names.borrow().as_ref().map(|names| names.3.clone()).or_else(|| Self::own_class_value(c,a.class_word("qualified"))).map_or(false,|v| Self::worth_of(&v).unwrap_or(v).plain()==owner);
+        let owned=|a:&Self,c:&Rc<Class>|c.name==owner || c.python_names.borrow().as_ref().map(|names| names.3.clone()).or_else(|| Self::own_class_value(c,a.class_word("qualified"))).map_or(false,|v| (if c.python_names.borrow().is_some() { v.type_text() } else { Self::worth_of(&v).unwrap_or(v) }).plain()==owner);
         let mut sequence=vec![receiver.clone()];sequence.extend(receiver.lineage.iter().cloned());
         let mut at=sequence.iter().position(|c|owned(self,c));
         // A method of a metaclass is written in the metaclass, not in the

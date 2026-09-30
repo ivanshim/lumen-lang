@@ -5586,3 +5586,7 @@ UTF-8 names and string docs, refusing surrogate names or docs and NUL names;
 qualified names permit NULs and surrogates. Name assignment validates before
 changing metadata, while doc assignment keeps arbitrary objects. Builtin types
 refuse metadata writes, and heap-type names and docs cannot be deleted.
+String metadata unwraps internal storage only after checking genuine str ancestry.
+Python instance rendering follows the public qualification and module. The original
+qualification preserves the existing string-based super lookup across renames;
+this is not a class-cell identity and same-spelling declarations can still collide.

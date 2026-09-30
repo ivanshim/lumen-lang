@@ -1395,6 +1395,19 @@ impl Value {
         Some(shown)
     }
 
+    /// Unwrap native string storage only for a real string descendant.
+    pub(super) fn type_text(&self) -> Value {
+        let held = self.contents();
+        if let Value::Object(object) = &held {
+            let class = object.class_now();
+            let string = std::iter::once(class.as_ref()).chain(class.lineage.iter().map(Rc::as_ref))
+                .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
+            if string {
+                if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
+            }
+        }
+        held
+    }
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
@@ -1463,14 +1476,7 @@ impl Value {
             Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => {
-                if let Some((_, qualified, module_key, _)) = c.python_names.borrow().as_ref() {
-                    let prefix = c.shared.borrow().iter().find(|(key, _)| key == module_key).and_then(|(_, value)| match value.contents() { Value::Text(text) => Some(text.to_string()), _ => None });
-                    let local = match qualified.contents() {
-                        Value::Object(object) => object.fields.borrow().iter().find(|(key, _)| key == "\0worth").map_or_else(|| qualified.plain(), |(_, text)| text.plain()),
-                        text => text.plain(),
-                    };
-                    return format!("<class '{}'>", match prefix { Some(module) if module != "builtins" => format!("{module}.{local}"), _ => local });
-                }
+                if let Some(title) = c.python_title() { return format!("<class '{title}'>"); }
                 c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name))
             },
             // A kind's own method read from the kind itself is bound to
@@ -1649,7 +1655,7 @@ pub const MAKER_MEMBER: &str = "\0metaclass";
 #[derive(Debug)]
 pub struct Class {
     /// Python heap-type names, the module label, and the original
-    /// qualification identifying the declaration for lexical super calls.
+    /// qualification used by the existing string-based lexical super lookup.
     pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
     pub lineage: Vec<Rc<Class>>,
     pub direct: Vec<Rc<Class>>,
@@ -1672,6 +1678,14 @@ pub struct Class {
 }
 
 impl Class {
+    pub(super) fn python_title(&self) -> Option<String> {
+        let names = self.python_names.borrow();
+        let (_, qualified, module_key, _) = names.as_ref()?;
+        let prefix = self.shared.borrow().iter().find(|(key, _)| key == module_key).and_then(|(_, value)| match value.contents() { Value::Text(text) => Some(text.to_string()), _ => None });
+        let local = qualified.type_text().plain();
+        Some(match prefix { Some(module) if module != "builtins" => format!("{module}.{local}"), _ => local })
+    }
+
     /// The program of that name, in this class or the nearest one
     /// beneath it that has one.
     pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {

@@ -253,14 +253,22 @@ impl<'a> Machine<'a> {
         }
         Ok(())
     }
+    fn type_argument_kind(value: &Value) -> String {
+        if let Value::Thing(thing) = value.settled() {
+            if let Some(names) = thing.blueprint().type_names.borrow().as_ref() {
+                return names.short.type_text().bare();
+            }
+        }
+        value.kind_word()
+    }
     fn checked_type_name(&mut self, given: &Value) -> Result<String, Escape> {
-        let native = Self::underlying(given).unwrap_or_else(|| given.settled());
-        if self.detail("name").is_empty() { return Ok(native.bare()); }
+        if self.detail("name").is_empty() { return Ok(Self::underlying(given).unwrap_or_else(|| given.settled()).bare()); }
+        let native = given.type_text();
         self.reject_type_surrogates(&native)?;
         match native {
             Value::Text(word) if word.contains('\0') => Err(String::from("ValueError: type name must not contain null characters").into()),
             Value::Text(word) => Ok(word.to_string()),
-            _ => Err(format!("TypeError: type.__new__() argument 1 must be str, not {}", given.kind_word()).into()),
+            _ => Err(format!("TypeError: type.__new__() argument 1 must be str, not {}", Self::type_argument_kind(given)).into()),
         }
     }
     /// The class itself, laid out from its name, its parents, its
@@ -300,13 +308,13 @@ impl<'a> Machine<'a> {
         let module=self.detail("main").to_owned();
         if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(&module)));}
         if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
-            if !matches!(Self::underlying(candidate).unwrap_or_else(|| candidate.settled()), Value::Text(_) | Value::Unpaired(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", candidate.kind_word()).into()); }
+            if !matches!(if self.detail("name").is_empty() { Self::underlying(candidate).unwrap_or_else(|| candidate.settled()) } else { candidate.type_text() }, Value::Text(_) | Value::Unpaired(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", Self::type_argument_kind(candidate)).into()); }
         }
         let type_names = if self.detail("name").is_empty() { None } else {
             self.checked_type_name(&Value::text(&title))?;
             let full = entries.iter().find(|entry| entry.0 == self.detail("qualified")).map_or_else(|| title_object.clone(), |entry| entry.1.clone());
             match entries.iter().find(|entry| entry.0 == self.detail("doc")) {
-                Some((_, held)) => { let text = Self::underlying(held).unwrap_or_else(|| held.settled()); self.reject_type_surrogates(&text)?; }
+                Some((_, held)) => { let text = held.type_text(); self.reject_type_surrogates(&text)?; }
                 None => entries.push((self.detail("doc").to_owned(), Value::Nil)),
             }
             entries.retain(|entry| entry.0 != self.detail("qualified"));
@@ -1261,6 +1269,7 @@ impl<'a> Machine<'a> {
                 Value::Thing(t)=>{
                     let module=self.detail("main").to_owned();
                     Value::text(&if t.blueprint().under.is_none() && t.blueprint().name == "object" { "<object object at 0x1>".to_string() }
+                        else if let Some(title) = t.blueprint().python_title() { format!("<{title} object at 0x1>") }
                         else if module.is_empty() { format!("<{} object>", t.blueprint().name) }
                         else { format!("<{module}.{} object at 0x1>", t.blueprint().name) })
                 }
@@ -2119,12 +2128,12 @@ impl<'a> Machine<'a> {
                     return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", b.name).into());
                 }
                 if b.type_names.borrow().is_some() && key == self.detail("doc") && replacement.is_none() {
-                    return Err(format!("TypeError: cannot delete '{key}' attribute of immutable type '{}'", Self::underlying(&b.type_names.borrow().as_ref().unwrap().short).unwrap_or_else(|| b.type_names.borrow().as_ref().unwrap().short.settled()).bare()).into());
+                    return Err(format!("TypeError: cannot delete '{key}' attribute of immutable type '{}'", b.type_names.borrow().as_ref().unwrap().short.type_text().bare()).into());
                 }
                 if b.type_names.borrow().is_some() && [self.detail("name"), self.detail("qualified")].contains(&key) {
-                    let Some(handed) = replacement.as_ref() else { return Err(format!("TypeError: cannot delete '{key}' attribute of immutable type '{}'", Self::underlying(&b.type_names.borrow().as_ref().unwrap().short).unwrap_or_else(|| b.type_names.borrow().as_ref().unwrap().short.settled()).bare()).into()); };
-                    let text = Self::underlying(handed).unwrap_or_else(|| handed.settled());
-                    if !matches!(text, Value::Text(_) | Value::Unpaired(_)) { return Err(format!("TypeError: can only assign string to {}.{key}, not '{}'", Self::underlying(&b.type_names.borrow().as_ref().unwrap().short).unwrap_or_else(|| b.type_names.borrow().as_ref().unwrap().short.settled()).bare(), handed.kind_word()).into()); }
+                    let Some(handed) = replacement.as_ref() else { return Err(format!("TypeError: cannot delete '{key}' attribute of immutable type '{}'", b.type_names.borrow().as_ref().unwrap().short.type_text().bare()).into()); };
+                    let text = handed.type_text();
+                    if !matches!(text, Value::Text(_) | Value::Unpaired(_)) { return Err(format!("TypeError: can only assign string to {}.{key}, not '{}'", b.type_names.borrow().as_ref().unwrap().short.type_text().bare(), Self::type_argument_kind(handed)).into()); }
                     if key == self.detail("qualified") { b.type_names.borrow_mut().as_mut().unwrap().full = handed.settled(); }
                     else { self.checked_type_name(&text)?; b.type_names.borrow_mut().as_mut().unwrap().short = handed.settled(); }
                     return Ok(Value::Nil);
@@ -2605,7 +2614,7 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn next_ancestor_call(&mut self,receiver:Value,declared:&str,key:&str,mut args:Vec<Value>)->Res {
         let class=match &receiver{Value::Thing(t)=>t.blueprint().clone(),Value::Blueprint(b)=>b.clone(),_=>return Err(self.class_unready())};
-        let named_here=|a:&Self,b:&Rc<Blueprint>|b.name==declared||b.type_names.borrow().as_ref().map(|names| names.declared.clone()).or_else(|| Self::own_entry(b,a.detail("qualified"))).map_or(false,|v| Self::underlying(&v).unwrap_or(v).bare()==declared);
+        let named_here=|a:&Self,b:&Rc<Blueprint>|b.name==declared||b.type_names.borrow().as_ref().map(|names| names.declared.clone()).or_else(|| Self::own_entry(b,a.detail("qualified"))).map_or(false,|v| (if b.type_names.borrow().is_some() { v.type_text() } else { Self::underlying(&v).unwrap_or(v) }).bare()==declared);
         let mut chain=std::iter::once(class.clone()).chain(class.ancestry.iter().cloned()).collect::<Vec<_>>();
         let mut start=chain.iter().position(|b|named_here(self,b));
         // A method of a metaclass is written in the metaclass, so the
