@@ -2482,7 +2482,11 @@ impl<'a> Machine<'a> {
                 if self.stands_under(&object.blueprint(), 42) {
                     let edges = self.table.strings("ext.stmt.import.missing");
                     if edges.len() == 2 {
-                        if let Some(module) = told.strip_prefix(edges[0].as_str()).and_then(|rest| rest.strip_suffix(edges[1].as_str())) {
+                        let mut message = told;
+                        if let [begin, end] = self.table.strings("ext.stmt.import.nonpackage") {
+                            if let Some((body, _)) = told.strip_suffix(end.as_str()).and_then(|rest| rest.rsplit_once(begin.as_str())) { message = body; }
+                        }
+                        if let Some(module) = message.strip_prefix(edges[0].as_str()).and_then(|rest| rest.strip_suffix(edges[1].as_str())) {
                             written.push((self.table.single("ext.builtin.exceptions.name"), Value::text(module)));
                         }
                     }
@@ -18361,8 +18365,20 @@ impl Machine<'_> {
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
         let split = path.rsplit_once('.');
-        if self.table.single("ext.system.module.path").is_some() {
-            if let Some((owner, _)) = split { self.load_namespace(owner)?; }
+        if let Some(attribute) = self.table.single("ext.system.module.path").map(str::to_owned) {
+            if let Some((parent_name, _)) = split {
+                let parent_value = self.load_namespace(parent_name)?;
+                let has_directories = if let Value::Thing(parent) = parent_value {
+                    parent.holds.borrow().iter().any(|entry| entry.0 == attribute)
+                } else { false };
+                if !has_directories && !self.library_sources.contains_key(path) {
+                    let missing = self.table.strings("ext.stmt.import.missing");
+                    let suffix = self.table.strings("ext.stmt.import.nonpackage");
+                    if let ([head, tail], [before, after]) = (missing, suffix) {
+                        return Err(format!("{head}{path}{tail}{before}{parent_name}{after}"));
+                    }
+                }
+            }
         }
         let from_disk = self.sys_path_source(path);
         let text = match &from_disk {

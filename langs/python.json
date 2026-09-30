@@ -3081,6 +3081,7 @@
     "' from '",
     "'"
   ],
+  "ext.stmt.import.nonpackage": ["; '", "' is not a package"],
   "ext.stmt.import.missing": [
     "ModuleNotFoundError: No module named '",
     "'"

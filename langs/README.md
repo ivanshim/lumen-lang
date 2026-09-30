@@ -5296,6 +5296,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.lazy` | - | - | `lazy` | - | - | - | - | - | - | - |
 | `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.import.nonpackage` | - | - | `; '` `' is not a package` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |
@@ -5593,3 +5594,7 @@ The embedded `test/test_iter.py` is byte-for-byte CPython `Lib/test/test_iter.py
 from commit `3b564385e4c9` (the suite source recorded in `tests/README.md`),
 under the PSF license in `tests/python/LICENSE`. It supplies the original
 module for imports by the unchanged math tests.
+
+`ext.stmt.import.nonpackage` gives the two suffix pieces for a Python
+missing submodule whose parent has no package search path. Its exception
+keeps the missing submodule name independently of that explanation.

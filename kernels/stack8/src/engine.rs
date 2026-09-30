@@ -2045,7 +2045,11 @@ impl<'a> Engine<'a> {
                 }
                 if self.stands_on(&object.class_now(), 42) {
                     if let [head, tail] = self.lang.import_missing.as_slice() {
-                        if let Some(module) = told.strip_prefix(head.as_str()).and_then(|s| s.strip_suffix(tail.as_str())) {
+                        let diagnostic = match self.lang.import_nonpackage.as_slice() {
+                            [before, after] => told.strip_suffix(after.as_str()).and_then(|rest| rest.rsplit_once(before.as_str())).map_or(told, |(message, _)| message),
+                            _ => told,
+                        };
+                        if let Some(module) = diagnostic.strip_prefix(head.as_str()).and_then(|s| s.strip_suffix(tail.as_str())) {
                             filled.push((&self.lang.absent_name_member, Value::text(module)));
                         }
                     }
@@ -18628,8 +18632,16 @@ impl Engine<'_> {
         // in, in the order it stands there, ahead of the library: a
         // name found there is read straight off the disk instead.
         let parent = path.rsplit_once('.');
-        if self.lang.module_path.is_some() {
-            if let Some((above, _)) = parent { self.import_module(above)?; }
+        if let Some(word) = self.lang.module_path.clone() {
+            if let Some((above, _)) = parent {
+                let owner = self.import_module(above)?;
+                let package = matches!(owner, Value::Object(ref module) if module.fields.borrow().iter().any(|(name, _)| name == &word));
+                if !package && !self.module_sources.contains_key(path) {
+                    if let [opening, closing] = self.lang.import_nonpackage.as_slice() {
+                        return Err(format!("{}{opening}{above}{closing}", Self::named_fault(&self.lang.import_missing, path)).into());
+                    }
+                }
+            }
         }
         let from_disk = self.sys_path_source(path);
         let source = match &from_disk {
