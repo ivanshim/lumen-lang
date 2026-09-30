@@ -8571,7 +8571,7 @@ impl<'a> Builder<'a> {
             }
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
-        if table.spells("ext.stmt.class.special.declined", &t.lexeme) {
+        if t.shape != Shape::Quote && table.spells("ext.stmt.class.special.declined", &t.lexeme) {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }

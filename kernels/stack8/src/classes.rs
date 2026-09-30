@@ -1998,6 +1998,12 @@ impl<'a> Engine<'a> {
                 if Self::class_sealed(c) {
                     return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
                 }
+                // The kinds of the two named singletons are fixed the
+                // way the reference fixes them: nothing is written onto
+                // the kind itself or taken off it.
+                if matches!(Self::own_kind(c).as_deref(), Some("NotImplementedType") | Some("ellipsis")) {
+                    return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
+                }
                 if name == self.class_word("qualified") {
                     match value.as_ref().map(Value::contents) {
                         Some(Value::Text(_)) => {},
@@ -2092,6 +2098,11 @@ impl<'a> Engine<'a> {
                     if pieces.len()==3 {return Err(format!("{}{name}{}{}{}",pieces[0],pieces[1],subject.core_kind(),pieces[2]).into());}
                 }
                 return Err(if value.is_some() {self.unwritable_member(&subject,name)} else {absent});
+            }
+            // A singleton's class is as fixed as the singleton itself:
+            // answered for, never written over nor taken away.
+            Value::Declined(_) | Value::Ellipsis if name == self.class_word("kind") => {
+                return Err(self.class_word(if value.is_some() { "kind.fixed" } else { "kind.kept" }).to_string().into());
             }
             // A value of a builtin kind keeps no namespace: a write
             // says so outright, while a taking-away only reports the

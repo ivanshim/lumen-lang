@@ -8925,7 +8925,7 @@ impl<'a> Compiler<'a> {
             }
             return Ok(());
         }
-        if Lang::spells(&lang.special_declined, &tok.lexeme) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.special_declined, &tok.lexeme) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
