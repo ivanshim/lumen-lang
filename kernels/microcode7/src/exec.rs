@@ -3244,7 +3244,7 @@ impl<'a> Machine<'a> {
             match member {
                 Ok(member) => { self.apply_class_member(member, Vec::new())?; }
                 Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if t.blueprint().goes_by("AttributeError", false)) => {}
-                Err(away) => return Err(away),
+                Err(away) => self.report_unraisable(away, &parts[0], "generator"),
             }
             return Ok(());
         }
@@ -3569,17 +3569,27 @@ impl<'a> Machine<'a> {
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown at them is raised on the spot.
     fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
+        self.step_into_mode(generator, sent, hurled, given, true)
+    }
+
+    // Initial async throw/close lets a delegate handle GeneratorExit through
+    // throw, so cleanup may await; synchronous close ends the delegate first.
+    fn step_into_mode(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Res<Option<Value>> {
         let previous_reading = self.reading_now;
         if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) { self.reading_now = Some(book); }
         let chosen = generator.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| self.constructor_world(body)));
         let previous_world = chosen.map(|book| self.world_book.replace(book));
-        let result = self.step_into_body(generator, sent, hurled, given);
+        let result = self.step_into_body(generator, sent, hurled, given, close_on_exit);
         if let Some(previous) = previous_world { self.world_book = previous; }
         self.reading_now = previous_reading;
         result
     }
 
-    fn step_into_body(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
+    fn step_into_body(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Res<Option<Value>> {
+        if !self.table.strings("ext.stmt.async.generator.methods").is_empty() && generator.try_borrow().is_ok_and(|body|
+            body.ended && body.of.as_ref().is_some_and(|program| program.flags & 128 != 0)) {
+            return Err("RuntimeError: cannot reuse already awaited coroutine".to_string().into());
+        }
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
         // what comes back out of that reaches the body itself.
@@ -3595,7 +3605,7 @@ impl<'a> Machine<'a> {
                 Some(Value::Wrapped(63, parts)) => {
                     let walk = Value::Wrapped(63, parts.clone());
                     let source = parts[0].clone();
-                    if self.is_exit(&value) {
+                    if close_on_exit && self.is_exit(&value) {
                         let ending = self.end_delegate(&walk);
                         generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None;
                         let ending = match ending {
@@ -3644,7 +3654,7 @@ impl<'a> Machine<'a> {
                 Some(Value::Generator(inner)) => {
                     let parent = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.trace_state.clone();
                     let saved = std::mem::replace(&mut self.active_trace, parent);
-                    let stepped = self.step_into(&inner, Value::Nil, Some(value), given);
+                    let stepped = self.step_into_mode(&inner, Value::Nil, Some(value), given, close_on_exit);
                     self.active_trace = saved;
                     let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
                     match stepped {
@@ -3659,7 +3669,7 @@ impl<'a> Machine<'a> {
                 // is what the throw came to, the delegation standing.
                 // One that does not know is ended, and the value is
                 // raised where the delegation stands instead.
-                Some(walk) if !self.is_exit(&value) => {
+                Some(walk) if !close_on_exit || !self.is_exit(&value) => {
                     let thing = Self::walked_thing(&walk);
                     let throwing = thing.as_ref().and_then(|held| self.named_within(held, &self.table.strings("ext.stmt.yield.throw").to_vec()));
                     match (thing, throwing) {
@@ -11746,12 +11756,13 @@ impl<'a> Machine<'a> {
                 self.resume(generator, offered)
             } else if *operation == 2 {
                 let fault = self.thrown_into(vec![argument.clone()], &self.outermost.clone())?;
-                self.step_into(generator, Value::Nil, Some(fault), &[argument.clone()])
+                self.step_into_mode(generator, Value::Nil, Some(fault), &[argument.clone()], false)
             } else {
                 closing.set(true);
                 if !begun { self.end_generator(generator)?; return Ok(AsyncStep::Finished(None)); }
                 let fault = self.exit_value().ok_or_else(|| self.bad_answer())?;
-                self.step_into(generator, Value::Nil, Some(fault), &[])
+                let kind = match &fault { Value::Thing(thing) => Value::Blueprint(thing.blueprint()), _ => fault.clone() };
+                self.step_into_mode(generator, Value::Nil, Some(fault), &[kind], false)
             };
             // A delegate callback returns an await token even if a lookup
             // resumed the parent and cleared its delegation in the meantime.
