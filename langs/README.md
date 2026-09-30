@@ -1515,8 +1515,10 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.callable` asks whether a value may be called.
   `ext.builtin.getattr`, `ext.builtin.setattr`, `ext.builtin.delattr`
   and `ext.builtin.hasattr` read, write, remove and ask after a member.
-  `ext.builtin.vars` yields the map of own members; `ext.builtin.dir`
-  yields the sorted names of own and inherited members.
+  `ext.builtin.vars` reads `__dict__` and returns that result itself, or
+  reports a missing namespace. `ext.builtin.dir` sorts the iterable returned
+  by `__dir__` when present; its default directory uses the namespace and
+  inherited members appropriate to the value.
   `ext.builtin.staticmethod`, `ext.builtin.classmethod` and
   `ext.builtin.property` make the corresponding member wrappers.
   These labels each take a list of builtin words.

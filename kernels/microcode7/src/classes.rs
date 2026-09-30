@@ -1556,6 +1556,11 @@ impl<'a> Machine<'a> {
             if key==self.detail("name"){return Ok(Value::text(&b.name));}
             if key==self.detail("qualified"){return Ok(self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name)));}
             if key==self.detail("namespace"){
+                if let Some(builder)=Self::builder_over(b) {
+                    if let Some(descriptor)=self.inherited_entry(&builder,key).filter(|entry| self.writes_too(entry)) {
+                        return self.member_binding(descriptor,Some(value.clone()),builder);
+                    }
+                }
                 // A blueprint standing for a native kind keeps no
                 // entries of its own; what it names are the ones a
                 // value of that kind answers to.
@@ -1605,6 +1610,9 @@ impl<'a> Machine<'a> {
             if !direct {if let Some(reader)=self.inherited_entry(&t.blueprint(),self.detail("get")){return self.apply_class_member(reader,vec![value.clone(),Value::text(key)]);}}
             if key==self.detail("kind"){return Ok(Value::Blueprint(t.blueprint().clone()));}
             if key==self.detail("namespace"){
+                if let Some(descriptor)=self.inherited_entry(&t.blueprint(),key) {
+                    return self.member_binding(descriptor,Some(value.clone()),t.blueprint().clone());
+                }
                 // A blueprint naming its slots without the namespace among them has things without one.
                 if !self.allowed_slot(&t.blueprint(),key){return Err(self.absent_attribute(&value,key));}
                 if let Some((_, mapping)) = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary") { return Ok(mapping.clone()); }
@@ -2430,8 +2438,27 @@ impl<'a> Machine<'a> {
         }
         if op==4 {return Err(self.wrong_count(&self.class_tool_word(4),3,values.len()));}
         if op==5 {return Err(self.wrong_count(&self.class_tool_word(5),2,values.len()));}
-        if op==7&&values.len()==1{let key=self.detail("namespace").to_owned();return self.read_class_member(values[0].clone(),&key,true);}
+        if op==7&&values.len()==1{
+            let key=self.detail("namespace").to_owned();
+            return match self.read_class_member(values[0].clone(),&key,false) {
+                Err(escape) if self.missing_member_escape(&escape) => Err(self.core_complaint("core.vars", "").into()),
+                result => result,
+            };
+        }
         if op==8&&values.len()==1{
+            if let Value::Blueprint(kind) = &values[0] {
+                if let Some(builder)=Self::builder_over(kind) {
+                    if let Some(word)=self.table.strings("ext.stmt.class.special").get(75).cloned() {
+                        if let Some(method)=self.inherited_entry(&builder,&word) {
+                            let bound=self.member_binding(method,Some(values[0].clone()),builder)?;
+                            let answer=self.apply_class_member(bound,Vec::new())?;
+                            let names=self.object_members(&answer)?;
+                            let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
+                            return Ok(Value::Vector(Rc::new(ordered)));
+                        }
+                    }
+                }
+            }
             if let Value::Thing(object) = &values[0] {
                 let blueprint = object.blueprint();
                 if blueprint.ancestry.iter().any(|parent| parent.name == "ModuleType") {
@@ -2440,13 +2467,34 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            if let Value::Thing(module) = &values[0] {
+                let blueprint=module.blueprint();
+                let module_kind=blueprint.name == "ModuleType" || blueprint.ancestry.iter().any(|parent| parent.name == "ModuleType");
+                let class_directory=self.table.strings("ext.stmt.class.special").get(75)
+                    .and_then(|word| self.inherited_entry(&blueprint,word)).is_some();
+                if (module_kind || self.namespace_holding(&values[0]).is_some()) && !class_directory {
+                    let entries=Self::attribute_entries(module);
+                    if let Some(word)=self.table.strings("ext.stmt.class.special").get(75) {
+                        if let Some((_,method))=entries.iter().find(|(key,_)| key.bare()==*word) {
+                            let answer=self.apply_class_member(method.clone(),Vec::new())?;
+                            let names=self.object_members(&answer)?;
+                            let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
+                            return Ok(Value::Vector(Rc::new(ordered)));
+                        }
+                    }
+                    let mut names: Vec<_> = entries.into_iter()
+                        .map(|(key, _)| key.bare()).collect();
+                    names.sort();
+                    return Ok(Value::Vector(Rc::new(names.iter().map(|name| Value::text(name)).collect())));
+                }
+            }
             // A thing with a directory method of its own answers with it,
             // and the names it gives are set in order.
             if matches!(&values[0],Value::Thing(_)){
                 if let Some(answer)=self.ask_special(&values[0],75,&[])?{
-                    let mut names=self.object_members(&answer)?;
-                    names.sort_by_key(|name|name.bare());
-                    return Ok(Value::Vector(Rc::new(names)));
+                    let names=self.object_members(&answer)?;
+                    let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
+                    return Ok(Value::Vector(Rc::new(ordered)));
                 }
             }
             // A routine lists the members it can honestly answer for,

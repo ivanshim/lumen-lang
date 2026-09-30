@@ -11410,9 +11410,6 @@ impl<'a> Machine<'a> {
         if let Some(under) = self.underlying_unless(subject, &[15]) { return self.object_members(&under); }
         match subject {
             Value::Attributes(t) => {
-                if matches!(self.namespace_holding(&Value::Thing(t.clone())).as_deref(), Some(name) if name != "builtins") {
-                    return Err(self.core_complaint("core.uniterable", &subject.kind_word()));
-                }
                 Ok(Self::attribute_entries(t).into_iter().map(|(key, _)| match key {
                     Value::Keyed(original, _) => original.as_ref().clone(), plain => plain,
                 }).collect())
@@ -15390,6 +15387,7 @@ impl<'a> Machine<'a> {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    (Value::Attributes(a), Value::Attributes(b)) => Rc::ptr_eq(a, b),
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
                     (Value::Bound(a,here), Value::Bound(b,there)) => Rc::ptr_eq(a,b) && Rc::ptr_eq(here,there),
                     // Every read of a method ties it afresh: two reads are never one value.
@@ -17315,9 +17313,6 @@ impl<'a> Machine<'a> {
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         if let Value::Attributes(owner) = source {
-            if matches!(self.namespace_holding(&Value::Thing(owner.clone())).as_deref(), Some(name) if name != "builtins") {
-                return Err(self.core_complaint("core.uniterable", &source.kind_word()));
-            }
             return Ok(Self::attribute_entries(owner).into_iter().map(|(key, _)| match key {
                 Value::Keyed(value, _) => value.as_ref().clone(), other => other,
             }).collect());

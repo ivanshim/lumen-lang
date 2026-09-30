@@ -1240,6 +1240,11 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("qualified") { return Ok(self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name))); }
                 if name==self.class_word("bases") { return Ok(Value::Tuple(Rc::new(c.direct.iter().cloned().map(Value::Class).collect()))); }
                 if name==self.class_word("namespace") {
+                    if let Some(maker)=Self::maker_beneath(c) {
+                        if let Some(descriptor)=self.class_value(&maker,name).filter(|entry| self.takes_writes(entry)) {
+                            return self.bind_class_value(descriptor,Some(subject.clone()),maker);
+                        }
+                    }
                     // A class standing for a builtin kind holds no
                     // members of its own; what it names are the ones a
                     // value of the kind answers to.
@@ -1293,6 +1298,9 @@ impl<'a> Engine<'a> {
                 } }
                 if name==self.class_word("kind") {return Ok(Value::Class(o.class_now().clone()));}
                 if name==self.class_word("namespace") {
+                    if let Some(descriptor)=self.class_value(&o.class_now(),name) {
+                        return self.bind_class_value(descriptor,Some(subject.clone()),o.class_now().clone());
+                    }
                     // A class that names its slots and leaves the namespace out of them has things without one.
                     if !self.slots_allow(&o.class_now(),name) {return Err(self.missing_member(&subject,name));}
                     if let Some((_, dictionary)) = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace") { return Ok(dictionary.clone()); }
@@ -2356,8 +2364,27 @@ impl<'a> Engine<'a> {
             6=>Err(self.arity_told(&self.class_tool_word(6),2,args.len())),
             4|5 if args.len()==if which==4{3}else{2}=>{let written=match &args[1]{Value::Codepoints(row)=>Value::text(&Value::predicate_text(row)),other=>other.clone()};let Value::Text(n)=&written else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};self.class_write(one,n,args.get(2).cloned(),false)},
             4|5=>Err(self.arity_told(&self.class_tool_word(which),if which==4{3}else{2},args.len())),
-            7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
+            7 if args.len()==1=>{
+                let word=self.class_word("namespace").to_string();
+                match self.class_get(one,&word,false) {
+                    Err(fault) if self.attribute_fault(&fault) => Err(self.core_fault("core.vars", "").into()),
+                    result => result,
+                }
+            },
             8 if args.len()==1=>{
+                if let Value::Class(class) = &one {
+                    if let Some(maker)=Self::maker_beneath(class) {
+                        if let Some(word)=self.lang.class_special.get(75).cloned() {
+                            if let Some(method)=self.class_value(&maker,&word) {
+                                let bound=self.bind_class_value(method,Some(one.clone()),maker)?;
+                                let answer=self.class_apply(bound,Vec::new())?;
+                                let names=self.special_items(&answer).map_err(Fault::Note)?;
+                                let ordered=self.steady_order(names,&Value::Null,false).map_err(Fault::Note)?;
+                                return Ok(Value::array(ordered));
+                            }
+                        }
+                    }
+                }
                 if let Value::Object(thing) = &one {
                     let class = thing.class_now();
                     if class.lineage.iter().any(|base| base.name == "ModuleType") {
@@ -2366,13 +2393,34 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                if let Value::Object(module) = &one {
+                    let class=module.class_now();
+                    let module_kind=class.name == "ModuleType" || class.lineage.iter().any(|base| base.name == "ModuleType");
+                    let class_directory=self.lang.class_special.get(75)
+                        .and_then(|word| self.class_value(&class,word)).is_some();
+                    if (module_kind || self.module_holding(&one).is_some()) && !class_directory {
+                        let entries=Self::fields_entries(module);
+                        if let Some(word)=self.lang.class_special.get(75) {
+                            if let Some((_,method))=entries.iter().find(|(key,_)| key.plain()==*word) {
+                                let answer=self.class_apply(method.clone(),Vec::new())?;
+                                let names=self.special_items(&answer).map_err(Fault::Note)?;
+                                let ordered=self.steady_order(names,&Value::Null,false).map_err(Fault::Note)?;
+                                return Ok(Value::array(ordered));
+                            }
+                        }
+                        let mut names: Vec<_> = entries.into_iter()
+                            .map(|(key, _)| key.plain()).collect();
+                        names.sort();
+                        return Ok(Value::array(names.iter().map(|name| Value::text(name)).collect()));
+                    }
+                }
                 // A thing with a directory method of its own answers with
                 // it, and the names it gives are put in order.
                 if matches!(&one,Value::Object(_)) {
                     if let Some(answer)=self.special_call(&one,75,vec![]).map_err(Fault::Note)? {
-                        let mut names=self.special_items(&answer).map_err(Fault::Note)?;
-                        names.sort_by_key(Value::plain);
-                        return Ok(Value::array(names));
+                        let names=self.special_items(&answer).map_err(Fault::Note)?;
+                        let ordered=self.steady_order(names,&Value::Null,false).map_err(Fault::Note)?;
+                        return Ok(Value::array(ordered));
                     }
                 }
                 // A routine lists the members it can honestly answer
