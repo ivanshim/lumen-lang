@@ -6812,7 +6812,7 @@ impl<'a> Machine<'a> {
         if !word.contains('.') { return Value::text(self.builtin_module()); }
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
-    pub(super) fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+    pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
         if let Value::Intrinsic(op, word) = value {
             if !Self::names_a_kind(op) {
                 if name == self.detail("qualified") { return Some(Value::text(word)); }
@@ -6881,6 +6881,12 @@ impl<'a> Machine<'a> {
             if self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| w == name) { return Some(Value::Flag(state.try_borrow().is_err())); }
         }
         let names = self.table.strings("ext.stmt.class.special");
+        // Each of the two named singletons is the one value of its
+        // kind, and answers for the very blueprint the kind primitive
+        // names for it.
+        if names.get(35).map_or(false, |s| s == name) && matches!(value.settled(), Value::Refusal(_) | Value::Ellipsis) {
+            return Some(self.kind_named_after(&value.settled()));
+        }
         if let Value::Span(bounds) = value {
             return self.span_bound_named(name).map(|i| bounds[i].clone());
         }
@@ -20981,6 +20987,11 @@ impl Machine<'_> {
                     if op == MembersOf { return Err(self.core_complaint("core.vars", "")); }
                     let word = input[1].bare();
                     if matches!(op, SetMember | DropMember) {
+                        // A singleton's class is as fixed as the singleton
+                        // itself, by builtin as by statement.
+                        if matches!(input[0].settled(), Value::Refusal(_) | Value::Ellipsis) && word == self.detail("kind") {
+                            return Err(self.detail(if op == SetMember { "kind.fixed" } else { "kind.kept" }).to_owned().into());
+                        }
                         let told = self.member_unwritable(&input[0], &word);
                         if told.is_empty() { return Err(self.core_complaint("core.unready", name)); }
                         return Err(told);

@@ -5229,6 +5229,12 @@ impl<'a> Engine<'a> {
                 return Ok(Some(Value::View(Rc::new((map,"mapping".to_string())))));
             }
         }
+        // Each of the two singletons a program can name is the one
+        // value of its kind, and answers for the very class the kind
+        // builtin names for it.
+        if matches!(held, Value::Declined(_) | Value::Ellipsis) && name == self.class_word("kind") {
+            return Ok(Some(self.named_kind(&held)));
+        }
         if let Some(size) = self.integer_member(&held, name) { return Ok(Some(size)); }
         if let Value::Native(op, word) = &held {
             if !Self::kind_builtin(op) {
@@ -8804,12 +8810,15 @@ impl<'a> Engine<'a> {
                 };
                 // A builtin kind also carries the members its own values answer to.
                 let kind_carries = self.loose_kind_member(&held, name).is_some();
+                // Each of the two singletons a program can name is the
+                // one value of its kind, and answers for that kind.
+                let lone_kind = matches!(&held, Value::Declined(_) | Value::Ellipsis) && name.as_ref() == self.class_word("kind");
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
                 let generator_running = matches!(&held, Value::Generator(_)) && (self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref())
                     || name.as_ref() == self.class_word("name") || name.as_ref() == self.class_word("qualified")
                     || [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)));
-                Value::Flag(matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_carries || text_method || byte_method || generator_running || lone_kind || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -18405,6 +18414,11 @@ impl Engine<'_> {
                     if b == Builtin::Vars { return Err(self.core_fault("core.vars", "")); }
                     let word = args[1].plain();
                     if matches!(b, Builtin::SetAttr | Builtin::DelAttr) {
+                        // A singleton's class is as fixed as the singleton
+                        // itself, by builtin as by statement.
+                        if matches!(args[0].contents(), Value::Declined(_) | Value::Ellipsis) && word == self.class_word("kind") {
+                            return Err(self.class_word(if b == Builtin::SetAttr { "kind.fixed" } else { "kind.kept" }).to_string().into());
+                        }
                         let told = self.member_unwritable(&args[0], &word);
                         if told.is_empty() { return Err(self.core_fault("core.unready", name)); }
                         return Err(told);

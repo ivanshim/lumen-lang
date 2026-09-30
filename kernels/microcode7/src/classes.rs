@@ -1922,6 +1922,11 @@ impl<'a> Machine<'a> {
             }
         }
         let writing=replacement.is_some();
+        // A singleton's class is as fixed as the singleton itself,
+        // by builtin as by statement.
+        if matches!(subject.settled(), Value::Refusal(_) | Value::Ellipsis) && key==self.detail("kind") {
+            return Err(self.detail(if writing{"kind.fixed"}else{"kind.kept"}).to_owned().into());
+        }
         let success=match &subject {
             Value::Thing(t)=>{
                 if self.is_fault_kind(&t.blueprint()) && self.table.single("ext.builtin.exceptions.args") == Some(key) {
@@ -2034,6 +2039,11 @@ impl<'a> Machine<'a> {
                 if b.name == "sentinel" {
                     let action = if replacement.is_some() { "set" } else { "delete" };
                     return Err(format!("TypeError: cannot {action} '{key}' attribute of immutable type 'sentinel'").into());
+                }
+                // The kinds of the two named singletons take no entry
+                // of their own and give none up, as the reference fixes them.
+                if matches!(Self::native_word(b).as_deref(),Some("NotImplementedType")|Some("ellipsis")) {
+                    return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", b.name).into());
                 }
                 if key == self.detail("qualified") {
                     if let Some(worth) = replacement.as_ref().map(Value::settled) {
