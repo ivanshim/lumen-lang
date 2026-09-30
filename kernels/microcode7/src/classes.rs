@@ -654,6 +654,7 @@ impl<'a> Machine<'a> {
                         self.root_turns_away(&t.blueprint(),'i')?;
                         Ok(Value::Nil)
                     }
+                    73 => self.initialise_type_object(values),
                     70 => self.class_of_parts(values),
                     71 => {
                         let (mut positional, keywords) = self.open_arguments(values)?;
@@ -883,6 +884,18 @@ impl<'a> Machine<'a> {
             }
         }
         self.construct_plainly(class,given)
+    }
+    fn initialise_type_object(&mut self,arguments:Vec<Value>)->Res {
+        let (values,named)=self.open_arguments(arguments)?;
+        let Some(first)=values.first() else{return Err("TypeError: descriptor '__init__' of 'type' object needs an argument".to_owned().into())};
+        let receiver=first.settled();
+        if !self.stands_for_a_kind(&receiver){return Err(format!("TypeError: descriptor '__init__' requires a 'type' object but received a '{}'",receiver.kind_word()).into());}
+        match values.len()-1 {
+            3=>Ok(Value::Nil),
+            1 if named.is_empty()=>Ok(Value::Nil),
+            1=>Err("TypeError: type.__init__() takes no keyword arguments".to_owned().into()),
+            _=>Err("TypeError: type.__init__() takes 1 or 3 arguments".to_owned().into()),
+        }
     }
     fn finish_class_construction(&mut self,built:&Value,called:&Rc<Blueprint>,arguments:Vec<Value>)->Result<(),Escape> {
         if let Value::Blueprint(class)=built {
@@ -1595,6 +1608,7 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Intrinsic(Prim::SortOf, _) = &value {
+            if self.table.single("ext.stmt.class.constructor")==Some(key){return Ok(Self::wrap(73,Vec::new()));}
             let operation = [("allocate", 70), ("call", 71), ("prepare", 72), ("get", 10), ("set", 11), ("remove", 12)]
                 .into_iter().find_map(|(part, tag)| (key == self.detail(part)).then_some(tag));
             if let Some(tag) = operation { return Ok(Self::wrap(tag, Vec::new())); }
@@ -1746,7 +1760,7 @@ impl<'a> Machine<'a> {
             // and a specification, answered as the format builtin would.
             if self.table.strings("ext.stmt.class.special").get(72).map_or(false,|word|word==key){return Ok(Self::wrap(59,Vec::new()));}
             {
-                let tag=if key==self.detail("allocate")&&(self.builds_classes(b)||b.ancestry.iter().any(|p|self.builds_classes(p))){70}else if key==self.detail("allocate"){1}else if self.table.single("ext.stmt.class.constructor")==Some(key)||key==self.detail("subclass"){2}
+                let tag=if key==self.detail("allocate")&&(self.builds_classes(b)||b.ancestry.iter().any(|p|self.builds_classes(p))){70}else if key==self.detail("allocate"){1}else if self.table.single("ext.stmt.class.constructor")==Some(key)&&(self.builds_classes(b)||b.ancestry.iter().any(|p|self.builds_classes(p))){73}else if self.table.single("ext.stmt.class.constructor")==Some(key)||key==self.detail("subclass"){2}
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};
                 if tag!=255{return Ok(Self::wrap(tag,Vec::new()));}
             }
@@ -2569,7 +2583,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=72))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=73))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{
@@ -2741,6 +2755,10 @@ impl<'a> Machine<'a> {
                 // The kind primitive's own building: a name, the
                 // parents and a namespace become a class, remembering
                 // the metaclass handed to it as the one that built it.
+                if self.table.single("ext.stmt.class.constructor")==Some(key) {
+                    let mut values=vec![receiver.clone()];values.extend(args);
+                    return self.initialise_type_object(values);
+                }
                 if key==self.detail("allocate") {return self.class_of_parts(args);}
                 if key==self.detail("call") {
                     let Value::Blueprint(made)=&receiver else{return Err(self.class_unready())};

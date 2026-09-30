@@ -640,6 +640,7 @@ impl<'a> Engine<'a> {
                     self.root_refuses_arguments(&o.class_now(),false)?;
                     Ok(Value::Null)
                 }
+                44 => self.type_initialiser(args),
                 40 => self.class_from_parts(args),
                 41 => {
                     let opened = self.call_items(args)?;
@@ -855,6 +856,15 @@ impl<'a> Engine<'a> {
             }
         }
         self.class_construct(c, args)
+    }
+    fn type_initialiser(&mut self, args: Vec<Value>) -> Flow<Value> {
+        let items = self.call_items(args)?;
+        let plain: Vec<_> = items.iter().filter(|(key, _)| key.is_none()).map(|(_, value)| value.contents()).collect();
+        let Some(receiver) = plain.first() else { return Err("TypeError: descriptor '__init__' of 'type' object needs an argument".into()) };
+        if !self.stands_for_kind(receiver) { return Err(format!("TypeError: descriptor '__init__' requires a 'type' object but received a '{}'", receiver.core_kind()).into()); }
+        if !matches!(plain.len(), 2 | 4) { return Err("TypeError: type.__init__() takes 1 or 3 arguments".into()); }
+        if plain.len() == 2 && items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: type.__init__() takes no keyword arguments".into()); }
+        Ok(Value::Null)
     }
     fn initialise_made_class(&mut self, value: &Value, requested: &Rc<Class>, args: Vec<Value>) -> Flow<()> {
         let Value::Class(made) = value else { return Ok(()) };
@@ -1278,7 +1288,8 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(&subject, Value::Native(Builtin::SortOf, _)) {
-            let tag = if name == self.class_word("call") { Some(41) }
+            let tag = if self.lang.constructor.as_deref() == Some(name) { Some(44) }
+                else if name == self.class_word("call") { Some(41) }
                 else if name == self.class_word("allocate") { Some(40) }
                 else if name == self.class_word("prepare") { Some(42) }
                 else if name == self.class_word("set") { Some(11) }
@@ -1399,6 +1410,7 @@ impl<'a> Engine<'a> {
                 {
                     let index = if name==self.class_word("allocate") && (self.is_metaclass_root(c) || c.lineage.iter().any(|b| self.is_metaclass_root(b))) {Some(40)}
                         else if name==self.class_word("allocate") {Some(1)}
+                        else if self.lang.constructor.as_deref()==Some(name) && (self.is_metaclass_root(c) || c.lineage.iter().any(|b| self.is_metaclass_root(b))) {Some(44)}
                         else if self.lang.constructor.as_deref()==Some(name) || name==self.class_word("subclass") {Some(2)}
                         else if name==self.class_word("get") {Some(10)} else if name==self.class_word("set") {Some(11)}
                         else if name==self.class_word("remove") {Some(12)} else {None};
@@ -2501,7 +2513,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42|44))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
@@ -2663,6 +2675,10 @@ impl<'a> Engine<'a> {
                 // The kind builtin's own making: a name, the bases and
                 // a namespace become a class, remembering the metaclass
                 // it was handed as the one that made it.
+                if self.lang.constructor.as_deref() == Some(name) {
+                    let mut values = vec![subject.clone()]; values.extend(args);
+                    return self.type_initialiser(values);
+                }
                 if name==self.class_word("allocate") { return self.class_from_parts(args); }
                 if name==self.class_word("call") {
                     let Value::Class(made)=&subject else{return Err(self.class_refusal())};
