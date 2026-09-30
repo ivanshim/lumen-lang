@@ -42,7 +42,7 @@ pub struct Engine<'a> {
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
-    frame_codes: HashMap<usize, Value>,
+    frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
     class_maker: Option<Rc<Class>>,
@@ -1478,6 +1478,7 @@ impl<'a> Engine<'a> {
             let _ = self.invoke(&method, vec![Value::Object(thing)]);
         }
         self.things_made.borrow_mut().clear();
+        crate::faint::release_all_anchors();
     }
 
     /// What is still being kept when the run ends is let go, outermost
@@ -1555,18 +1556,37 @@ impl<'a> Engine<'a> {
         loop {
             let (words, walks, gone) = crate::faint::settle();
             if words.is_empty() && walks.is_empty() && gone.is_empty() { return; }
-            for (object, routine) in words {
-                self.speak_ignoring(routine, vec![Value::Object(object)], "deallocator");
-            }
             for (told, bearer) in gone {
                 self.speak_ignoring(told, vec![bearer], "callback");
             }
+            for (object, routine) in words {
+                self.speak_ignoring(routine, vec![Value::Object(object)], "deallocator");
+            }
             for walk in walks {
-                if let Err(fault) = self.close_generator(&walk) {
+                if let Err(fault) = self.close_departed_generator(&walk) {
                     self.ignore_fault(fault, &Value::Generator(walk.clone()), "generator");
                 }
             }
         }
+    }
+
+    /// A discarded Python generator keeps the globals of the function
+    /// that made it while its pending finalizer runs, even when its
+    /// defining exec namespace has otherwise become unreachable.
+    fn close_departed_generator(&mut self, walk: &Rc<RefCell<Generator>>) -> Flow<Value> {
+        let book = if self.lang.trace_fields.is_empty() { None } else {
+            walk.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| {
+                self.constructor_book(body).or_else(|| match body.globe.as_ref() {
+                    Some(Value::Bond(cell) | Value::Binding(cell)) => Some(cell.clone()),
+                    _ => None,
+                })
+            }))
+        };
+        let saved = self.outer_book.clone();
+        if let Some(book) = book { self.outer_book = Some(book); }
+        let outcome = self.close_generator(walk);
+        self.outer_book = saved;
+        outcome
     }
 
     /// A call made on the run's behalf, whose raised value nobody can
@@ -1609,7 +1629,18 @@ impl<'a> Engine<'a> {
     /// counting frees the rest, and the watchers are told.
     fn collect_cycles(&mut self) -> usize {
         loop {
-            let mut graph = crate::faint::Graph::from_candidates();
+            let books = self.text_books.iter().flat_map(|book| {
+                std::iter::once(Value::Bond(book.near.clone()))
+                    .chain(book.outer.iter().cloned().map(Value::Bond))
+            });
+            let bookkeeping = self.function_members.iter().flat_map(|(function, holder)| [function.clone(), Value::Object(holder.clone())])
+                .chain(books).chain(crate::faint::anchored_values()).collect();
+            let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
+                .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
+                .chain(self.native_exceptions.values()).cloned()
+                .chain(self.outer_book.iter().cloned().map(Value::Bond))
+                .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
+            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live);
             let unreached = graph.unreached();
             let mut spoke = false;
             for value in &unreached {
@@ -1617,13 +1648,18 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => {
                         let Some(words) = crate::faint::last_word_of(&o.class) else { continue };
                         if crate::faint::first_words(o) {
+                            crate::faint::invalidate_object(o);
+                            self.settle_departed();
                             spoke = true;
                             self.speak_ignoring(words, vec![Value::Object(o.clone())], "deallocator");
+                            crate::faint::release_anchor(o);
                         }
                     }
                     Value::Generator(g) if crate::faint::asleep(g) => {
+                        crate::faint::invalidate_walk(g);
+                        self.settle_departed();
                         spoke = true;
-                        if let Err(fault) = self.close_generator(g) {
+                        if let Err(fault) = self.close_departed_generator(g) {
                             self.ignore_fault(fault, value, "generator");
                         }
                     }
@@ -1632,6 +1668,7 @@ impl<'a> Engine<'a> {
             }
             if spoke { continue; }
             let count = unreached.len();
+            self.function_members.retain(|(function, _)| !graph.unowned(function));
             let grave = crate::faint::Graph::sever(&unreached);
             drop(unreached);
             drop(graph);
@@ -4001,12 +4038,15 @@ impl<'a> Engine<'a> {
             return Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]);
         }
         let key = Rc::as_ptr(&program.instrs) as usize;
-        self.frame_codes.entry(key).or_insert_with(|| {
-            let mut body = (**program).clone();
-            body.held.clear();
-            body.enclosed.clear();
-            Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())])
-        }).clone()
+        if let Some(handle) = self.frame_codes.get(&key).and_then(Weak::upgrade) {
+            return Value::Adapter(handle);
+        }
+        let mut body = (**program).clone();
+        body.held.clear();
+        body.enclosed.clear();
+        let handle = Rc::new((7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]));
+        self.frame_codes.insert(key, Rc::downgrade(&handle));
+        Value::Adapter(handle)
     }
 
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
@@ -8629,6 +8669,7 @@ impl<'a> Engine<'a> {
                 let object = Rc::new(Instance {replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
                 if self.lang.finaliser.is_some() && crate::faint::last_word_of(&class).is_some() {
                     crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&object)));
+                    if !self.lang.trace_fields.is_empty() { crate::faint::anchor(&object); }
                 }
                 if self.lang.destructor.is_some() {
                     self.things_made.borrow_mut().push(Rc::downgrade(&object));

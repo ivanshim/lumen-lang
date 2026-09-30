@@ -35,9 +35,15 @@ impl Hold {
     /// The value again, while it is still there.
     pub fn revive(&self) -> Option<Value> {
         Some(match self {
-            Hold::Object(w) => Value::Object(w.upgrade()?),
+            Hold::Object(w) => {
+                if invalid_object(w) { return None; }
+                Value::Object(w.upgrade()?)
+            },
             Hold::Class(w) => Value::Class(w.upgrade()?),
-            Hold::Generator(w) => Value::Generator(w.upgrade()?),
+            Hold::Generator(w) => {
+                if invalid_walk(w) { return None; }
+                Value::Generator(w.upgrade()?)
+            },
             Hold::Set(w) => Value::Set(w.upgrade()?),
             Hold::Routine(w) => Value::Routine(w.upgrade()?),
             Hold::Method(o, r) => Value::Method(o.upgrade()?, r.upgrade()?),
@@ -46,9 +52,9 @@ impl Hold {
 
     pub fn gone(&self) -> bool {
         match self {
-            Hold::Object(w) => w.strong_count() == 0,
+            Hold::Object(w) => w.strong_count() == 0 || invalid_object(w),
             Hold::Class(w) => w.strong_count() == 0,
-            Hold::Generator(w) => w.strong_count() == 0,
+            Hold::Generator(w) => w.strong_count() == 0 || invalid_walk(w),
             Hold::Set(w) => w.strong_count() == 0,
             Hold::Routine(w) => w.strong_count() == 0,
             Hold::Method(o, r) => o.strong_count() == 0 || r.strong_count() == 0,
@@ -83,10 +89,64 @@ thread_local! {
     static UNFINISHED: RefCell<Vec<Rc<RefCell<Generator>>>> = const { RefCell::new(Vec::new()) };
     /// Objects whose last words were said already, by where they live.
     static SPOKEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    /// Weak references cleared when an unreachable cycle is finalized.
+    static INVALID_OBJECTS: RefCell<Vec<Weak<Instance>>> = const { RefCell::new(Vec::new()) };
+    static INVALID_WALKS: RefCell<Vec<Weak<RefCell<Generator>>>> = const { RefCell::new(Vec::new()) };
+    /// A finalizable instance stays itself while its last words run.
+    static ANCHORED: RefCell<Vec<Rc<Instance>>> = const { RefCell::new(Vec::new()) };
     /// Everything whose going somebody could notice: the weakly held
     /// values and the objects with last words. Only rounds that hold one
     /// of these are worth looking for.
     static CANDIDATES: RefCell<(Vec<Hold>, usize)> = const { RefCell::new((Vec::new(), 8)) };
+}
+
+fn invalid_object(w: &Weak<Instance>) -> bool {
+    INVALID_OBJECTS.try_with(|all| all.borrow().iter().any(|item| Weak::ptr_eq(item, w))).unwrap_or(false)
+}
+
+fn invalid_walk(w: &Weak<RefCell<Generator>>) -> bool {
+    INVALID_WALKS.try_with(|all| all.borrow().iter().any(|item| Weak::ptr_eq(item, w))).unwrap_or(false)
+}
+
+pub fn invalidate_object(object: &Rc<Instance>) {
+    let weak = Rc::downgrade(object);
+    let _ = INVALID_OBJECTS.try_with(|all| {
+        let mut all = all.borrow_mut();
+        if !all.iter().any(|item| Weak::ptr_eq(item, &weak)) { all.push(weak); }
+    });
+    note_death();
+}
+
+pub fn invalidate_walk(walk: &Rc<RefCell<Generator>>) {
+    let weak = Rc::downgrade(walk);
+    let _ = INVALID_WALKS.try_with(|all| {
+        let mut all = all.borrow_mut();
+        if !all.iter().any(|item| Weak::ptr_eq(item, &weak)) { all.push(weak); }
+    });
+    note_death();
+}
+
+pub fn anchor(object: &Rc<Instance>) {
+    let _ = ANCHORED.try_with(|all| {
+        let mut all = all.borrow_mut();
+        if !all.iter().any(|item| Rc::ptr_eq(item, object)) { all.push(object.clone()); }
+    });
+}
+
+pub fn anchored_values() -> Vec<Value> {
+    ANCHORED.try_with(|all| all.borrow().iter().cloned().map(Value::Object).collect()).unwrap_or_default()
+}
+
+pub fn release_anchor(object: &Rc<Instance>) {
+    let _ = ANCHORED.try_with(|all| all.borrow_mut().retain(|item| !Rc::ptr_eq(item, object)));
+}
+
+pub fn release_all_anchors() {
+    let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
+}
+
+fn anchor_ready() -> bool {
+    ANCHORED.try_with(|all| all.borrow().iter().any(|item| Rc::strong_count(item) == 1)).unwrap_or(false)
 }
 
 /// Tell the module the name a class gives its last words. Until this
@@ -97,7 +157,7 @@ pub fn name_last_word(word: Option<String>) {
 
 /// Whether the engine has anything to settle before its next step.
 pub fn pending() -> bool {
-    PENDING.try_with(|p| p.get()).unwrap_or(false)
+    PENDING.try_with(|p| p.get()).unwrap_or(false) || anchor_ready()
 }
 
 fn wake() {
@@ -154,7 +214,7 @@ pub fn departing(dying: &mut Instance) {
 /// A walk is going. One asleep inside a try is rebuilt around its own
 /// frame and queued, so that its last parts run as the language asks.
 pub fn walk_departing(dying: &mut Generator) {
-    let asleep = dying.started && !dying.closed && dying.program.is_some() && !dying.resume.is_empty();
+    let asleep = dying.started && !dying.closed && dying.program.is_some();
     if asleep && LAST_WORD.try_with(|w| w.borrow().is_some()).unwrap_or(false) {
         let again = Generator {
             name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(),
@@ -196,7 +256,18 @@ pub fn plain_departing() {
 /// while the engine works, so it asks again until nothing comes.
 pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec<(Value, Value)>) {
     let _ = PENDING.try_with(|p| p.set(false));
-    let words = LAST_WORDS.try_with(|q| std::mem::take(&mut *q.borrow_mut())).unwrap_or_default();
+    let mut words = LAST_WORDS.try_with(|q| std::mem::take(&mut *q.borrow_mut())).unwrap_or_default();
+    let ready = ANCHORED.try_with(|all| {
+        let mut all = all.borrow_mut();
+        let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
+        *all = kept;
+        ready
+    }).unwrap_or_default();
+    for object in ready {
+        if first_words(&object) {
+            if let Some(routine) = last_word_of(&object.class) { words.push((object, routine)); }
+        }
+    }
     let walks = UNFINISHED.try_with(|q| std::mem::take(&mut *q.borrow_mut())).unwrap_or_default();
     let mut gone = Vec::new();
     if DIED.try_with(|d| d.replace(false)).unwrap_or(false) {
@@ -283,6 +354,7 @@ struct Node {
 /// unreachable by the program.
 pub struct Graph {
     nodes: HashMap<usize, Node>,
+    bookkeeping: HashMap<usize, usize>,
 }
 
 /// Where a value's pointer stands, for the kinds that live behind one.
@@ -385,8 +457,15 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             }
         }
         Value::Routine(r) => {
+            out.extend(r.annotation.iter().map(|p| Value::Routine(p.clone())));
+            out.extend(r.code_constants.iter().cloned());
+            out.extend(r.globe.iter().cloned());
+            out.extend(r.born.iter().cloned());
             out.extend(r.held.iter().cloned());
             out.extend(r.enclosed.iter().map(|(_, v)| v.clone()));
+            if let Ok(revised) = r.revised.try_borrow() {
+                out.extend(revised.iter().map(|p| Value::Routine(p.clone())));
+            }
         }
         Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => {
             if let Ok(inner) = c.try_borrow() {
@@ -459,19 +538,50 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
     }
 }
 
+/// Follow inline values held by the running engine until their shared
+/// owners can be included as live graph roots. Inline dictionaries have
+/// no reference count of their own, so they cannot be inferred by a
+/// count on their members.
+fn external_places(value: Value, out: &mut Vec<Value>) {
+    match value {
+        Value::Method(object, routine) => {
+            out.push(Value::Object(object));
+            out.push(Value::Routine(routine));
+        }
+        other if place_of(&other).is_some() => out.push(other),
+        other => {
+            let mut children = Vec::new();
+            reaches(&other, &mut children);
+            for child in children { external_places(child, out); }
+        }
+    }
+}
+
 impl Graph {
     /// Everything reachable from the remembered candidates still alive.
-    pub fn from_candidates() -> Graph {
-        let roots: Vec<Value> = CANDIDATES.try_with(|c| {
+    pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>) -> Graph {
+        let mut bookkeeping = HashMap::new();
+        for value in &extra {
+            let parts = match value {
+                Value::Method(object, routine) => vec![Value::Object(object.clone()), Value::Routine(routine.clone())],
+                other => vec![other.clone()],
+            };
+            for part in parts {
+                if let Some(place) = place_of(&part) { *bookkeeping.entry(place).or_insert(0) += 1; }
+            }
+        }
+        let mut roots: Vec<Value> = CANDIDATES.try_with(|c| {
             let mut c = c.borrow_mut();
             c.0.retain(|h| !h.gone());
             c.1 = (c.0.len() * 2).max(8);
             c.0.iter().filter_map(|h| h.revive()).collect()
         }).unwrap_or_default();
-        Graph::build(roots)
+        roots.extend(extra);
+        for value in live { external_places(value, &mut roots); }
+        Graph::build(roots, bookkeeping)
     }
 
-    fn build(roots: Vec<Value>) -> Graph {
+    fn build(roots: Vec<Value>, bookkeeping: HashMap<usize, usize>) -> Graph {
         let mut nodes: HashMap<usize, Node> = HashMap::new();
         let mut open: Vec<usize> = Vec::new();
         for root in roots {
@@ -506,7 +616,16 @@ impl Graph {
             }
             nodes.get_mut(&place).unwrap().reaches = reached;
         }
-        Graph { nodes }
+        Graph { nodes, bookkeeping }
+    }
+
+    /// Whether this value is now unreachable once the engine's own
+    /// function bookkeeping is left out of the strong holds.
+    pub fn unowned(&self, value: &Value) -> bool {
+        match value {
+            Value::Method(object, routine) => self.unowned(&Value::Object(object.clone())) && self.unowned(&Value::Routine(routine.clone())),
+            other => place_of(other).and_then(|place| self.nodes.get(&place)).is_some_and(|node| !node.marked),
+        }
     }
 
     /// The values nothing outside the graph holds, directly or through
@@ -514,7 +633,7 @@ impl Graph {
     /// not counted among the program's.
     pub fn unreached(&mut self) -> Vec<Value> {
         let mut open: Vec<usize> = self.nodes.iter()
-            .filter(|(_, n)| holds_on(&n.held) > n.inward + 1)
+            .filter(|(place, n)| holds_on(&n.held) > n.inward + 1 + self.bookkeeping.get(place).copied().unwrap_or(0))
             .map(|(place, _)| *place)
             .collect();
         for place in &open {
@@ -599,5 +718,5 @@ impl Graph {
 /// Whether a walk in the graph is asleep inside a try, so that closing
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
-    walk.try_borrow().map_or(false, |g| g.started && !g.closed && g.program.is_some() && !g.resume.is_empty())
+    walk.try_borrow().map_or(false, |g| g.started && !g.closed && g.program.is_some())
 }
