@@ -5055,10 +5055,18 @@ impl<'a> Engine<'a> {
     /// the kind before the method is a way to the kind's own maker and
     /// not a member of a value, so it is left out.
     pub(super) fn kind_member_names(&self, sample: &Value) -> Vec<String> {
-        // A slice keeps its bounds and answers to nothing else the
-        // family mechanism below reckons, its own family standing for
-        // no working a program writes in the plain way.
-        if matches!(sample, Value::Slice(_)) { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
+        let held = sample.contents();
+        if matches!(held, Value::Trace(_)) {
+            let mut names: Vec<_> = self.lang.trace_fields.iter().skip(1).take(3).cloned().collect();
+            names.sort();
+            return names;
+        }
+        if matches!(held, Value::Slice(_)) {
+            let mut names = vec!["start".to_string(), "step".to_string(), "stop".to_string()];
+            if let Some(word) = self.lang.class_details.get("root.members").and_then(|words| words.get(9)) { names.push(word.clone()); }
+            names.sort();
+            return names;
+        }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         if matches!(family, Kindred::Set(_) | Kindred::Map) { names.extend(self.lang.constructor.iter().cloned()); }
@@ -5080,7 +5088,17 @@ impl<'a> Engine<'a> {
         // A whole number answers besides for the member that writes it
         // into a row of bytes, which belongs to the kind and not to a
         // value of it, so it is reached through the kind's own word.
-        if matches!(family, Kindred::Whole) { names.extend(self.lang.byte_words["ext.builtin.bytes.from_int"].iter().cloned()); }
+        if matches!(family, Kindred::Whole) {
+            names.extend(self.lang.byte_words["ext.builtin.bytes.from_int"].iter().cloned());
+            names.extend(self.lang.byte_words["ext.builtin.bytes.to_int"].iter().map(|word| word.rsplit('.').next().unwrap_or(word).to_string()));
+            names.extend(self.lang.class_details.get("integer.layout").and_then(|parts| parts.get(2)).cloned());
+        }
+        // The machine's numeric conversions are not Python members of
+        // complex, even though its arithmetic machinery can use them.
+        if matches!(family, Kindred::Complex) {
+            names.retain(|word| ![38, 39].iter().any(|at| self.lang.class_special.get(*at) == Some(word)));
+        }
+        if let Some(word) = self.lang.class_details.get("root.members").and_then(|words| words.get(9)) { names.push(word.clone()); }
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
@@ -5201,11 +5219,26 @@ impl<'a> Engine<'a> {
         if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
             return Some(Value::Native(Builtin::Text(crate::strings::TextOp::Maketrans), Rc::from(name)));
         }
+        if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
+            return Some(Self::adapter(30, vec![Value::text(name)]));
+        }
         if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
         Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
     }
 
+    /// Bind only a directory method supplied by the Python root protocol.
+    /// Tracebacks keep their restricted directory even though this method
+    /// itself is inherited and can be called explicitly.
+    pub(super) fn builtin_directory_method(&self, value: &Value, name: &str) -> Option<Value> {
+        let word = self.lang.class_details.get("root.members")?.get(9)?;
+        if name != word { return None; }
+        let held = value.contents();
+        if Self::native_family(&held).is_none() && !matches!(held, Value::Slice(_) | Value::Trace(_)) { return None; }
+        Some(Value::ValueMethod(Rc::new((value.clone(), word.clone()))))
+    }
+
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if let Some(directory) = self.builtin_directory_method(value, name) { return Ok(Some(directory)); }
         // A view of a map's keys, values or pairs keeps a reading of
         // the map itself under this name: a fresh view of its own,
         // read-only, and equal to the map for as long as it stands.
@@ -5474,7 +5507,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn native_special(&self, subject: &Value, name: &str) -> bool {
-        self.native_place(subject, name).is_some()
+        self.native_place(subject, name).is_some() || self.builtin_directory_method(subject, name).is_some()
     }
 
     /// The cell a container's name stands for, followed through however
@@ -12788,6 +12821,10 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if self.builtin_directory_method(receiver, operation).is_some() {
+            if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            return Ok(self.default_directory(receiver));
+        }
         if operation == "code_replace" {
             let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
             let Some(Value::Routine(original)) = handle.1.first() else { return Err(self.special_fault()) };

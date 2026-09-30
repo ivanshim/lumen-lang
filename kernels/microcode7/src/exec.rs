@@ -6351,13 +6351,21 @@ impl<'a> Machine<'a> {
     /// before the method leads to the kind's own maker rather than to a
     /// member of a value, so it is passed over.
     pub(super) fn native_directory(&self, sample: &Value) -> Vec<String> {
-        // A span keeps its bounds and answers to nothing else the mark
-        // mechanism below reckons, its own mark standing for no working
-        // a program writes in the plain way.
-        if let Value::Span(_) = sample { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
+        if matches!(sample.settled(), Value::Backtrace(_)) {
+            let words = self.table.strings("ext.builtin.exceptions.traceback");
+            let mut fields = words.get(1..4).unwrap_or(&[]).to_vec();
+            fields.sort_unstable();
+            return fields;
+        }
+        if let Value::Span(_) = sample.settled() {
+            let mut bounds = vec![String::from("start"), String::from("step"), String::from("stop")];
+            bounds.extend(self.table.strings("ext.stmt.class.detail.root.members").get(9).cloned());
+            bounds.sort_unstable();
+            return bounds;
+        }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
         let mut gathered = Vec::new();
-        if matches!(sample, Value::Set(_) | Value::Dict(_)) {
+        if matches!(sample.settled(), Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
         }
         for name in self.table.strings("ext.stmt.class.special") {
@@ -6387,7 +6395,20 @@ impl<'a> Machine<'a> {
         // A whole number answers besides for the member that writes it
         // into a row of bytes, which belongs to the kind itself and is
         // reached through the kind's own word rather than a value's.
-        if mark == 'n' { gathered.extend(self.table.strings("ext.builtin.bytes.from_int").iter().cloned()); }
+        if mark == 'n' {
+            gathered.extend(self.table.strings("ext.builtin.bytes.from_int").iter().cloned());
+            for spelling in self.table.strings("ext.builtin.bytes.to_int") {
+                gathered.push(spelling.rsplit('.').next().unwrap_or(spelling).to_owned());
+            }
+            gathered.extend(self.table.strings("ext.stmt.class.detail.integer.layout").get(2).cloned());
+        }
+        if mark == 'c' {
+            // Operator conversions belong to the interpreter here;
+            // the Python complex namespace does not expose those slots.
+            let special = self.table.strings("ext.stmt.class.special");
+            gathered.retain(|name| special.get(38) != Some(name) && special.get(39) != Some(name));
+        }
+        gathered.extend(self.table.strings("ext.stmt.class.detail.root.members").get(9).cloned());
         gathered.sort();
         gathered.dedup();
         gathered
@@ -6542,7 +6563,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn native_member(&self, value: &Value, name: &str) -> bool {
-        self.native_place(value, name).is_some()
+        self.native_place(value, name).is_some() || self.directory_attribute(value, name).is_some()
     }
 
     /// The cell a native holder's names share, followed through however
@@ -6796,6 +6817,9 @@ impl<'a> Machine<'a> {
         if let (Value::Text(_), Some(op @ Prim::Textual(crate::text::Work::MAKETRANS))) = (&stand_in, self.table.prims.get(name)) {
             return Some(Value::Intrinsic(*op, Rc::from(name)));
         }
+        if self.table.strings("ext.stmt.class.detail.root.members").get(9).is_some_and(|word| word == name) {
+            return Some(Value::Wrapped(36, Rc::new(vec![Value::text(name)])));
+        }
         if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
         Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)])))
     }
@@ -6817,7 +6841,20 @@ impl<'a> Machine<'a> {
         if !word.contains('.') { return Value::text(self.builtin_module()); }
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
+    // Read the inherited directory hook without adding it to a
+    // traceback's restricted set of public field names.
+    pub(super) fn directory_attribute(&self, item: &Value, key: &str) -> Option<Value> {
+        let words = self.table.strings("ext.stmt.class.detail.root.members");
+        let directory = words.get(9)?;
+        if directory != key { return None; }
+        let actual = item.settled();
+        let ordinary = Self::native_mark(&actual).is_some();
+        if !ordinary && !matches!(actual, Value::Span(_) | Value::Backtrace(_)) { return None; }
+        Some(Value::Member(Rc::new(item.clone()), directory.clone()))
+    }
+
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if let Some(hook) = self.directory_attribute(value, name) { return Some(hook); }
         if let Value::Intrinsic(op, word) = value {
             if !Self::names_a_kind(op) {
                 if name == self.detail("qualified") { return Some(Value::text(word)); }
@@ -7352,6 +7389,10 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if self.directory_attribute(receiver, name).is_some() {
+            if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
+            return Ok(self.ordinary_directory(receiver));
+        }
         if name == "code_replace" {
             let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready()) };
             let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err(self.class_unready()) };
@@ -11855,7 +11896,10 @@ impl<'a> Machine<'a> {
             (Prim::Of | Prim::HasMember, [Value::Backtrace(link), Value::Text(member)]) => {
                 let roster = self.table.strings("ext.builtin.exceptions.traceback");
                 let at = roster.iter().position(|key| key == member.as_ref());
-                if operation == Prim::HasMember { return Ok(Some(Value::Flag(matches!(at, Some(1..=3 | 16..=18))))); }
+                let trace = Value::Backtrace(link.clone());
+                let hook = self.directory_attribute(&trace, member);
+                if operation == Prim::HasMember { return Ok(Some(Value::Flag(hook.is_some() || matches!(at, Some(1..=3 | 16..=18))))); }
+                if let Some(hook) = hook { return Ok(Some(hook)); }
                 return match at {
                     Some(1) => Ok(Some(Value::Small(link.location as i64))),
                     Some(2) => Ok(Some(link.following.clone())),
