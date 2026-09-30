@@ -1,6 +1,10 @@
-# The Linux signal numbers. Nothing here can deliver a signal: this
-# runtime has no handler dispatch, so the functions that would install
-# one refuse rather than accept a handler that could never run.
+# Signals kept pending and taken up between one statement and the next.
+#
+# The numbers and names are the Linux ones. A handler is named with
+# signal() and asked back with getsignal(); raise_signal() leaves a
+# signal pending, and the run takes it up at the next statement's edge,
+# running the handler named for it — or raising KeyboardInterrupt where
+# the interrupt signal still goes its own way.
 SIGHUP = 1
 SIGINT = 2
 SIGQUIT = 3
@@ -114,6 +118,44 @@ _descriptions = {
     64: 'Real-time signal 30',
 }
 
+def default_int_handler(signalnum, frame):
+    raise KeyboardInterrupt
+
+def _checked_number(signalnum):
+    if not isinstance(signalnum, int):
+        raise 'TypeError: an integer is required'
+    if signalnum < 1 or signalnum >= NSIG:
+        raise 'ValueError: signal number out of range'
+    return signalnum
+
+def signal(signalnum, handler):
+    _checked_number(signalnum)
+    if handler != SIG_DFL and handler != SIG_IGN and not callable(handler):
+        raise TypeError('signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable')
+    previous = __signal(0, signalnum, handler)
+    if previous is None:
+        if signalnum == SIGINT:
+            return default_int_handler
+        return SIG_DFL
+    return previous
+
+def getsignal(signalnum):
+    _checked_number(signalnum)
+    handler = __signal(1, signalnum)
+    if handler is None:
+        if signalnum == SIGINT:
+            return default_int_handler
+        return SIG_DFL
+    return handler
+
+def raise_signal(signalnum):
+    _checked_number(signalnum)
+    # The number is left pending as this wrapper's last word: no
+    # statement's edge stands between here and the caller it returns
+    # to, so the signal is taken up from there, never from inside the
+    # raising call.
+    __signal(2, signalnum)
+
 def strsignal(signalnum):
     if signalnum in _descriptions:
         return _descriptions[signalnum]
@@ -127,22 +169,8 @@ def valid_signals():
         result.add(number)
     return result
 
-def getsignal(signalnum):
-    if signalnum not in _names:
-        raise 'ValueError: signal number out of range'
-    return SIG_DFL
-
-def signal(signalnum, handler):
-    raise 'NotImplementedError: signal handlers cannot be delivered here'
-
 def alarm(seconds):
     raise 'NotImplementedError: signal.alarm cannot deliver SIGALRM here'
 
-def raise_signal(signalnum):
-    raise 'NotImplementedError: signals cannot be raised here'
-
 def pause():
     raise 'NotImplementedError: no signal can arrive to end a pause'
-
-def default_int_handler(signalnum, frame):
-    raise 'KeyboardInterrupt'
