@@ -47,6 +47,7 @@ impl Writer<'_> {
             "ext.text.format.invalid" => &self.lang.fmt_text_format_invalid,
             "ext.text.format.invalid.detail" => &self.lang.fmt_text_format_invalid_detail,
             "ext.text.format.group.conflict" => &self.lang.fmt_text_format_group_conflict,
+            "ext.text.format.group.type" => &self.lang.fmt_text_format_group_type,
             "ext.text.format.unknown" => &self.lang.fmt_text_format_unknown,
             "ext.text.format.kinds" => &self.lang.fmt_text_format_kinds,
             "ext.text.format.unready" => &self.lang.fmt_text_format_unready,
@@ -175,6 +176,24 @@ impl Writer<'_> {
         }
         if spec.is_empty() && !matches!(value, Value::Real(_)) { return self.representation_plain(value); }
         let mut rule = self.parse(spec, value)?;
+        // Grouping is checked against the presentation letter before the
+        // value's type or any other numeric flags. A missing letter uses
+        // the value's ordinary presentation; a named letter keeps its own
+        // spelling even when that type does not support it.
+        if rule.group != '\0' {
+            let code = if rule.code == '\0' && matches!(value, Value::Text(_)) { 's' } else { rule.code };
+            let allowed = match rule.group {
+                ',' => matches!(code, '\0' | 'd' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%'),
+                '_' => matches!(code, '\0' | 'd' | 'b' | 'o' | 'x' | 'X' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%'),
+                _ => true,
+            };
+            if !allowed {
+                return Err(self.fault("ext.text.format.group.type", &[&format!("'{}'", rule.group), &format!("'{}'", code)]));
+            }
+        }
+        if rule.code == 'n' && rule.fraction_group != '\0' {
+            return Err(self.fault("ext.text.format.group.type", &[&format!("'{}'", rule.fraction_group), "'n'"]));
+        }
         // The locale presentation writes the figures the plain
         // presentations write, this run keeping one locale only: a
         // whole number stays with the tens, everything else takes the
@@ -195,7 +214,6 @@ impl Writer<'_> {
             if rule.unsigned_zero { return Err(self.fault("ext.text.format.zero.string", &[])); }
             if rule.alternate { return Err(self.fault("ext.text.format.alternate.string", &[])); }
             if rule.align == '=' { return Err(self.fault("ext.text.format.align.string", &[])); }
-            if rule.group != '\0' || rule.fraction_group != '\0' { return Err(self.fault("ext.text.format.invalid", &[])); }
             let shown: String = text.chars().take(rule.precision.unwrap_or(usize::MAX)).collect();
             return Ok(rule.pad("", &shown, '<'));
         }
@@ -204,9 +222,9 @@ impl Writer<'_> {
         // no presentation was named. Neither nought padding nor the
         // '=' alignment has a meaning across two numbers.
         if let Some((re, im)) = complex_parts(value) {
+            if !matches!(kind, '\0' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G') { return Err(self.unknown(value, kind)); }
             if rule.fill == '0' { return Err(self.fault("ext.text.format.complex.zero", &[])); }
             if rule.align == '=' { return Err(self.fault("ext.text.format.complex.align", &[])); }
-            if !matches!(kind, '\0' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G') { return Err(self.unknown(value, kind)); }
             // Nothing named is the writing the representation gives:
             // the figures that read back again, in brackets, with a
             // real part that is a plain nought left out altogether. A
@@ -234,17 +252,15 @@ impl Writer<'_> {
             return Err(self.fault("ext.stmt.class.format.amiss", &[self.kind(value)]));
         }
         if whole && matches!(kind, '\0' | 'd' | 'b' | 'o' | 'x' | 'X' | 'c') {
-            if rule.unsigned_zero { return Err(self.fault("ext.text.format.zero.integer", &[])); }
             if rule.precision.is_some() { return Err(self.fault("ext.text.format.precision.integer", &[])); }
+            if rule.unsigned_zero { return Err(self.fault("ext.text.format.zero.integer", &[])); }
             let number = value.as_big()?;
             if kind == 'c' {
                 if rule.sign != '\0' { return Err(self.fault("ext.text.format.sign.character", &[])); }
                 if rule.alternate { return Err(self.fault("ext.text.format.alternate.character", &[])); }
-                if rule.group != '\0' { return Err(self.fault("ext.text.format.invalid", &[])); }
                 return Ok(rule.pad("", &self.character(value, false)?, '>'));
             }
             let base = match kind { 'b' => 2, 'o' => 8, 'x' | 'X' => 16, _ => 10 };
-            if rule.fraction_group != '\0' || rule.group == ',' && base != 10 { return Err(self.fault("ext.text.format.invalid", &[])); }
             let mut figures = number.abs().to_str_radix(base);
             if kind == 'X' { figures.make_ascii_uppercase(); }
             let mut head = rule.sign_for(number.is_negative());
@@ -284,6 +300,9 @@ impl Writer<'_> {
             else if rule.code == '\0' { crate::value::shortest_real(magnitude) }
             else { decimal(magnitude, rule) };
         if rule.code.is_ascii_uppercase() { body.make_ascii_uppercase(); }
+        if rule.alternate && rule.code == '\0' && magnitude.is_finite() && !body.contains(['.', 'e', 'E']) {
+            body.push('.');
+        }
         // A part that rounds to nought loses its minus where the
         // specification asks for no signed nought.
         let nought = rule.unsigned_zero && body.parse::<f64>().ok() == Some(0.0);

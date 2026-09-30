@@ -3592,6 +3592,11 @@
     "ValueError: Cannot specify ",
     "."
   ],
+  "ext.text.format.group.type": [
+    "ValueError: Cannot specify ",
+    " with ",
+    "."
+  ],
   "ext.text.format.key": [
     "KeyError: '",
     "'"
