@@ -46,7 +46,7 @@ impl<'a> Engine<'a> {
         self.class_maker = Some(c.clone());
         c
     }
-    fn is_metaclass_root(&self, c: &Rc<Class>) -> bool {
+    pub(super) fn is_metaclass_root(&self, c: &Rc<Class>) -> bool {
         self.class_maker.as_ref().map_or(false, |m| Rc::ptr_eq(m, c))
     }
     /// The metaclass a class was made by, where its header named one.
@@ -64,7 +64,7 @@ impl<'a> Engine<'a> {
     /// The metaclass that will make a class: the one its header named,
     /// else the one its forebears were made by. Where both speak, the
     /// one standing on the other is taken, as the deeper answer.
-    fn maker_in_force(&mut self, asked: Option<Value>, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
+    pub(super) fn maker_in_force(&mut self, asked: Option<Value>, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
         let named = match asked.map(|v| v.contents()) {
             None => None,
             // The kind builtin names the plainest maker there is, which
@@ -239,7 +239,9 @@ impl<'a> Engine<'a> {
         let (Value::Tuple(listed) | Value::Array(listed)) = plain[2].contents() else { return Err(self.class_refusal()) };
         for b in listed.iter() { parents.push(self.type_base(b)?); }
         if parents.is_empty() { parents.push(self.root_class()); }
-        let Value::Map(entries) = plain[3].contents() else { return Err(self.class_refusal()) };
+        let namespace = plain[3].contents();
+        let namespace = if !self.lang.class_builder.is_empty() { Self::worth_of(&namespace).map_or(namespace.clone(), |worth| worth.contents()) } else { namespace };
+        let Value::Map(entries) = namespace else { return Err(self.class_refusal()) };
         let members = entries.iter().map(|(k, v)| (k.plain(), v.clone())).collect();
         self.forge_class(title, parents, members, by, named)
     }
@@ -249,6 +251,16 @@ impl<'a> Engine<'a> {
     /// forebears when it has made a namespace of its own.
     pub(super) fn forge_class(&mut self, name: String, bases: Vec<Rc<Class>>, mut members: Vec<(String, Value)>,
         maker: Option<Rc<Class>>, carried: Vec<Value>) -> Flow<Value> {
+        let mut class_cell = None;
+        let cell_word = self.class_word("classcell").to_owned();
+        if !cell_word.is_empty() {
+            if let Some(at) = members.iter().position(|(key, _)| key == &cell_word) {
+                let cell = members.remove(at).1;
+                if !matches!(cell.contents(), Value::Adapter(ref wrapped) if wrapped.0 == 31) { return Err("TypeError: __classcell__ must be a nonlocal cell".into()); }
+                class_cell = Some(cell);
+            }
+        }
+
         // A place only an arm of a conditional writes to may never have
         // been written. Nothing stands there, and the class keeps no
         // member for it: a name a conditional never bound is no member.
@@ -282,6 +294,8 @@ impl<'a> Engine<'a> {
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default(),
             shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
+        if let Some(cell) = class_cell { let word = self.class_word("cell.contents").to_owned(); self.class_write(cell, &word, Some(Value::Class(c.clone())), true)?; }
+
         self.furnish_slots(&c)?;
         // Each member that asks to be told its name is told it, once the
         // class stands, before any forebear hears of the new class.
@@ -1077,6 +1091,9 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        let subject = if !self.lang.class_builder.is_empty() {
+            match subject { Value::Bond(cell) => cell.borrow().clone(), Value::Binding(cell) => cell.borrow().clone(), value => value }
+        } else { subject };
         if let Value::Adapter(proxy) = &subject {
             if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
                 let dynamic = match receiver { Value::Object(o) => o.class_now().clone(), Value::Class(c) => c.clone(), _ => return Err(self.class_refusal()) };
@@ -1183,7 +1200,9 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("descriptor.delete") { return Ok(Self::adapter(18, w.1.clone())); }
             }
         }
-        if matches!(&subject, Value::Native(Builtin::SortOf, _)) {
+        if matches!(&subject, Value::Native(Builtin::SortOf, _))
+            || (!self.lang.class_builder.is_empty() && (matches!(&subject, Value::Class(c) if self.is_metaclass_root(c) || Self::own_kind(c).is_some_and(|word| self.lang.builtins.get(&word) == Some(&Builtin::SortOf)))
+                || self.kind_spelled(&subject).is_some_and(|word| self.lang.builtins.get(word.as_ref()) == Some(&Builtin::SortOf)))) {
             let tag = if name == self.class_word("call") { Some(41) }
                 else if name == self.class_word("allocate") { Some(40) }
                 else if name == self.class_word("prepare") { Some(42) }
@@ -2136,7 +2155,7 @@ impl<'a> Engine<'a> {
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
         512 + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
-    fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
+    pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         match value.contents() {
             Value::Class(class) if Self::class_sealed(&class) => Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()),
             Value::Class(class) => Ok(class),
@@ -2375,7 +2394,10 @@ impl<'a> Engine<'a> {
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {
             13 => self.build_body_class(args),
-            14 => { self.require_class_builder()?; Ok(Value::Null) },
+            14 => self.require_class_builder(),
+            15 => self.class_body_book(one),
+            16 => self.dispatch_class_builder(args),
+            18 => self.class_namespace_read(args),
             12 if args.len() == 1 => Ok(Value::Flag(match &one {
                 Value::Object(object) => self.slots_allow(&object.class_now(), self.class_word("namespace"))
                     && Self::kind_beneath(&object.class_now()).is_none()

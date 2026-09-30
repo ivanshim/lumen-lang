@@ -39,6 +39,7 @@ thread_local! {
 struct ClassParts {
     lexical_members: Vec<String>,
     completed_class: Address,
+    needs_class_cell: bool,
     methods: Vec<(String, Rc<Routine>)>,
     attributes: Vec<String>,
     held: Vec<Form>,
@@ -715,7 +716,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { class_namespace: None, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
@@ -1473,6 +1474,7 @@ impl<'a> Builder<'a> {
             return Form::Read(book);
         }
         let seed = self.class_names_map();
+        let seed = if self.table.has_any("ext.stmt.class.builder") { prim_call(Prim::ClassWork(15), vec![seed]) } else { seed };
         let book = self.gensym("locals");
         self.parts().book = Some(book.clone());
         sequence(vec![Form::Write(book.clone(), Box::new(seed)), Form::Read(book)])
@@ -1496,7 +1498,7 @@ impl<'a> Builder<'a> {
         let key = constant(Value::text(word));
         let value = Form::Read(place.clone());
         let target = self.read_to_write(&book.ident.to_string());
-        Some(prim_call(Prim::Replace, vec![target, key, value]))
+        Some(prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(19) } else { Prim::Replace }, vec![target, key, value]))
     }
 
     /// The companion of `mirror_member` for `del name` read in a class
@@ -1510,7 +1512,7 @@ impl<'a> Builder<'a> {
         let book = self.parts().book.clone()?;
         let target = self.read_to_write(&book.ident.to_string());
         let key = constant(Value::text(word));
-        let erased = prim_call(Prim::Erase, vec![target, key]);
+        let erased = prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(20) } else { Prim::Erase }, vec![target, key]);
         Some(self.write(&book.ident.to_string(), erased))
     }
 
@@ -1551,6 +1553,17 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
+            if let Some(book) = self.parts().book.clone() {
+                let found = self.gensym("class_lookup");
+                let read = prim_call(Prim::ClassWork(18), vec![Form::Read(book), constant(Value::text(name))]);
+                let present = prim_call(Prim::At, vec![Form::Read(found.clone()), constant(Value::Small(0))]);
+                let value = prim_call(Prim::At, vec![Form::Read(found.clone()), constant(Value::Small(1))]);
+                let fallback = self.read_fallback(name);
+                let selected = self.choose(present, value, fallback);
+                return sequence(vec![Form::Write(found, Box::new(read)), selected]);
+            }
+        }
         if let Some((depth, names)) = self.class_bindings.last() {
             if *depth == self.layers.len() {
                 if let Some(slot) = names.get(name).cloned() {
@@ -1789,7 +1802,7 @@ impl<'a> Builder<'a> {
         let mut suspension = false;
         inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
         if scope.permits_async && suspension { flags = (flags & !128) | 512; }
-        Ok(constant(Value::Routine(Rc::new(Routine { annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { class_namespace: None, annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
     fn build_annotator(&mut self) -> Res<Option<Rc<Routine>>> {
@@ -1838,7 +1851,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { class_namespace: None, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -4448,7 +4461,16 @@ impl<'a> Builder<'a> {
             .map(|at| &self.tokens[at])
             .take_while(|word| !matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close))
             .any(|word| word.shape == Shape::Sign && table.spells("op.mul", &word.lexeme));
+        let before = self.class_bindings.last().expect("class namespace").1.clone();
         let brought = self.stmt()?;
+        let bound = self.class_bindings.last().expect("class namespace").1.clone();
+        let mut steps = vec![brought];
+        for (word, place) in bound {
+            if table.has_any("ext.stmt.class.builder") && !before.contains_key(&word) {
+                if let Some(mirror) = self.mirror_member(&word, &place) { steps.push(mirror); }
+            }
+        }
+        let brought = sequence(steps);
         if starred { self.parts().cannot = true; }
         Ok(brought)
     }
@@ -4679,7 +4701,120 @@ impl<'a> Builder<'a> {
         Ok((word, address))
     }
 
+    fn python_class(&mut self) -> Res<(Form, bool)> {
+        let builder = self.gensym("class_builder");
+        let mut setup = vec![Form::Write(builder.clone(), Box::new(prim_call(Prim::ClassWork(14), Vec::new())))];
+        self.advance();
+        let title = self.original_words[self.pos].lexeme.clone();
+        let named = self.need_word("as the class name")?;
+        if named == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
+        let args = if self.table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
+            self.advance(); self.args("syntax.call.close", "syntax.call.separator")?
+        } else { Vec::new() };
+        let header = self.gensym("class_header");
+        setup.push(Form::Write(header.clone(), Box::new(prim_call(Prim::MakeTuple, args))));
+        let full_name = self.full_name_of(&title);
+        let mut namespace = None;
+        let mut cannot = false;
+        let body = self.routine(&title, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
+            let (body, book, cell, declined) = b.python_class_body(title.clone(), full_name.clone())?;
+            namespace = Some((book, cell)); cannot = declined; Ok(body)
+        })?;
+        let Form::Const(Value::Routine(code)) = body else { unreachable!() };
+        let mut code = (*code).clone(); code.class_namespace = namespace; code.flags &= !3;
+        let made = prim_call(Prim::ClassWork(16), vec![Form::Read(builder), constant(Value::Routine(Rc::new(code))), constant(Value::text(&title)), Form::Read(header)]);
+        if self.in_class_body() {
+            let slot = self.gensym("inner_class");
+            self.class_bindings.last_mut().expect("outer class").1.insert(named.clone(), slot.clone());
+            setup.push(Form::Write(slot.clone(), Box::new(made)));
+            if let Some(mirror) = self.mirror_member(&named, &slot) { setup.push(mirror); }
+        } else { setup.push(self.write(&named, made)); }
+        Ok((sequence(setup), cannot))
+    }
+
+    fn python_class_body(&mut self, class_title: String, full_name: String) -> Res<(Form, String, Option<String>, bool)> {
+        let table = self.table;
+        let parent: Option<Address> = None;
+        let cannot = false;
+        let mut setup = Vec::new();
+        let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
+        let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
+        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
+        self.need_intro()?;
+        let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
+        if !on_one_line {
+            self.skip_line_ends();
+            if self.look().shape != Shape::Open { return Err("Expected an indented class body".to_string()); }
+            self.advance();
+            self.skip_line_ends();
+        }
+        let body_source = self.pos;
+        let lexical_members = self.surveyed.get(&body_source).map(|scope| scope.bound.clone()).unwrap_or_default();
+        self.class_bindings.push((self.layers.len(), HashMap::new()));
+        self.class_globals.push((self.layers.len(), Vec::new()));
+        self.class_met.push(Vec::new());
+        let completed_class = self.gensym("completed_class");
+        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+            ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
+            book: None, book_tracked: HashSet::new() });
+        // The body uses the metaclass's actual mapping from its first statement.
+        if table.has_any("ext.stmt.class.builder") || self.class_body_names_locals(self.pos, on_one_line) {
+            let made = self.class_book();
+            setup.push(made);
+        }
+        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
+        // Seed documentation only when the body starts with a docstring.
+        if let Some(word) = table.single("ext.stmt.class.detail.doc") {
+            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+            if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
+        }
+        let book = self.parts().book.clone().expect("class namespace");
+        let module_name = table.single("ext.system.module.name").unwrap_or_default();
+        let module_value = self.read(module_name);
+        let module_word = table.single("ext.stmt.class.detail.module").unwrap_or_default();
+        let target = self.read_to_write(book.ident.as_ref());
+        setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(module_word)), module_value]));
+        let seed = self.class_names_map();
+        // Copy the body metadata through the prepared mapping's real setter.
+        let seeded = prim_call(Prim::ClassWork(15), vec![seed]);
+        setup.push(Form::Write(book.clone(), Box::new(seeded)));
+        while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
+            if on_one_line && self.on_stmt_end() { break; }
+            if self.class_item(&mut setup)? { continue; }
+            if on_one_line {
+                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
+                    self.advance();
+                }
+            } else { self.skip_line_ends(); }
+        }
+        if !on_one_line {
+            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
+            self.advance();
+        }
+        if self.survey {
+            let bound = self.parts().lexical_members.clone();
+            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
+        }
+        self.class_bindings.pop();
+        self.class_globals.pop();
+        self.class_met.pop();
+        self.within = previous;
+        self.named_before = named_outside;
+        let parts = self.under_way.pop().expect("class body");
+        if !parts.annotated_names.is_empty() && table.has_any("ext.stmt.class.annotations") {
+            let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
+            let book = parts.book.as_ref().expect("class namespace");
+            let target = self.read_to_write(book.ident.as_ref());
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(crate::data::ANNOTATE_WORD)), prim_call(Prim::MakeArray, row)]));
+        }
+        if parts.cannot { setup.push(self.class_not_ready()); }
+        setup.push(constant(Value::Nil));
+        Ok((sequence(setup), parts.book.expect("class namespace").ident.to_string(), parts.needs_class_cell.then(|| parts.completed_class.ident.to_string()), parts.cannot))
+    }
+
     fn class_with_receiver(&mut self) -> Res<(Form, bool)> {
+        if self.table.has_any("ext.stmt.class.builder") { return self.python_class(); }
         self.advance();
         let class_title = self.original_words[self.pos].lexeme.clone();
         let named = self.need_word("as the class name")?;
@@ -4777,7 +4912,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -4823,7 +4958,7 @@ impl<'a> Builder<'a> {
         self.class_met.pop();
         self.within = previous;
         self.named_before = named_outside;
-        let ClassParts { completed_class, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
+        let ClassParts { completed_class, needs_class_cell: _, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
@@ -8752,6 +8887,7 @@ impl<'a> Builder<'a> {
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
                     (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
+                        self.parts().needs_class_cell = true;
                         let private = self.parts().completed_class.ident.to_string();
                         let args = vec![self.read(&private), self.read(&receiver)];
                         let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone)));
@@ -8782,6 +8918,7 @@ impl<'a> Builder<'a> {
                 && !self.layers.last().unwrap().idents.contains(&t.lexeme)
                 && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
                 self.advance();
+                self.parts().needs_class_cell = true;
                 let hidden = self.parts().completed_class.ident.to_string();
                 self.read(&hidden)
             }
@@ -10901,7 +11038,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let program = Routine { class_namespace: None, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

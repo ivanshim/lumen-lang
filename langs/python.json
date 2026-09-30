@@ -2806,6 +2806,7 @@
     "() requires a code object with ",
     " free vars, not "
   ],
+  "ext.stmt.class.detail.classcell": ["__classcell__"],
   "ext.stmt.class.detail.cell.contents": [
     "cell_contents"
   ],

@@ -1798,6 +1798,7 @@ impl<'a> Machine<'a> {
     }
 
     fn what_it_spells(&self, v: Value) -> Value {
+        let v = if self.table.has_any("ext.stmt.class.builder") { v.settled() } else { v };
         let Value::Text(name) = &v else { return v };
         if !self.spelled_stands {
             return v;
@@ -5092,7 +5093,6 @@ impl<'a> Machine<'a> {
                 ending
             }
             Form::Class { plan, values } => {
-                self.check_class_builtin()?;
                 // What was written: the class it is built on, then a value
                 // for every property, kept value and constant, in the
                 // order the plan names them.
@@ -5571,7 +5571,7 @@ impl<'a> Machine<'a> {
                             return self.apply_class_member(member, values);
                         }
                     }
-                    if self.has_class_order() && (matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Intrinsic(Prim::Truthful, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
+                    if self.has_class_order() && (matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Intrinsic(Prim::Truthful, _))) || (self.table.has_any("ext.stmt.class.builder") && matches!(&subject, Value::Intrinsic(Prim::SortOf, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.table.flag("ext.op.member.pipes") {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -5969,6 +5969,7 @@ impl<'a> Machine<'a> {
                         if let Some(living @ IteratorKind::Living(..)) = values.first().and_then(Self::live_walk) { return Ok(Self::cursor_value(living)); }
                     }
                     // The property builtin takes its accessors by name; making the property sorts them out.
+                    if *op == Prim::ClassWork(13) { return self.work_on_class(13, values); }
                     if *op == Prim::ClassWork(11) && self.has_class_order() && !self.detail("descriptor.get").is_empty() { return self.work_on_class(11, values); }
                     if self.names_in_calls && self.table.prims.contains_key(name.as_ref()) {
                         let (mut positions, keywords) = self.open_arguments(values)?;
@@ -5988,6 +5989,9 @@ impl<'a> Machine<'a> {
                     // not hold, and take the write of one: where the
                     // language names such methods and the class is
                     // written with them, they stand in its place.
+                    if *op == Prim::Of && self.table.has_any("ext.stmt.class.builder") {
+                        if let Some(subject) = values.first_mut() { *subject = subject.settled(); }
+                    }
                     if self.has_class_order() {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
@@ -6260,6 +6264,7 @@ impl<'a> Machine<'a> {
         let name = word.to_string();
         Some((|| {
             let mut values = self.value_list(args, frame)?;
+            if let Prim::ClassWork(which) = op { if self.has_class_order() { return self.work_on_class(which, values); } }
             if op == Prim::ClassWork(11) && self.has_class_order() && !self.detail("descriptor.get").is_empty() { return self.work_on_class(11, values); }
             if matches!(stands, Value::Intrinsic(..) | Value::OctetKind { .. }) && self.names_in_calls {
                 let (mut positions, names) = self.open_arguments(values)?;
@@ -9187,14 +9192,32 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         };
-        let outcome = self.traced_result(outcome);
-        if self.body_namespace.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, &program)) {
-            let entries = program.idents.iter().zip(frame.cells.borrow().iter())
-                .filter(|(name, value)| Self::visible_name(name) && !matches!(value.settled(), Value::Unset))
-                .map(|(name, value)| (Value::text(name), value.clone())).collect::<Vec<_>>();
-            if let Some((_, namespace)) = &mut self.body_namespace {
-                *namespace = Some(Value::Dict(Rc::new(entries.into())));
+        let mut outcome = outcome;
+        let mut body_namespace = None;
+        if outcome.is_ok() {
+            if let Some((book_name, cell_name)) = &program.class_namespace {
+                let book_at = program.idents.iter().position(|name| name == book_name).expect("class locals slot");
+                let book = frame.cells.borrow()[book_at].clone();
+                let cell = if let Some(cell_name) = cell_name {
+                    let cell_at = program.idents.iter().position(|name| name == cell_name).expect("class cell slot");
+                    Value::Wrapped(35, Rc::new(vec![Value::Bound(program.clone(), frame.clone()), Value::Small(cell_at as i64), Value::Flag(true)]))
+                } else { Value::Nil };
+                if matches!(cell, Value::Wrapped(35, _)) {
+                    let word = self.detail("classcell").to_owned();
+                    match self.mapping_write(&book, &word, Some(cell.clone())) { Ok(()) => outcome = Ok(cell.clone()), Err(fault) => outcome = Err(fault) }
+                }
+                body_namespace = Some(Value::Tuple(Rc::new(vec![book, cell])));
             }
+        }
+        let outcome = self.traced_result(outcome);
+        if outcome.is_ok() && self.body_namespace.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, &program)) {
+            let captured = body_namespace.unwrap_or_else(|| {
+                let entries = program.idents.iter().zip(frame.cells.borrow().iter())
+                    .filter(|(name, value)| Self::visible_name(name) && !matches!(value.settled(), Value::Unset))
+                    .map(|(name, value)| (Value::text(name), value.clone())).collect::<Vec<_>>();
+                Value::Dict(Rc::new(entries.into()))
+            });
+            if let Some((_, namespace)) = &mut self.body_namespace { *namespace = Some(captured); }
         }
         self.update_watched_locals();
         if mine { self.active_trace = caller_trace; self.extent = parent_extent; }
@@ -18702,35 +18725,114 @@ impl<'a> Machine<'a> {
         Value::Mutable(self.natives_kept(), true)
     }
 
-    fn check_class_builtin(&mut self) -> Result<(), Escape> {
+    pub(super) fn check_class_builtin(&mut self) -> Result<Value, Escape> {
         let names = self.table.strings("ext.stmt.class.builder").to_vec();
-        let Some(word) = names.first() else { return Ok(()) };
-        if self.reading_now.is_none() { return Ok(()); }
+        let Some(word) = names.first() else { return Ok(Value::Nil) };
+        if let Some(born) = self.frames_named.iter().rev().find(|code| !code.frameless).and_then(|code| code.born.clone()) {
+            let dictionary = self.builtin_dictionary(born)?;
+            if let Some(value) = self.mapping_read(&dictionary.settled(), word)? { return Ok(value); }
+            return Err(names.get(1).cloned().unwrap_or_default().into());
+        }
+        if self.reading_now.is_none() {
+            if let Some(module) = self.imported.get(self.builtin_module()).filter(|_| !self.importing.contains(self.builtin_module())).cloned() {
+                if let Value::Thing(space) = module {
+                    let found = space.holds.borrow().iter().find(|(key, _)| key == word).map(|(_, value)| value.settled());
+                    if let Some(value) = found.filter(|value| !matches!(value, Value::Unset)) { return Ok(value); }
+                }
+                return Err(names.get(1).cloned().unwrap_or_default().into());
+            }
+            let book = self.natives_kept();
+            if let Some(value) = self.booked_get(&book, word)? { return Ok(value); }
+            return Err(names.get(1).cloned().unwrap_or_default().into());
+        }
         let roots = self.book_about(true);
         let key = self.table.single("ext.system.module.builtins").unwrap_or_default().to_owned();
         if let Some(mut builtins) = self.builtin_entry(&roots, &key)? {
             builtins = self.builtin_dictionary(builtins)?;
-            if self.mapping_read(&builtins.settled(), word)?.is_some() { return Ok(()); }
+            if let Some(value) = self.mapping_read(&builtins.settled(), word)? { return Ok(value); }
         }
         Err(names.get(1).cloned().unwrap_or_default().into())
     }
 
-    pub(super) fn class_from_function(&mut self, mut supplied: Vec<Value>) -> Result<Value, Escape> {
-        if supplied.len() < 2 { return Err("TypeError: __build_class__: not enough arguments".to_owned().into()); }
-        let callable = supplied.remove(0).settled();
+    pub(super) fn prepared_class_book(&mut self, seed: Value) -> Result<Value, Escape> {
+        let prepared = self.body_namespace.as_ref().filter(|(body, _)| self.frames_named.last().is_some_and(|running| Rc::ptr_eq(body, running))).and_then(|(_, book)| book.clone());
+        let captured = self.frames_named.last().and_then(|code| code.globe.clone());
+        let book = prepared.or(captured).unwrap_or_else(|| Value::Shared(self.book_about(true)));
+        if let Value::Dict(pairs) = seed.settled() {
+            for (key, value) in pairs.iter() { self.mapping_write(&book, &key.bare(), Some(value.clone()))?; }
+        }
+        Ok(book)
+    }
+
+    pub(super) fn class_namespace_read(&mut self, values: Vec<Value>) -> Result<Value, Escape> {
+        let found = self.mapping_read(&values[0].settled(), &values[1].bare())?;
+        Ok(Value::Tuple(Rc::new(vec![Value::Flag(found.is_some()), found.unwrap_or(Value::Nil)])))
+    }
+
+    pub(super) fn class_namespace_write(&mut self, values: Vec<Value>, remove: bool) -> Result<Value, Escape> {
+        self.mapping_write(&values[0], &values[1].bare(), if remove { None } else { Some(values[2].clone()) })?;
+        Ok(values[0].clone())
+    }
+
+    pub(super) fn dispatch_class_builder(&mut self, mut values: Vec<Value>) -> Result<Value, Escape> {
+        let Value::Tuple(header) = values.pop().unwrap_or(Value::Nil).settled() else { return Err(self.class_unready()); };
+        let builder = values.remove(0);
+        values.extend(header.iter().cloned());
+        self.apply_class_member(builder, values)
+    }
+
+    pub(super) fn class_from_function(&mut self, supplied: Vec<Value>) -> Result<Value, Escape> {
+        let (mut plain, named) = self.open_arguments(supplied)?;
+        if plain.len() < 2 { return Err("TypeError: __build_class__: not enough arguments".to_owned().into()); }
+        let callable = plain.remove(0).settled();
         let (body, environment) = match callable {
             Value::Bound(body, environment) => (body, environment),
             Value::Routine(body) => (body, self.outermost.clone()),
             _ => return Err("TypeError: __build_class__: func must be a function".to_owned().into()),
         };
-        let Value::Text(name) = supplied.remove(0).settled() else { return Err("TypeError: __build_class__: name is not a string".to_owned().into()) };
-        let old_capture = self.body_namespace.replace((body.clone(), None));
+        let Value::Text(name) = plain.remove(0).settled() else { return Err("TypeError: __build_class__: name is not a string".to_owned().into()) };
+        let mut asked = None; let mut keywords = Vec::new();
+        for (key, value) in named {
+            if self.table.spells("ext.stmt.class.metaclass", &key) { asked = Some(value); }
+            else { keywords.push(Value::Couple(Rc::new((Value::text(&key), value)))); }
+        }
+        let requested = asked.as_ref().map(Value::settled);
+        let custom = requested.as_ref().is_some_and(|value| match value {
+            Value::Intrinsic(Prim::SortOf, _) => false,
+            Value::Blueprint(class) => !self.builds_classes(class) && !class.ancestry.iter().any(|base| self.builds_classes(base)),
+            _ => true,
+        });
+        let parents = if custom { Vec::new() } else { plain.iter().map(|value| self.parent_from_type(value)).collect::<Result<Vec<_>, _>>()? };
+        let factory = if custom { requested } else { self.builder_for(asked, &parents)?.map(Value::Blueprint) };
+        let bases = Value::Tuple(Rc::new(plain));
+        let namespace = if let Some(factory) = &factory {
+            let word = self.detail("prepare").to_owned();
+            match self.read_class_member(factory.clone(), &word, false) {
+                Ok(prepare) => { let mut given = vec![Value::Text(name.clone()), bases.clone()]; given.extend(keywords.iter().cloned()); self.apply_class_member(prepare, given)? }
+                Err(fault) if self.missing_member_escape(&fault) => Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true),
+                Err(fault) => return Err(fault),
+            }
+        } else { Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true) };
+        let old_capture = self.body_namespace.replace((body.clone(), Some(namespace)));
         let result = self.invoke(body, environment, Vec::new());
         let namespace = self.body_namespace.take().and_then(|(_, value)| value);
         self.body_namespace = old_capture;
         result?;
-        let mapping = namespace.unwrap_or_else(|| Value::Dict(Rc::new(Vec::new().into())));
-        self.class_from_type(vec![Value::Text(name), Value::Tuple(Rc::new(supplied)), mapping])
+        let captured = namespace.unwrap_or_else(|| Value::Dict(Rc::new(Vec::new().into())));
+        let (mapping, class_cell) = match captured { Value::Tuple(values) if values.len() == 2 => (values[0].clone(), Some(values[1].clone())), value => (value, None) };
+        let result = if let Some(factory) = factory {
+            let mut given = vec![Value::Text(name.clone()), bases, mapping]; given.extend(keywords); self.apply_class_member(factory, given)?
+        } else {
+            let Value::Dict(entries) = mapping.settled() else { return Err("TypeError: class namespace must be a mapping".to_owned().into()); };
+            let mut members = entries.iter().map(|(key, value)| (key.bare(), value.clone())).collect::<Vec<_>>();
+            for (key, value) in self.open_arguments(keywords)?.1 { members.push((format!("\0handed:{key}"), value)); }
+            self.build_class_value(name.to_string(), parents, members)?
+        };
+        if let Some(Value::Wrapped(35, items)) = class_cell {
+            let held = self.cell_contents(&items).ok_or_else(|| format!("RuntimeError: __class__ not set defining '{}'", name))?;
+            if !matches!((held.settled(), result.settled()), (Value::Blueprint(a), Value::Blueprint(b)) if Rc::ptr_eq(&a, &b)) { return Err(format!("TypeError: __class__ set to a different value defining '{}'", name).into()); }
+        }
+        Ok(result)
     }
 
     /// The dictionary of every builtin word, made once.
@@ -18905,6 +19007,12 @@ impl<'a> Machine<'a> {
     /// value with neither is refused the way any other value nothing
     /// may be written into is.
     fn mapping_write(&mut self, held: &Value, name: &str, given: Option<Value>) -> Result<(), Escape> {
+        if matches!(held, Value::Mutable(_, true) | Value::Shared(_)) && matches!(held.settled(), Value::Dict(_)) {
+            if Self::write_into_book(held, name, given) { return Ok(()); }
+            return Err(format!("KeyError: '{}'", name).into());
+        }
+        let resolved = held.settled();
+        let held = if matches!(resolved, Value::Thing(_)) { &resolved } else { held };
         let key = Value::text(name);
         let outcome = match given {
             Some(value) if self.appointed(held, 12).is_some() =>
@@ -20764,6 +20872,7 @@ impl Machine<'_> {
                 let mut incoming = Vec::new();
                 if let Some(source) = input.first() {
                     if let Value::Dict(pairs) = source { incoming.extend(pairs.iter().cloned()); }
+                    else if let Some(Value::Dict(pairs)) = Self::underlying(source).filter(|_| self.table.has_any("ext.stmt.class.builder") && self.appointment(source, 15).is_none()).map(|base| base.settled()) { incoming.extend(pairs.iter().cloned()); }
                     else if let Some(method) = self.attribute(source, "keys").or_else(|| Self::underlying(source).and_then(|base| self.attribute(&base, "keys"))) {
                         let offered = self.apply_within(method, Vec::new())?;
                         let keys = self.core_collect(&offered)?;

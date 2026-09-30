@@ -5165,6 +5165,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.cell.contents` | - | - | `cell_contents` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.cell.empty` | - | - | `ValueError: Cell is empty` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.classcell` | - | - | `__classcell__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
@@ -5585,3 +5586,5 @@ stop_exception class or tuple of classes for callable iterators.
 
 `ext.system.module.kind` names the library module and class used for the builtin namespace module.
 `ext.builtin.build_class` names the class body builder; `ext.stmt.class.builder` supplies its lookup name and missing-builtin error for class statements.
+
+`ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.

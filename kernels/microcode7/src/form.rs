@@ -772,6 +772,8 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    /// The live class namespace slot and, when used by methods, its class cell.
+    pub class_namespace: Option<(String, Option<String>)>,
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
     pub referenced: Vec<String>,

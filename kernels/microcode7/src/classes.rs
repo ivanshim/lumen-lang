@@ -64,7 +64,7 @@ impl<'a> Machine<'a> {
         self.builder_kind=Some(kind.clone());
         kind
     }
-    fn builds_classes(&self,b:&Rc<Blueprint>)->bool {self.builder_kind.as_ref().map_or(false,|k|Rc::ptr_eq(k,b))}
+    pub(super) fn builds_classes(&self,b:&Rc<Blueprint>)->bool {self.builder_kind.as_ref().map_or(false,|k|Rc::ptr_eq(k,b))}
     /// The metaclass named for a blueprint when it was built.
     fn named_builder(b:&Blueprint)->Option<Rc<Blueprint>> {
         match b.constants.iter().find(|(k,_)|k=="\0metaclass").map(|(_,v)|v) {
@@ -79,7 +79,7 @@ impl<'a> Machine<'a> {
     }
     /// Which metaclass builds a class: the one its header named, else the
     /// one its forebears were built by, and of two the deeper.
-    fn builder_for(&mut self,asked:Option<Value>,parents:&[Rc<Blueprint>])->Result<Option<Rc<Blueprint>>,Escape> {
+    pub(super) fn builder_for(&mut self,asked:Option<Value>,parents:&[Rc<Blueprint>])->Result<Option<Rc<Blueprint>>,Escape> {
         let named=match asked.map(|v|v.settled()) {
             None=>None,
             // The kind primitive names the plainest builder there is,
@@ -232,7 +232,9 @@ impl<'a> Machine<'a> {
         let (Value::Tuple(listed)|Value::Vector(listed))=plain[2].settled() else{return Err(self.class_unready())};
         for p in listed.iter(){ancestors.push(self.parent_from_type(p)?);}
         if ancestors.is_empty(){ancestors.push(self.common_ancestor());}
-        let Value::Dict(pairs)=plain[3].settled() else{return Err(self.class_unready())};
+        let namespace = plain[3].settled();
+        let namespace = if self.table.has_any("ext.stmt.class.builder") { Self::underlying(&namespace).map_or(namespace.clone(), |base| base.settled()) } else { namespace };
+        let Value::Dict(pairs)=namespace else{return Err(self.class_unready())};
         let body=pairs.iter().map(|(k,v)|(k.bare(),v.clone())).collect();
         let keywords=named.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k),v)))).collect();
         self.assemble_class(name,ancestors,body,by,keywords)
@@ -243,6 +245,16 @@ impl<'a> Machine<'a> {
     /// forebears once it has made a namespace of its own.
     pub(super) fn assemble_class(&mut self,title:String,parents:Vec<Rc<Blueprint>>,mut entries:Vec<(String,Value)>,
         builder:Option<Rc<Blueprint>>,handed:Vec<Value>)->Res {
+        let mut class_cell = None;
+        let cell_word = self.detail("classcell").to_owned();
+        if !cell_word.is_empty() {
+            if let Some(at) = entries.iter().position(|(key, _)| key == &cell_word) {
+                let cell = entries.remove(at).1;
+                if !matches!(cell, Value::Wrapped(35, _)) { return Err("TypeError: __classcell__ must be a nonlocal cell".to_owned().into()); }
+                class_cell = Some(cell);
+            }
+        }
+
         // A place only an arm of a conditional writes to may stay
         // unwritten. Nothing stands in it, and the class is given no
         // entry for it: a name a conditional never bound is no member.
@@ -281,6 +293,8 @@ impl<'a> Machine<'a> {
             under:parents.first().cloned(),parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
             methods:vec![],constants:builder.map(|m|vec![("\0metaclass".to_owned(),Value::Blueprint(m))]).unwrap_or_default(),
             shared:RefCell::new(entries),sealed:Cell::new(false)});
+        if let Some(cell) = class_cell { let word = self.detail("cell.contents").to_owned(); self.alter_class_member(cell, &word, Some(Value::Blueprint(class.clone())), true)?; }
+
         self.name_slots(&class)?;
         // Every entry whose blueprint wants its name is given it now, the
         // class standing, and before the forebears hear of it.
@@ -732,6 +746,8 @@ impl<'a> Machine<'a> {
                     _=>Err(self.class_unready()),
                 }
             }
+            Value::Intrinsic(Prim::ClassWork(op), _) if self.table.has_any("ext.stmt.class.builder") => self.work_on_class(op, values),
+            Value::Intrinsic(Prim::SortOf, _) if self.table.has_any("ext.stmt.class.builder") => self.class_from_type(values),
             Value::Text(word)=>{
                 let Some(op)=self.table.prims.get(word.as_ref()).copied()else{return Err(self.class_unready());};
                 match op {Prim::ClassWork(k)=>self.work_on_class(k,values),Prim::SortOf=>self.class_from_type(values),_=>Ok(self.prim(op,&word,&values)?)}
@@ -1013,7 +1029,7 @@ impl<'a> Machine<'a> {
     }
     /// An entry written into a handed namespace, or taken out of it,
     /// through the cell it lives in so every name for it sees it.
-    fn write_into_book(book:&Value,key:&str,replacement:Option<Value>)->bool {
+    pub(super) fn write_into_book(book:&Value,key:&str,replacement:Option<Value>)->bool {
         let (Value::Mutable(cell,_)|Value::Shared(cell))=book else{return false};
         let mut held=cell.borrow_mut();
         let Value::Dict(entries)=&mut *held else{return false};
@@ -1153,6 +1169,10 @@ impl<'a> Machine<'a> {
     /// The frame a cell stands in and its place there: the name a
     /// routine reaches, found from where its calls stand.
     pub(super) fn cell_place(&self,items:&[Value])->Option<(Rc<Env>,usize)> {
+        if let [Value::Bound(_, room), Value::Small(at), Value::Flag(true)] = items {
+            let at = usize::try_from(*at).ok()?;
+            return (at < room.cells.borrow().len()).then(|| (room.clone(), at));
+        }
         let [Value::Bound(code,room),Value::Small(which)]=items else{return None};
         let address=code.reaching.get(usize::try_from(*which).ok()?)?;
         let mut frame=self.standing_under(code,room);
@@ -1411,6 +1431,7 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        let value = if self.table.has_any("ext.stmt.class.builder") { value.settled() } else { value };
         if let Value::Wrapped(9, binding) = &value {
             if let [Value::Blueprint(defining), instance] = binding.as_slice() {
                 let actual = match instance { Value::Thing(t) => t.blueprint().clone(), Value::Blueprint(b) => b.clone(), _ => return Err(self.class_unready()) };
@@ -1502,7 +1523,9 @@ impl<'a> Machine<'a> {
                 if key==self.detail("descriptor.delete"){return Ok(Self::wrap(34,parts.as_ref().clone()));}
             }
         }
-        if let Value::Intrinsic(Prim::SortOf, _) = &value {
+        if matches!(&value, Value::Intrinsic(Prim::SortOf, _))
+            || (self.table.has_any("ext.stmt.class.builder") && (matches!(&value, Value::Blueprint(b) if self.builds_classes(b) || Self::native_word(b).is_some_and(|word| self.table.prims.get(&word) == Some(&Prim::SortOf)))
+                || self.kind_spelling(&value).is_some_and(|word| self.table.prims.get(word.as_ref()) == Some(&Prim::SortOf)))) {
             let operation = [("allocate", 70), ("call", 71), ("prepare", 72), ("get", 10), ("set", 11), ("remove", 12)]
                 .into_iter().find_map(|(part, tag)| (key == self.detail(part)).then_some(tag));
             if let Some(tag) = operation { return Ok(Self::wrap(tag, Vec::new())); }
@@ -2181,7 +2204,7 @@ impl<'a> Machine<'a> {
         if nowhere{return Err(self.unwritable_attribute(&subject,key));}
         Err(self.absent_attribute(&subject,key))
     }
-    fn parent_from_type(&mut self, parent: &Value) -> Res<Rc<Blueprint>> {
+    pub(super) fn parent_from_type(&mut self, parent: &Value) -> Res<Rc<Blueprint>> {
         let settled = parent.settled();
         if let Value::Blueprint(class) = settled {
             if Self::sealed(&class) { return Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()); }
@@ -2420,6 +2443,11 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
         if op == 13 { return self.class_from_function(values); }
+        if op == 14 { return self.check_class_builtin(); }
+        if op == 15 { return self.prepared_class_book(values.remove(0)); }
+        if op == 16 { return self.dispatch_class_builder(values); }
+        if op == 18 { return self.class_namespace_read(values); }
+        if op == 19 || op == 20 { return self.class_namespace_write(values, op == 20); }
         if matches!(op, 3|4|5|6) {
             if let Some(name) = values.get_mut(1) {
                 if let Some(text @ Value::Text(_)) = Self::underlying(name) { *name = text; }

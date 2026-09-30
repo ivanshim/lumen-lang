@@ -65,6 +65,7 @@ struct Beside {
 
 pub struct Engine<'a> {
     trace_frame: Option<Rc<Instance>>,
+    running_routine: Option<Rc<Routine>>,
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
@@ -1148,6 +1149,7 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             trace_frame: None,
+            running_routine: None,
             inline_comp: None,
             location: None,
             frame_class: None,
@@ -2291,6 +2293,9 @@ impl<'a> Engine<'a> {
     }
 
     fn what_it_spells(&self, v: Value) -> Value {
+        if !self.lang.class_builder.is_empty() {
+            if let Value::Bond(cell) | Value::Binding(cell) = &v { return self.what_it_spells(cell.borrow().clone()); }
+        }
         let Value::Text(name) = &v else { return v };
         if !self.lang.spelled_stands {
             return v;
@@ -3194,9 +3199,28 @@ impl<'a> Engine<'a> {
         let caller_line = self.line;
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
-        let outcome = self.run_instrs(program, &mut frame);
-        if self.class_body_capture.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, program)) {
-            let namespace = self.names_about(program, &frame, Builtin::NearNames)?;
+        let caller_routine = self.running_routine.replace(program.clone());
+        let mut outcome = self.run_instrs(program, &mut frame);
+        self.running_routine = caller_routine;
+        let mut body_namespace = None;
+        if outcome.is_ok() {
+            if let Some((book_name, cell_name)) = &program.class_namespace {
+                let book_at = program.idents.iter().position(|name| name == book_name).expect("class locals slot");
+                let cell_at = cell_name.as_ref().map(|cell_name| program.idents.iter().position(|name| name == cell_name).expect("class cell slot"));
+                let book = match &frame[book_at] { Value::Bond(cell) | Value::Binding(cell) => cell.borrow().clone(), held => held.clone() };
+                let cell = cell_at.map_or(Value::Null, |at| frame[at].clone());
+                if matches!(cell, Value::Bond(_) | Value::Binding(_)) {
+                    let wrapped = Self::adapter(31, vec![cell.clone()]);
+                    let word = self.class_word("classcell").to_owned();
+                    let written = match &book { Value::Collection(storage, _) | Value::Bond(storage) | Value::Binding(storage) => self.book_put(storage, &word, Some(wrapped.clone())), _ => self.dyn_write(&book, &word, Some(wrapped.clone())) };
+                    if let Err(fault) = written { outcome = Err(fault); }
+                    else { self.data.truncate(base); self.data.push(wrapped); }
+                }
+                body_namespace = Some(Value::Tuple(Rc::new(vec![book, cell])));
+            }
+        }
+        if outcome.is_ok() && self.class_body_capture.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, program)) {
+            let namespace = match body_namespace { Some(namespace) => namespace, None => self.names_about(program, &frame, Builtin::NearNames)? };
             if let Some((_, captured)) = &mut self.class_body_capture { *captured = Some(namespace); }
         }
         self.trace_frame = caller_frame;
@@ -7628,6 +7652,9 @@ impl<'a> Engine<'a> {
             let at = self.data.len().saturating_sub(argc);
             if let Some(value) = self.data.get_mut(at) { *value = collection_contents(value); }
         }
+        if !self.lang.class_builder.is_empty() && matches!(op, Action::Grab(_)) {
+            if let Some(value) = self.data.pop() { let value = self.what_it_spells(value); self.data.push(value); }
+        }
         if self.fuller_classes() {
             let result = match op {
                 Action::Grab(name) if self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name.as_ref()))
@@ -7642,6 +7669,7 @@ impl<'a> Engine<'a> {
                 Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc == 3 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
                     let supplied=self.drop_many(argc)?;let mut args=Vec::new();
                     // The property builtin takes its accessors by name; the making of the property sorts them.
+                    if *builtin == Builtin::ClassTool(13) { let made = self.class_work(13, supplied)?; self.data.push(made); return Ok(()); }
                     if *builtin==Builtin::ClassTool(11) && !self.class_word("descriptor.get").is_empty() { let made=self.class_work(11,supplied)?; self.data.push(made); return Ok(()); }
                     for (key,v) in self.call_items(supplied)? {
                         if key.is_some(){let words=&self.lang.call_builtin_amiss;return Err(format!("{}{}{}",words.first().map_or("",String::as_str),name,words.get(1).map_or("",String::as_str)).into());}
@@ -9200,6 +9228,7 @@ impl<'a> Engine<'a> {
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
+                let subject = if !self.lang.class_builder.is_empty() { self.what_it_spells(subject) } else { subject };
                 if let Value::Generator(held) = subject {
                     let opened = self.call_items(args)?;
                     if opened.iter().any(|(name, _)| name.is_some()) { return Err(self.lang.yield_unsupported[0].clone().into()); }
@@ -12595,6 +12624,10 @@ impl<'a> Engine<'a> {
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         if !self.lang.compile_modes.is_empty() && matches!(builtin, Builtin::RunText | Builtin::Eval | Builtin::ReadyText | Builtin::Summon | Builtin::OuterNames | Builtin::NearNames) {
             return self.text_builtin(builtin, name, items);
+        }
+        if let Builtin::ClassTool(job) = builtin {
+            let supplied = items.into_iter().map(|(key, value)| match key { Some(key) => Value::Tie(Rc::new((Value::text(&key), value))), None => value }).collect();
+            return self.class_work(job, supplied).map_err(|fault| { self.carried = Some(fault); self.lang.stream_failed[0].clone() });
         }
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
@@ -18092,6 +18125,11 @@ impl Engine<'_> {
                 arity(0, 1)?;
                 let mut pairs = match args.first() {
                     Some(Value::Map(p)) => p.to_vec(),
+                    Some(value) if !self.lang.class_builder.is_empty() && self.special_value(value, 15).is_none()
+                        && matches!(Self::worth_of(value).map(|worth| worth.contents()), Some(Value::Map(_))) => {
+                        let Some(Value::Map(entries)) = Self::worth_of(value).map(|worth| worth.contents()) else { unreachable!() };
+                        entries.to_vec()
+                    }
                     Some(v) => {
                         let mut pairs = Vec::new();
                         if let Some(keys_method) = self.member_of(v.clone(), "keys")? {
@@ -18906,30 +18944,106 @@ impl Engine<'_> {
         }
     }
 
-    pub(super) fn require_class_builder(&mut self) -> Flow<()> {
-        let Some(word) = self.lang.class_builder.first().cloned() else { return Ok(()) };
-        if self.reading_in.is_none() { return Ok(()); }
+    pub(super) fn require_class_builder(&mut self) -> Flow<Value> {
+        let Some(word) = self.lang.class_builder.first().cloned() else { return Ok(Value::Null) };
+        if let Some(born) = self.running_routine.as_ref().and_then(|program| program.born.clone()) {
+            let dictionary = self.as_builtins_dictionary(born)?;
+            if let Some(value) = self.dyn_lookup(&dictionary.contents(), &word)? { return Ok(value); }
+            return Err(self.lang.class_builder.get(1).cloned().unwrap_or_default().into());
+        }
+        if self.reading_in.is_none() {
+            if let Some(module) = self.modules.get(self.home_module_word()).filter(|_| !self.importing.contains(self.home_module_word())).cloned() {
+                return match self.class_get(module, &word, false) {
+                    Err(fault) if self.attribute_fault(&fault) => Err(self.lang.class_builder.get(1).cloned().unwrap_or_default().into()),
+                    result => result,
+                };
+            }
+            let book = self.natives_book();
+            if let Some(value) = self.book_get(&book, &word)? { return Ok(value); }
+            return Err(self.lang.class_builder.get(1).cloned().unwrap_or_default().into());
+        }
         let outer = self.book_here(true);
         let builtin_word = self.lang.module_builtins.first().cloned().unwrap_or_default();
         if let Some(held) = self.book_builtins(&outer, &builtin_word)? {
             let dictionary = self.as_builtins_dictionary(held)?;
-            if self.dyn_lookup(&dictionary.contents(), &word)?.is_some() { return Ok(()); }
+            if let Some(value) = self.dyn_lookup(&dictionary.contents(), &word)? { return Ok(value); }
         }
         Err(self.lang.class_builder.get(1).cloned().unwrap_or_default().into())
     }
 
-    pub(super) fn build_body_class(&mut self, mut arguments: Vec<Value>) -> Flow<Value> {
-        if arguments.len() < 2 { return Err("TypeError: __build_class__: not enough arguments".into()); }
-        let body = arguments.remove(0).contents();
-        let Value::Routine(program) = body else { return Err("TypeError: __build_class__: func must be a function".into()) };
-        let Value::Text(name) = arguments.remove(0).contents() else { return Err("TypeError: __build_class__: name is not a string".into()) };
-        let previous = self.class_body_capture.replace((program.clone(), None));
-        let call = self.call_held(Value::Routine(program), Vec::new());
+    pub(super) fn class_body_book(&mut self, seed: Value) -> Flow<Value> {
+        let prepared = self.class_body_capture.as_ref().filter(|(body, _)| self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running))).and_then(|(_, book)| book.clone());
+        let captured = self.running_routine.as_ref().and_then(|program| program.globe.clone());
+        let book = prepared.or(captured).unwrap_or_else(|| Value::Bond(self.book_here(true)));
+        if let Value::Map(pairs) = seed.contents() {
+            for (key, value) in pairs.iter() { match &book { Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => self.book_put(cell, &key.plain(), Some(value.clone()))?, _ => self.dyn_write(&book, &key.plain(), Some(value.clone()))? }; }
+        }
+        Ok(book)
+    }
+
+    pub(super) fn class_namespace_read(&mut self, arguments: Vec<Value>) -> Flow<Value> {
+        let found = self.dyn_lookup(&arguments[0].contents(), &arguments[1].plain())?;
+        Ok(Value::Tuple(Rc::new(vec![Value::Flag(found.is_some()), found.unwrap_or(Value::Null)])))
+    }
+
+    pub(super) fn dispatch_class_builder(&mut self, mut arguments: Vec<Value>) -> Flow<Value> {
+        let header = arguments.pop().unwrap_or(Value::Null).contents();
+        let Value::Tuple(header) = header else { return Err(self.class_word("unready").to_string().into()); };
+        let builder = arguments.remove(0);
+        arguments.extend(header.iter().cloned());
+        Ok(self.call_held(builder, arguments)?)
+    }
+
+    pub(super) fn build_body_class(&mut self, arguments: Vec<Value>) -> Flow<Value> {
+        let mut plain = Vec::new(); let mut keywords = Vec::new(); let mut asked = None;
+        for (key, value) in self.call_items(arguments)? {
+            match key {
+                Some(key) if Lang::spells(&self.lang.metaclass_word, &key) => asked = Some(value),
+                Some(key) => keywords.push(Value::Tie(Rc::new((Value::text(&key), value)))),
+                None => plain.push(value),
+            }
+        }
+        if plain.len() < 2 { return Err("TypeError: __build_class__: not enough arguments".into()); }
+        let Value::Routine(program) = plain.remove(0).contents() else { return Err("TypeError: __build_class__: func must be a function".into()) };
+        let Value::Text(name) = plain.remove(0).contents() else { return Err("TypeError: __build_class__: name is not a string".into()) };
+        let requested = asked.as_ref().map(Value::contents);
+        let custom = requested.as_ref().is_some_and(|value| match value {
+            Value::Native(Builtin::SortOf, _) => false,
+            Value::Class(class) => !self.is_metaclass_root(class) && !class.lineage.iter().any(|base| self.is_metaclass_root(base)),
+            _ => true,
+        });
+        let parents = if custom { Vec::new() } else { plain.iter().map(|base| self.type_base(base)).collect::<Flow<Vec<_>>>()? };
+        let factory = if custom { requested } else { self.maker_in_force(asked, &parents)?.map(Value::Class) };
+        let bases = Value::Tuple(Rc::new(plain));
+        let namespace = if let Some(factory) = &factory {
+            let word = self.class_word("prepare").to_owned();
+            match self.class_get(factory.clone(), &word, false) {
+                Ok(prepare) => { let mut given = vec![Value::Text(name.clone()), bases.clone()]; given.extend(keywords.iter().cloned()); self.class_apply(prepare, given)? }
+                Err(fault) if self.attribute_fault(&fault) => Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true),
+                Err(fault) => return Err(fault),
+            }
+        } else { Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true) };
+        let previous = self.class_body_capture.replace((program.clone(), Some(namespace)));
+        let call = self.class_apply(Value::Routine(program), Vec::new());
         let captured = self.class_body_capture.take().and_then(|(_, namespace)| namespace);
         self.class_body_capture = previous;
         call?;
-        let namespace = captured.unwrap_or_else(|| Value::Map(Rc::new(Vec::new().into())));
-        self.class_type(vec![Value::Text(name), Value::Tuple(Rc::new(arguments)), namespace])
+        let captured = captured.unwrap_or_else(|| Value::Map(Rc::new(Vec::new().into())));
+        let (namespace, class_cell) = match captured { Value::Tuple(values) if values.len() == 2 => (values[0].clone(), Some(values[1].clone())), value => (value, None) };
+        let result = if let Some(factory) = factory {
+            let mut given = vec![Value::Text(name.clone()), bases, namespace]; given.extend(keywords); self.class_apply(factory, given)?
+        } else {
+            let Value::Map(entries) = namespace.contents() else { return Err("TypeError: class namespace must be a mapping".into()); };
+            let mut members = entries.iter().map(|(key, value)| (key.plain(), value.clone())).collect::<Vec<_>>();
+            for (key, value) in self.call_items(keywords)? { if let Some(key) = key { members.push((format!("\0keyword:{key}"), value)); } }
+            self.form_class(name.to_string(), parents, members)?
+        };
+        if let Some(Value::Bond(cell) | Value::Binding(cell)) = class_cell {
+            let held = cell.borrow().contents();
+            if matches!(held, Value::Blank) { return Err(format!("RuntimeError: __class__ not set defining '{}'", name).into()); }
+            if !matches!((held, result.contents()), (Value::Class(a), Value::Class(b)) if Rc::ptr_eq(&a, &b)) { return Err(format!("TypeError: __class__ set to a different value defining '{}'", name).into()); }
+        }
+        Ok(result)
     }
 
     /// The dictionary of every builtin word, made once.
