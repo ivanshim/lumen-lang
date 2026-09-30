@@ -1390,6 +1390,15 @@ fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
         .collect()
 }
 
+/// The extension labels' shapes, split once and kept. The reader looks
+/// into this roster for every label a definition holds, which is most
+/// of a definition's reading; splitting it each time costs the run's
+/// whole start.
+fn extension_shapes() -> &'static [(char, &'static str)] {
+    static SHAPES: std::sync::OnceLock<Vec<(char, &'static str)>> = std::sync::OnceLock::new();
+    SHAPES.get_or_init(|| shapes_of(EXT_LABELS))
+}
+
 fn number_shapes() -> Vec<(char, &'static str)> {
     shapes_of(LABELS)
 }
@@ -1406,7 +1415,7 @@ impl<'a> Reader<'a> {
         if let Some(value) = self.0.get(key) {
             return Ok(value);
         }
-        match shapes_of(EXT_LABELS).iter().find(|(_, tag)| *tag == key) {
+        match extension_shapes().iter().find(|(_, tag)| *tag == key) {
             Some(('b', _)) => Ok(&ABSENT_SWITCH),
             Some(('n', _)) => Ok(&ABSENT_COUNT),
             Some(_) => Ok(&ABSENT_LIST),
@@ -1686,10 +1695,10 @@ impl Lang {
                 return Err(format!("missing label '{tag}'"));
             }
         }
-        let extensions = shapes_of(EXT_LABELS);
+        let extensions = extension_shapes();
         let mut strange: Vec<&str> = map
             .keys()
-            .filter(|k| !k.starts_with('$') && !shapes.iter().chain(&extensions).any(|(_, l)| l == k))
+            .filter(|k| !k.starts_with('$') && !shapes.iter().chain(extensions.iter()).any(|(_, l)| l == k))
             .map(String::as_str)
             .collect();
         strange.sort();
