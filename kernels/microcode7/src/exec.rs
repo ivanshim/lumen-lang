@@ -5070,6 +5070,9 @@ impl<'a> Machine<'a> {
                 let under = match plan.extends {
                     false => None,
                     true => match given.next() {
+                        // A class the seal marked unchangeable stands
+                        // as no class's base.
+                        Some(Value::Blueprint(b)) if Self::sealed(&b) => return Err(format!("TypeError: type '{}' is not an acceptable base type", b.name).into()),
                         Some(Value::Blueprint(b)) => Some(b),
                         // The kind primitive, built on: what is being
                         // made is a metaclass, and the things it makes
@@ -5094,6 +5097,7 @@ impl<'a> Machine<'a> {
                 let mut answers = Vec::with_capacity(plan.answers);
                 for _ in 0..plan.answers {
                     match given.next() {
+                        Some(Value::Blueprint(b)) if Self::sealed(&b) => return Err(format!("TypeError: type '{}' is not an acceptable base type", b.name).into()),
                         Some(Value::Blueprint(b)) => answers.push(b),
                         Some(Value::Intrinsic(_,word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => { let kind = self.builder_blueprint(); answers.push(kind); }
                         Some(Value::Intrinsic(_,word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
@@ -13599,7 +13603,11 @@ impl<'a> Machine<'a> {
             Prim::MakeHeir => {
                 n(3)?;
                 let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
-                let ancestor = match &v[1] { Value::Blueprint(old) => old.clone(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
+                let ancestor = match &v[1] {
+                    Value::Blueprint(old) if Self::sealed(old) => return Err(format!("TypeError: type '{}' is not an acceptable base type", old.name)),
+                    Value::Blueprint(old) => old.clone(),
+                    _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                };
                 let members = match &v[2] { Value::Dict(pairs) => pairs, _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
                 let mut holdings = Vec::with_capacity(members.len());
                 for pair in members.iter() {
@@ -13664,6 +13672,33 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Dict(Rc::new(bindings.into()))
+            }
+            Prim::FrameModule => {
+                n(1)?;
+                let Value::Small(depth) = v[0] else { return Err(String::from("TypeError: an integer is required")); };
+                let mut at = self.active_trace.clone();
+                for _ in 0..depth.max(0) {
+                    at = at.and_then(|item| match &item.holds.borrow()[2].1 { Value::Thing(parent) => Some(parent.clone()), _ => None });
+                }
+                let Some(frame) = at else { return Err(String::from("ValueError: call stack is not deep enough")); };
+                let body = frame.holds.borrow().iter().find(|(word, _)| word == "\0environment").map(|(_, held)| held.clone());
+                match body {
+                    Some(Value::Bound(code, _)) => Value::text(&self.routine_home(&code)),
+                    _ => return Err(String::from("ValueError: call stack is not deep enough")),
+                }
+            }
+            Prim::ClassSeal => {
+                n(1)?;
+                match v[0].settled() {
+                    Value::Blueprint(class) => {
+                        let mut entries = class.shared.borrow_mut();
+                        if entries.iter().all(|(word, _)| word != "\0sealed") {
+                            entries.push(("\0sealed".to_string(), Value::Flag(true)));
+                        }
+                        Value::Nil
+                    }
+                    other => return Err(format!("TypeError: expected a class, not {}", other.kind_word())),
+                }
             }
             Prim::ReadMember => {
                 if v.len() < 2 || v.len() > 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }

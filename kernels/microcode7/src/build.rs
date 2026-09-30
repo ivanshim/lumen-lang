@@ -506,7 +506,15 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
     for (begin, end, owner) in suites {
         for offset in begin..end {
             if input[offset].shape == Shape::Bare {
-                output[offset].lexeme = member_spelling(owner, &input[offset].lexeme);
+                // A name the table spells for a builtin is that builtin
+                // in a class body as out of one: the private-name
+                // mangling does not reach it.
+                let word = &input[offset].lexeme;
+                let named = word.starts_with("__") && !word.ends_with("__")
+                    && crate::table::BUILTIN_LABELS.iter().any(|(label, _)| table.spells(label, word));
+                if !named {
+                    output[offset].lexeme = member_spelling(owner, word);
+                }
             }
         }
     }

@@ -75,6 +75,10 @@ pub enum Prim {
     WriteMember,
     ReadMember,
     ProgramNames,
+    /// The name of the module the routine a frame runs was written in.
+    FrameModule,
+    /// Mark a class unchangeable: no member writes, no standing as a base.
+    ClassSeal,
     BringModule,
     SpreadModule,
     /// Whether a member, rather than the pipe, takes the name.
