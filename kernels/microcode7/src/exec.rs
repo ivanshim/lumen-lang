@@ -324,7 +324,7 @@ pub struct Machine<'a> {
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
-    async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>)>,
+    async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
     code_handles: HashMap<usize, (Rc<Routine>, Value)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
@@ -3159,8 +3159,13 @@ impl<'a> Machine<'a> {
             if matches!(source, Value::Iterator(_) | Value::Cursor(_)) && matches!(sent, Value::Nil) { return self.delegated_step(source, sent); }
             let name = if matches!(sent, Value::Nil) { self.table.strings("ext.stmt.class.special")[16].clone() }
                 else { self.table.strings("ext.stmt.yield.send")[0].clone() };
-            let member = self.read_class_member(source.clone(), &name, false)?;
-            let outcome = self.apply_class_member(member, if matches!(sent, Value::Nil) { Vec::new() } else { vec![sent] });
+            let outcome = if matches!(sent, Value::Nil) && matches!(source, Value::Thing(_)) {
+                self.ask_special(source, 16, &[]).map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))
+                    .and_then(|item| item.ok_or_else(|| self.bad_answer().into()))
+            } else {
+                let member = self.read_class_member(source.clone(), &name, false)?;
+                self.apply_class_member(member, if matches!(sent, Value::Nil) { Vec::new() } else { vec![sent] })
+            };
             return match outcome {
                 Ok(item) => Ok(Some(item)),
                 Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => {
@@ -3217,6 +3222,14 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn delegated_fault(&mut self, fault: Escape) -> Escape {
+        match fault {
+            Escape::Error(words) => self.got_away.take()
+                .unwrap_or_else(|| self.as_raised(&words).map(Escape::Thrown).unwrap_or(Escape::Error(words))),
+            other => other,
+        }
+    }
+
     /// A walk let go of: another sleeping body is ended the way a walk
     /// is ended, and a walk of the program's own is told to end where it
     /// knows how, since it may have a last part of its own.
@@ -3224,7 +3237,9 @@ impl<'a> Machine<'a> {
         if let Value::Wrapped(63, parts) = walk {
             if matches!(&parts[0], Value::Iterator(_) | Value::Cursor(_)) { return Ok(()); }
             let name = self.table.strings("ext.stmt.yield.close")[0].clone();
-            match self.read_class_member(parts[0].clone(), &name, false) {
+            let member = self.read_class_member(parts[0].clone(), &name, false);
+            let member = member.map_err(|fault| self.delegated_fault(fault));
+            match member {
                 Ok(member) => { self.apply_class_member(member, Vec::new())?; }
                 Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if t.blueprint().goes_by("AttributeError", false)) => {}
                 Err(away) => return Err(away),
@@ -3579,21 +3594,28 @@ impl<'a> Machine<'a> {
                     let walk = Value::Wrapped(63, parts.clone());
                     let source = parts[0].clone();
                     if self.is_exit(&value) {
-                        self.end_delegate(&walk)?;
+                        let ending = self.end_delegate(&walk);
                         generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None;
+                        let ending = match ending {
+                            Err(Escape::Error(words)) => Err(self.got_away.take().unwrap_or_else(|| self.as_raised(&words).map(Escape::Thrown).unwrap_or(Escape::Error(words)))),
+                            other => other,
+                        };
+                        match ending {
+                            Ok(()) => {}
+                            Err(Escape::Thrown(fault)) => hurled = Some(fault),
+                            Err(away) => return Err(away),
+                        }
                     } else {
                         let name = self.table.strings("ext.stmt.yield.throw")[0].clone();
                         let member = self.read_class_member(source, &name, false);
-                        let member = match member {
-                            Err(Escape::Error(words)) => Err(self.as_raised(&words).map(Escape::Thrown).unwrap_or(Escape::Error(words))),
-                            other => other,
-                        };
+                        let member = member.map_err(|fault| self.delegated_fault(fault));
                         match member {
                             Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if t.blueprint().goes_by("AttributeError", false)) => {
                                 generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None;
                             }
                             Err(away) => return Err(away),
-                            Ok(member) => match self.apply_class_member(member, if given.is_empty() { vec![value] } else { given.to_vec() }) {
+                            Ok(member) => match self.apply_class_member(member, if given.is_empty() { vec![value] } else { given.to_vec() })
+                                .map_err(|fault| self.delegated_fault(fault)) {
                                 Ok(item) => return Ok(Some(item)),
                                 Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => {
                                     if let Value::Shared(returned) = &parts[1] { *returned.borrow_mut() = self.read_class_member(fault, "value", false)?; }
@@ -7598,8 +7620,9 @@ impl<'a> Machine<'a> {
                 if matches!(&parts[3], Value::Shared(stage) if matches!(*stage.borrow(), Value::Small(2))) { return Ok(Value::Nil); }
                 let exit = self.exit_value().ok_or_else(|| self.bad_answer())?;
                 return match self.drive_async_with(&parts, Value::Nil, Some(exit)) {
-                    Ok(AsyncStep::Finished(None)) => Ok(Value::Nil),
-                    Err(Escape::Thrown(value)) if self.is_exit(&value) || matches!(&value, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => Ok(Value::Nil),
+                    Ok(AsyncStep::Finished(_)) => Ok(Value::Nil),
+                    Err(Escape::Thrown(value)) if self.is_exit(&value) || self.async_exhausted(&Escape::Thrown(value.clone()))
+                        || matches!(&value, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => Ok(Value::Nil),
                     Ok(_) => Err(String::from("RuntimeError: coroutine ignored GeneratorExit").into()),
                     Err(away) => Err(away),
                 };
@@ -9121,7 +9144,7 @@ impl<'a> Machine<'a> {
         state.trace_state = self.activation(program, &state.frame, None);
         let walk = Rc::new(RefCell::new(state));
         if !self.table.strings("ext.stmt.async.generator.methods").is_empty() && program.flags & 512 != 0 {
-            self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false))));
+            self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false)), Rc::new(StateCell::new(false))));
         }
         if crate::ghost::bidding() {
             crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
@@ -9212,7 +9235,7 @@ impl<'a> Machine<'a> {
             suspension.trace_state = self.activation(&program, &frame, None);
             let walk = Rc::new(RefCell::new(suspension));
             if !self.table.strings("ext.stmt.async.generator.methods").is_empty() && program.flags & 512 != 0 {
-                self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false))));
+                self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false)), Rc::new(StateCell::new(false))));
             }
             if crate::ghost::bidding() {
                 crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
@@ -9328,7 +9351,7 @@ impl<'a> Machine<'a> {
                         suspension.trace_state = self.activation(&p, &f, None);
                         let walk = Rc::new(RefCell::new(suspension));
                         if !self.table.strings("ext.stmt.async.generator.methods").is_empty() && p.flags & 512 != 0 {
-                            self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false))));
+                            self.async_generators.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), Rc::new(RefCell::new(None)), Rc::new(StateCell::new(false)), Rc::new(StateCell::new(false))));
                         }
                         if crate::ghost::bidding() {
                             crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
@@ -11630,7 +11653,7 @@ impl<'a> Machine<'a> {
     pub(super) fn async_running(&self, value: &Value) -> bool {
         let Value::Generator(body) = value else { return false };
         self.async_generators.get(&(Rc::as_ptr(body) as usize))
-            .is_some_and(|(_, owner, _)| owner.borrow().is_some())
+            .is_some_and(|(_, owner, _, _)| owner.borrow().is_some())
     }
 
     fn operation_answer(&mut self, outcome: Res<AsyncStep>) -> Res<Value> {
@@ -11656,15 +11679,17 @@ impl<'a> Machine<'a> {
             let suffix = if *operation < 2 { "__anext__()/asend()" } else { "aclose()/athrow()" };
             return Err(format!("RuntimeError: cannot reuse already awaited {suffix}").into());
         }
-        if phase == 0 && *operation >= 2 && thrown.is_none() && !matches!(sent, Value::Nil) {
-            return Err(String::from("RuntimeError: can't send non-None value to a just-started coroutine").into());
-        }
-        let (_, claim, closing) = self.async_generators.get(&(Rc::as_ptr(generator) as usize))
+        let (_, claim, closing, driving) = self.async_generators.get(&(Rc::as_ptr(generator) as usize))
             .cloned().ok_or_else(|| self.bad_answer())?;
-        if claim.borrow().as_ref().is_some_and(|active| !Rc::ptr_eq(active, stage)) {
+        if phase == 0 && claim.borrow().as_ref().is_some_and(|active| !Rc::ptr_eq(active, stage)) {
             *stage.borrow_mut() = Value::Small(2);
             let verb = match operation { 2 => "athrow", 3 => "aclose", _ => "anext" };
             return Err(format!("RuntimeError: {verb}(): asynchronous generator is already running").into());
+        }
+        if driving.get() {
+            if *operation != 2 || phase != 1 || thrown.is_some() { *stage.borrow_mut() = Value::Small(2); }
+            *claim.borrow_mut() = None;
+            return Err("ValueError: async generator already executing".to_string().into());
         }
         let (ended, begun) = match generator.try_borrow() {
             Ok(held) => (held.ended, held.begun),
@@ -11674,7 +11699,13 @@ impl<'a> Machine<'a> {
                 return Err("ValueError: async generator already executing".to_string().into());
             }
         };
-        *claim.borrow_mut() = Some(stage.clone());
+        if !ended && !closing.get() && phase == 0 && *operation >= 2 && thrown.is_none() && !matches!(sent, Value::Nil) {
+            return Err(String::from("RuntimeError: can't send non-None value to a just-started coroutine").into());
+        }
+        let injected = thrown.is_some();
+        if phase == 0 { *claim.borrow_mut() = Some(stage.clone()); }
+        *stage.borrow_mut() = Value::Small(1);
+        driving.set(true);
         let outcome = (|| {
             if ended {
                 if let Some(value) = thrown {
@@ -11712,14 +11743,22 @@ impl<'a> Machine<'a> {
                 Ok(Some(item)) if generator.try_borrow().is_ok_and(|held| held.inner.is_some()) => Ok(AsyncStep::Waiting(item)),
                 Ok(Some(_)) if *operation == 3 => Err(self.table.single("ext.stmt.async.generator.close.ignored").unwrap_or_default().to_owned().into()),
                 Ok(Some(item)) => Ok(AsyncStep::Finished(Some(item))),
-                Ok(None) if *operation >= 2 => Ok(AsyncStep::Finished(None)),
+                Ok(None) if *operation == 3 => Ok(AsyncStep::Finished(None)),
                 Ok(None) => Err(self.async_fault(&self.table.strings("ext.stmt.async.stop")[0].clone(), Vec::new())),
                 Err(Escape::Thrown(fault)) if *operation == 3 && self.is_exit(&fault) => Ok(AsyncStep::Finished(None)),
                 Err(away) => Err(away),
             }
         })();
-        if matches!(outcome, Ok(AsyncStep::Waiting(_))) { *stage.borrow_mut() = Value::Small(1); }
-        else { *stage.borrow_mut() = Value::Small(2); *claim.borrow_mut() = None; }
+        driving.set(false);
+        if matches!(outcome, Ok(AsyncStep::Waiting(_))) {
+            if !matches!(*stage.borrow(), Value::Small(2)) { *stage.borrow_mut() = Value::Small(1); }
+        } else {
+            // Resuming an athrow uses the generator's send/unwrap path;
+            // initial throw, injected throw, and already-ended frames close it.
+            let continuing_throw = *operation == 2 && phase == 1 && !injected && !ended;
+            if !continuing_throw { *stage.borrow_mut() = Value::Small(2); }
+            *claim.borrow_mut() = None;
+        }
         outcome
     }
 
@@ -11734,7 +11773,7 @@ impl<'a> Machine<'a> {
             return Ok(offered);
         }
         let native = matches!(&offered, Value::Iterator(_) | Value::Cursor(_) | Value::Wrapped(62, _));
-        if !native && self.appointed(&offered, 16).is_none() {
+        if !native && self.appointment(&offered, 16).is_none() {
             return Err(format!("TypeError: __await__() returned non-iterator of type '{}'", offered.kind_word()).into());
         }
         Ok(Value::Wrapped(63, Rc::new(vec![offered, Value::Shared(Rc::new(RefCell::new(Value::Nil))),
