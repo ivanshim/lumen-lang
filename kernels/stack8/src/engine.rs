@@ -6603,13 +6603,15 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
             }
         }
-        if let Value::Fields(o) = a {
-            return self.special_dyad(op, &Value::Map(Rc::new(Self::fields_entries(o).into())), b);
-        }
-        // The view standing on the right of the sign is that dictionary
-        // just the same, so `{} == f.__dict__` answers as CPython does.
-        if let Value::Fields(o) = b {
-            return self.special_dyad(op, a, &Value::Map(Rc::new(Self::fields_entries(o).into())));
+        if !matches!(op, Action::Same | Action::Unsame) || self.lang.identity_not.is_empty() {
+            if let Value::Fields(o) = a {
+                return self.special_dyad(op, &Value::Map(Rc::new(Self::fields_entries(o).into())), b);
+            }
+            // The view standing on the right is also a dictionary for
+            // operations that inspect its members.
+            if let Value::Fields(o) = b {
+                return self.special_dyad(op, a, &Value::Map(Rc::new(Self::fields_entries(o).into())));
+            }
         }
         // Text on the left of the remainder sign fills its own marks,
         // which is what the left side's own method does in the
@@ -7565,9 +7567,6 @@ impl<'a> Engine<'a> {
 
     fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Value::Fields(o) = value {
-            if matches!(self.module_holding(&Value::Object(o.clone())).as_deref(), Some(name) if name != "builtins") {
-                return Err(self.core_fault("core.uniterable", &value.core_kind()));
-            }
             return Ok(Self::fields_entries(o).into_iter().map(|(key, _)| match key {
                 Value::Hashed(pair) => pair.0.clone(), plain => plain,
             }).collect());
@@ -10927,6 +10926,7 @@ impl<'a> Engine<'a> {
                     (Value::Bytes(x, ..), Value::Bytes(y, ..)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+                    (Value::Fields(x), Value::Fields(y)) => Rc::ptr_eq(x, y),
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Routine(x), Value::Routine(y)) => Rc::ptr_eq(x,y),
@@ -12349,6 +12349,9 @@ impl<'a> Engine<'a> {
             Value::Cursor(_) => self.core_members(value),
             Value::Set(s) => Ok(s.borrow().items()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| match k { Value::Hashed(p) => p.0.clone(), _ => k.clone() }).collect()),
+            Value::Fields(owner) => Ok(Self::fields_entries(owner).into_iter().map(|(key, _)| match key {
+                Value::Hashed(pair) => pair.0.clone(), plain => plain,
+            }).collect()),
             Value::Bytes(row, ..) => Ok(row.borrow().iter().map(|&b| Value::Small(b as i64)).collect()),
             Value::Words(items, _) => Ok(items.iter().map(|s| Value::text(s)).collect()),
             Value::Codepoints(row) => Ok(row.iter().map(|&n| Value::from_codes(vec![n])).collect()),
@@ -17694,9 +17697,6 @@ impl Engine<'_> {
 
     fn core_members(&mut self, v: &Value) -> Res<Vec<Value>> {
         if let Value::Fields(owner) = v {
-            if matches!(self.module_holding(&Value::Object(owner.clone())).as_deref(), Some(name) if name != "builtins") {
-                return Err(self.core_fault("core.uniterable", &v.core_kind()));
-            }
             return Ok(Self::fields_entries(owner).into_iter().map(|(key, _)| match key {
                 Value::Hashed(pair) => pair.0.clone(), plain => plain,
             }).collect());
