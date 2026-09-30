@@ -709,7 +709,7 @@ impl<'a> Engine<'a> {
                 }
                 44 => {
                     if self.call_items(args.clone())?.iter().any(|(key, _)| key.is_some()) {
-                        return Err(format!("TypeError: {}() takes no keyword arguments", self.class_word("descriptor.get")).into());
+                        return Err(format!("TypeError: wrapper {}() takes no keyword arguments", self.class_word("descriptor.get")).into());
                     }
                     let count = args.len().saturating_sub(1);
                     if count == 0 { return Err(format!("TypeError: {} expected at least 1 argument, got 0", self.class_word("descriptor.get")).into()); }

@@ -716,7 +716,7 @@ impl<'a> Machine<'a> {
                     4|8=>self.apply_class_member(kept[0].clone(),values),
                     73 => {
                         if !self.open_arguments(values.clone())?.1.is_empty() {
-                            return Err(format!("TypeError: {}() takes no keyword arguments", self.detail("descriptor.get")).into());
+                            return Err(format!("TypeError: wrapper {}() takes no keyword arguments", self.detail("descriptor.get")).into());
                         }
                         let count = values.len().saturating_sub(1);
                         if count == 0 { return Err(format!("TypeError: {} expected at least 1 argument, got 0", self.detail("descriptor.get")).into()); }
