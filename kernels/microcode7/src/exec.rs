@@ -202,13 +202,13 @@ impl Suspension {
     /// finalisation the language asks for when it is let go.
     pub(crate) fn asleep(&self) -> bool {
         self.begun && !self.ended && self.of.is_some()
-            && self.owed.iter().any(|owed| matches!(owed, Owed::Warding(..) | Owed::Lastly(..)))
     }
 
     /// Every knot the sleeping body holds: its frame first.
     pub(crate) fn reaches(&self, out: &mut Vec<crate::ghost::Knot>) {
         use crate::ghost::Knot;
         out.push(Knot::Frame(self.frame.clone()));
+        if let Some(body) = &self.of { out.push(Knot::Held(Value::Routine(body.clone()))); }
         if let Some(thing) = &self.trace_state { out.push(Knot::Held(Value::Thing(thing.clone()))); }
         for v in &self.found { out.push(Knot::Held(v.clone())); }
         out.push(Knot::Held(self.result.clone()));
@@ -220,12 +220,43 @@ impl Suspension {
         if let Some((cell, _)) = &self.overseen { out.push(Knot::Held(Value::Shared(cell.clone()))); }
         for v in &self.holding { out.push(Knot::Held(v.clone())); }
         if let Some(v) = &self.stepping_through { out.push(Knot::Held(v.clone())); }
+        let mut plans = std::collections::HashSet::new();
+        let mut shared_forms = std::collections::HashSet::new();
         for owed in &self.owed {
-            if let Owed::Restore(outcome, _) = owed {
-                match &**outcome {
+            match owed {
+                Owed::Find(form) => crate::ghost::form_holds(form, out),
+                Owed::Apply(Callee::Code(target), _) => crate::ghost::form_holds(target, out),
+                Owed::Into(callee, form, _) => {
+                    if let Callee::Code(target) = callee { crate::ghost::form_holds(target, out); }
+                    crate::ghost::form_holds(form, out);
+                }
+                Owed::Select(a, b) => {
+                    crate::ghost::form_holds(a, out);
+                    crate::ghost::form_holds(b, out);
+                }
+                Owed::Test(form) | Owed::Decide(form) | Owed::Turn(form, _) => {
+                    if shared_forms.insert(Rc::as_ptr(form) as usize) { crate::ghost::form_holds(form, out); }
+                }
+                Owed::Truth(_, form) => crate::ghost::form_holds(form, out),
+                Owed::Warding(plan, ..) | Owed::Lastly(plan, ..) => {
+                    if plans.insert(Rc::as_ptr(plan) as usize) {
+                        for clause in &plan.clauses {
+                            if let Some(choices) = &clause.choices {
+                                for choice in choices { crate::ghost::form_holds(choice, out); }
+                            }
+                            crate::ghost::form_holds(&clause.body, out);
+                        }
+                        if let Some(last) = &plan.last { crate::ghost::form_holds(last, out); }
+                        if let Some(otherwise) = &plan.otherwise { crate::ghost::form_holds(otherwise, out); }
+                    }
+                }
+                Owed::Restore(outcome, _) => match &**outcome {
                     Ok(v) | Err(Escape::Thrown(v)) | Err(Escape::Yield(v)) => out.push(Knot::Held(v.clone())),
                     Err(_) => {}
-                }
+                },
+                Owed::Store(_) | Owed::Drop | Owed::Apply(Callee::Prim(..), _)
+                | Owed::Call(_) | Owed::HandOut | Owed::From | Owed::Finish
+                | Owed::Unhold(..) | Owed::Stop => {}
             }
         }
     }
@@ -290,7 +321,7 @@ pub struct Machine<'a> {
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
-    code_handles: HashMap<usize, (Rc<Routine>, Value)>,
+    code_handles: HashMap<usize, Weak<Vec<Value>>>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     imported: HashMap<String, Value>,
@@ -1946,6 +1977,7 @@ impl<'a> Machine<'a> {
             let _ = self.invoke(program, self.outermost.clone(), vec![Value::Thing(thing)]);
         }
         self.things.borrow_mut().clear();
+        crate::ghost::release_all_anchors();
     }
 
     /// Whatever is still being kept when the run ends is let go,
@@ -2020,18 +2052,37 @@ impl<'a> Machine<'a> {
         loop {
             let (farewells, walks, notices) = crate::ghost::gather();
             if farewells.is_empty() && walks.is_empty() && notices.is_empty() { return; }
-            for (thing, farewell) in farewells {
-                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
-            }
             for (notify, bearer) in notices {
                 self.call_unheard(notify, vec![bearer], "callback");
             }
+            for (thing, farewell) in farewells {
+                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
+            }
             for walk in walks {
-                if let Err(away) = self.shut_generator(&walk) {
+                if let Err(away) = self.shut_departed_generator(&walk) {
                     self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
                 }
             }
         }
+    }
+
+    /// The globals that made a discarded Python generator remain in
+    /// force while it is shut, including one made by an exec namespace
+    /// that is being collected in this round.
+    fn shut_departed_generator(&mut self, walk: &Rc<RefCell<Suspension>>) -> Res<Value> {
+        let book = if self.table.single("ext.builtin.exceptions.traceback").is_none() { None } else {
+            walk.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| {
+                self.constructor_world(body).or_else(|| match body.globe.as_ref() {
+                    Some(Value::Shared(cell) | Value::Mutable(cell, _)) => Some(cell.clone()),
+                    _ => None,
+                })
+            }))
+        };
+        let saved = self.world_book.clone();
+        if let Some(book) = book { self.world_book = Some(book); }
+        let outcome = self.shut_generator(walk);
+        self.world_book = saved;
+        outcome
     }
 
     /// A call the run makes on its own account, whose raised value no
@@ -2066,7 +2117,19 @@ impl<'a> Machine<'a> {
     fn reap_rounds(&mut self) -> usize {
         use crate::ghost::{Knot, Web};
         loop {
-            let mut web = Web::from_notable();
+            let books = self.readings.iter().flat_map(|book| {
+                std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
+                    .chain(book.outer.iter().cloned().map(|outer| Knot::Held(Value::Shared(outer))))
+            });
+            let bookkeeping = self.routine_members.iter().flat_map(|(function, holder)| [Knot::Held(function.clone()), Knot::Held(Value::Thing(holder.clone()))])
+                .chain(books).chain(crate::ghost::anchored_values()).collect();
+            let live = self.imported.values().chain(self.memo.values()).chain(self.fault_kinds.values())
+                .chain(&self.holding_fault).cloned().map(Knot::Held)
+                .chain(std::iter::once(Knot::Frame(self.outermost.clone())))
+                .chain(self.world_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
+                .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
+                .collect();
+            let mut web = Web::from_notable(bookkeeping, live);
             let lost = web.unreachable();
             let mut bade = false;
             for knot in &lost {
@@ -2074,13 +2137,18 @@ impl<'a> Machine<'a> {
                     Knot::Held(Value::Thing(thing)) => {
                         let Some(farewell) = crate::ghost::farewell_of(&thing.of) else { continue };
                         if crate::ghost::first_farewell(thing) {
+                            crate::ghost::invalidate_thing(thing);
+                            self.attend_to_gone();
                             bade = true;
                             self.call_unheard(farewell, vec![Value::Thing(thing.clone())], "deallocator");
+                            crate::ghost::release_anchor(thing);
                         }
                     }
                     Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |w| w.asleep()) => {
+                        crate::ghost::invalidate_walk(walk);
+                        self.attend_to_gone();
                         bade = true;
-                        if let Err(away) = self.shut_generator(walk) {
+                        if let Err(away) = self.shut_departed_generator(walk) {
                             self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
                         }
                     }
@@ -2089,6 +2157,7 @@ impl<'a> Machine<'a> {
             }
             if bade { continue; }
             let found = lost.len();
+            self.routine_members.retain(|(function, _)| !web.unowned(function));
             let taken = Web::cut(&lost);
             drop(lost);
             drop(web);
@@ -3487,7 +3556,9 @@ impl<'a> Machine<'a> {
     /// over take nothing in: what is thrown at them is raised on the spot.
     fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
         let previous_reading = self.reading_now;
-        if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) { self.reading_now = Some(book); }
+        if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) {
+            if book < self.readings.len() { self.reading_now = Some(book); }
+        }
         let chosen = generator.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| self.constructor_world(body)));
         let previous_world = chosen.map(|book| self.world_book.replace(book));
         let result = self.step_into_body(generator, sent, hurled, given);
@@ -4141,14 +4212,18 @@ impl<'a> Machine<'a> {
 
     pub(super) fn code_handle(&mut self, body: &Rc<Routine>) -> Value {
         let address = Rc::as_ptr(body) as usize;
-        if let Some((_, handle)) = self.code_handles.get(&address) { return handle.clone(); }
+        if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
+            return Value::Wrapped(7, parts);
+        }
         let origin = self.written_over.values().find(|entry| Rc::ptr_eq(&entry.2, body))
             .map(|entry| entry.4.clone()).filter(|source| !Rc::ptr_eq(source, body));
         let handle = match origin {
             Some(source) => self.code_handle(&source),
             None => Value::Wrapped(7, Rc::new(vec![Value::Routine(body.clone())])),
         };
-        self.code_handles.insert(address, (body.clone(), handle.clone()));
+        if let Value::Wrapped(7, parts) = &handle {
+            self.code_handles.insert(address, Rc::downgrade(parts));
+        }
         handle
     }
 
@@ -5474,6 +5549,7 @@ impl<'a> Machine<'a> {
                     let thing = Rc::new(Thing {reclassified: RefCell::new(None), of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
                     if crate::ghost::bidding() && crate::ghost::farewell_of(&class).is_some() {
                         crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(&thing)));
+                        if self.table.single("ext.builtin.exceptions.traceback").is_some() { crate::ghost::anchor(&thing); }
                     }
                     if self.table.single("ext.stmt.class.destructor").is_some() {
                         self.things.borrow_mut().push(Rc::downgrade(&thing));
@@ -9055,7 +9131,7 @@ impl<'a> Machine<'a> {
                     break Ok(v);
                 }
                 Ok(Next::Jump(p, f)) => {
-                    if !p.frameless && self.table.strings("ext.builtin.exceptions.traceback").len() > 15 {
+                    if !p.frameless && self.table.single("ext.builtin.exceptions.traceback").is_some() {
                         break self.drive(p, f);
                     }
                     if p.generator && self.table.flag("ext.stmt.yield.suspends") {
