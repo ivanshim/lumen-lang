@@ -709,10 +709,10 @@ impl<'a> Machine<'a> {
             locations.resize(keys.len(), Value::Nil);
             holds.extend(keys.iter().cloned().zip(locations));
             let layout: Vec<Value> = keys.iter().map(|k| Value::text(k)).collect();
-            holds.push(("\0syntax-layout".to_string(), Value::Tuple(Rc::new(layout))));
+            holds.push(("\0syntax-layout".to_string(), Value::tuple(layout)));
         }
         if self.stands_under(&kind, 17) {
-            let status = if row.is_empty() { Value::Nil } else if row.len() == 1 { row[0].clone() } else { Value::Tuple(Rc::new(row.clone())) };
+            let status = if row.is_empty() { Value::Nil } else if row.len() == 1 { row[0].clone() } else { Value::tuple(row.clone()) };
             holds.push((String::from("code"), status));
         }
         if self.stands_under(&kind, 19) {
@@ -728,7 +728,7 @@ impl<'a> Machine<'a> {
             holds.push((String::from("filename2"), second_file));
             if row.len() >= 3 && row.len() <= 5 && !matches!(row[2], Value::Nil) { row.resize(2, Value::Nil); }
         }
-        let values = Value::Arguments(Rc::new(row));
+        let values = Value::Arguments(crate::tuples::Sequence::plain(row));
         let seeded = [
             ("ext.builtin.exceptions.args", values.clone()), ("ext.builtin.exceptions.cause", because),
             ("ext.builtin.exceptions.context", Value::Nil), ("ext.builtin.exceptions.suppress", Value::Flag(false)),
@@ -898,7 +898,7 @@ impl<'a> Machine<'a> {
             _ => kind,
         };
         let how_many = members.len();
-        let members = Value::Tuple(Rc::new(members));
+        let members = Value::tuple(members);
         let made = self.make_fault(kind, vec![heading.clone(), members.clone()], Value::Nil);
         if let Value::Thing(thing) = &made {
             let mut holds = thing.holds.borrow_mut();
@@ -969,7 +969,7 @@ impl<'a> Machine<'a> {
         let mut target = target.holds.borrow_mut();
         for key in labels.iter().filter_map(|label| self.table.single(label)) {
             let Some((_, held)) = source.iter().find(|(k, _)| k == key) else { continue };
-            let held = match held { Value::Vector(items) => Value::Vector(Rc::new(items.to_vec())), other => other.clone() };
+            let held = match held { Value::Vector(items) => Value::Vector(crate::tuples::Sequence::plain(items.to_vec())), other => other.clone() };
             match target.iter_mut().find(|(k, _)| k == key) {
                 Some(entry) => entry.1 = held,
                 None => target.push((key.to_string(), held)),
@@ -1059,7 +1059,7 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Nil);
             }
             let key = self.table.single("ext.builtin.exceptions.args").unwrap_or_default().to_owned();
-            let row = Value::Tuple(Rc::new(given.to_vec()));
+            let row = Value::tuple(given.to_vec());
             return self.alter_class_member(Value::Thing(thing), &key, Some(row), true);
         }
         let unready = self.argument_fault("ext.builtin.exceptions.unready", None);
@@ -1071,7 +1071,7 @@ impl<'a> Machine<'a> {
             let given_args = holding.iter().find(|(key, _)| key == args_word).map(|(_, value)| match value {
                 Value::Arguments(row) => Value::Tuple(row.clone()),
                 other => other.clone(),
-            }).unwrap_or(Value::Tuple(Rc::new(vec![])));
+            }).unwrap_or(Value::tuple(vec![]));
             let mut inputs = match given_args { Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
             if self.stands_under(&kind, 20) {
                 if let Some((_, file)) = holding.iter().find(|(key, _)| key == "filename") {
@@ -1087,9 +1087,9 @@ impl<'a> Machine<'a> {
             let attribute_kind = self.stands_under(&kind, 12);
             let excluded = [args_word, "__traceback__", "__cause__", "__context__", "__suppress_context__", "__notes__", "name", "obj", "errno", "strerror", "filename", "filename2", "encoding", "object", "start", "end", "reason", "msg", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line", "path", "name_from", "code", "value", "_metadata"];
             let extras: Vec<_> = holding.iter().filter(|(key, value)| !key.starts_with('\0') && !excluded.contains(&key.as_str()) || ((import_kind && (key == "name" || key == "path")) || attribute_kind && key == "name") && !matches!(value, Value::Nil)).map(|(key, item)| (Value::text(key), item.clone())).collect();
-            let mut result = vec![Value::Blueprint(kind), Value::Tuple(Rc::new(inputs))];
+            let mut result = vec![Value::Blueprint(kind), Value::tuple(inputs)];
             if !extras.is_empty() { result.push(Value::Dict(Rc::new(extras.into()))); }
-            return Ok(Value::Tuple(Rc::new(result)));
+            return Ok(Value::tuple(result));
         }
         if self.table.single("ext.builtin.exceptions.setstate") == Some(word) {
             let [value] = given else { return Err(String::from("TypeError: state is not a dictionary").into()) };
@@ -1107,7 +1107,7 @@ impl<'a> Machine<'a> {
             match holds.iter_mut().find(|(k, _)| *k == key) {
                 Some((_, Value::Vector(items))) => Rc::make_mut(items).push(given[0].clone()),
                 Some(_) => return Err(String::from("TypeError: __notes__ is not a list").into()),
-                None => holds.push((key, Value::Vector(Rc::new(given.to_vec())))),
+                None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(given.to_vec())))),
             }
             return Ok(Value::Nil);
         }
@@ -1139,7 +1139,7 @@ impl<'a> Machine<'a> {
         };
         let (passed, stayed) = self.sieve_faults(whole, &sieve)?;
         let both = self.table.single("ext.builtin.exceptions.group.split") == Some(word);
-        Ok(if both { Value::Tuple(Rc::new(vec![passed.unwrap_or(Value::Nil), stayed.unwrap_or(Value::Nil)])) } else { passed.unwrap_or(Value::Nil) })
+        Ok(if both { Value::tuple(vec![passed.unwrap_or(Value::Nil), stayed.unwrap_or(Value::Nil)]) } else { passed.unwrap_or(Value::Nil) })
     }
 
     /// Writing a cause onto a fault, nil or not, hushes its context.
@@ -2956,7 +2956,7 @@ impl<'a> Machine<'a> {
         }
         if self.has_class_order() {
             if slot.ident.as_ref()==self.detail("root") {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
-            if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)])));}
+            if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)]).into()));}
         }
         if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
         Err(format!("Undefined variable: {}", slot.ident))
@@ -4173,7 +4173,7 @@ impl<'a> Machine<'a> {
             .map(|entry| entry.4.clone()).filter(|source| !Rc::ptr_eq(source, body));
         let handle = match origin {
             Some(source) => self.code_handle(&source),
-            None => Value::Wrapped(7, Rc::new(vec![Value::Routine(body.clone())])),
+            None => Value::Wrapped(7, Rc::new(vec![Value::Routine(body.clone())]).into()),
         };
         self.code_handles.insert(address, (body.clone(), handle.clone()));
         handle
@@ -4713,7 +4713,7 @@ impl<'a> Machine<'a> {
                     Value::Span(bounds) if self.table.has_any("ext.builtin.slice") => {
                         let settled = self.span_settled(bounds);
                         if let Some(away) = self.got_away.take() { return Err(away); }
-                        Value::Span(Rc::new(settled?))
+                        Value::Span(crate::tuples::Sequence::plain(settled?))
                     }
                     _ => named,
                 };
@@ -4761,8 +4761,8 @@ impl<'a> Machine<'a> {
                     Value::Vector(items) if matches!(at, Value::Span(_)) && self.table.has_any("ext.builtin.slice") => {
                         let Value::Span(bounds) = &at else { unreachable!() };
                         let (_, picked, _) = self.span_selection(bounds, items.len())?;
-                        let retained = items.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, v)| v.clone()).collect();
-                        Value::Vector(Rc::new(retained))
+                        let retained: Vec<_> = items.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(crate::tuples::Sequence::plain(retained))
                     }
                     // A tuple and text hold their places for good: a
                     // language of sequences refuses to take one out of
@@ -4780,15 +4780,15 @@ impl<'a> Machine<'a> {
                             else { return Err(self.key_refused(held, &at).into()) };
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                         if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(held).into()); }
-                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, x)| x.clone()).collect();
-                        Value::Vector(Rc::new(retained))
+                        let retained: Vec<_> = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, x)| x.clone()).collect();
+                        Value::Vector(crate::tuples::Sequence::plain(retained))
                     }
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &at { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                         if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
-                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
-                        Value::Vector(Rc::new(retained))
+                        let retained: Vec<_> = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(crate::tuples::Sequence::plain(retained))
                     }
                     // A changeable row of bytes parts with a place, or
                     // with a run of them, where it stands; a fixed row
@@ -5312,7 +5312,7 @@ impl<'a> Machine<'a> {
                     let (given, keywords) = self.open_arguments(raw)?;
                     if given.len() != 1 { return Err(self.method_fault("arguments").into()); }
                     let sorted = self.ordered_members(&given[0], &keywords)?;
-                    Ok(Value::Vector(Rc::new(sorted)).keep(true))
+                    Ok(Value::Vector(crate::tuples::Sequence::plain(sorted)).keep(true))
                 }
                 Prim::Seq => {
                     let mut last = Value::Nil;
@@ -5337,7 +5337,7 @@ impl<'a> Machine<'a> {
                 },
                 Prim::AsyncGathered => {
                     let value = self.value_of(&args[0], frame)?;
-                    Ok(Value::Wrapped(245, Rc::new(vec![value])))
+                    Ok(Value::Wrapped(245, Rc::new(vec![value]).into()))
                 }
                 Prim::AsyncWalked => {
                     let held = self.value_of(&args[0], frame)?.settled();
@@ -5590,7 +5590,7 @@ impl<'a> Machine<'a> {
                         let Some(stands) = stands else {
                             return Err(format!("Call to undefined method {}::{}()", thing.blueprint().name, called).into());
                         };
-                        let handed = vec![Value::Thing(thing), Value::text(&called), Value::Vector(Rc::new(values))];
+                        let handed = vec![Value::Thing(thing), Value::text(&called), Value::Vector(crate::tuples::Sequence::plain(values))];
                         return Ok(self.invoke(stands, self.outermost.clone(), handed)?);
                     };
                     let mut all = vec![Value::Thing(thing)];
@@ -5835,7 +5835,7 @@ impl<'a> Machine<'a> {
                             let members = self.object_members(&value).map_err(|words| {
                                 if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
                             })?;
-                            value = Value::Vector(Rc::new(members));
+                            value = Value::Vector(crate::tuples::Sequence::plain(members));
                         }
                         let old = f.cells.borrow()[i].clone();
                         match old {
@@ -6316,7 +6316,7 @@ impl<'a> Machine<'a> {
     pub(super) fn kind_stand_in(&self, word: &str) -> Option<Value> {
         let walking = ["generator", "reversed", "filter", "map", "zip", "enumerate", "callable_iterator", "bytearray_iterator", "bytes_iterator", "dict_reverseitemiterator", "dict_reversevalueiterator", "dict_reversekeyiterator", "dict_itemiterator", "dict_valueiterator", "dict_keyiterator", "set_iterator", "longrange_iterator", "range_iterator", "str_iterator", "str_ascii_iterator", "tuple_iterator", "list_reverseiterator", "list_iterator", "iterator"];
         if walking.contains(&word) {
-            let empty = IteratorKind::Stored { entries: Rc::new(Vec::new()), next: 0 };
+            let empty = IteratorKind::Stored { entries: Rc::new(Vec::new()).into(), next: 0 };
             return Some(Self::cursor_value_walked(empty, Some(Rc::from(word))));
         }
         let portion = match word {
@@ -6335,12 +6335,12 @@ impl<'a> Machine<'a> {
             Prim::Span => Value::Progression(Rc::new(crate::data::Progression {
                 first: BigInt::from(0), limit: BigInt::from(0), stride: BigInt::from(1), word: word.to_owned(),
             })),
-            Prim::Listed => Value::Vector(Rc::new(Vec::new())),
-            Prim::Tupling => Value::Tuple(Rc::new(Vec::new())),
+            Prim::Listed => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+            Prim::Tupling => Value::tuple(Vec::new()),
             Prim::Dictionary => Value::Dict(Rc::new(Vec::new().into())),
             kind @ (Prim::Uniques | Prim::Unchanging) => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word, *kind == Prim::Unchanging)))),
             Prim::Octets(kind) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
-            Prim::SpanOf => Value::Span(Rc::new(vec![Value::Nil, Value::Nil, Value::Nil])),
+            Prim::SpanOf => Value::Span(crate::tuples::Sequence::plain(vec![Value::Nil, Value::Nil, Value::Nil])),
             _ => return None,
         })
     }
@@ -6576,9 +6576,9 @@ impl<'a> Machine<'a> {
                 holder.as_ref().map_or(false, |cell| Self::native_cell(input).map_or(false, |other| Rc::ptr_eq(cell, &other)))
                     || matches!((input.settled(), receiver.settled()), (Value::Vector(left), Value::Vector(right)) if Rc::ptr_eq(&left, &right))
             });
-            if let Some(cell) = &holder { *cell.borrow_mut() = Value::Vector(Rc::new(Vec::new())); }
+            if let Some(cell) = &holder { *cell.borrow_mut() = Value::Vector(crate::tuples::Sequence::plain(Vec::new())); }
             let values = if source_is_self { Vec::new() } else { match arguments.first() { Some(input) => self.object_members(input)?, None => Vec::new() } };
-            if let Some(cell) = holder { *cell.borrow_mut() = Value::Vector(Rc::new(values)); }
+            if let Some(cell) = holder { *cell.borrow_mut() = Value::Vector(crate::tuples::Sequence::plain(values)); }
             return Ok(Value::Nil);
         }
         if at == usize::MAX {
@@ -6623,7 +6623,7 @@ impl<'a> Machine<'a> {
             ('c', 82) => {
                 let z = crate::complex::coordinates(&receiver.settled()).expect("complex coordinates");
                 let row = [z.0,z.1].into_iter().map(crate::complex::decimal_value).collect();
-                return Ok(Value::Tuple(Rc::new(row)));
+                return Ok(Value::tuple(row));
             }
             ('c', 4..=7) => return Ok(Value::Refusal(Rc::from(self.table.single("ext.stmt.class.special.declined").unwrap_or_default()))),
             _ => {}
@@ -6714,7 +6714,7 @@ impl<'a> Machine<'a> {
                     let members = self.object_members(&incoming).map_err(|words| {
                         if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
                     })?;
-                    incoming = Value::Vector(Rc::new(members));
+                    incoming = Value::Vector(crate::tuples::Sequence::plain(members));
                 }
                 match Self::native_cell(receiver) {
                     Some(cell) => self.span_written(&mut cell.borrow_mut(), &bounds, &incoming)?,
@@ -6797,7 +6797,7 @@ impl<'a> Machine<'a> {
             return Some(Value::Intrinsic(*op, Rc::from(name)));
         }
         if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
-        Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)])))
+        Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into()))
     }
 
     /// The word the definition gives the module the builtin names live in.
@@ -6954,7 +6954,7 @@ impl<'a> Machine<'a> {
             _ => false,
         };
         if setted {
-            return Some(Value::Wrapped(3, Rc::new(vec![Value::text(name), value.settled()])));
+            return Some(Value::Wrapped(3, Rc::new(vec![Value::text(name), value.settled()]).into()));
         }
         let class = match value {
             Value::Thing(thing) => {
@@ -6967,7 +6967,7 @@ impl<'a> Machine<'a> {
                 }
                 if self.is_fault_kind(&thing.blueprint()) && self.table.single("ext.builtin.exceptions.args") == Some(name) {
                     let arguments = fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone());
-                    return arguments.or_else(|| Some(Value::Arguments(Rc::new(fields.iter().filter(|(key, _)| key == "message").map(|(_, value)| value.clone()).collect()))));
+                    return arguments.or_else(|| Some(Value::Arguments(crate::tuples::Sequence::plain(fields.iter().filter(|(key, _)| key == "message").map(|(_, value)| value.clone()).collect::<Vec<_>>()))));
                 }
                 if let Some(at) = self.member_place(&fields, name) {
                     return Some(match &fields[at].1 {
@@ -7069,7 +7069,7 @@ impl<'a> Machine<'a> {
             let Some(stands) = stands else {
                 return Some(Err(format!("Call to undefined method {}::{}()", class.name, called).into()));
             };
-            let handed = vec![first, Value::text(&called), Value::Vector(Rc::new(given))];
+            let handed = vec![first, Value::text(&called), Value::Vector(crate::tuples::Sequence::plain(given))];
             return Some(self.invoke(stands, self.outermost.clone(), handed).map_err(Escape::from));
         };
         let mut all = vec![first];
@@ -7367,7 +7367,7 @@ impl<'a> Machine<'a> {
                     _ => return Err(Escape::Error(format!("TypeError: code.replace() got an unexpected keyword argument '{keyword}'"))),
                 }
             }
-            return Ok(Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(copy))])));
+            return Ok(Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(copy))]).into()));
         }
         if name == "clear" {
             if let Value::Thing(item) = receiver.settled() {
@@ -7496,7 +7496,7 @@ impl<'a> Machine<'a> {
         let mut arguments = arguments;
         if name == "extend" && arguments.len() == 1 && matches!(receiver.settled(), Value::Vector(_)) {
             let plain = matches!(arguments[0].settled(), Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Set(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_));
-            if !plain { let drawn = self.gathered_members(&arguments[0])?; arguments[0] = Value::Vector(Rc::new(drawn)); }
+            if !plain { let drawn = self.gathered_members(&arguments[0])?; arguments[0] = Value::Vector(crate::tuples::Sequence::plain(drawn)); }
         }
         // A special member asked for by name on a value of a native
         // kind. Each hands its work to the primitive that already does
@@ -7517,7 +7517,7 @@ impl<'a> Machine<'a> {
                 ("indices", 1) => {
                     let clipped = self.span_clipped(&bounds, &arguments[0]);
                     if let Some(away) = self.got_away.take() { return Err(away); }
-                    Ok(Value::Tuple(Rc::new(clipped?.into_iter().map(Value::from_big).collect())))
+                    Ok(Value::tuple(clipped?.into_iter().map(Value::from_big).collect()))
                 }
                 ("slice_hash", 0) => self.span_hashed(&receiver.settled()).map_err(Escape::from),
                 _ => Err(self.method_fault("arguments").into()),
@@ -7623,7 +7623,7 @@ impl<'a> Machine<'a> {
             let key = format!("ext.builtin.text.{}", name);
             if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(label, _)| *label == key) {
                 let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| v.settled()));
-                if *work == crate::text::Work::JOIN && given.len() == 2 { given[1] = Value::Vector(Rc::new(self.gathered_members(&given[1])?)); }
+                if *work == crate::text::Work::JOIN && given.len() == 2 { given[1] = Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&given[1])?)); }
                 crate::text::fit_names(self.table, *work, &mut given, keywords)?;
                 if *work == crate::text::Work::FORMATMAP {
                     if given.len() != 2 { return Err(crate::text::complaint(self.table, "arguments").into()); }
@@ -7753,7 +7753,7 @@ impl<'a> Machine<'a> {
         let Value::Mutable(place, _) = receiver else { return Err(self.method_fault("unready").into()) };
         if !self.table.has_any("ext.builtin.method.sort.modified") {
             let ordered = self.ordered_members(receiver, &keywords)?;
-            place.replace(Value::Vector(Rc::new(ordered)));
+            place.replace(Value::Vector(crate::tuples::Sequence::plain(ordered)));
             return Ok(Value::Nil);
         }
         // The row stands aside while it is being ordered and an empty one
@@ -7762,11 +7762,11 @@ impl<'a> Machine<'a> {
         // stood; should the key have written into the waiting row, the
         // ordered row is put in place and the meddling told of after.
         let bare = Rc::new(Vec::new());
-        let kept = place.replace(Value::Vector(Rc::clone(&bare)));
+        let kept = place.replace(Value::Vector(Rc::clone(&bare).into()));
         let outcome = self.ordered_members(&kept, &keywords);
         let meddled = !matches!(&*place.borrow(), Value::Vector(row) if Rc::ptr_eq(row, &bare));
         let ordered = match outcome { Err(away) => { place.replace(kept); return Err(away); }, Ok(row) => row };
-        place.replace(Value::Vector(Rc::new(ordered)));
+        place.replace(Value::Vector(crate::tuples::Sequence::plain(ordered)));
         match meddled {
             false => Ok(Value::Nil),
             true => Err(format!("\0{}", self.table.single("ext.builtin.method.sort.modified").unwrap_or_default()).into()),
@@ -8602,7 +8602,7 @@ impl<'a> Machine<'a> {
         }
         // The spare worths a gathering place takes stand as a tuple, so
         // that they read, weigh and compare as the language says.
-        if let Some(slot) = gather { fitted[slot] = Value::Tuple(Rc::new(remaining)); }
+        if let Some(slot) = gather { fitted[slot] = Value::tuple(remaining); }
         let keys: Vec<String> = match manners.contains(&'p') {
             true => named.iter().map(|(key, _)| key.clone()).collect(),
             false => Vec::new(),
@@ -8668,7 +8668,7 @@ impl<'a> Machine<'a> {
             let mut values = self.value_list(args, caller)?;
             let tail = values.split_off(start.min(values.len()));
             values.resize(start, Value::Unset);
-            values.push(Value::Vector(Rc::new(tail)));
+            values.push(Value::Vector(crate::tuples::Sequence::plain(tail)));
             let frame = self.frame_for(program, &env);
             for (slot, value) in program.formal_slots.iter().zip(values) {
                 frame.cells.borrow_mut()[*slot] = value;
@@ -8964,7 +8964,7 @@ impl<'a> Machine<'a> {
         if let Some(first) = program.gather_from {
             let rest = args.split_off(first.min(args.len()));
             args.resize(first, Value::Unset);
-            args.push(Value::Vector(Rc::new(rest)));
+            args.push(Value::Vector(crate::tuples::Sequence::plain(rest)));
         }
         let frame = if program.frameless {
             env
@@ -9801,7 +9801,7 @@ impl<'a> Machine<'a> {
                     },
                 }
                 pieces.reverse();
-                Ok(Value::Vector(Rc::new(pieces.into_iter().map(built).collect())))
+                Ok(Value::Vector(crate::tuples::Sequence::plain(pieces.into_iter().map(built).collect::<Vec<_>>())))
             }
             // The blank, or a set of bytes chosen instead, taken off
             // one end of the row.
@@ -9823,7 +9823,7 @@ impl<'a> Machine<'a> {
                     None if operation == 27 => [empty.clone(), empty, content.to_vec()],
                     None => [content.to_vec(), empty.clone(), empty],
                 };
-                Ok(Value::Tuple(Rc::new(cut.into_iter().map(built).collect())))
+                Ok(Value::tuple(cut.into_iter().map(built).collect()))
             }
             // The lines of the row. A line closes at a line feed, at a
             // return, or at a return and a feed together, and nowhere
@@ -9842,7 +9842,7 @@ impl<'a> Machine<'a> {
                     opened = closed;
                 }
                 if opened < content.len() { lines.push(content[opened..].to_vec()); }
-                Ok(Value::Vector(Rc::new(lines.into_iter().map(built).collect())))
+                Ok(Value::Vector(crate::tuples::Sequence::plain(lines.into_iter().map(built).collect::<Vec<_>>())))
             }
             // Filled out to a width with a byte of choice, or with
             // noughts written behind whatever sign leads the figures.
@@ -10078,7 +10078,7 @@ impl<'a> Machine<'a> {
             } else {
                 if matches!(source, Value::Text(_) | Value::Unpaired(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.octet_error("arguments")); }
                 let members = self.gathered_members(source)?;
-                Value::Vector(Rc::new(members))
+                Value::Vector(crate::tuples::Sequence::plain(members))
             };
             let mut replaced = values.to_vec(); replaced[0] = gathered;
             return self.octet_work(operation, &replaced, negative_allowed);
@@ -10268,7 +10268,7 @@ impl<'a> Machine<'a> {
                     }
                     chunks.push(remaining.to_vec());
                 }
-                return Ok(Value::Vector(Rc::new(chunks.into_iter().map(|chunk| self.octets(chunk, *changeable)).collect())));
+                return Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.into_iter().map(|chunk| self.octets(chunk, *changeable)).collect::<Vec<_>>())));
             }
             9 if args.len() == 1 => {
                 let _lease = if *changeable { Some(OctetLease::new(cell)) } else { None };
@@ -10583,7 +10583,7 @@ impl<'a> Machine<'a> {
                                         Some(key) => keys.push(key),
                                     }
                                 }
-                                Value::Vector(Rc::new(keys))
+                                Value::Vector(crate::tuples::Sequence::plain(keys))
                             },
                             None => other.clone(),
                         };
@@ -10659,7 +10659,7 @@ impl<'a> Machine<'a> {
         match holds.iter_mut().find(|(k, _)| *k == key) {
             Some((_, Value::Vector(items))) => Rc::make_mut(items).push(Value::text(note)),
             Some(_) => return,
-            None => holds.push((key, Value::Vector(Rc::new(vec![Value::text(note)])))),
+            None => holds.push((key, Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(note)])))),
         }
     }
 
@@ -11233,7 +11233,7 @@ impl<'a> Machine<'a> {
                     let next = match spread {
                         Some(star) if ordinal == *star => {
                             let end = values.len() - (members.len() - ordinal - 1);
-                            let portion = Value::Vector(Rc::new(values[position..end].to_vec()));
+                            let portion = Value::Vector(crate::tuples::Sequence::plain(values[position..end].to_vec()));
                             position = end;
                             portion
                         }
@@ -11370,14 +11370,14 @@ impl<'a> Machine<'a> {
         let [subject] = v else { return Err(Escape::Error(format!("an asynchronous walk expects 1 argument, got {}", v.len()))) };
         let subject = subject.settled();
         if matches!(&subject, Value::Generator(state) if state.borrow().of.as_ref().map_or(false, |program| program.flags & 512 != 0)) {
-            return Ok(Value::Wrapped(61, Rc::new(vec![subject])));
+            return Ok(Value::Wrapped(61, Rc::new(vec![subject]).into()));
         }
         let asked = self.ask_special(&subject, 83, &[]).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)))?;
         let Some(walker) = asked else {
             let kind = match &subject { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
             return Err(Escape::Error(format!("TypeError: 'async for' requires an object with __aiter__ method, got {kind}")));
         };
-        Ok(Value::Wrapped(61, Rc::new(vec![walker])))
+        Ok(Value::Wrapped(61, Rc::new(vec![walker]).into()))
     }
 
     /// One step of an asynchronous walk: the walk's own word for the next
@@ -11828,7 +11828,7 @@ impl<'a> Machine<'a> {
                     });
                     if operation == Prim::Tupling || inherited_tuple {
                         let copied = values.iter().cloned().collect();
-                        return Ok(Some(Value::Tuple(Rc::new(copied))));
+                        return Ok(Some(Value::tuple(copied)));
                     }
                 }
                 // A thing built on a native kind is named by its own
@@ -12306,7 +12306,7 @@ impl<'a> Machine<'a> {
                         if !duplicate { result.push(hashed); }
                     } else { result.push(candidate.clone()); }
                 }
-                Value::Vector(Rc::new(result.into_iter().map(|v| match v { Value::Keyed(raw, _) => raw.as_ref().clone(), v => v }).collect()))
+                Value::Vector(crate::tuples::Sequence::plain(result.into_iter().map(|v| match v { Value::Keyed(raw, _) => raw.as_ref().clone(), v => v }).collect::<Vec<_>>()))
             }
             (Prim::Ordered, [one]) => {
                 let input = self.object_members(one)?;
@@ -12320,11 +12320,11 @@ impl<'a> Machine<'a> {
                     }
                     ordered.insert(place, item);
                 }
-                Value::Vector(Rc::new(ordered)).keep(true)
+                Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true)
             }
             (Prim::Iterated, [one @ (Value::Thing(_) | Value::Wrapped(61, _))]) => one.clone(),
             (Prim::Listed, [one]) => {
-                let result = Value::Vector(Rc::new(self.object_members(one)?));
+                let result = Value::Vector(crate::tuples::Sequence::plain(self.object_members(one)?));
                 // Members an iterator hands out are kept quoted, as a window's are.
                 if matches!(one, Value::Window(..) | Value::Mutable(_, true) | Value::Text(_) | Value::Iterator(_) | Value::Generator(_)) { result.keep(true) } else { result }
             },
@@ -12399,7 +12399,7 @@ impl<'a> Machine<'a> {
     }
 
     fn weighed_member_wise(&mut self, op: Prim, one: &Value, two: &Value) -> Result<Option<Value>, String> {
-        let members = |value: &Value| match value { Value::Vector(held) | Value::Tuple(held) | Value::Row(held) => Some(Rc::clone(held)), _ => None };
+        let members = |value: &Value| match value { Value::Vector(held) | Value::Tuple(held) | Value::Row(held) => Some(held.clone()), _ => None };
         let rows = matches!(one, Value::Vector(_)) == matches!(two, Value::Vector(_));
         if let (Some(left), Some(right), true) = (members(one), members(two), rows) {
             for place in 0..left.len().min(right.len()) {
@@ -12792,7 +12792,7 @@ impl<'a> Machine<'a> {
             if !matches!(target, Value::Thing(_) | Value::Dict(_)) {
                 if bounds.iter().any(|bound| matches!(bound, Value::Thing(_))) {
                     let bounds = self.span_settled(bounds)?;
-                    return self.prim(op, name, &[target, Value::Span(Rc::new(bounds))]);
+                    return self.prim(op, name, &[target, Value::Span(crate::tuples::Sequence::plain(bounds))]);
                 }
                 if let Value::Progression(walk) = &target {
                     let clipped = self.span_clipped(bounds, &Value::from_big(walk.count()))?;
@@ -13051,7 +13051,7 @@ impl<'a> Machine<'a> {
         // no union.
         if let (Prim::BitsEither, [a, b]) = (op, v) {
             if self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
-                return Ok(Value::Tuple(Rc::new(vec![a.clone(), b.clone()])));
+                return Ok(Value::tuple(vec![a.clone(), b.clone()]));
             }
         }
         // Rows, tuples and text as a language of sequences works them.
@@ -13108,7 +13108,7 @@ impl<'a> Machine<'a> {
                 let plain = lone.settled();
                 let already = matches!(plain, Value::Octets { .. } | Value::Vector(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 if !already {
-                    if let Ok(numbers) = self.core_collect(&plain) { return self.octet_routine(which, &[Value::Vector(Rc::new(numbers))]); }
+                    if let Ok(numbers) = self.core_collect(&plain) { return self.octet_routine(which, &[Value::Vector(crate::tuples::Sequence::plain(numbers))]); }
                 }
             }
         }
@@ -13422,7 +13422,7 @@ impl<'a> Machine<'a> {
                 crate::text::apply(self.table, work, name, &values, self.wording())?
             },
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
-            Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
+            Prim::SliceBounds => Value::Span(crate::tuples::Sequence::plain(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
             // spelling no number: a language may walk such text along
             // its letters instead, or leave it standing, and says so.
@@ -13451,8 +13451,8 @@ impl<'a> Machine<'a> {
             }
             Prim::TupleJoined => match (&v[0], &v[1]) {
                 (Value::Vector(left), Value::Vector(right)) => {
-                    let joined = left.iter().chain(right.iter()).cloned().collect();
-                    Value::Vector(Rc::new(joined))
+                    let joined: Vec<_> = left.iter().chain(right.iter()).cloned().collect();
+                    Value::Vector(crate::tuples::Sequence::plain(joined))
                 }
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
@@ -13517,17 +13517,17 @@ impl<'a> Machine<'a> {
                     let tail = wanted - middle - 1;
                     let after = values.split_off(values.len() - tail);
                     let gathered = values.split_off(middle);
-                    values.push(Value::Vector(Rc::new(gathered)));
+                    values.push(Value::Vector(crate::tuples::Sequence::plain(gathered)));
                     values.extend(after);
                 }
-                Value::Vector(Rc::new(values))
+                Value::Vector(crate::tuples::Sequence::plain(values))
             }
             // An iterator or a generator is not gathered: the loop steps
             // it a member at a time, so what its body said before a later
             // step raised stands said, and a loop broken off leaves the rest.
             Prim::Iterated => match self.begin_set_walk(&v[0]) {
                 None if matches!(v[0], Value::Iterator(_) | Value::Generator(_)) => v[0].clone(),
-                None => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+                None => Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)),
                 Some(walk) => walk,
             },
             Prim::CheckUnpack(count) | Prim::BindingWidth(count) => {
@@ -13543,7 +13543,7 @@ impl<'a> Machine<'a> {
                     let label = if matches!(op, Prim::BindingWidth(_)) { "ext.stmt.binding.unrun" } else { "ext.op.comprehension.unpack.amiss" };
                     return Err(self.table.single(label).unwrap_or("Comprehension target and item have different lengths").into());
                 }
-                Value::Vector(Rc::new(values))
+                Value::Vector(crate::tuples::Sequence::plain(values))
             }
             Prim::ExtendLiteral(dictionary, expanded) => {
                 if let Value::Set(kept) = &v[0] {
@@ -13555,7 +13555,7 @@ impl<'a> Machine<'a> {
                     let Value::Vector(prior) = &v[0] else { unreachable!() };
                     let mut next = prior.to_vec();
                     next.extend(if expanded { self.literal_members(&v[1])? } else { vec![v[1].clone()] });
-                    Value::Vector(Rc::new(next))
+                    Value::Vector(crate::tuples::Sequence::plain(next))
                 } else {
                     // The fast pre-check above the general dispatch takes
                     // every ordinary literal or comprehension step; a
@@ -13816,7 +13816,7 @@ impl<'a> Machine<'a> {
                     }
                     Err(escape) => { self.got_away = Some(escape); return Err("the call ended the run".into()); }
                 }
-                Value::Vector(Rc::new(items))
+                Value::Vector(crate::tuples::Sequence::plain(items))
             }
             Prim::ProgramNames => {
                 if v.len() == 1 {
@@ -14167,7 +14167,7 @@ impl<'a> Machine<'a> {
                 if self.builds_places && matches!(v.first(), Some(Value::Nil) | Some(Value::Unset)) =>
             {
                 let mut made = v.to_vec();
-                made[0] = Value::Vector(Rc::new(Vec::new()));
+                made[0] = Value::Vector(crate::tuples::Sequence::plain(Vec::new()));
                 self.prim(op, name, &made)?
             }
             Prim::Added => {
@@ -14176,7 +14176,7 @@ impl<'a> Machine<'a> {
                     Value::Vector(items) | Value::Tuple(items) => {
                         let mut all = items.as_ref().clone();
                         all.push(v[1].clone());
-                        Value::Vector(Rc::new(all))
+                        Value::Vector(crate::tuples::Sequence::plain(all))
                     }
                     Value::Dict(entries) => {
                         let mut all = entries.as_ref().clone();
@@ -14218,7 +14218,7 @@ impl<'a> Machine<'a> {
                         if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&v[0])); }
                         let mut all = items.as_ref().clone();
                         all[position as usize] = v[2].clone();
-                        return Ok(Value::Vector(Rc::new(all)));
+                        return Ok(Value::Vector(crate::tuples::Sequence::plain(all)));
                     }
                 }
                 match &v[0] {
@@ -14241,7 +14241,7 @@ impl<'a> Machine<'a> {
                     Value::Vector(items) if as_index(&v[1]).map_or(false, |at| at < items.len()) => {
                         let mut all = items.as_ref().clone();
                         all[as_index(&v[1])?] = v[2].clone();
-                        Value::Vector(Rc::new(all))
+                        Value::Vector(crate::tuples::Sequence::plain(all))
                     }
                     Value::Vector(items) | Value::Tuple(items) => {
                         let mut all: Vec<(Value, Value)> =
@@ -14347,7 +14347,7 @@ impl<'a> Machine<'a> {
                     Ok(entries) => {
                         let mut names: Vec<Value> = entries.filter_map(|e| e.ok()).map(|e| Value::text(&e.file_name().to_string_lossy())).collect();
                         names.sort_by(|a, b| a.render(w).cmp(&b.render(w)));
-                        Value::Vector(Rc::new(names))
+                        Value::Vector(crate::tuples::Sequence::plain(names))
                     }
                     Err(_) => Value::Flag(false),
                 }
@@ -14430,10 +14430,10 @@ impl<'a> Machine<'a> {
             Prim::FaultHeld => {
                 if v.len() > 1 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
                 let held = v.first().cloned().or_else(|| self.holding_fault.last().cloned());
-                let Some(fault) = held else { return Ok(Value::Vector(Rc::new(vec![Value::Nil, Value::Nil]))) };
+                let Some(fault) = held else { return Ok(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Nil, Value::Nil]))) };
                 let kind = match &fault { Value::Thing(thing) => Value::text(&thing.blueprint().name), _ => Value::Nil };
                 let words = self.object_words(&fault, false)?;
-                Value::Vector(Rc::new(vec![kind, Value::text(&words)]))
+                Value::Vector(crate::tuples::Sequence::plain(vec![kind, Value::text(&words)]))
             }
             Prim::PathSort => {
                 n(1)?;
@@ -14453,7 +14453,7 @@ impl<'a> Machine<'a> {
                     if let (Some(key), Some(worth)) = (key.to_str(), worth.to_str()) { surroundings.push((Value::text(key), Value::text(worth))); }
                 }
                 let row = vec![here, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Dict(Rc::new(surroundings.into()))];
-                Value::Vector(Rc::new(row))
+                Value::Vector(crate::tuples::Sequence::plain(row))
             }
             // The host's shell, handed a command and asked afterwards
             // for all it put where a run puts what it writes. Both ways
@@ -14772,10 +14772,10 @@ impl<'a> Machine<'a> {
                         pairs.push((Value::text("class"), Value::text(class)));
                     }
                     let handed = self.handed_to(call).unwrap_or_default().to_vec();
-                    pairs.push((Value::text("args"), Value::Vector(Rc::new(handed))));
+                    pairs.push((Value::text("args"), Value::Vector(crate::tuples::Sequence::plain(handed))));
                     told.push(Value::Dict(Rc::new(pairs.into())));
                 }
-                Value::Vector(Rc::new(told))
+                Value::Vector(crate::tuples::Sequence::plain(told))
             }
             Prim::Complain => {
                 n(2)?;
@@ -14810,7 +14810,7 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                Value::Vector(Rc::new(named))
+                Value::Vector(crate::tuples::Sequence::plain(named))
             }
             // The words the language has of its own, by name: what a
             // program may call though nobody wrote them.
@@ -14819,7 +14819,7 @@ impl<'a> Machine<'a> {
                 n(0)?;
                 let mut words: Vec<String> = self.table.prims.keys().cloned().collect();
                 words.sort();
-                Value::Vector(Rc::new(words.iter().map(|w| Value::text(w)).collect()))
+                Value::Vector(crate::tuples::Sequence::plain(words.iter().map(|w| Value::text(w)).collect::<Vec<_>>()))
             }
             // What a class answers to, by name: the methods written in
             // it, or the properties its things carry, its own coming
@@ -14846,7 +14846,7 @@ impl<'a> Machine<'a> {
                     }
                     here = class.under.clone();
                 }
-                Value::Vector(Rc::new(gathered.iter().map(|called| Value::text(called)).collect()))
+                Value::Vector(crate::tuples::Sequence::plain(gathered.iter().map(|called| Value::text(called)).collect()))
             }
             // The class a class stands on, by name: a thing is asked of
             // the class it is of. Nothing where it stands on none.
@@ -15033,7 +15033,7 @@ impl<'a> Machine<'a> {
                 match op {
                     Prim::Handed => {
                         n(0)?;
-                        Value::Vector(Rc::new(handed.clone()))
+                        Value::Vector(crate::tuples::Sequence::plain(handed.clone()))
                     }
                     Prim::HowMany => {
                         n(0)?;
@@ -15096,7 +15096,7 @@ impl<'a> Machine<'a> {
                         let bounds = self.span_settled(bounds)?;
                         let (_, picked, _) = self.span_selection(&bounds, items.len())?;
                         let retained = items.iter().enumerate().filter(|(at, _)| !picked.contains(at)).map(|(_, x)| x.clone()).collect();
-                        Value::Vector(Rc::new(retained))
+                        Value::Vector(crate::tuples::Sequence::plain(retained))
                     }
                     // A tuple and text hold their places for good: a
                     // language of sequences refuses to take one out of
@@ -15114,15 +15114,15 @@ impl<'a> Machine<'a> {
                             else { return Err(self.key_refused(held, &v[1]).into()) };
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                         if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(held).into()); }
-                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, x)| x.clone()).collect();
-                        Value::Vector(Rc::new(retained))
+                        let retained: Vec<_> = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, x)| x.clone()).collect();
+                        Value::Vector(crate::tuples::Sequence::plain(retained))
                     }
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &v[1] { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                         if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
-                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
-                        Value::Vector(Rc::new(retained))
+                        let retained: Vec<_> = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(crate::tuples::Sequence::plain(retained))
                     }
                     Value::Vector(items) | Value::Tuple(items) => {
                         let i = as_index(&v[1])?;
@@ -15501,8 +15501,8 @@ impl<'a> Machine<'a> {
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {
                 held @ (Value::Vector(_) | Value::Dict(_)) => held,
-                Value::Nil | Value::Unset => Value::Vector(std::rc::Rc::new(Vec::new())),
-                held => Value::Vector(std::rc::Rc::new(vec![held])),
+                Value::Nil | Value::Unset => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+                held => Value::Vector(crate::tuples::Sequence::plain(vec![held])),
             },
             Prim::AsWhole => {
                 let worth = self.worth_of(&v[0]);
@@ -15523,7 +15523,7 @@ impl<'a> Machine<'a> {
                 let reached = self.element(&v[0], &v[1], Reading::Plain).unwrap_or(Value::Nil);
                 self.quieted -= 1;
                 match reached {
-                    Value::Nil | Value::Unset => Value::Vector(std::rc::Rc::new(Vec::new())),
+                    Value::Nil | Value::Unset => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
                     already => already,
                 }
             }
@@ -15757,7 +15757,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() || v.len() > 3 { return Err(self.table.single("ext.builtin.slice.arity").unwrap_or_default().to_owned()); }
                 let mut bounds = vec![Value::Nil; 3];
                 match v.len() { 1 => bounds[1] = v[0].clone(), count => bounds[..count].clone_from_slice(v) }
-                Value::Span(Rc::new(bounds))
+                Value::Span(crate::tuples::Sequence::plain(bounds))
             }
             Prim::Inquire => {
                 let words = self.table.strings("ext.builtin.input.reader").to_vec();
@@ -15841,7 +15841,7 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::Suspend | Prim::Delegate => return Err(self.generator_words("unsupported")),
-            Prim::MakeTuple => Value::Tuple(Rc::new(v.to_vec())),
+            Prim::MakeTuple => Value::tuple(v.to_vec()),
             Prim::Following => {
                 if !(1..=2).contains(&v.len()) { return Err(self.generator_words("unsupported")); }
                 let Value::Generator(state) = &v[0] else { return Err(format!("TypeError: '{}' object is not iterable", v[0].kind_word())); };
@@ -15870,14 +15870,14 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Tupled => {
-                if v.is_empty() { Value::Tuple(Rc::new(Vec::new())) }
-                else { n(1)?; Value::Tuple(Rc::new(self.gathered_members(&v[0])?)) }
+                if v.is_empty() { Value::tuple(Vec::new()) }
+                else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
             Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
-                    0 => Value::Vector(Rc::new(Vec::new())),
-                    1 => {let result=Value::Vector(Rc::new(self.gathered_members(&v[0])?)); if matches!(v[0],Value::Window(..)|Value::Mutable(_,true)|Value::Text(_)|Value::Iterator(_)|Value::Generator(_)){result.keep(true)}else{result}},
+                    0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+                    1 => {let result=Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)); if matches!(v[0],Value::Window(..)|Value::Mutable(_,true)|Value::Text(_)|Value::Iterator(_)|Value::Generator(_)){result.keep(true)}else{result}},
                     _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
                 }
             }
@@ -16599,8 +16599,8 @@ impl<'a> Machine<'a> {
             Prim::Plus if strung(left) || strung(right) => {
                 let mut row = inside(left);
                 match (left, right) {
-                    (Value::Vector(_), Value::Vector(_)) => { row.extend(inside(right)); Ok(Some(Value::Vector(Rc::new(row)))) }
-                    (Value::Tuple(_), Value::Tuple(_)) => { row.extend(inside(right)); Ok(Some(Value::Tuple(Rc::new(row)))) }
+                    (Value::Vector(_), Value::Vector(_)) => { row.extend(inside(right)); Ok(Some(Value::Vector(crate::tuples::Sequence::plain(row)))) }
+                    (Value::Tuple(_), Value::Tuple(_)) => { row.extend(inside(right)); Ok(Some(Value::tuple(row))) }
                     // Only a sequence is joined to; where the left
                     // side is none, both kinds are named instead, as a
                     // working neither side answers for.
@@ -16613,7 +16613,7 @@ impl<'a> Machine<'a> {
                 let times = self.repeat_count(by)?;
                 if times == 1 && matches!(row, Value::Tuple(_)) { return Ok(Some(row.clone())); }
                 let laid = self.laid_again(&inside(row), times)?;
-                Ok(Some(match row { Value::Tuple(_) => Value::Tuple(Rc::new(laid)), _ => Value::Vector(Rc::new(laid)) }))
+                Ok(Some(match row { Value::Tuple(_) => Value::tuple(laid), _ => Value::Vector(crate::tuples::Sequence::plain(laid)) }))
             }
             // Text laid down again is counted out below; only a count
             // that is no whole number is answered here, so that it is
@@ -16667,7 +16667,7 @@ impl<'a> Machine<'a> {
             row.extend(self.gathered_members(given).map_err(|_| self.core_complaint("core.uniterable", &kind))?);
             row
         };
-        cell.replace(Value::Vector(Rc::new(row)));
+        cell.replace(Value::Vector(crate::tuples::Sequence::plain(row)));
         Ok(Some(target.clone()))
     }
 
@@ -16761,7 +16761,7 @@ impl<'a> Machine<'a> {
             }
             let selected=if let Value::Span(bounds)=at {
                 let (_,places,_)=self.span_selection(bounds,values.len())?;
-                Value::Tuple(Rc::new(places.into_iter().map(|i|values[i].clone()).collect()))
+                Value::tuple(places.into_iter().map(|i|values[i].clone()).collect())
             }else{
                 let index=at.as_big()?;let index=if index<BigInt::from(0){index+values.len()}else{index};
                 let beyond = || match self.works_sequences() {
@@ -16973,8 +16973,8 @@ impl<'a> Machine<'a> {
             return Ok(if matches!(target, Value::Text(_)) {
                 Value::text(&selected.iter().map(Value::bare).collect::<String>())
             } else if matches!(target, Value::Tuple(_)) {
-                Value::Tuple(Rc::new(selected))
-            } else { Value::Vector(Rc::new(selected)) });
+                Value::tuple(selected)
+            } else { Value::Vector(crate::tuples::Sequence::plain(selected)) });
         }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
@@ -17258,7 +17258,7 @@ impl<'a> Machine<'a> {
                 }
             });
             if fault { return Err(self.set_complaint("unsortable", "")); }
-            return Ok(Value::Vector(Rc::new(row)));
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(row)));
         }
         let Some(Value::Set(target)) = values.first() else { return Err(self.set_complaint("operands", "")); };
         match which {
@@ -17581,7 +17581,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool, w: Names) -> String {
 /// takes the next whole number.
 fn assembled(values: Vec<Value>, map_wanted: bool, plain_keys: bool) -> Value {
     if !map_wanted && !values.iter().any(|x| matches!(x, Value::Couple(_))) {
-        return Value::Vector(Rc::new(values));
+        return Value::Vector(crate::tuples::Sequence::plain(values));
     }
     // Grown as one store-backed map throughout, so a literal of many
     // keys writes each one into the pairs it already has rather than
@@ -17780,7 +17780,7 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
     // the plain one it looks like and is given back as such.
     let plain = all.iter().enumerate().all(|(at, (k, _))| matches!(k, Value::Small(n) if *n == at as i64));
     *held = match plain {
-        true => Value::Vector(Rc::new(all.into_iter().map(|(_, x)| x).collect())),
+        true => Value::Vector(crate::tuples::Sequence::plain(all.into_iter().map(|(_, x)| x).collect::<Vec<_>>())),
         false => Value::Dict(Rc::new(all.into())),
     };
     Ok(many)
@@ -17796,7 +17796,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
         return Ok(over);
     }
     if builds && matches!(held, Value::Nil | Value::Unset) {
-        *held = Value::Vector(Rc::new(Vec::new()));
+        *held = Value::Vector(crate::tuples::Sequence::plain(Vec::new()));
     }
     let stays = match (&*held, &key) {
         (Value::Vector(items), Some(k)) => as_index(k).map_or(false, |at| at < items.len()),
@@ -17904,7 +17904,7 @@ fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Result<Rc<RefCe
 
 fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Result<&'a mut Value, String> {
     if makes && matches!(held, Value::Nil | Value::Unset) {
-        *held = Value::Vector(Rc::new(Vec::new()));
+        *held = Value::Vector(crate::tuples::Sequence::plain(Vec::new()));
     }
     // A list holds only the places it already has: a key that is no
     // whole number, or one past the last, makes it a map, which is what
@@ -18297,7 +18297,7 @@ impl Machine<'_> {
                 let initial = if is_module_name { Value::text(path) }
                     else if file_word == Some(name.as_str()) { own_file.as_deref().map_or(Value::Nil, Value::text) }
                     else if self.table.flag("ext.stmt.class.this.explicit") && self.table.spells("ext.stmt.class.parent", name) {
-                        Value::Wrapped(9, Rc::new(Vec::new()))
+                        Value::Wrapped(9, Rc::new(Vec::new()).into())
                     }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
@@ -18759,7 +18759,7 @@ impl<'a> Machine<'a> {
                 _ => Vec::new(),
             };
             words.sort();
-            return Ok(Value::Vector(Rc::new(words.iter().map(|word| Value::text(word)).collect())));
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(words.iter().map(|word| Value::text(word)).collect::<Vec<_>>())));
         }
         Ok(Value::Shared(book))
     }
@@ -18900,7 +18900,7 @@ impl<'a> Machine<'a> {
                     return String::new();
                 }
                 if row == 0 && source.is_empty() && mode > 0 {
-                    let locations = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(0), Value::Small(0), Value::text(""), Value::Small(0), Value::Small(0)]));
+                    let locations = Value::tuple(vec![Value::text(file), Value::Small(0), Value::Small(0), Value::text(""), Value::Small(0), Value::Small(0)]);
                     let fault = self.make_fault(kind, vec![Value::text(message), locations], Value::Nil);
                     self.keep_context(&fault);
                     self.got_away = Some(Escape::Thrown(fault));
@@ -18912,7 +18912,7 @@ impl<'a> Machine<'a> {
                         _ => (0, -1),
                     };
                     let origin = vec![Value::text(file), Value::Small(line), Value::Small(at), Value::Nil];
-                    let fault = self.make_fault(kind, vec![Value::text(message), Value::Tuple(Rc::new(origin))], Value::Nil);
+                    let fault = self.make_fault(kind, vec![Value::text(message), Value::tuple(origin)], Value::Nil);
                     self.keep_context(&fault);
                     self.got_away = Some(Escape::Thrown(fault));
                     return String::new();
@@ -18972,7 +18972,7 @@ impl<'a> Machine<'a> {
                     (true, Some(contents)) => contents.replace("\r\n", "\n").replace('\r', "\n").split_inclusive('\n').nth(line as usize - 1).map(Value::text).unwrap_or(Value::Nil),
                     _ => Value::Nil,
                 };
-                let details = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(line as i64), Value::Small(offset), source_line, Value::Small(ending_line as i64), Value::Small(end_offset)]));
+                let details = Value::tuple(vec![Value::text(file), Value::Small(line as i64), Value::Small(offset), source_line, Value::Small(ending_line as i64), Value::Small(end_offset)]);
                 let value = self.make_fault(kind, vec![Value::text(&words), details], Value::Nil);
                 self.keep_context(&value);
                 self.got_away = Some(Escape::Thrown(value));
@@ -19700,7 +19700,7 @@ impl Machine<'_> {
     }
 
     fn reduce_iterator(&mut self, subject: &Value) -> Result<Value, String> {
-        fn tuple(values: Vec<Value>) -> Value { Value::Tuple(Rc::new(values)) }
+        fn tuple(values: Vec<Value>) -> Value { Value::tuple(values) }
         let builtin = |op: Prim| {
             let label = self.table.prims.iter().find(|(_, candidate)| **candidate == op).map(|(name, _)| name.clone()).unwrap_or_default();
             Value::Intrinsic(op, Rc::from(label))
@@ -19713,7 +19713,7 @@ impl Machine<'_> {
             let frame = handle.borrow();
             if frame.walked.is_none() || frame.of.is_some() { return Err("TypeError: cannot pickle generator object".to_owned()); }
             let entries = frame.members.as_ref().map(|items| items.as_slice().to_vec()).unwrap_or_default();
-            return Ok(tuple(vec![builtin(Prim::Iterator), tuple(vec![Value::Vector(Rc::new(entries))])]));
+            return Ok(tuple(vec![builtin(Prim::Iterator), tuple(vec![Value::Vector(crate::tuples::Sequence::plain(entries))])]));
         }
         let Value::Iterator(handle) = subject else { return Err("TypeError: cannot pickle this iterator".to_owned()); };
         let backwards = {
@@ -19731,16 +19731,16 @@ impl Machine<'_> {
                     Some("str_iterator" | "str_ascii_iterator") => Value::text(""),
                     Some("list_reverseiterator" | "reversed") => {
                         constructor = reversed.clone();
-                        Value::Vector(Rc::new(Vec::new()))
+                        Value::Vector(crate::tuples::Sequence::plain(Vec::new()))
                     }
-                    Some("list_iterator") => Value::Vector(Rc::new(Vec::new())),
+                    Some("list_iterator") => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
                     _ => tuple(Vec::new()),
                 }),
-                IteratorKind::Living(..) => Some(Value::Vector(Rc::new(Vec::new()))),
+                IteratorKind::Living(..) => Some(Value::Vector(crate::tuples::Sequence::plain(Vec::new()))),
                 IteratorKind::Placed(..) | IteratorKind::Summoned { .. } => Some(tuple(Vec::new())),
                 IteratorKind::PlacedBack(..) => {
                     constructor = reversed.clone();
-                    Some(if snapshot.walks.as_deref() == Some("list_reverseiterator") { Value::Vector(Rc::new(Vec::new())) } else { tuple(Vec::new()) })
+                    Some(if snapshot.walks.as_deref() == Some("list_reverseiterator") { Value::Vector(crate::tuples::Sequence::plain(Vec::new())) } else { tuple(Vec::new()) })
                 }
                 _ => None,
             };
@@ -19768,9 +19768,9 @@ impl Machine<'_> {
                         constructor = reversed.clone();
                         state = Some(Value::from_big(BigInt::from(items.len()) - BigInt::from(*next) - BigInt::from(1)));
                         items.reverse();
-                        if snapshot.walks.as_deref() == Some("reversed") { tuple(items) } else { Value::Vector(Rc::new(items)) }
+                        if snapshot.walks.as_deref() == Some("reversed") { tuple(items) } else { Value::Vector(crate::tuples::Sequence::plain(items)) }
                     }
-                    _ => Value::Vector(Rc::new(items)),
+                    _ => Value::Vector(crate::tuples::Sequence::plain(items)),
                 };
                 vec![source]
             }
@@ -19805,7 +19805,7 @@ impl Machine<'_> {
             }
             IteratorKind::Watching { .. } => {
                 let temporary = Value::Iterator(Rc::new(RefCell::new(snapshot)));
-                vec![Value::Vector(Rc::new(self.core_collect(&temporary)?))]
+                vec![Value::Vector(crate::tuples::Sequence::plain(self.core_collect(&temporary)?))]
             }
             IteratorKind::Handed(source) => vec![source.clone()],
             IteratorKind::Busy => return Err("TypeError: cannot pickle an active iterator".to_owned()),
@@ -19855,12 +19855,12 @@ impl Machine<'_> {
 
     fn native_reduce(&self, value: &Value) -> Value {
         if let Value::Blueprint(b) = value {
-            return Value::Tuple(Rc::new(vec![Value::text("class"), Value::text(&b.name)]));
+            return Value::tuple(vec![Value::text("class"), Value::text(&b.name)]);
         }
         if let Value::Thing(t) = value {
             let Some(Value::Iterator(cell)) = Self::underlying(value) else { return Value::Nil };
             let IteratorKind::Count(walk, n) = &cell.borrow().kind else { return Value::Nil };
-            return Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Blueprint(t.blueprint().clone()), walk.clone(), Value::from_big(n.clone())]));
+            return Value::tuple(vec![Value::text("numbered"), Value::Blueprint(t.blueprint().clone()), walk.clone(), Value::from_big(n.clone())]);
         }
         let Value::Iterator(cell) = value else { return Value::Nil };
         let held = cell.borrow();
@@ -19868,16 +19868,16 @@ impl Machine<'_> {
         match &held.kind {
             IteratorKind::Stored { entries, next } => {
                 let remaining = entries.get(*next..).unwrap_or_default().to_vec();
-                Value::Tuple(Rc::new(vec![Value::text("items"), walks, Value::Tuple(Rc::new(remaining))]))
+                Value::tuple(vec![Value::text("items"), walks, Value::tuple(remaining)])
             }
-            IteratorKind::Stepping(walk, at) => Value::Tuple(Rc::new(vec![
+            IteratorKind::Stepping(walk, at) => Value::tuple(vec![
                 Value::text("counted"), walks,
                 Value::from_big(walk.first.clone()), Value::from_big(walk.limit.clone()), Value::from_big(walk.stride.clone()),
                 Value::text(&walk.word), Value::from_big(at.clone()),
-            ])),
-            IteratorKind::PlacedBack(thing, at) => Value::Tuple(Rc::new(vec![Value::text("back"), walks, thing.clone(), Value::from_big(at.clone())])),
-            IteratorKind::Count(walk, n) => Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Nil, walk.clone(), Value::from_big(n.clone())])),
-            IteratorKind::Handed(object) => Value::Tuple(Rc::new(vec![Value::text("handed"), object.clone()])),
+            ]),
+            IteratorKind::PlacedBack(thing, at) => Value::tuple(vec![Value::text("back"), walks, thing.clone(), Value::from_big(at.clone())]),
+            IteratorKind::Count(walk, n) => Value::tuple(vec![Value::text("numbered"), Value::Nil, walk.clone(), Value::from_big(n.clone())]),
+            IteratorKind::Handed(object) => Value::tuple(vec![Value::text("handed"), object.clone()]),
             _ => Value::Nil,
         }
     }
@@ -19986,7 +19986,7 @@ impl Machine<'_> {
             }
             _ => {
                 let entries = self.core_collect(source)?;
-                let walk = Self::cursor_value(IteratorKind::Stored { entries: Rc::new(entries), next: 0 });
+                let walk = Self::cursor_value(IteratorKind::Stored { entries: Rc::new(entries).into(), next: 0 });
                 if let (Value::Iterator(state), Some(word)) = (&walk, Self::walk_named(source)) { state.borrow_mut().walks = Some(word); }
                 Ok(walk)
             }
@@ -20159,7 +20159,7 @@ impl Machine<'_> {
                     Some(member) => {
                         let pair = vec![Value::from_big(number.clone()), member];
                         *number += 1;
-                        Ok(Some(Value::Tuple(Rc::new(pair))))
+                        Ok(Some(Value::tuple(pair)))
                     }
                 },
                 IteratorKind::Parallel { inputs, mapper, exact } => {
@@ -20182,7 +20182,7 @@ impl Machine<'_> {
                         parts.push(part);
                     }
                     match mapper {
-                        None => Ok(Some(Value::Tuple(Rc::new(parts)))),
+                        None => Ok(Some(Value::tuple(parts))),
                         Some(work) => match self.core_run(work, parts) {
                             Ok(made) => Ok(Some(made)),
                             Err(complaint) => if self.walk_halted() { Ok(None) } else { Err(complaint) },
@@ -20514,7 +20514,7 @@ impl Machine<'_> {
         let whole = |v: &Value| -> Result<BigInt, String> {
             if matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { v.as_big() } else { Err(self.core_complaint("core.integer", &v.kind_word())) }
         };
-        let cursor = |values: Vec<Value>| Self::cursor_value(IteratorKind::Stored { entries: Rc::new(values), next: 0 });
+        let cursor = |values: Vec<Value>| Self::cursor_value(IteratorKind::Stored { entries: Rc::new(values).into(), next: 0 });
         match op {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
             Quoted => {
@@ -20622,7 +20622,7 @@ impl Machine<'_> {
             Tupling | Uniques | Unchanging => {
                 require(0, 1)?;
                 if let (Tupling, [Value::Tuple(values)]) = (op, input.as_slice()) {
-                    return Ok(Value::Tuple(Rc::clone(values)));
+                    return Ok(Value::Tuple(values.clone()));
                 }
                 // A sealed set given to the maker of its own kind comes
                 // straight back: nothing may alter it, so a second
@@ -20638,7 +20638,7 @@ impl Machine<'_> {
                     Some(v) if op == Tupling => self.core_collect(v)?,
                     Some(v) => self.set_sources(v)?,
                 };
-                if op == Tupling { return Ok(Value::Tuple(Rc::new(entries))); }
+                if op == Tupling { return Ok(Value::tuple(entries)); }
                 // A thing among the entries goes in as the set literal puts
                 // it in, under its own hash and its own equality; any other
                 // entry with no hash is refused. The sealed kind is
@@ -20730,7 +20730,7 @@ impl Machine<'_> {
                 if let Value::Attributes(object) = &input[0] {
                     let mut names: Vec<Value> = Self::attribute_entries(object).into_iter().map(|(key, _)| key).collect();
                     names.reverse();
-                    return Ok(Self::cursor_value_walked(IteratorKind::Stored { entries: Rc::new(names), next: 0 }, Some(Rc::from("dict_reversekeyiterator"))));
+                    return Ok(Self::cursor_value_walked(IteratorKind::Stored { entries: Rc::new(names).into(), next: 0 }, Some(Rc::from("dict_reversekeyiterator"))));
                 }
                 // Octets run backwards as well. A run forwards over them
                 // gives up the numbers they keep rather than any letters,
@@ -20811,7 +20811,7 @@ impl Machine<'_> {
                 let key = ordering.unwrap_or(Value::Nil);
                 let entries = self.core_collect(&input[0])?;
                 let row = self.arranged(entries, &key, descending)?;
-                Ok(Value::Vector(Rc::new(row)).keep(true))
+                Ok(Value::Vector(crate::tuples::Sequence::plain(row)).keep(true))
             }
             Least | Greatest => {
                 if input.is_empty() { return Err(format!("TypeError: {} expected at least 1 argument, got 0", name)); }
@@ -20838,7 +20838,7 @@ impl Machine<'_> {
                 // A generator is walked where it stands, for gathering it
                 // first would run it to its end before a single member
                 // had been weighed.
-                let walk = if input.len() > 1 { Self::cursor_value(IteratorKind::Stored { entries: Rc::new(input.clone()), next: 0 }) }
+                let walk = if input.len() > 1 { Self::cursor_value(IteratorKind::Stored { entries: Rc::new(input.clone()).into(), next: 0 }) }
                     else if matches!(input[0], Value::Generator(_)) { input[0].clone() }
                     else { self.iterated_value(&input[0])? };
                 let Some(mut choice) = self.next_value(&walk)? else { return fallback.ok_or_else(|| self.core_complaint("core.empty", name)) };
@@ -20878,7 +20878,7 @@ impl Machine<'_> {
                     let divisor = two.as_big()?;
                     if divisor.is_zero() { return Err("ZeroDivisionError: division by zero".to_owned()); }
                     let dividend = one.as_big()?;
-                    return Ok(Value::Tuple(Rc::new(vec![Value::from_big(dividend.div_floor(&divisor)),Value::from_big(dividend.mod_floor(&divisor))])));
+                    return Ok(Value::tuple(vec![Value::from_big(dividend.div_floor(&divisor)),Value::from_big(dividend.mod_floor(&divisor))]));
                 }
                 let left = math::ratio_of(&one).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let right = math::ratio_of(&two).ok_or_else(|| self.core_complaint("core.unready", name))?;
@@ -20892,7 +20892,7 @@ impl Machine<'_> {
                 let trunc = quotient.floor();
                 let floor = if quotient == 0.0 { 0.0f64.copysign(x/y) } else if quotient-trunc > 0.5 { trunc+1.0 } else { trunc };
                 let pair = [floor,remain].into_iter().map(|n| crate::data::worth_of_binary(n,math::DEFAULT_PLACES)).collect();
-                Ok(Value::Tuple(Rc::new(pair)))
+                Ok(Value::tuple(pair))
             }
             Powered => {
                 require(2, 3)?;
@@ -21081,8 +21081,8 @@ impl Machine<'_> {
         match value {
             Value::Shared(cell) => self.copy_worth(&cell.borrow(), descend, known),
             Value::Vector(items) if descend => {
-                let items = items.iter().map(|item| self.copy_worth(item, true, known)).collect();
-                Value::Vector(Rc::new(items))
+                let items: Vec<_> = items.iter().map(|item| self.copy_worth(item, true, known)).collect();
+                Value::Vector(crate::tuples::Sequence::plain(items))
             }
             Value::Dict(pairs) if descend => {
                 let mut copied = Vec::with_capacity(pairs.len());

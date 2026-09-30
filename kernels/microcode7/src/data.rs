@@ -5,6 +5,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use crate::tuples::Sequence;
+
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
@@ -170,7 +172,7 @@ pub const ANNOTATE_WORD: &str = "\0annotate";
 
 #[derive(Clone)]
 pub enum IteratorKind {
-    Stored { entries: Rc<Vec<Value>>, next: usize },
+    Stored { entries: Sequence, next: usize },
     /// A progression stepped through one place at a time.
     Stepping(Rc<Progression>, BigInt),
     /// A list read through its cell at every step, so that members put
@@ -212,7 +214,7 @@ pub enum Value {
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
     Window(Rc<Value>, char),
-    Row(Rc<Vec<Value>>),
+    Row(Sequence),
     Intrinsic(Prim, Rc<str>),
     Iterator(Rc<RefCell<IteratorState>>),
     Backtrace(Rc<TraceLink>),
@@ -221,11 +223,11 @@ pub enum Value {
     Traversal(Rc<Value>, Rc<RefCell<Option<Value>>>),
     Refusal(Rc<str>),
     Cursor(Rc<RefCell<std::collections::VecDeque<Value>>>),
-    Arguments(Rc<Vec<Value>>),
+    Arguments(Sequence),
     Octets { cell: Rc<RefCell<Vec<u8>>>, changeable: bool, lead: Rc<str> },
     Export(Rc<crate::exec::OctetLease>),
     OctetKind { changeable: bool, shown: Rc<str> },
-    Wrapped(u8, Rc<Vec<Value>>),
+    Wrapped(u8, Sequence),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -240,13 +242,13 @@ pub enum Value {
     Flag(bool),
     Nil,
     Ellipsis,
-    Vector(Rc<Vec<Value>>),
-    Tuple(Rc<Vec<Value>>),
+    Vector(Sequence),
+    Tuple(Sequence),
     Generator(Rc<RefCell<crate::exec::Suspension>>),
     Set(Rc<RefCell<SetStore>>),
     SetCursor { source: Rc<RefCell<SetStore>>, count: usize },
     /// A span awaiting the length of what it is to read.
-    Span(Rc<Vec<Value>>),
+    Span(Sequence),
     /// Keys with their values, kept in the order they were written.
     Dict(Rc<MapStore>),
     /// A key written together with its value (`k => v`), until a
@@ -548,6 +550,8 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
 }
 
 impl Value {
+    pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }
+
     pub fn point_kept(&self) -> bool {
         match self {
             Self::Frac(e) => e.pointed,
@@ -581,10 +585,10 @@ impl Value {
                     // A reading of the map itself walks, and is
                     // measured, the very way its keys are: it is asked
                     // after by key alone.
-                    items.push(if *portion=='k' || *portion=='m' {bare} else if *portion=='v' {value.clone()} else {Value::Tuple(Rc::new(vec![bare,value.clone()]))});
+                    items.push(if *portion=='k' || *portion=='m' {bare} else if *portion=='v' {value.clone()} else {Value::tuple(vec![bare,value.clone()])});
                 }
             }
-            return Value::Vector(Rc::new(items));
+            return Value::Vector(crate::tuples::Sequence::plain(items));
         }
         self.clone()
     }

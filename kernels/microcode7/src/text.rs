@@ -247,7 +247,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     if let Some(Value::Unpaired(numbers)) = input.first() {
         if work == NEWARGS {
             if input.len() > 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", input.len() - 1)); }
-            return Ok(Value::Tuple(Rc::new(vec![Value::characters(numbers.to_vec())])));
+            return Ok(Value::tuple(vec![Value::characters(numbers.to_vec())]));
         }
         if matches!(work, ISASCII|ISDECIMAL|ISNUMERIC|ISTITLE|ISIDENTIFIER|ISPRINTABLE) {
             let string = numbers.iter().map(|code| char::from_u32(*code).unwrap_or('\0')).collect::<String>();
@@ -298,7 +298,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     let answer=match work {
         ENCODE=>return Err(g.bad("encode")),
         REPR|MAKETRANS=>unreachable!(),
-        NEWARGS=>Value::Tuple(Rc::new(Vec::from([Value::text(source)]))),
+        NEWARGS=>Value::tuple(Vec::from([Value::text(source)])),
         LENGTH=>Value::Small(many as i64),
         LOWER|UPPER|CAPITALIZE|TITLE|CASEFOLD|SWAPCASE=>Value::text(&case_changed(source,work)),
         ISASCII=>Value::Flag(source.is_ascii()),
@@ -337,7 +337,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let row=if let Some(i)=position {vec![source[..i].to_owned(),separator.to_owned(),source[i+separator.len()..].to_owned()]}
                 else if work==RPARTITION {vec![String::new(),String::new(),source.to_owned()]}
                 else {vec![source.to_owned(),String::new(),String::new()]};
-            Value::Tuple(Rc::new(row.into_iter().map(|word| Value::text(&word)).collect()))
+            Value::tuple(row.into_iter().map(|word| Value::text(&word)).collect())
         }
         EXPANDTABS=>{
             let stop=g.whole(0,8)?.max(0) as usize;
@@ -391,7 +391,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 else {divided.push(remaining[at+size..].to_owned());remaining=&remaining[..at];}
             }
             if work==RSPLIT {divided.reverse();}
-            Value::Vector(Rc::new(divided.into_iter().map(|word| Value::text(&word)).collect())).keep(true)
+            Value::Vector(crate::tuples::Sequence::plain(divided.into_iter().map(|word| Value::text(&word)).collect::<Vec<_>>())).keep(true)
         }
         CENTER|LJUST|RJUST|ZFILL=>{
             let width=g.whole(0,0)?.max(0) as usize;

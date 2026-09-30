@@ -159,7 +159,7 @@ impl Request<'_> {
             while !remainder.is_zero(){let next=&divisor%&remainder;divisor=remainder;remainder=next;}
             // The two whole numbers are handed back as a tuple, which
             // is what they are, and not a row that only reads like one.
-            return Ok(Value::Tuple(Rc::new(vec![Value::from_big(pair.0/&divisor),Value::from_big(pair.1/divisor)])));
+            return Ok(Value::tuple(vec![Value::from_big(pair.0/&divisor),Value::from_big(pair.1/divisor)]));
         }
         if self.operation=="hex" && real {
             let Value::Frac(ratio)=value else {unreachable!()};
@@ -290,7 +290,7 @@ impl Request<'_> {
             }
         }
         if reverse{chunks.reverse();}
-        Ok(Value::Vector(Rc::new(chunks.iter().map(|part|Value::text(part)).collect())).keep(true))
+        Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.iter().map(|part|Value::text(part)).collect::<Vec<_>>())).keep(true))
     }
     fn search_text(&self,s:&str)->ResultValue{
         self.takes(1,3)?;let length=s.chars().count();let raw=self.number(1,0)?;
@@ -315,11 +315,11 @@ impl Request<'_> {
             "insert"=>{self.takes(2,2)?;values.insert(place(self.number(0,0)?,values.len()),self.given[1].clone());}
             "clear"=>{self.takes(0,0)?;values=Vec::new();}
             "reverse"=>{self.takes(0,0)?;values.reverse();}
-            "copy"=>{self.takes(0,0)?;return Ok(Value::Vector(Rc::new(values)).keep(true));}
+            "copy"=>{self.takes(0,0)?;return Ok(Value::Vector(crate::tuples::Sequence::plain(values)).keep(true));}
             "pop"=>{
                 self.takes(0,1)?;if values.is_empty(){return Err(self.fail("pop"));}let mut offset=self.number(0,-1)?;
                 if offset<0{offset=offset.saturating_add(values.len() as i64);}if offset<0||offset as usize>=values.len(){return Err(self.fail("index"));}
-                let result=values.remove(offset as usize);self.replace(Value::Vector(Rc::new(values)))?;return Ok(result);
+                let result=values.remove(offset as usize);self.replace(Value::Vector(crate::tuples::Sequence::plain(values)))?;return Ok(result);
             }
             "remove"|"index"|"count"=>{
                 self.takes(1,if self.operation=="index"{3}else{1})?;
@@ -332,7 +332,7 @@ impl Request<'_> {
             }
             _=>return Err(self.unknown()),
         }
-        self.replace(Value::Vector(Rc::new(values)))
+        self.replace(Value::Vector(crate::tuples::Sequence::plain(values)))
     }
     // A pair written over the value its key already holds, or added last.
     fn enter(&self,entries:&mut Vec<(Value,Value)>,key:Value,value:Value){
@@ -368,7 +368,7 @@ impl Request<'_> {
                 self.takes(0,0)?;
                 let Some((key,value))=entries.pop() else {return Err(self.fail("popitem"));};
                 self.replace(Value::Dict(Rc::new(entries.into())))?;
-                return Ok(Value::Tuple(Rc::new(vec![key,value])));
+                return Ok(Value::tuple(vec![key,value]));
             }
             "keys"|"values"|"items"=>{
                 self.takes(0,0)?;

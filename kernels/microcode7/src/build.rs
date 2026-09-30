@@ -8737,7 +8737,7 @@ impl<'a> Builder<'a> {
             Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.lexeme)
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
                 self.advance();
-                constant(Value::Wrapped(9, PARENT_PAYLOAD.with(|value| value.clone())))
+                constant(Value::Wrapped(9, PARENT_PAYLOAD.with(|value| value.clone()).into()))
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
@@ -8754,7 +8754,7 @@ impl<'a> Builder<'a> {
                     (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
                         let private = self.parts().completed_class.ident.to_string();
                         let args = vec![self.read(&private), self.read(&receiver)];
-                        let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone)));
+                        let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
                         invoke(parent_word, args)
                     }
                     (true, Some(base), Some(receiver), Some(_)) => {
@@ -8922,7 +8922,7 @@ impl<'a> Builder<'a> {
                         None => {
                             let expression = if !table.has_any("ext.op.tuple") { self.expr(0)? }
                                 else if self.on_any("syntax.group.close") {
-                                if table.has_any("ext.builtin.tuple") { constant(Value::Tuple(Rc::new(Vec::new()))) } else { self.scope_unrun("ext.system.scope.unready") }
+                                if table.has_any("ext.builtin.tuple") { constant(Value::tuple(Vec::new())) } else { self.scope_unrun("ext.system.scope.unready") }
                             }
                                 else { self.comma_value()? };
                             if table.has_any("ext.builtin.exceptions.syntax")
