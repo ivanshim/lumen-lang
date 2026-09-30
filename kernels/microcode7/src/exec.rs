@@ -5250,8 +5250,9 @@ impl<'a> Machine<'a> {
                     Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
                     callable => callable,
                 };
-                if args.is_empty() && self.table.has_any("ext.stmt.class.builder") && matches!(stands, Value::Intrinsic(Prim::ClassWork(8), _)) {
-                    return self.names_here(frame, Prim::ClassWork(8)).map_err(Escape::Error);
+                if args.is_empty() && self.table.has_any("ext.stmt.class.builder") && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
+                    let Value::Intrinsic(operation, _) = stands else { unreachable!() };
+                    return self.names_here(frame, operation).map_err(Escape::Error);
                 }
                 if let Value::Adorned(adornment) = &stands {
                     let given = self.value_list(args, frame)?;

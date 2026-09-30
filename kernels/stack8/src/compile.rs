@@ -5360,11 +5360,16 @@ impl<'a> Compiler<'a> {
         // One bare name before one sign is the member the walk knows
         // already, and it is left to the reader that knows it.
         if spans.len() == 1 && spans[0].1 == spans[0].0 + 1 { return Ok(None); }
+        if !self.outer_marks(begin, signs[0], &lang.annotation_marks).0.is_empty() { return Ok(None); }
         let mut names = Vec::new();
-        for &(from, to) in &spans {
-            if !self.target_names(from, to, &mut names) { return Ok(None); }
+        if lang.class_builder.is_empty() {
+            for &(from, to) in &spans {
+                if !self.target_names(from, to, &mut names) { return Ok(None); }
+            }
+            if names.is_empty() { return Ok(None); }
         }
-        if names.is_empty() { return Ok(None); }
+        // The executable body lowers every target itself. Prebinding words
+        // inside a composite address would invent class destinations.
         // The value is worked out before any name is given a place, so
         // that a value naming a member the body bound earlier still
         // reads what that member held.
@@ -5665,7 +5670,7 @@ impl<'a> Compiler<'a> {
             let (marks, _) = self.outer_marks(self.pos + 1, self.tokens.len(), &lang.in_words);
             let mut names = Vec::new();
             let plain = marks.first().map_or(false, |&at| self.target_names(self.pos + 1, at, &mut names));
-            if !plain {
+            if !plain && lang.class_builder.is_empty() {
                 self.stmt()?;
                 self.gathering().unready = true;
                 return Ok(());
@@ -7435,6 +7440,15 @@ impl<'a> Compiler<'a> {
             let (commas, _) = self.outer_marks(begin, end, &self.lang.tuple_marks);
             if !commas.is_empty() { listed = true; break; }
         }
+        if !self.lang.class_builder.is_empty() && self.in_class_body() && end == begin + 1 {
+            let word = &self.tokens[begin].lexeme;
+            if word == "__debug__" || [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|family| Lang::spells(family, word)) {
+                return Err(format!("SyntaxError: cannot assign to {word}"));
+            }
+            if self.lang.keywords.contains(word) && ![&self.lang.match_words, &self.lang.match_cases, &self.lang.type_alias_words].iter().any(|family| Lang::spells(family, word)) {
+                return Err("SyntaxError: invalid syntax".into());
+            }
+        }
         let (commas, _) = self.outer_marks(begin, end, &self.lang.tuple_marks);
         listed |= !commas.is_empty();
         if !listed {
@@ -7449,7 +7463,11 @@ impl<'a> Compiler<'a> {
                 return Ok(());
             }
             let from = self.mark();
-            let reading = std::mem::replace(&mut self.writing_place, true);
+            // The container and keys of a composite destination are reads.
+            // Only a bare destination bypasses the prepared namespace.
+            let writing_name = self.lang.class_builder.is_empty() || !self.in_class_body()
+                || end == begin + 1 && self.look().shape == Shape::Instr;
+            let reading = std::mem::replace(&mut self.writing_place, writing_name);
             let place = if end == begin + 1 && self.look().shape == Shape::Instr {
                 let name = self.take().lexeme;
                 if [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|words| Lang::spells(words, &name)) {
@@ -7458,11 +7476,12 @@ impl<'a> Compiler<'a> {
                     self.read(&name);
                     Ok(())
                 }
-            } else { self.prefix() };
+            } else if !self.lang.class_builder.is_empty() && self.in_class_body() { self.block_place() }
+            else { self.prefix() };
             self.writing_place = reading;
             place?;
             if self.pos != end { return Err(amiss.clone()); }
-            if self.piece().comprehension_kind.is_some() && self.lang.slice_values()
+            if (self.piece().comprehension_kind.is_some() || !self.lang.class_builder.is_empty() && self.in_class_body()) && self.lang.slice_values()
                 && matches!(self.piece().instrs.last(), Some(Instr::Act(Action::At, 2))) {
                 self.piece().instrs.pop();
                 let key = self.gensym("target_index");
@@ -7683,7 +7702,15 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         let writing_signs: Vec<String> = self.lang.assign_words.iter().cloned().chain(self.lang.compound.keys().cloned()).collect();
-        let writing_target = !self.outer_marks(self.pos, self.tokens.len(), &writing_signs).0.is_empty();
+        let assignments = self.outer_marks(self.pos, self.tokens.len(), &writing_signs).0;
+        let mut writing_target = !assignments.is_empty();
+        if writing_target && !self.lang.class_builder.is_empty() && self.in_class_body() {
+            let end = self.outer_marks(target_at, assignments[0], &self.lang.annotation_marks).0.first().copied().unwrap_or(assignments[0]);
+            let names: Vec<_> = self.tokens[target_at..end].iter().filter(|token| {
+                !self.lang.grouping.as_ref().is_some_and(|pair| token.shape == Shape::Sign && (token.lexeme == pair.open || token.lexeme == pair.close))
+            }).collect();
+            writing_target = names.len() == 1 && names[0].shape == Shape::Instr;
+        }
         let saved_place = std::mem::replace(&mut self.writing_place, writing_target);
         let outer_annotation = self.annotation_target;
         self.annotation_target = if starts_here { self.statement_annotation() } else { None };
@@ -7966,6 +7993,26 @@ impl<'a> Compiler<'a> {
                 self.registry.stopped_fatally = true;
                 return Err(format!("Cannot re-assign {}", this));
             }
+        }
+        // Python composite stores mutate the evaluated object. They do not
+        // assign the object expression back into the class namespace.
+        if !self.lang.class_builder.is_empty() && self.in_class_body()
+            && matches!(target.last(), Some(Instr::Act(Action::At, 2))) {
+            let value = self.gensym("target_value");
+            if compound.is_none() { self.value_written(keep)?; self.write(&value); }
+            let at = self.mark();
+            for instruction in relocated(target[..target.len() - 1].to_vec(), at as i64 - from as i64) { self.put(instruction); }
+            let key = self.gensym("target_key"); self.write(&key);
+            let object = self.gensym("target_object"); self.write(&object);
+            if let Some(operation) = compound {
+                self.read(&object); self.read(&key); self.act(Action::At, 2);
+                self.stood_before(); self.addend()?; self.compound_act(operation);
+                self.kept(keep); self.write(&value);
+            }
+            self.read(&key); self.read(&value); self.read(&object);
+            self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
+            if hushed || silenced { self.put(if silenced { Instr::Mute(false) } else { Instr::Hush(false) }); }
+            return Ok(());
         }
         // Where the target read its way into a place within a place,
         // the keys are taken apart, each with where it began, so that
@@ -9676,6 +9723,14 @@ impl<'a> Compiler<'a> {
                     if targets { self.put(Instr::Read(slot.clone())); self.discard(); }
                     let held = self.cell_to_write(&slot.ident.to_string());
                     self.put(Instr::Forget(held));
+                }
+                [.., Instr::Act(Action::At, 2)] if targets && !self.lang.class_builder.is_empty() && self.in_class_body() => {
+                    // A computed object supplied by the class book is already
+                    // the deletion receiver, rather than a name to rewrite.
+                    let at = self.mark();
+                    for instruction in relocated(named[..named.len() - 1].to_vec(), at as i64 - from as i64) { self.put(instruction); }
+                    self.act(Action::ForgetWithin, 2);
+                    self.discard();
                 }
                 [.., Instr::Act(Action::At, 2)] if targets => {
                     let (keys, starts) = keys_apart(&named, from, &self.keyed);

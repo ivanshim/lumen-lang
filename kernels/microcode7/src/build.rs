@@ -4105,9 +4105,14 @@ impl<'a> Builder<'a> {
             targets.push(begins..*sign);
             begins = sign + 1;
         }
+        if !self.divided_at(self.pos, signs[0], "ext.stmt.annotation").is_empty() { return Ok(None); }
         let mut gathered = Vec::new();
-        if targets.iter().any(|span| !self.target_words(span.clone(), &mut gathered)) { return Ok(None); }
-        if gathered.is_empty() { return Ok(None); }
+        if !self.table.has_any("ext.stmt.class.builder") {
+            if targets.iter().any(|span| !self.target_words(span.clone(), &mut gathered)) { return Ok(None); }
+            if gathered.is_empty() { return Ok(None); }
+        }
+        // Actual destinations are registered by distribute, not by words
+        // found inside the expressions supplying their objects and keys.
         // The value is worked out while the words still stand for what
         // the body bound earlier, so that `a, b = a + 1, 2` reads the
         // member `a` held rather than the place about to replace it.
@@ -4438,7 +4443,7 @@ impl<'a> Builder<'a> {
             let cuts = self.divided_at(self.pos + 1, self.tokens.len(), "stmt.for.in");
             let mut words = Vec::new();
             let of_words = cuts.first().map_or(false, |&at| self.target_words(self.pos + 1..at, &mut words));
-            if !of_words {
+            if !of_words && !self.table.has_any("ext.stmt.class.builder") {
                 let read = self.stmt()?;
                 self.parts().cannot = true;
                 return Ok(read);
@@ -7261,6 +7266,15 @@ impl<'a> Builder<'a> {
             if array { break; }
             if !self.divided_at(lo, hi, "ext.op.tuple").is_empty() { break; }
         }
+        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() && hi == lo + 1 {
+            let word = &self.tokens[lo].lexeme;
+            if word == "__debug__" || ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, word)) {
+                return Err(format!("SyntaxError: cannot assign to {word}"));
+            }
+            if self.table.keywords.contains(word) && !["ext.stmt.match", "ext.stmt.match.case", "ext.stmt.type_alias"].iter().any(|label| self.table.spells(label, word)) {
+                return Err("SyntaxError: invalid syntax".into());
+            }
+        }
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
             self.pos = lo;
@@ -7273,17 +7287,21 @@ impl<'a> Builder<'a> {
                 self.member_noted(&word, place.clone());
                 return Ok(match self.mirror_member(&word, &place) { Some(mirror) => sequence(vec![written, mirror]), None => written });
             }
-            self.place_depth += 1;
+            // Address expressions read their object and keys from the live book.
+            let writing_name = !self.table.has_any("ext.stmt.class.builder") || !self.in_class_body()
+                || hi == lo + 1 && self.look().shape == Shape::Bare;
+            self.place_depth += usize::from(writing_name);
             let reading = if hi == lo + 1 && self.look().shape == Shape::Bare {
                 let word = self.advance().lexeme;
                 if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &word)) {
                     Err("Invalid assignment target before '='".to_string())
                 } else { Ok(self.read(&word)) }
-            } else { self.monadic_expr() };
-            self.place_depth -= 1;
+            } else if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() { self.deletion_place() }
+            else { self.monadic_expr() };
+            self.place_depth -= usize::from(writing_name);
             let place = reading?;
             if self.pos != hi { return Err(bad); }
-            if self.layers.last().unwrap().gathering_kind.is_some() && self.table.has_any("ext.builtin.slice") {
+            if (self.layers.last().unwrap().gathering_kind.is_some() || self.table.has_any("ext.stmt.class.builder") && self.in_class_body()) && self.table.has_any("ext.builtin.slice") {
                 if let Form::Apply(Callee::Prim(Prim::At, _), mut operands) = place {
                     let container = self.gather_name("target_object");
                     let evaluate = self.write(&container, operands.remove(0));
@@ -7586,7 +7604,15 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
-        let writing = !self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty();
+        let assignments = self.divided_at(self.pos, self.tokens.len(), "stmt.assign");
+        let mut writing = !assignments.is_empty();
+        if writing && self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+            let end = self.declaration_mark().unwrap_or(assignments[0]).min(assignments[0]);
+            let names: Vec<_> = self.tokens[began..end].iter().filter(|token| {
+                token.shape != Shape::Sign || !["syntax.group.open", "syntax.group.close"].iter().any(|label| self.table.spells(label, &token.lexeme))
+            }).collect();
+            writing = names.len() == 1 && names[0].shape == Shape::Bare;
+        }
         self.place_depth += usize::from(writing);
         let enclosing_mark = self.kind_mark.take();
         if boundary { self.kind_mark = self.declaration_mark(); }
@@ -7840,6 +7866,29 @@ impl<'a> Builder<'a> {
             (None, Some(cell), None) => self.read(&cell),
             (None, None, None) => if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? },
         };
+        // The live class book can supply an object with no writable name.
+        // Keep the evaluated object and key, then perform its actual write.
+        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+            if let Form::Apply(Callee::Prim(Prim::At, _), operands) = &expr {
+                if operands.len() == 2 {
+                    let object = self.gensym("target_object");
+                    let key = self.gensym("target_key");
+                    let put = self.gensym("target_value");
+                    let mut steps = Vec::new();
+                    if plain { steps.push(Form::Write(put.clone(), Box::new(value.clone()))); }
+                    steps.push(Form::Write(object.clone(), Box::new(operands[0].clone())));
+                    steps.push(Form::Write(key.clone(), Box::new(operands[1].clone())));
+                    if let Some(operation) = compound {
+                        let current = self.kept_before(prim_call(Prim::At, vec![Form::Read(object.clone()), Form::Read(key.clone())]));
+                        let combined = self.kept_after(prim_call(operation, vec![current, value]));
+                        steps.push(Form::Write(put.clone(), Box::new(combined)));
+                    }
+                    steps.push(prim_call(Prim::Replace, vec![Form::Read(object), Form::Read(key), Form::Read(put.clone())]));
+                    steps.push(if gives_back { Form::Read(put) } else { constant(Value::Nil) });
+                    return Ok(sequence(steps));
+                }
+            }
+        }
         // The value comes before the bounds of a slice assignment.
         let keyed_write = matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _)) && self.table.has_any("ext.builtin.slice");
         let before_bounds = if plain && (slice_target(&expr) || keyed_write) {

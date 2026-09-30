@@ -4389,9 +4389,10 @@ impl<'a> Engine<'a> {
                             self.perform(op, *argc)
                         }
                         Action::Invoke(_) if *argc == 1 && !self.lang.class_builder.is_empty()
-                            && self.data.last().is_some_and(|held| matches!(self.what_it_spells(held.clone()), Value::Native(Builtin::ClassTool(8), _))) => {
-                            self.data.pop();
-                            self.names_about(program, frame, Builtin::ClassTool(8)).map(|names| self.data.push(names))
+                            && self.data.last().is_some_and(|held| matches!(self.what_it_spells(held.clone()), Value::Native(Builtin::ClassTool(8) | Builtin::NearNames | Builtin::Vars | Builtin::OuterNames, _))) => {
+                            let callable = self.data.pop().expect("the callable");
+                            let Value::Native(kind, _) = self.what_it_spells(callable) else { unreachable!() };
+                            self.names_about(program, frame, kind).map(|names| self.data.push(names))
                         }
                         _ => self.perform(op, *argc),
                     };

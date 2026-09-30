@@ -642,7 +642,13 @@ impl<'a> Engine<'a> {
                     let given = if self.lang.builtins.get(&word) == Some(&Builtin::Set) { Vec::new() } else { args };
                     self.thing_of_kind(c, &word, given)
                 }
-                3 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
+                3 => {
+                    args.insert(0,w.1[1].clone());
+                    let callable = w.1[0].clone();
+                    if !self.lang.class_builder.is_empty() && matches!(callable.contents(), Value::Native(..) | Value::ByteKind(..) | Value::SortOf(..)) {
+                        self.call_held(callable, args).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))
+                    } else { self.class_apply(callable, args) }
+                }
                 // A member a builtin kind carries, standing loose: the
                 // first value it is called with is the one it works
                 // upon, and the rest are what the member itself takes.
@@ -702,16 +708,36 @@ impl<'a> Engine<'a> {
                     }
                 }
                 44 => {
-                    let [descriptor, instance, Value::Class(owner)] = args.as_slice() else { return Err(self.class_refusal()); };
+                    if self.call_items(args.clone())?.iter().any(|(key, _)| key.is_some()) {
+                        return Err(format!("TypeError: {}() takes no keyword arguments", self.class_word("descriptor.get")).into());
+                    }
+                    let count = args.len().saturating_sub(1);
+                    if count == 0 { return Err(format!("TypeError: {} expected at least 1 argument, got 0", self.class_word("descriptor.get")).into()); }
+                    if count > 2 { return Err(format!("TypeError: {} expected at most 2 arguments, got {}", self.class_word("descriptor.get"), count).into()); }
+                    let [descriptor, instance, rest @ ..] = args.as_slice() else { return Err(self.class_refusal()); };
+                    let explicit = rest.first().filter(|owner| !matches!(owner.contents(), Value::Null));
+                    if matches!(instance.contents(), Value::Null) && explicit.is_none() { return Err("TypeError: __get__(None, None) is invalid".into()); }
                     let held = Self::worth_of(descriptor).ok_or_else(|| self.class_refusal())?;
-                    let receiver = (!matches!(instance, Value::Null)).then(|| instance.clone());
-                    self.bind_class_value(held, receiver, owner.clone())
+                    let Value::Adapter(wrapped) = held else { return Err(self.class_refusal()); };
+                    match wrapped.0 {
+                        4 => Ok(wrapped.1[0].clone()),
+                        5 => {
+                            let owner = match explicit { Some(owner) => owner.clone(), None => self.call_held(self.kind_maker_word(), vec![instance.clone()])? };
+                            Ok(Self::adapter(3, vec![wrapped.1[0].clone(), owner]))
+                        }
+                        _ => Err(self.class_refusal()),
+                    }
                 }
                 45 => {
                     if args.is_empty() { return Err(self.class_refusal()); }
                     let descriptor = args.remove(0);
                     let held = Self::worth_of(&descriptor).ok_or_else(|| self.class_refusal())?;
-                    self.class_apply(held, args)
+                    let Value::Adapter(wrapped) = held else { return Err(self.class_refusal()); };
+                    if wrapped.0 != 4 { return Err(self.class_refusal()); }
+                    let callable = wrapped.1[0].clone();
+                    if matches!(callable.contents(), Value::Native(..) | Value::ByteKind(..) | Value::SortOf(..)) {
+                        self.call_held(callable, args).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))
+                    } else { self.class_apply(callable, args) }
                 }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
                 5 => Err(self.core_fault("core.uncallable", "classmethod").into()),

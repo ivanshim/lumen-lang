@@ -654,7 +654,7 @@ impl<'a> Machine<'a> {
                         if self.table.prims.get(&word) == Some(&Prim::Uniques) { values.clear(); }
                         self.thing_over_native(c,&word,values)
                     }
-                    3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
+                    3=>{values.insert(0,kept[1].clone());if self.table.has_any("ext.stmt.class.builder"){self.apply_held(kept[0].clone(),values)}else{self.apply_class_member(kept[0].clone(),values)}},
                     // An entry a native kind carries, standing loose:
                     // the first value handed to it is the one it works
                     // upon, the rest being what the entry itself takes.
@@ -715,16 +715,32 @@ impl<'a> Machine<'a> {
                     }
                     4|8=>self.apply_class_member(kept[0].clone(),values),
                     73 => {
-                        let [descriptor, instance, Value::Blueprint(owner)] = values.as_slice() else { return Err(self.class_unready()); };
+                        if !self.open_arguments(values.clone())?.1.is_empty() {
+                            return Err(format!("TypeError: {}() takes no keyword arguments", self.detail("descriptor.get")).into());
+                        }
+                        let count = values.len().saturating_sub(1);
+                        if count == 0 { return Err(format!("TypeError: {} expected at least 1 argument, got 0", self.detail("descriptor.get")).into()); }
+                        if count > 2 { return Err(format!("TypeError: {} expected at most 2 arguments, got {}", self.detail("descriptor.get"), count).into()); }
+                        let [descriptor, instance, rest @ ..] = values.as_slice() else { return Err(self.class_unready()); };
+                        let supplied = rest.first().filter(|owner| !matches!(owner.settled(), Value::Nil));
+                        if matches!(instance.settled(), Value::Nil) && supplied.is_none() { return Err("TypeError: __get__(None, None) is invalid".to_owned().into()); }
                         let held = Self::underlying(descriptor).ok_or_else(|| self.class_unready())?;
-                        let receiver = (!matches!(instance, Value::Nil)).then(|| instance.clone());
-                        self.member_binding(held, receiver, owner.clone())
+                        let Value::Wrapped(tag, items) = held else { return Err(self.class_unready()); };
+                        match tag {
+                            4 => Ok(items[0].clone()),
+                            5 => {
+                                let owner = match supplied { Some(owner) => owner.clone(), None => self.apply_held(self.kind_builder_word(), vec![instance.clone()])? };
+                                Ok(Self::wrap(3, vec![items[0].clone(), owner]))
+                            }
+                            _ => Err(self.class_unready()),
+                        }
                     }
                     74 => {
                         if values.is_empty() { return Err(self.class_unready()); }
                         let descriptor = values.remove(0);
                         let held = Self::underlying(&descriptor).ok_or_else(|| self.class_unready())?;
-                        self.apply_class_member(held, values)
+                        let Value::Wrapped(4, items) = held else { return Err(self.class_unready()); };
+                        self.apply_held(items[0].clone(), values)
                     }
                     5=>Err(self.core_complaint("core.uncallable","classmethod").into()),
                     // The root's formatting of a thing to a specification.
