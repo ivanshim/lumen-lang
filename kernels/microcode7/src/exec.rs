@@ -4476,6 +4476,124 @@ impl<'a> Machine<'a> {
                 }
             }
             Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
+            Form::Located(position, inner) => {
+                let saved = (self.row, self.extent);
+                self.row = position.0;
+                self.extent = Some(*position);
+                let result = self.value_of(inner, frame);
+                let result = self.traced_result(result);
+                (self.row, self.extent) = saved;
+                result
+            }
+            Form::OnLine(row, inner) => {
+                self.extent = None;
+                self.row = *row;
+                if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(*row as i64); }
+                self.update_watched_locals();
+                // A statement reached is a fault gone by: whatever calls
+                // an earlier one was raised under are none of its
+                // business.
+                self.under = None;
+                self.entering = None;
+                // A statement is a fair place to look at the clock:
+                // often enough to stop a run that runs away, seldom
+                // enough that asking costs little.
+                if let Some(over) = self.past_its_time() {
+                    return Err(over);
+                }
+                if let Some(over) = self.past_its_room() {
+                    return Err(over);
+                }
+                let outcome = self.value_of(inner, frame);
+                self.traced_result(outcome)
+            }
+            Form::Write(slot, value) => {
+                let v = self.value_of(value, frame)?;
+                self.store(slot, frame, v.clone())?;
+                Ok(v)
+            }
+            Form::Apply(Callee::Prim(Prim::Seq, _), args) if self.wildcard_names.is_empty() => {
+                let mut last = Value::Nil;
+                for a in args {
+                    // What the statement before came to is let go
+                    // before the next is worked out and not after
+                    // it: a program asking how much room it holds
+                    // must not be told of a value it has already
+                    // finished with.
+                    drop(std::mem::replace(&mut last, Value::Nil));
+                    last = self.value_of(a, frame)?;
+                }
+                Ok(last)
+            }
+            Form::Apply(Callee::Code(target), args) => self.call_form(target, args, frame),
+            _ => self.extended_value(node, frame),
+        }
+    }
+
+    fn call_form(&mut self, target: &Form, args: &[Form], frame: &Rc<Env>) -> Res {
+        let found = self.value_of(target, frame)?;
+        let stands = match self.what_it_spells(found) {
+            Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
+            callable => callable,
+        };
+        if let Value::Adorned(adornment) = &stands {
+            let given = self.value_list(args, frame)?;
+            return self.call_adornment(adornment, given, frame);
+        }
+        if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
+        if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
+            let mut values=self.value_list(args,frame)?;
+            if matches!(&stands,Value::Wrapped(..)) { values=self.opened_arguments(values)?; }
+            return self.apply_class_member(stands,values);
+        }
+        if let Value::Method(body, object) = &stands {
+            let mut given = vec![Value::Thing(object.clone())];
+            given.extend(self.value_list(args, frame)?);
+            return self.invoke(body.clone(), self.outermost.clone(), given).map_err(Escape::from);
+        }
+        if let Value::Member(receiver, operation) = &stands {
+            let raw = self.value_list(args, frame)?;
+            let (given, named) = self.open_arguments(raw)?;
+            return self.value_member(receiver, operation, given, named);
+        }
+        if self.appointed(&stands, 17).is_some() {
+            let values = self.value_list(args, frame)?;
+            let answer = self.ask_special(&stands, 17, &values)?.unwrap();
+            return Ok(answer);
+        }
+        if let Some(done) = self.paired_call(&stands, args, frame) {
+            return done;
+        }
+        if let Some(done) = self.word_it_spells(&stands, args, frame) {
+            return done;
+        }
+        if self.rules.explicit_receiver {
+            if let Value::Blueprint(class) = &stands {
+                let values = self.value_list(args, frame)?;
+                return self.make_instance(class.clone(), values);
+            }
+        }
+        let callable = stands.clone();
+        let (p, env) = match self.routine_of(stands, target) {
+            Ok(callable) => callable,
+            Err(fault) => {
+                self.value_list(args, frame)?;
+                return Err(fault);
+            }
+        };
+        let callee = self.env_for(&p, env, args, frame)?;
+        let chosen = self.constructor_world(&p);
+        let earlier = chosen.map(|book| self.world_book.replace(book));
+        let outcome = if p.generator && self.rules.suspends {
+            self.named_generator(callable, &p, callee)
+        } else { self.drive(p, callee) };
+        if let Some(previous) = earlier { self.world_book = previous; }
+        outcome
+    }
+
+    #[inline(never)]
+    fn extended_value(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        match node {
             Form::Tie(slot, source) => {
                 let cell = self.value_of(source, frame)?;
                 let f = ascend(frame, slot.up);
@@ -4893,37 +5011,6 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Located(position, inner) => {
-                let saved = (self.row, self.extent);
-                self.row = position.0;
-                self.extent = Some(*position);
-                let result = self.value_of(inner, frame);
-                let result = self.traced_result(result);
-                (self.row, self.extent) = saved;
-                result
-            }
-            Form::OnLine(row, inner) => {
-                self.extent = None;
-                self.row = *row;
-                if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(*row as i64); }
-                self.update_watched_locals();
-                // A statement reached is a fault gone by: whatever calls
-                // an earlier one was raised under are none of its
-                // business.
-                self.under = None;
-                self.entering = None;
-                // A statement is a fair place to look at the clock:
-                // often enough to stop a run that runs away, seldom
-                // enough that asking costs little.
-                if let Some(over) = self.past_its_time() {
-                    return Err(over);
-                }
-                if let Some(over) = self.past_its_room() {
-                    return Err(over);
-                }
-                let outcome = self.value_of(inner, frame);
-                self.traced_result(outcome)
-            }
             Form::Missing(slot) => {
                 let f = ascend(frame, slot.up);
                 let values = f.cells.borrow();
@@ -5274,71 +5361,6 @@ impl<'a> Machine<'a> {
                     if let Some(arm) = otherwise { self.value_of(arm, frame)?; }
                 }
                 Ok(Value::Nil)
-            }
-            Form::Write(slot, value) => {
-                let v = self.value_of(value, frame)?;
-                self.store(slot, frame, v.clone())?;
-                Ok(v)
-            }
-            Form::Apply(Callee::Code(target), args) => {
-                let found = self.value_of(target, frame)?;
-                let stands = match self.what_it_spells(found) {
-                    Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
-                    callable => callable,
-                };
-                if let Value::Adorned(adornment) = &stands {
-                    let given = self.value_list(args, frame)?;
-                    return self.call_adornment(adornment, given, frame);
-                }
-                if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
-                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
-                    let mut values=self.value_list(args,frame)?;
-                    if matches!(&stands,Value::Wrapped(..)) { values=self.opened_arguments(values)?; }
-                    return self.apply_class_member(stands,values);
-                }
-                if let Value::Method(body, object) = &stands {
-                    let mut given = vec![Value::Thing(object.clone())];
-                    given.extend(self.value_list(args, frame)?);
-                    return self.invoke(body.clone(), self.outermost.clone(), given).map_err(Escape::from);
-                }
-                if let Value::Member(receiver, operation) = &stands {
-                    let raw = self.value_list(args, frame)?;
-                    let (given, named) = self.open_arguments(raw)?;
-                    return self.value_member(receiver, operation, given, named);
-                }
-                if self.appointed(&stands, 17).is_some() {
-                    let values = self.value_list(args, frame)?;
-                    let answer = self.ask_special(&stands, 17, &values)?.unwrap();
-                    return Ok(answer);
-                }
-                if let Some(done) = self.paired_call(&stands, args, frame) {
-                    return done;
-                }
-                if let Some(done) = self.word_it_spells(&stands, args, frame) {
-                    return done;
-                }
-                if self.rules.explicit_receiver {
-                    if let Value::Blueprint(class) = &stands {
-                        let values = self.value_list(args, frame)?;
-                        return self.make_instance(class.clone(), values);
-                    }
-                }
-                let callable = stands.clone();
-                let (p, env) = match self.routine_of(stands, target) {
-                    Ok(callable) => callable,
-                    Err(fault) => {
-                        self.value_list(args, frame)?;
-                        return Err(fault);
-                    }
-                };
-                let callee = self.env_for(&p, env, args, frame)?;
-                let chosen = self.constructor_world(&p);
-                let earlier = chosen.map(|book| self.world_book.replace(book));
-                let outcome = if p.generator && self.rules.suspends {
-                    self.named_generator(callable, &p, callee)
-                } else { self.drive(p, callee) };
-                if let Some(previous) = earlier { self.world_book = previous; }
-                outcome
             }
             Form::Apply(Callee::Prim(op, name), args) if !self.wildcard_names.is_empty()
                 && self.spread_override(name, *op).is_some() => {
@@ -6141,6 +6163,7 @@ impl<'a> Machine<'a> {
                     Ok(made)
                 }
             },
+            _ => unreachable!("form evaluated by the common dispatch"),
         }
     }
 
@@ -13234,15 +13257,6 @@ impl<'a> Machine<'a> {
                 return Err(self.table.single(label).unwrap_or_default().to_owned());
             }
         }
-        let w = self.wording();
-        let n = |k: usize| -> Result<(), String> {
-            if v.len() == k { return Ok(()); }
-            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
-                let words = self.table.strings("ext.builtin.core.arity.one");
-                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
-            }
-            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
-        };
         if v.len() == 2 && v.iter().any(|item| matches!(item, Value::Set(_))) {
             let rule = match op { Prim::BitsEither => Some(0), Prim::BitsBoth => Some(1), Prim::Minus => Some(2), Prim::BitsOne => Some(3), _ => None };
             if rule.is_some() || matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
@@ -13328,6 +13342,25 @@ impl<'a> Machine<'a> {
                 Value::from_big(answer)
             });
         }
+        if v.len() == 2
+            && matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::IntDiv | Prim::Power)
+            && v.iter().all(|value| matches!(value, Value::Small(_) | Value::Huge(_) | Value::Frac(_))) {
+            return self.number_work(op, v);
+        }
+        self.dispatch_primitive(op, name, v)
+    }
+
+    #[inline(never)]
+    fn dispatch_primitive(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
         Ok(match op {
             Prim::Positive => { n(1)?; v[0].clone() }
             // A landing was settled into its plain working above.
@@ -15704,66 +15737,7 @@ impl<'a> Machine<'a> {
                 };
                 self.at_width(evenly)
             }
-            Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => {
-                let sum = match op {
-                    Prim::Plus => Calc::Plus,
-                    Prim::Minus => Calc::Minus,
-                    Prim::Times => Calc::Times,
-                    Prim::Over => Calc::Over,
-                    Prim::OverReal => Calc::OverReal,
-                    Prim::IntDiv => Calc::IntDiv,
-                    Prim::Mod => Calc::Remainder,
-                    _ => Calc::Power,
-                };
-                // Where a language holds its reals to a width of bits,
-                // a whole number meeting a real is brought to that
-                // width first, so the two are worked as it works them.
-                // A whole number too great for any real of the width to
-                // hold cannot be carried there, and the meeting is
-                // stopped rather than let the width's own standing-past-
-                // every-number answer for a number that is not; a real
-                // which only happens to overflow the working stays
-                // quiet, being at the width already before this asked.
-                let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
-                    true => {
-                        let carry = |v: &Value| -> Result<Value, String> {
-                            let wide = self.as_wide_real(v);
-                            if !self.a_real(v) {
-                                if let Value::Frac(e) = &wide {
-                                    if !e.above.is_zero() && crate::data::nearest_binary(&e.above, &e.beneath).is_infinite() {
-                                        return Err("OverflowError: int too large to convert to float".to_string());
-                                    }
-                                }
-                            }
-                            Ok(self.at_width(wide))
-                        };
-                        (carry(&v[0])?, carry(&v[1])?)
-                    }
-                    false => (v[0].clone(), v[1].clone()),
-                };
-                let binary = if self.table.flag("ext.op.arithmetic.binary") { math::binary_work(sum, &left, &right) } else { None };
-                let worked = match binary.or_else(|| math::compute(sum, &left, &right)) {
-                    // A language may tell the remainder by nought apart
-                    // from the division by it and word that its own
-                    // way. The kind of fault is the same for both, so
-                    // it is the wording alone that is stood in.
-                    Some(Err(told)) if sum == Calc::Remainder && told == "Division by zero" => {
-                        let its_own = self.table.single("ext.system.fault.modulo");
-                        return Err(its_own.map_or(told, str::to_string));
-                    }
-                    Some(r) => r?,
-                    None => match sum {
-                        Calc::Plus => Value::from_big(left.as_big()? + right.as_big()?),
-                        Calc::Minus => Value::from_big(left.as_big()? - right.as_big()?),
-                        Calc::Times => Value::from_big(left.as_big()? * right.as_big()?),
-                        Calc::Over | Calc::OverReal => return Err("Division requires numeric operands".to_string()),
-                        Calc::IntDiv => return Err("Integer quotient requires numeric operands".to_string()),
-                        Calc::Remainder => return Err("Modulo requires numeric operands".to_string()),
-                        Calc::Power => return Err("Exponentiation requires numeric operands".to_string()),
-                    },
-                };
-                self.at_width(worked)
-            }
+            Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => self.number_work(op, v)?,
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
                 // A whole number asked whether it stands in order
                 // beside a real is answered exactly, not carried to
@@ -16351,6 +16325,70 @@ impl<'a> Machine<'a> {
             Prim::Octets(_) | Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
             | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
         })
+    }
+
+    fn number_work(&mut self, op: Prim, v: &[Value]) -> Result<Value, String> {
+        let result = {
+            let sum = match op {
+                Prim::Plus => Calc::Plus,
+                Prim::Minus => Calc::Minus,
+                Prim::Times => Calc::Times,
+                Prim::Over => Calc::Over,
+                Prim::OverReal => Calc::OverReal,
+                Prim::IntDiv => Calc::IntDiv,
+                Prim::Mod => Calc::Remainder,
+                _ => Calc::Power,
+            };
+            // Where a language holds its reals to a width of bits,
+            // a whole number meeting a real is brought to that
+            // width first, so the two are worked as it works them.
+            // A whole number too great for any real of the width to
+            // hold cannot be carried there, and the meeting is
+            // stopped rather than let the width's own standing-past-
+            // every-number answer for a number that is not; a real
+            // which only happens to overflow the working stays
+            // quiet, being at the width already before this asked.
+            let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
+                true => {
+                    let carry = |v: &Value| -> Result<Value, String> {
+                        let wide = self.as_wide_real(v);
+                        if !self.a_real(v) {
+                            if let Value::Frac(e) = &wide {
+                                if !e.above.is_zero() && crate::data::nearest_binary(&e.above, &e.beneath).is_infinite() {
+                                    return Err("OverflowError: int too large to convert to float".to_string());
+                                }
+                            }
+                        }
+                        Ok(self.at_width(wide))
+                    };
+                    (carry(&v[0])?, carry(&v[1])?)
+                }
+                false => (v[0].clone(), v[1].clone()),
+            };
+            let binary = if self.table.flag("ext.op.arithmetic.binary") { math::binary_work(sum, &left, &right) } else { None };
+            let worked = match binary.or_else(|| math::compute(sum, &left, &right)) {
+                // A language may tell the remainder by nought apart
+                // from the division by it and word that its own
+                // way. The kind of fault is the same for both, so
+                // it is the wording alone that is stood in.
+                Some(Err(told)) if sum == Calc::Remainder && told == "Division by zero" => {
+                    let its_own = self.table.single("ext.system.fault.modulo");
+                    return Err(its_own.map_or(told, str::to_string));
+                }
+                Some(r) => r?,
+                None => match sum {
+                    Calc::Plus => Value::from_big(left.as_big()? + right.as_big()?),
+                    Calc::Minus => Value::from_big(left.as_big()? - right.as_big()?),
+                    Calc::Times => Value::from_big(left.as_big()? * right.as_big()?),
+                    Calc::Over | Calc::OverReal => return Err("Division requires numeric operands".to_string()),
+                    Calc::IntDiv => return Err("Integer quotient requires numeric operands".to_string()),
+                    Calc::Remainder => return Err("Modulo requires numeric operands".to_string()),
+                    Calc::Power => return Err("Exponentiation requires numeric operands".to_string()),
+                },
+            };
+            self.at_width(worked)
+        };
+        Ok(result)
     }
 
     /// A source read in and run: text given outright, or a file
