@@ -61,6 +61,12 @@ pub struct Registry {
     /// own: every routine read from it keeps the two.
     pub globe: Option<Value>,
     pub born: Option<Value>,
+    /// The name the dictionary named for itself under `__name__` where
+    /// the text now being read was handed one, caught before the text
+    /// was read: every routine read from it keeps it as its module. The
+    /// inner Nothing where the dictionary named nothing; the outer for
+    /// text not handed a dictionary of its own.
+    pub home: Option<Option<Rc<str>>>,
     /// The global names the program's own lines have bound, as against
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
@@ -499,6 +505,9 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
                 Shape::Close => { depth = depth.saturating_sub(1); if depth == 0 { break; } }
                 Shape::LineEnd if !indented => break,
                 Shape::Finish => break,
+                // A private builtin's spelling is no class's private
+                // name: it keeps its own spelling wherever it is written.
+                Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
                 Shape::Instr => result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme),
                 _ => {}
             }
@@ -713,7 +722,7 @@ fn compile_pass(
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
     a.registry.top_level_coroutine = unit.generator;
-    Ok(Rc::new(Routine { annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { annotation: None, code_constants: Vec::new(), code_names: Vec::new(), local_names: Vec::new(), code_flags: 0, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1685,7 +1694,7 @@ impl<'a> Compiler<'a> {
         }
         code_flags |= if unit.asynchronous { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names);
-        Ok(Rc::new(Routine { annotation, code_constants, code_names, local_names, code_flags, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
+        Ok(Rc::new(Routine { annotation, code_constants, code_names, local_names, code_flags, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
     fn annotation_routine(&mut self) -> Res<Option<Rc<Routine>>> {
@@ -8923,7 +8932,7 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.lexeme) && !lang.exceptions.contains(&tok.lexeme) {
             self.take();
-            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()) };
+            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }

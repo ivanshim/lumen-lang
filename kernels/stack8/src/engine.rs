@@ -452,7 +452,7 @@ impl<'a> Engine<'a> {
             classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()),
+                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
             }));
         }
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
@@ -1124,7 +1124,7 @@ impl<'a> Engine<'a> {
             if let (Some(slot), Some(name)) = (find(&lang.fault_value), &lang.fault_value) {
                 world[slot] = Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                     name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
                 }));
             }
         }
@@ -1988,7 +1988,7 @@ impl<'a> Engine<'a> {
             if let Some(Value::Class(class)) = self.native_exceptions.get(&self.lang.special_stop[0]).cloned() {
                 return Some(self.exception_instance(class, vec![], Value::Null));
             }
-            let class = Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]) };
+            let class = Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) };
             self.made += 1;
             return Some(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: Rc::new(class), fields: RefCell::new(vec![]), mark: self.made })));
         }
@@ -4044,7 +4044,7 @@ impl<'a> Engine<'a> {
             None => {
                 let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false) });
                 self.frame_class = Some(class.clone());
                 class
             }
@@ -5230,6 +5230,14 @@ impl<'a> Engine<'a> {
             }
         }
         if let Some(size) = self.integer_member(&held, name) { return Ok(Some(size)); }
+        if name == self.class_word("flags") && !name.is_empty() {
+            let kind = match &held {
+                Value::Native(op, spelling) if Self::kind_builtin(op) => Some(spelling.clone()),
+                Value::ByteKind(mutable, _) => Some(Rc::from(self.byte_kind_word(*mutable))),
+                other => self.kind_spelled(other),
+            };
+            if let Some(word) = kind { let class = self.kind_class(&word); return Ok(Some(Value::Small(self.flags_of(&class)))); }
+        }
         if let Value::Native(op, word) = &held {
             if !Self::kind_builtin(op) {
                 if name == self.class_word("qualified") { return Ok(Some(Value::text(word))); }
@@ -8587,6 +8595,7 @@ impl<'a> Engine<'a> {
                 let base = match plan.extends {
                     false => None,
                     true => match given.next() {
+                        Some(Value::Class(c)) if Self::class_sealed(&c) => return Err(format!("TypeError: type '{}' is not an acceptable base type", c.name).into()),
                         Some(Value::Class(c)) => Some(c),
                         Some(Value::Native(Builtin::Bool, _)) if self.lang.bool_base.is_some() => return Err(self.lang.bool_base.clone().unwrap_or_default().into()),
                         // The kind builtin, stood on: what is being made
@@ -8666,6 +8675,7 @@ impl<'a> Engine<'a> {
                     methods: plan.methods.clone(),
                     shared: RefCell::new(take(&plan.shared_names)),
                     constants: take(&plan.constant_names),
+                    sealed: std::cell::Cell::new(false),
                 }))
             }
             Action::Make => {
@@ -8783,6 +8793,8 @@ impl<'a> Engine<'a> {
                     && matches!(&held, Value::Native(_, word) if Self::builtin_kind_doc(word).is_some());
                 let kind_namespace = name.as_ref() == self.class_word("namespace")
                     && (matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) || self.kind_spelled(&held).is_some());
+                let kind_flags = name.as_ref() == self.class_word("flags") && !name.is_empty()
+                    && (matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) || matches!(&held, Value::ByteKind(..)) || self.kind_spelled(&held).is_some());
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
@@ -8809,7 +8821,7 @@ impl<'a> Engine<'a> {
                 let generator_running = matches!(&held, Value::Generator(_)) && (self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref())
                     || name.as_ref() == self.class_word("name") || name.as_ref() == self.class_word("qualified")
                     || [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)));
-                Value::Flag(matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_flags || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -9376,7 +9388,7 @@ impl<'a> Engine<'a> {
                             lineage: Vec::new(), direct: Vec::new(), outline: None,
                             name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
                             answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
-                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
                         });
                         self.made += 1;
                         let fields = if bare { Vec::new() } else { vec![("message".to_string(), message)] };
@@ -15372,7 +15384,7 @@ impl<'a> Engine<'a> {
                 Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                     name: title.to_string(), base: Some(parent.clone()), answers: Vec::new(),
                     fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                    constants: Vec::new(), shared: RefCell::new(shared),
+                    constants: Vec::new(), shared: RefCell::new(shared), sealed: std::cell::Cell::new(false),
                 }))
             }
             Builtin::CopyValue => {
@@ -15416,6 +15428,36 @@ impl<'a> Engine<'a> {
                     if name.starts_with('\0') || name.contains(crate::code::OF_A_CLASS) || matches!(value, Value::Blank) { None }
                     else { Some((Value::text(name), value.clone())) }
                 }).collect()))
+            }
+            // The module the routine running `depth` frames up the call
+            // chain answers as its own: the same walk the
+            // program-namespace builtin makes, answered as the routine's
+            // own `__module__` member would answer.
+            Builtin::FrameModule => {
+                if let [Value::Small(depth)] = args.as_slice() {
+                    let mut current = self.trace_frame.clone().map_or(Value::Null, Value::Object);
+                    for _ in 0..(*depth).max(0) {
+                        current = match current { Value::Object(frame) => frame.fields.borrow()[2].1.clone(), _ => Value::Null };
+                    }
+                    if let Value::Object(frame) = current.contents() {
+                        let routine = frame.fields.borrow().iter().find(|(n, _)| n == "\0routine").map(|(_, v)| v.contents());
+                        if let Some(Value::Routine(program)) = routine {
+                            let member = self.class_word("module").to_string();
+                            return self.class_get(Value::Routine(program), &member, false).map_err(|fled| fled.told(&sp));
+                        }
+                    }
+                    return Err("ValueError: call stack is not deep enough".into());
+                }
+                return Err("TypeError: an integer is required".into());
+            }
+            // Sealing a class marks it against change: the mark is the
+            // class's own and no member of it, so no program write can
+            // reach it, and every later look at the class answers from it.
+            Builtin::ClassSeal => {
+                arity(1)?;
+                let Value::Class(c) = args[0].contents() else { return Err("TypeError: a class is required".into()) };
+                c.sealed.set(true);
+                Value::Null
             }
             Builtin::MemberGet => {
                 if args.len() != 2 && args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
@@ -16095,7 +16137,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Class(Rc::new(Class {
                         lineage: Vec::new(), direct: Vec::new(), outline: None, name: word.clone(), base: None,
                         answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                        constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                        constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
                     })));
                 }
                 // A thing is of no kind the core knows, so a language
@@ -18544,7 +18586,7 @@ impl Engine<'_> {
         }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
-            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }),
+            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false) }),
             fields: RefCell::new(fields), mark: self.made,
         });
         let module = Value::Object(object);
@@ -18988,7 +19030,7 @@ impl Engine<'_> {
         if let Some(class) = &self.code_class { return class.clone(); }
         let class = Rc::new(Class {
             direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.compile_kind.clone().unwrap_or_default(),
-            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
         });
         self.code_class = Some(class.clone());
         class
@@ -19806,6 +19848,10 @@ impl Engine<'_> {
             local.born = Some(born);
         }
         let module_hint = book_entry(&outer, "__name__").and_then(|held| match held.contents() { Value::Text(named) => Some(named.to_string()), _ => None });
+        // The namespace's own name is caught before the text is read, so
+        // that every routine the text makes answers with the name the
+        // namespace had when they were made, not one written later.
+        local.home = Some(module_hint.as_deref().map(Rc::from));
         let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref())?;
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }

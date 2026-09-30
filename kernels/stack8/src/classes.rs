@@ -17,7 +17,7 @@ impl<'a> Engine<'a> {
         let name = self.class_word("root").to_string();
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![], lineage: vec![], base: None, answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]) });
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
         self.class_root = Some(c.clone());
         c
     }
@@ -29,7 +29,7 @@ impl<'a> Engine<'a> {
         let root = self.root_class();
         let c = Rc::new(Class { outline: Some(format!("<class '{word}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]) });
+            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
         self.kind_classes.push((word.to_string(), c.clone()));
         c
     }
@@ -42,7 +42,7 @@ impl<'a> Engine<'a> {
         let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::SortOf).map_or(String::new(), |(w, _)| w.clone());
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(vec![]) });
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
         self.class_maker = Some(c.clone());
         c
     }
@@ -97,6 +97,13 @@ impl<'a> Engine<'a> {
     /// The builtin kind a class stands on, through any of its line.
     pub(super) fn kind_beneath(c: &Class) -> Option<String> {
         std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(Self::own_kind)
+    }
+    /// Whether the class was sealed against change: a sealed class
+    /// refuses writes and removals among its members and cannot stand
+    /// as a base. Only the library's own sealing builtin sets the mark,
+    /// which no member of the class can stand for.
+    pub(super) fn class_sealed(c: &Class) -> bool {
+        c.sealed.get()
     }
     /// The worth a thing keeps of the builtin kind its class stands on,
     /// as it is kept: a row or a map in its cell, so that what is done
@@ -274,7 +281,7 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default(),
-            shared: RefCell::new(members) });
+            shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
         self.furnish_slots(&c)?;
         // Each member that asks to be told its name is told it, once the
         // class stands, before any forebear hears of the new class.
@@ -396,7 +403,7 @@ impl<'a> Engine<'a> {
         }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(members) });
+            methods: vec![], constants: vec![], shared: RefCell::new(members), sealed: std::cell::Cell::new(false) });
         self.property_class = Some(c.clone());
         c
     }
@@ -1135,6 +1142,20 @@ impl<'a> Engine<'a> {
         if let Value::Adapter(property) = &subject {
             if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
         }
+        // The kind's word, or the kind read as a class, answers for its
+        // type flags from the class the kind stands for.
+        if name==self.class_word("flags") && !name.is_empty() {
+            let held=subject.contents();
+            let builtin=match &held {
+                Value::Native(op,word) if Self::kind_builtin(op)=>Some(word.clone()),
+                Value::ByteKind(mutable, _) => Some(Rc::from(self.byte_kind_word(*mutable))),
+                other=>self.kind_spelled(other),
+            };
+            if let Some(word)=builtin {
+                let kind=self.kind_class(&word);
+                return Ok(Value::Small(self.flags_of(&kind)));
+            }
+        }
         if name==self.class_word("namespace") {
             let held=subject.contents();
             let builtin=match &held {
@@ -1223,10 +1244,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if name == self.class_word("flags") {
-                    let dictionary = self.slots_allow(c, self.class_word("namespace"));
-                    let inline = dictionary && Self::kind_beneath(c).is_none();
-                    return Ok(Value::Small(512 + 1024 + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 }));
-            }
+                    return Ok(Value::Small(self.flags_of(c)));
+                }
                 if (Self::own_kind(c).as_deref() == Some("float") || Self::kind_beneath(c).as_deref() == Some("float")) && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
                 }
@@ -1422,7 +1441,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("name") {return Ok(self.routine_held(&subject,name,Value::text(&f.ident)));}
                 if name==self.class_word("qualified") {return Ok(self.routine_held(&subject,name,Value::text(&f.qualified)));}
                 if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
-                if name==self.class_word("module") {let place=self.routine_home(f);return Ok(self.routine_held(&subject,name,Value::text(&place)));}
+                if name==self.class_word("module") {let home=self.routine_module(f);return Ok(self.routine_held(&subject,name,home));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
                     if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
@@ -1531,10 +1550,20 @@ impl<'a> Engine<'a> {
     /// The name of the module a routine was written in: the module the
     /// file it came from was read as, or the run's own name where the
     /// routine is the program itself.
-    fn routine_home(&self, f: &Routine) -> String {
+    pub(super) fn routine_home(&self, f: &Routine) -> String {
         f.written_in.as_ref()
             .and_then(|place| self.module_slots.get(place))
             .map_or_else(|| self.class_word("main").to_string(), |(_, path)| path.clone())
+    }
+    /// The module a routine answers as its own before anything the
+    /// program set on it: the name of the namespace a routine made by
+    /// hand was made in, caught when it was made (None where that
+    /// namespace named nothing), else the module its file was read as.
+    pub(super) fn routine_module(&self, f: &Routine) -> Value {
+        match &f.home {
+            Some(named) => named.as_ref().map_or(Value::Null, |word| Value::text(word)),
+            None => Value::text(&self.routine_home(f)),
+        }
     }
     /// The word the definition gives the module the builtin names live in.
     pub(super) fn home_module_word(&self) -> &str {
@@ -1958,9 +1987,8 @@ impl<'a> Engine<'a> {
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
-                if c.name == "sentinel" {
-                    let action = if value.is_some() { "set" } else { "delete" };
-                    return Err(format!("TypeError: cannot {action} '{name}' attribute of immutable type 'sentinel'").into());
+                if Self::class_sealed(c) {
+                    return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
                 }
                 if name == self.class_word("qualified") {
                     match value.as_ref().map(Value::contents) {
@@ -2091,8 +2119,22 @@ impl<'a> Engine<'a> {
         let fits=match &slots {Value::Array(v)|Value::Tuple(v)=>v.iter().any(allows),v=>allows(v)};
         fits||c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_allow(b,name))
     }
+    /// The type flags the reference reports for a class: a heap type,
+    /// standing as a base unless sealed (a sealed class reads as
+    /// immutable instead), with a namespace dictionary and an inline
+    /// layout where they apply, and tracked by the cyclic collector
+    /// unless its things keep a worth of an atomic builtin kind, which
+    /// can take no part in a cycle.
+    pub(super) fn flags_of(&self, c: &Class) -> i64 {
+        let dictionary = self.slots_allow(c, self.class_word("namespace"));
+        let inline = dictionary && Self::kind_beneath(c).is_none();
+        let tracked = Self::own_kind(c).is_none()
+            && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
+        512 + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+    }
     fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         match value.contents() {
+            Value::Class(class) if Self::class_sealed(&class) => Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()),
             Value::Class(class) => Ok(class),
             Value::Native(Builtin::SortOf, _) => Ok(self.metaclass_root()),
             Value::Native(Builtin::Bool, _) => Err(self.lang.bool_base.clone().unwrap_or_default().into()),

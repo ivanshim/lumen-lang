@@ -3552,6 +3552,17 @@ only. The extension labels so far, all from PHP:
   cells are not part of that map; it lets a library find the classes the
   program has declared without teaching the kernel a test runner. With an
   integer depth it instead returns a running frame for the system library.
+- `ext.builtin.frame.module`: a builtin answering the name of the module
+  the routine running a frame was written in, the frame found by walking
+  the running frames an integer depth from the innermost one, the way
+  `ext.builtin.program.namespace` walks them. A library reads the module
+  a call was made from without the caller passing it.
+- `ext.builtin.class.seal`: a builtin sealing the class it is given
+  against change: writing or taking away a member of the class itself is
+  refused, and the class is refused as a base. The class's flags then say
+  so: the bit for an immutable type is set, the bit for a usable base is
+  not, and a class whose things the round-finding collector follows also
+  carries the collector's bit, sealed or not.
 - `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
   and writing a member by its name, the owner given first. The reader
   may be given a third value for an absent member; the writer takes the
@@ -3767,6 +3778,8 @@ only. The extension labels so far, all from PHP:
 - `ext.text.format.invalid`: the complaint for an ill-formed specification.
 - `ext.text.format.invalid.detail`: the invalid specification and value type.
 - `ext.text.format.group.conflict`: the incompatible grouping marks.
+  `ext.text.format.group.type` names a grouping mark and the presentation
+  letter with which it cannot be used, before other type checks.
   `ext.text.format.unknown` holds the words before a presentation letter,
   between that letter and the value's kind, and after the kind.
   `ext.text.format.kinds` names whole, real, text, flag, list, map, nothing,
@@ -4396,6 +4409,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
+| `ext.builtin.class.seal` | - | - | `__seal_class` | - | - | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
 | `ext.builtin.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
@@ -4513,6 +4527,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.frame.module` | - | - | `__frame_module` | - | - | - | - | - | - | - |
 | `ext.builtin.frozenset` | - | - | `frozenset` | - | - | - | - | - | - | - |
 | `ext.builtin.gc.collect` | - | - | `__gc_collect` | - | - | - | - | - | - | - |
 | `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
@@ -5499,6 +5514,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.digits` | - | - | `ValueError: Too many decimal digits in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.group.conflict` | - | - | `ValueError: Cannot specify ` `.` | - | - | - | - | - | - | - |
+| `ext.text.format.group.type` | - | - | `ValueError: Cannot specify ` ` with ` `.` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid` | - | - | `ValueError: Invalid format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid.detail` | - | - | `ValueError: Invalid format specifier '` `' for object of type '` `'` | - | - | - | - | - | - | - |
