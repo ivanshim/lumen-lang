@@ -13564,8 +13564,15 @@ impl<'a> Machine<'a> {
                 if self.is_our_namespace(&v[0], &v[1].bare()) {
                     self.namespace_item(&v[0], &v[1].bare(), &v[2].bare())?
                 } else {
-                    self.read_class_member(v[0].clone(), &v[2].bare(), false)
-                        .map_err(|escape| self.suspension_fault(escape))?
+                    // A member the program's own __import__ answered
+                    // without is a missing import, not a missing
+                    // attribute: the ImportError the reference names,
+                    // whatever the answer's own reading raises standing.
+                    match self.read_class_member(v[0].clone(), &v[2].bare(), false) {
+                        Ok(value) => value,
+                        Err(escape) if self.missing_member_escape(&escape) => return Err(self.import_member_fault(&v[1].bare(), &v[2].bare())),
+                        Err(escape) => return Err(self.suspension_fault(escape)),
+                    }
                 }
             }
             Prim::SpreadModule => {

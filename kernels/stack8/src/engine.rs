@@ -8679,7 +8679,15 @@ impl<'a> Engine<'a> {
                 if self.is_builtin_module(&module, path) {
                     self.import_member(&module, path, name)?
                 } else {
-                    self.class_get(module, name, false)?
+                    // A member the program's own __import__ answered
+                    // without is a missing import, not a missing
+                    // attribute: the ImportError the reference names,
+                    // whatever the answer's own reading raises standing.
+                    match self.class_get(module, name, false) {
+                        Ok(value) => value,
+                        Err(fault) if self.attribute_fault(&fault) => return Err(self.import_member_fault(path, name).into()),
+                        Err(fault) => return Err(fault),
+                    }
                 }
             }
             Action::ImportAll => {
