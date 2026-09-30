@@ -1680,10 +1680,18 @@ pub struct Class {
 impl Class {
     pub(super) fn python_title(&self) -> Option<String> {
         let names = self.python_names.borrow();
+        let (short, qualified, module_key, _) = names.as_ref()?;
+        let module = self.shared.borrow().iter().find(|(key, _)| key == module_key).and_then(|(_, value)| match value.type_text() { text @ (Value::Text(_) | Value::Codepoints(_)) => Some(text.plain()), _ => None });
+        Some(match module { Some(module) if module != "builtins" => format!("{module}.{}", qualified.type_text().plain()), _ => short.type_text().plain() })
+    }
+    /// Percent-character errors keep the public qualification even when repr
+    /// falls back to the short name because no usable module is present.
+    pub(super) fn python_qualified_title(&self) -> Option<String> {
+        let names = self.python_names.borrow();
         let (_, qualified, module_key, _) = names.as_ref()?;
-        let prefix = self.shared.borrow().iter().find(|(key, _)| key == module_key).and_then(|(_, value)| match value.contents() { Value::Text(text) => Some(text.to_string()), _ => None });
+        let module = self.shared.borrow().iter().find(|(key, _)| key == module_key).and_then(|(_, value)| match value.type_text() { text @ (Value::Text(_) | Value::Codepoints(_)) => Some(text.plain()), _ => None });
         let local = qualified.type_text().plain();
-        Some(match prefix { Some(module) if module != "builtins" => format!("{module}.{local}"), _ => local })
+        Some(match module { Some(module) if module != "builtins" => format!("{module}.{local}"), _ => local })
     }
 
     /// The program of that name, in this class or the nearest one

@@ -21187,6 +21187,7 @@ impl crate::formatting::Elsewhere for Machine<'_> {
         let qualified: Option<String> = match &held {
             Value::Thing(t) => {
                 let blueprint = t.blueprint();
+                if let Some(title) = blueprint.python_qualified_title().filter(|_| code == 'c') { Some(title) } else {
                 let qualifier = self.detail("qualified");
                 let qualname = if qualifier.is_empty() {
                     blueprint.name.clone()
@@ -21202,6 +21203,7 @@ impl crate::formatting::Elsewhere for Machine<'_> {
                     Some(if module.is_empty() { qualname } else { format!("{module}.{qualname}") })
                 } else {
                     Some(qualname)
+                }
                 }
             }
             _ => None,
@@ -21229,7 +21231,9 @@ impl crate::formatting::Elsewhere for Machine<'_> {
         } else if let Some(index) = self.stood_for_whole(&held)? {
             return Ok(crate::formatting::NumberAnswer::Whole(index));
         }
-        Ok(if let Some(worth) = worth() { crate::formatting::NumberAnswer::Whole(worth) } else { crate::formatting::NumberAnswer::Missing(named(&held)) })
+        Ok(if let Some(worth) = worth() { crate::formatting::NumberAnswer::Whole(worth) } else if code == 'c' && matches!(&held, Value::Thing(t) if t.blueprint().python_qualified_title().is_some()) {
+            crate::formatting::NumberAnswer::CharacterType(named(&held))
+        } else { crate::formatting::NumberAnswer::Missing(named(&held)) })
     }
 }
 

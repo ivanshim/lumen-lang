@@ -6089,10 +6089,11 @@ impl<'a> Engine<'a> {
 
     /// The name a formatting complaint gives a value: the qualified name
     /// of a thing's class, and the core kind of anything else.
-    fn format_kind(&self, value: &Value) -> String {
+    fn format_kind(&self, value: &Value, code: char) -> String {
         match value {
             Value::Object(o) => {
                 let class = o.class_now();
+                if code == 'c' { if let Some(title) = class.python_qualified_title() { return title; } }
                 let qualified = self.class_value(&class, self.class_word("qualified")).and_then(|v| match v {
                     Value::Text(name) if !name.is_empty() => Some(name.to_string()),
                     _ => None,
@@ -10044,20 +10045,25 @@ impl<'a> Engine<'a> {
                     None => {}
                     Some(Value::Flag(flag)) => return Ok(Answer::Whole(Value::Small(i64::from(flag)))),
                     Some(whole @ (Value::Small(_) | Value::Huge(_))) => return Ok(Answer::Whole(whole)),
-                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value))),
+                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value, code))),
                 }
                 if let Some(index) = self.special_index(&thing)? { return Ok(Answer::Whole(index)); }
             } else if matches!(code, 'e' | 'E' | 'f' | 'F' | 'g' | 'G') {
                 match self.special_call(&thing, 39, Vec::new())? {
                     None => {}
                     Some(real @ (Value::Real(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => return Ok(Answer::Whole(real)),
-                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value))),
+                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value, code))),
                 }
                 if let Some(index) = self.special_index(&thing)? { return Ok(Answer::Whole(index)); }
             } else if let Some(index) = self.special_index(&thing)? {
                 return Ok(Answer::Whole(index));
             }
-            Ok(if let Some(worth) = worth() { Answer::Whole(worth) } else { Answer::Missing(self.format_kind(value)) })
+            Ok(if let Some(worth) = worth() { Answer::Whole(worth) } else if code == 'c' {
+                match &thing {
+                    Value::Object(object) if object.class_now().python_qualified_title().is_some() => Answer::CharacterType(self.format_kind(value, code)),
+                    _ => Answer::Missing(self.format_kind(value, code)),
+                }
+            } else { Answer::Missing(self.format_kind(value, code)) })
         };
         writer.percent(template, arguments, &mut asked, false)
     }

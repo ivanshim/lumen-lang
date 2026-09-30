@@ -5590,3 +5590,9 @@ String metadata unwraps internal storage only after checking genuine str ancestr
 Python instance rendering follows the public qualification and module. The original
 qualification preserves the existing string-based super lookup across renames;
 this is not a class-cell identity and same-spelling declarations can still collide.
+
+Python class reads and writes honor metaclass data descriptors before heap
+metadata or namespace entries; ordinary classes retain their default None doc.
+Rendering accepts genuine str-subclass modules and uses the current short name
+when the module is builtins or non-string. Percent-character complaints instead
+keep the public qualification, without changing the lexical declaration name.

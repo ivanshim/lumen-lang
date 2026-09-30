@@ -469,7 +469,7 @@ impl<'a> Engine<'a> {
         let pieces = self.lang.class_details.get(part).cloned().unwrap_or_default();
         if pieces.len() != 3 { return self.class_refusal(); }
         let named = Self::property_accessor(property, "\0name").map(|n| format!(" '{}'", n.plain())).unwrap_or_default();
-        let of = match thing { Value::Object(o) => o.class_now().name.clone(), Value::Class(c) => c.name.clone(), other => other.plain() };
+        let of = match thing { Value::Object(o) => o.class_now().name.clone(), Value::Class(c) => if self.class_word("name").is_empty() { c.name.clone() } else { Self::maker_beneath(c).map_or_else(|| c.name.clone(), |maker| maker.python_names.borrow().as_ref().map_or_else(|| maker.name.clone(), |names| names.0.type_text().plain())) }, other => other.plain() };
         format!("{}{named}{}{of}{}", pieces[0], pieces[1], pieces[2]).into()
     }
     /// The workings of the property class, each handed the property
@@ -1278,6 +1278,13 @@ impl<'a> Engine<'a> {
                 if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
             }
             Value::Class(c) => {
+                if !self.class_word("name").is_empty() {
+                    if let Some(maker) = Self::maker_beneath(c) {
+                        if let Some(member) = self.class_value(&maker, name).filter(|member| self.takes_writes(member) && (matches!(member, Value::Adapter(w) if matches!(w.0, 6 | 16 | 28)) || self.descriptor_hook(member, "descriptor.get").is_some())) {
+                            return self.bind_class_value(member, Some(subject.clone()), maker);
+                        }
+                    }
+                }
                 if let Some(word) = Self::own_kind(c) {
                     if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                     if name==self.class_word("qualified") { return Ok(Value::text(&word)); }
@@ -2034,6 +2041,17 @@ impl<'a> Engine<'a> {
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
+                if !self.class_word("name").is_empty() && !Self::class_sealed(c) {
+                    if let Some(maker) = Self::maker_beneath(c) {
+                        if let Some(member) = self.class_value(&maker, name).filter(|member| self.takes_writes(member)) {
+                            let part = if value.is_some() { "descriptor.set" } else { "descriptor.delete" };
+                            let hook = self.descriptor_hook(&member, part).ok_or_else(|| Fault::Note(format!("AttributeError: {}", self.class_word(part))))?;
+                            let mut args = vec![subject.clone()]; args.extend(value);
+                            self.call_descriptor(&member, hook, args)?;
+                            return Ok(Value::Null);
+                        }
+                    }
+                }
                 if Self::class_sealed(c) || (c.python_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|key| !self.class_word(key).is_empty() && name == self.class_word(key))) {
                     return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
                 }

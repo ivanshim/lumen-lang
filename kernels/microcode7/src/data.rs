@@ -1586,9 +1586,17 @@ impl Blueprint {
     pub(super) fn python_title(&self) -> Option<String> {
         let kept = self.type_names.borrow();
         let names = kept.as_ref()?;
-        let module = self.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
+        let module = self.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.type_text() { text @ (Value::Text(_) | Value::Unpaired(_)) => Some(text.bare()), _ => None });
+        Some(match module { Some(word) if word != "builtins" => format!("{word}.{}", names.full.type_text().bare()), _ => names.short.type_text().bare() })
+    }
+    /// A character-format complaint uses qualification, unlike repr's
+    /// short-name fallback for builtin or non-string modules.
+    pub(super) fn python_qualified_title(&self) -> Option<String> {
+        let kept = self.type_names.borrow();
+        let names = kept.as_ref()?;
+        let module = self.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.type_text() { text @ (Value::Text(_) | Value::Unpaired(_)) => Some(text.bare()), _ => None });
         let full = names.full.type_text().bare();
-        Some(module.filter(|word| word != "builtins").map_or(full.clone(), |word| format!("{word}.{full}")))
+        Some(match module { Some(word) if word != "builtins" => format!("{word}.{full}"), _ => full })
     }
 
     pub fn program(&self, name: &str) -> Option<&Rc<Routine>> {
