@@ -494,6 +494,8 @@ pub enum Builtin {
     MemberSet,
     MemberGet,
     ProgramNamespace,
+    FrameModule,
+    ClassSeal,
     Bytes(u8),
     Text(crate::strings::TextOp),
     ClassTool(u8),

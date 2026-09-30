@@ -98,6 +98,12 @@ impl<'a> Engine<'a> {
     pub(super) fn kind_beneath(c: &Class) -> Option<String> {
         std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(Self::own_kind)
     }
+    /// Whether the class was sealed against change: a sealed class
+    /// refuses writes and removals among its members and cannot stand
+    /// as a base. Only the library's own sealing builtin sets the mark.
+    pub(super) fn class_sealed(c: &Class) -> bool {
+        c.shared.borrow().iter().any(|(n, _)| n == "\0sealed")
+    }
     /// The worth a thing keeps of the builtin kind its class stands on,
     /// as it is kept: a row or a map in its cell, so that what is done
     /// to it through the thing is done to the thing's own.
@@ -1127,6 +1133,20 @@ impl<'a> Engine<'a> {
         if let Value::Adapter(property) = &subject {
             if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
         }
+        // The kind's word, or the kind read as a class, answers for its
+        // type flags from the class the kind stands for.
+        if name==self.class_word("flags") && !name.is_empty() {
+            let held=subject.contents();
+            let builtin=match &held {
+                Value::Native(op,word) if Self::kind_builtin(op)=>Some(word.clone()),
+                Value::ByteKind(mutable, _) => Some(Rc::from(self.byte_kind_word(*mutable))),
+                other=>self.kind_spelled(other),
+            };
+            if let Some(word)=builtin {
+                let kind=self.kind_class(&word);
+                return Ok(Value::Small(self.flags_of(&kind)));
+            }
+        }
         if name==self.class_word("namespace") {
             let held=subject.contents();
             let builtin=match &held {
@@ -1215,10 +1235,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if name == self.class_word("flags") {
-                    let dictionary = self.slots_allow(c, self.class_word("namespace"));
-                    let inline = dictionary && Self::kind_beneath(c).is_none();
-                    return Ok(Value::Small(512 + 1024 + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 }));
-            }
+                    return Ok(Value::Small(self.flags_of(c)));
+                }
                 if (Self::own_kind(c).as_deref() == Some("float") || Self::kind_beneath(c).as_deref() == Some("float")) && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_from_number".to_string()))));
                 }
@@ -1523,7 +1541,7 @@ impl<'a> Engine<'a> {
     /// The name of the module a routine was written in: the module the
     /// file it came from was read as, or the run's own name where the
     /// routine is the program itself.
-    fn routine_home(&self, f: &Routine) -> String {
+    pub(super) fn routine_home(&self, f: &Routine) -> String {
         f.written_in.as_ref()
             .and_then(|place| self.module_slots.get(place))
             .map_or_else(|| self.class_word("main").to_string(), |(_, path)| path.clone())
@@ -1950,9 +1968,8 @@ impl<'a> Engine<'a> {
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
-                if c.name == "sentinel" {
-                    let action = if value.is_some() { "set" } else { "delete" };
-                    return Err(format!("TypeError: cannot {action} '{name}' attribute of immutable type 'sentinel'").into());
+                if Self::class_sealed(c) {
+                    return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
                 }
                 if name == self.class_word("qualified") {
                     match value.as_ref().map(Value::contents) {
@@ -2083,8 +2100,22 @@ impl<'a> Engine<'a> {
         let fits=match &slots {Value::Array(v)|Value::Tuple(v)=>v.iter().any(allows),v=>allows(v)};
         fits||c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_allow(b,name))
     }
+    /// The type flags the reference reports for a class: a heap type,
+    /// standing as a base unless sealed (a sealed class reads as
+    /// immutable instead), with a namespace dictionary and an inline
+    /// layout where they apply, and tracked by the cyclic collector
+    /// unless its things keep a worth of an atomic builtin kind, which
+    /// can take no part in a cycle.
+    pub(super) fn flags_of(&self, c: &Class) -> i64 {
+        let dictionary = self.slots_allow(c, self.class_word("namespace"));
+        let inline = dictionary && Self::kind_beneath(c).is_none();
+        let tracked = Self::own_kind(c).is_none()
+            && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
+        512 + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+    }
     fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         match value.contents() {
+            Value::Class(class) if Self::class_sealed(&class) => Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()),
             Value::Class(class) => Ok(class),
             Value::Native(Builtin::SortOf, _) => Ok(self.metaclass_root()),
             Value::Native(Builtin::Bool, _) => Err(self.lang.bool_base.clone().unwrap_or_default().into()),

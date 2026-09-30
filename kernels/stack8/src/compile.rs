@@ -499,6 +499,9 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
                 Shape::Close => { depth = depth.saturating_sub(1); if depth == 0 { break; } }
                 Shape::LineEnd if !indented => break,
                 Shape::Finish => break,
+                // A private builtin's spelling is no class's private
+                // name: it keeps its own spelling wherever it is written.
+                Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
                 Shape::Instr => result[i].lexeme = private_name(&owner.lexeme, &source[i].lexeme),
                 _ => {}
             }
