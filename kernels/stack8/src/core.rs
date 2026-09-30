@@ -35,7 +35,14 @@ impl Value {
             // A generator the program wrote is a generator; a walk this
             // kernel made of its own, such as a map walked backwards,
             // carries the word the reference gives that walk instead.
-            Value::Generator(state) => return state.try_borrow().ok().and_then(|g| g.walked.clone()).map_or_else(|| "generator".to_string(), |w| w.to_string()),
+            Value::Generator(state) => return state.try_borrow().ok().map_or_else(|| "generator".to_string(), |g| {
+                if let Some(walked) = &g.walked { return walked.to_string(); }
+                match g.program.as_ref().map(|p| p.code_flags & (128 | 512)) {
+                    Some(512) => "async_generator".to_string(),
+                    Some(128) => "coroutine".to_string(),
+                    _ => "generator".to_string(),
+                }
+            }),
             Value::View(view) => crate::value::view_kind(&view.1),
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",

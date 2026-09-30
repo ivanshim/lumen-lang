@@ -210,7 +210,7 @@ pub struct Suspension {
     /// it stands inside that routine, so it is named while the step
     /// lasts and anything asking what names are in reach is answered
     /// about the right one.
-    of: Option<Rc<Routine>>,
+    pub(crate) of: Option<Rc<Routine>>,
     /// The faults the body itself is handling, kept while it sleeps so
     /// that what is raised next stands behind them.
     holding: Vec<Value>,

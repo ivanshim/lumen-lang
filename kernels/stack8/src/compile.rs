@@ -206,6 +206,7 @@ struct Piece {
     /// Whether an expression statement stored into the result slot; a
     /// function without one needs neither the slot nor its prologue.
     result_touched: bool,
+    return_value_at: Option<usize>,
     generator: bool,
     /// Which line the last marker in this unit named, so that a run of
     /// statements on one line marks it once.
@@ -538,7 +539,8 @@ fn compile_pass(
         cycles: Vec::new(),
         escapes: Vec::new(),
         result_touched: false,
-            generator: false,
+        return_value_at: None,
+        generator: false,
         line: 0,
         instrs: Vec::new(),
     };
@@ -1601,6 +1603,7 @@ impl<'a> Compiler<'a> {
             cycles: Vec::new(),
             escapes: Vec::new(),
             result_touched: false,
+            return_value_at: None,
             generator: false,
             line: 0,
             instrs: Vec::new(),
@@ -1650,6 +1653,12 @@ impl<'a> Compiler<'a> {
             self.patch_jump(at, end);
         }
         let unit = self.pieces.pop().expect("the unit");
+        if unit.asynchronous && unit.instrs.iter().any(|word| matches!(word, Instr::Act(Action::Suspend, _))) {
+            if let Some(at) = unit.return_value_at {
+                self.pos = at;
+                return Err("SyntaxError: 'return' with value in async generator".into());
+            }
+        }
         if self.discovering {
             let names = unit.idents.iter().filter(|n| !unit.nonlocals.contains(n) && !unit.globals.iter().any(|(g, _)| g == *n)).cloned().collect();
             self.plans.insert(source, BindingPlan { names, globals: unit.globals.clone(), nonlocals: unit.nonlocals.clone(), class_nonlocals: unit.class_nonlocals.clone() });
@@ -4805,7 +4814,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn return_stmt(&mut self) -> Res<()> {
+        let return_at = self.pos;
         self.take();
+        let has_value = !(self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes));
+        if has_value && !self.lang.syntax_members.is_empty() {
+            self.piece().return_value_at.get_or_insert(return_at);
+        }
         // A routine that gives back a cell answers with the cell of
         // whatever it names, so a name fastened to the answer and the
         // one inside the routine stand for the one cell. Where what it
@@ -8900,6 +8914,10 @@ impl<'a> Compiler<'a> {
                     self.registry.stopped_end_row = end.row;
                     self.pos = yield_at;
                     return Err(format!("SyntaxError: {message}"));
+                }
+                if delegated && self.piece().asynchronous {
+                    self.pos = yield_at;
+                    return Err("SyntaxError: 'yield from' inside async function".into());
                 }
             }
             if lang.yield_suspends {
