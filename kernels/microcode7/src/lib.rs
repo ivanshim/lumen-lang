@@ -360,6 +360,10 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
             if kind == "MODULE" { machine.library_sources.insert(name.clone(), text.clone()); }
         }
     }
+    for (kind, name, detail, _) in request {
+        if kind == "MODULE_FILE" { machine.library_files.insert(name.clone(), detail.clone()); }
+        if kind == "MODULE_ALIAS" { machine.library_aliases.insert(name.clone(), detail.clone()); }
+    }
     // Text read while the run goes is a piece of this same program, and
     // is built knowing what the whole of it declared about cells.
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());

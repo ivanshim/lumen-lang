@@ -320,6 +320,8 @@ pub struct Machine<'a> {
     code_handles: HashMap<usize, (Rc<Routine>, Value)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
+    pub library_files: HashMap<String, String>,
+    pub library_aliases: HashMap<String, String>,
     imported: HashMap<String, Value>,
     wildcard_names: Vec<(Rc<str>, String, usize)>,
     loaded_spaces: HashMap<Rc<str>, String>,
@@ -1247,6 +1249,8 @@ impl<'a> Machine<'a> {
             fault_kinds,
             library_sources: HashMap::new(),
             library_directory: None,
+            library_files: HashMap::new(),
+            library_aliases: HashMap::new(),
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
             wildcard_names: Vec::new(),
@@ -18374,7 +18378,10 @@ impl Machine<'_> {
                 let has_directories = if let Value::Thing(parent) = parent_value {
                     parent.holds.borrow().iter().any(|entry| entry.0 == attribute)
                 } else { false };
-                if !has_directories && !self.library_sources.contains_key(path) {
+                if let Some(cached) = self.imported.get(path) {
+                    if self.import_cache_names(path) { return Ok(cached.clone()); }
+                }
+                if !has_directories {
                     let missing = self.table.strings("ext.stmt.import.missing");
                     let suffix = self.table.strings("ext.stmt.import.nonpackage");
                     if let ([head, tail], [before, after]) = (missing, suffix) {
@@ -18389,7 +18396,7 @@ impl Machine<'_> {
                 Some(embedded) if self.table.single("ext.system.module.path").is_some() && embedded == *location => self.library_sources.get(path).cloned().unwrap_or_else(|| text.clone()),
                 _ => text.clone(),
             },
-            None => self.library_sources.get(path).cloned().ok_or_else(|| {
+            None => self.library_sources.get(path).filter(|_| split.is_none() || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
                 let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
                 format!("{before}{path}{after}")
             })?,
@@ -18501,6 +18508,20 @@ impl Machine<'_> {
                 } else { holdings.push((name.into(), value.clone())); }
             }
         }
+        // Aliases of ordinary embedded modules are entered in the cache
+        // using the parent's real exported value, never by name alone.
+        if self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref()) {
+            for (full, member) in &self.library_aliases {
+                let Some((owner, _)) = full.rsplit_once('.') else { continue; };
+                if owner != path { continue; }
+                if let Value::Thing(parent) = &value {
+                    if let Some((_, held)) = parent.holds.borrow().iter().find(|entry| &entry.0 == member) {
+                        let alias = match held { Value::Shared(link) => link.borrow().clone(), other => other.clone() };
+                        self.imported.insert(full.clone(), alias);
+                    }
+                }
+            }
+        }
         self.refresh_import_table();
         Ok(value)
     }
@@ -18530,6 +18551,10 @@ impl Machine<'_> {
             let package = folder.join(filename).join("__init__.py");
             let choices = if self.table.single("ext.system.module.path").is_some() { vec![package, ordinary] } else { vec![ordinary] };
             for location in choices {
+                let absolute = made_absolute(&location.to_string_lossy());
+                if self.table.single("ext.system.module.path").is_some() && self.library_module_file(path).as_deref() == Some(absolute.as_str()) {
+                    if let Some(text) = self.library_sources.get(path) { return Some((absolute, text.clone())); }
+                }
                 if let Ok(text) = std::fs::read_to_string(&location) {
                     return Some((made_absolute(&location.to_string_lossy()), text));
                 }
@@ -18538,12 +18563,15 @@ impl Machine<'_> {
         None
     }
 
-    /// An explicit directory from the host replaces the build-time location.
-    /// Both ordinary modules and package initializers still need a real file.
+    /// Manifest locations describe the embedded library even when its files
+    /// are absent. A host directory replaces the root of those locations.
     fn library_module_file(&self, path: &str) -> Option<String> {
         let directory = self.library_directory.as_deref().unwrap_or_else(|| {
             std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules"))
         });
+        if self.table.single("ext.system.module.path").is_some() {
+            if let Some(file) = self.library_files.get(path) { return Some(made_absolute(&directory.join(file).to_string_lossy())); }
+        }
         let name = path.replace('.', "/");
         for relative in [format!("{name}.py"), format!("{name}/__init__.py")] {
             let candidate = directory.join(relative);
@@ -18562,8 +18590,11 @@ impl Machine<'_> {
                 if !matches!(read, Value::Unset) { return Ok(read); }
             }
         }
+        if self.table.single("ext.system.module.path").is_some() && self.library_aliases.contains_key(path) {
+            if let Some(member) = self.member_for_case(value, wanted)? { return Ok(member); }
+        }
         let full = format!("{path}.{wanted}");
-        if self.library_sources.contains_key(&full) || self.sys_path_source(&full).is_some() { return self.load_namespace(&full); }
+        if (self.table.single("ext.system.module.path").is_none() && self.library_sources.contains_key(&full)) || self.sys_path_source(&full).is_some() || (self.imported.contains_key(&full) && self.import_cache_names(&full)) { return self.load_namespace(&full); }
         Err(self.import_member_fault(path, wanted))
     }
 
@@ -18588,6 +18619,13 @@ impl Machine<'_> {
     /// the library keeps it under, so the words naming it point at
     /// the file honestly.
     fn namespace_file_path(&self, path: &str) -> Option<String> {
+        if self.table.single("ext.system.module.path").is_some() {
+            let word = self.table.single("ext.system.source.file")?;
+            let Value::Thing(module) = self.imported.get(path)? else { return None; };
+            let held = module.holds.borrow().iter().find(|entry| entry.0 == word)?.1.clone();
+            let value = match held { Value::Shared(link) => link.borrow().clone(), other => other };
+            return match value { Value::Text(file) => Some(file.to_string()), _ => None };
+        }
         if !self.library_sources.contains_key(path) { return None; }
         Some(format!("langs/lib_python/modules/{}.py", path.replace('.', "/")))
     }

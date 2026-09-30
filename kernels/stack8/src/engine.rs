@@ -109,6 +109,8 @@ pub struct Engine<'a> {
     fresh_routines: bool,
     pub module_sources: HashMap<String, String>,
     pub library_root: Option<String>,
+    pub module_files: HashMap<String, String>,
+    pub module_aliases: HashMap<String, String>,
     modules: HashMap<String, Value>,
     // Only names actually supplied by an import need a runtime check;
     // an empty table leaves ordinary builtin calls on their fast path.
@@ -1194,6 +1196,8 @@ impl<'a> Engine<'a> {
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
             library_root: None,
+            module_files: HashMap::new(),
+            module_aliases: HashMap::new(),
             modules: HashMap::new(),
             wildcard_slots: HashMap::new(),
             module_slots: HashMap::new(),
@@ -18639,7 +18643,10 @@ impl Engine<'_> {
             if let Some((above, _)) = parent {
                 let owner = self.import_module(above)?;
                 let package = matches!(owner, Value::Object(ref module) if module.fields.borrow().iter().any(|(name, _)| name == &word));
-                if !package && !self.module_sources.contains_key(path) {
+                if let Some(held) = self.modules.get(path) {
+                    if self.module_cache_names(path) { return Ok(held.clone()); }
+                }
+                if !package {
                     if let [opening, closing] = self.lang.import_nonpackage.as_slice() {
                         return Err(format!("{}{opening}{above}{closing}", Self::named_fault(&self.lang.import_missing, path)).into());
                     }
@@ -18653,7 +18660,7 @@ impl Engine<'_> {
                     self.module_sources.get(path).cloned().unwrap_or_else(|| source.clone())
                 } else { source.clone() }
             },
-            None => match self.module_sources.get(path).cloned() {
+            None => match self.module_sources.get(path).filter(|_| parent.is_none() || self.lang.module_path.is_none()).cloned() {
                 Some(source) => source,
                 None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
             },
@@ -18752,6 +18759,19 @@ impl Engine<'_> {
                 }
             }
         }
+        // Only an embedded parent can register its manifest-declared aliases.
+        // A shadowing filesystem module never acquires these cached children.
+        if self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref()) {
+            for (child, member) in &self.module_aliases {
+                if child.rsplit_once('.').map(|(owner, _)| owner) != Some(path) { continue; }
+                if let Value::Object(parent) = &module {
+                    if let Some((_, value)) = parent.fields.borrow().iter().find(|(name, _)| name == member) {
+                        let held = match value { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                        self.modules.insert(child.clone(), held);
+                    }
+                }
+            }
+        }
         self.refresh_module_cache();
         Ok(module)
     }
@@ -18783,6 +18803,11 @@ impl Engine<'_> {
                 vec![format!("{}/{leaf}/__init__.py", directory.trim_end_matches('/')), flat]
             } else { vec![flat] };
             for file in candidates {
+                // Embedded text has a location, just like disk text. It is
+                // eligible only at a directory in the actual search list.
+                if self.lang.module_path.is_some() && self.library_module_file(path).as_deref() == Some(made_absolute(&file).as_str()) {
+                    if let Some(source) = self.module_sources.get(path) { return Some((made_absolute(&file), source.clone())); }
+                }
                 if let Ok(source) = std::fs::read_to_string(&file) {
                     return Some((made_absolute(&file), source));
                 }
@@ -18791,11 +18816,14 @@ impl Engine<'_> {
         None
     }
 
-    /// Locate embedded source on disk, using the host's override when given.
-    /// Without one, keep looking in the checkout that built this kernel.
+    /// An embedded source has a manifest location even without a disk file.
+    /// The host may replace its root; older language layouts still use disk.
     fn library_module_file(&self, path: &str) -> Option<String> {
         const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
         let root = self.library_root.as_deref().unwrap_or(ROOT);
+        if self.lang.module_path.is_some() {
+            if let Some(relative) = self.module_files.get(path) { return Some(made_absolute(&format!("{root}/{relative}"))); }
+        }
         let stem = path.replace('.', "/");
         let flat = format!("{root}/{stem}.py");
         if std::path::Path::new(&flat).is_file() { return Some(made_absolute(&flat)); }
@@ -18811,8 +18839,15 @@ impl Engine<'_> {
                 if !matches!(value, Value::Blank) { return Ok(value); }
             }
         }
+        if self.lang.module_path.is_some() && self.module_aliases.contains_key(path) {
+            match self.class_get(module.clone(), name, false) {
+                Ok(value) => return Ok(value),
+                Err(fault) if self.attribute_fault(&fault) => {},
+                Err(fault) => return Err(fault),
+            }
+        }
         let child = format!("{path}.{name}");
-        if self.module_sources.contains_key(&child) || self.sys_path_source(&child).is_some() { return self.import_module(&child); }
+        if (self.lang.module_path.is_none() && self.module_sources.contains_key(&child)) || self.sys_path_source(&child).is_some() || (self.modules.contains_key(&child) && self.module_cache_names(&child)) { return self.import_module(&child); }
         Err(self.import_member_fault(path, name).into())
     }
 
@@ -18836,6 +18871,13 @@ impl Engine<'_> {
     /// the library keeps it under, so the words naming it point at
     /// the file honestly.
     fn module_file_path(&self, path: &str) -> Option<String> {
+        if self.lang.module_path.is_some() {
+            let word = self.lang.source_bindings.iter().find(|(part, _)| part == "file")?.1.as_str();
+            let Value::Object(module) = self.modules.get(path)? else { return None; };
+            let held = module.fields.borrow().iter().find(|(name, _)| name == word)?.1.clone();
+            let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
+            return match value { Value::Text(file) => Some(file.to_string()), _ => None };
+        }
         if !self.module_sources.contains_key(path) { return None; }
         Some(format!("langs/lib_python/modules/{}.py", path.replace('.', "/")))
     }
