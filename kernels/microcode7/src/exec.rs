@@ -16498,6 +16498,7 @@ impl<'a> Machine<'a> {
                 false => (v[0].clone(), v[1].clone()),
             };
             let binary = if self.rules.binary_arithmetic { math::binary_work(sum, &left, &right) } else { None };
+            let binary_fraction = matches!(&binary, Some(Ok(Value::Frac(_))));
             let worked = match binary.or_else(|| math::compute(sum, &left, &right)) {
                 // A language may tell the remainder by nought apart
                 // from the division by it and word that its own
@@ -16518,7 +16519,13 @@ impl<'a> Machine<'a> {
                     Calc::Power => return Err("Exponentiation requires numeric operands".to_string()),
                 },
             };
-            self.at_width(worked)
+            // Binary arithmetic has just made this value from a double.
+            // At the same precision, its exact ratio already has the
+            // width and point markers the final conversion would make.
+            if binary_fraction && self.real_figures() == math::DEFAULT_PLACES
+                && self.rules.lone_system_real_render == Some("shortest") {
+                worked
+            } else { self.at_width(worked) }
         };
         Ok(result)
     }
