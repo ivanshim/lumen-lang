@@ -2294,7 +2294,10 @@ impl<'a> Engine<'a> {
 
     fn what_it_spells(&self, v: Value) -> Value {
         if !self.lang.class_builder.is_empty() {
-            if let Value::Bond(cell) | Value::Binding(cell) = &v { return self.what_it_spells(cell.borrow().clone()); }
+            if let Value::Bond(cell) | Value::Binding(cell) = &v {
+                let held = cell.borrow().clone();
+                if !matches!(held, Value::Array(_) | Value::Map(_)) { return self.what_it_spells(held); }
+            }
         }
         let Value::Text(name) = &v else { return v };
         if !self.lang.spelled_stands {
@@ -4384,6 +4387,11 @@ impl<'a> Engine<'a> {
                         Action::Builtin(Builtin::Given | Builtin::GivenCount | Builtin::GivenAt, _) if !program.body_of_all => {
                             self.as_they_stand(program, frame);
                             self.perform(op, *argc)
+                        }
+                        Action::Invoke(_) if *argc == 1 && !self.lang.class_builder.is_empty()
+                            && self.data.last().is_some_and(|held| matches!(self.what_it_spells(held.clone()), Value::Native(Builtin::ClassTool(8), _))) => {
+                            self.data.pop();
+                            self.names_about(program, frame, Builtin::ClassTool(8)).map(|names| self.data.push(names))
                         }
                         _ => self.perform(op, *argc),
                     };
@@ -18986,6 +18994,24 @@ impl Engine<'_> {
         Ok(Value::Tuple(Rc::new(vec![Value::Flag(found.is_some()), found.unwrap_or(Value::Null)])))
     }
 
+    pub(super) fn class_namespace_remove(&mut self, arguments: Vec<Value>) -> Flow<Value> {
+        let book = &arguments[0];
+        let name = arguments[1].plain();
+        let failure = format!("NameError: name '{}' is not defined", name);
+        let removed = match book {
+            Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) if matches!(cell.borrow().contents(), Value::Map(_)) => {
+                if self.book_get(cell, &name)?.is_none() { return Err(failure.into()); }
+                self.book_put(cell, &name, None)
+            }
+            _ => self.dyn_write(book, &name, None),
+        };
+        match removed {
+            Err(fault) if self.fault_names(&fault, "KeyError") => Err(failure.into()),
+            Err(fault) => Err(fault),
+            Ok(()) => Ok(book.clone()),
+        }
+    }
+
     pub(super) fn dispatch_class_builder(&mut self, mut arguments: Vec<Value>) -> Flow<Value> {
         let header = arguments.pop().unwrap_or(Value::Null).contents();
         let Value::Tuple(header) = header else { return Err(self.class_word("unready").to_string().into()); };
@@ -19006,7 +19032,10 @@ impl Engine<'_> {
         if plain.len() < 2 { return Err("TypeError: __build_class__: not enough arguments".into()); }
         let Value::Routine(program) = plain.remove(0).contents() else { return Err("TypeError: __build_class__: func must be a function".into()) };
         let Value::Text(name) = plain.remove(0).contents() else { return Err("TypeError: __build_class__: name is not a string".into()) };
-        let requested = asked.as_ref().map(Value::contents);
+        let implicit = if asked.is_none() && plain.first().is_some_and(|base| !self.stands_for_kind(&base.contents())) {
+            Some(self.call_held(self.kind_maker_word(), vec![plain[0].clone()])?)
+        } else { None };
+        let requested = asked.as_ref().map(Value::contents).or(implicit);
         let custom = requested.as_ref().is_some_and(|value| match value {
             Value::Native(Builtin::SortOf, _) => false,
             Value::Class(class) => !self.is_metaclass_root(class) && !class.lineage.iter().any(|base| self.is_metaclass_root(base)),
@@ -19031,7 +19060,7 @@ impl Engine<'_> {
         let captured = captured.unwrap_or_else(|| Value::Map(Rc::new(Vec::new().into())));
         let (namespace, class_cell) = match captured { Value::Tuple(values) if values.len() == 2 => (values[0].clone(), Some(values[1].clone())), value => (value, None) };
         let result = if let Some(factory) = factory {
-            let mut given = vec![Value::Text(name.clone()), bases, namespace]; given.extend(keywords); self.class_apply(factory, given)?
+            let mut given = vec![Value::Text(name.clone()), bases, namespace]; given.extend(keywords); self.call_held(factory, given)?
         } else {
             let Value::Map(entries) = namespace.contents() else { return Err("TypeError: class namespace must be a mapping".into()); };
             let mut members = entries.iter().map(|(key, value)| (key.plain(), value.clone())).collect::<Vec<_>>();
@@ -19175,7 +19204,13 @@ impl Engine<'_> {
         if kind == Builtin::ClassLocalsPlace {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
-        let book = if kind == Builtin::OuterNames || program.body_of_all {
+        let class_book = program.class_namespace.as_ref().and_then(|(name, _)| program.idents.iter().position(|word| word == name)).map(|at| frame[at].clone());
+        let book = if kind != Builtin::OuterNames && class_book.is_some() {
+            match self.what_it_spells(class_book.unwrap()) {
+                Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
+                value => Rc::new(RefCell::new(value)),
+            }
+        } else if kind == Builtin::OuterNames || program.body_of_all {
             self.book_here(kind == Builtin::OuterNames)
         } else {
             let mut pairs = Vec::new();

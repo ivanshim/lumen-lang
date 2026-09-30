@@ -1095,7 +1095,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
-        if !self.lang.class_builder.is_empty() && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
+        if !self.lang.class_builder.is_empty() && !self.writing_place && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
             if let Some(book) = self.gathering().book.clone() {
                 self.read(&book); self.constant(Value::text(name));
                 self.act(Action::Builtin(Builtin::ClassTool(18), Rc::from("")), 2);
@@ -1349,7 +1349,7 @@ impl<'a> Compiler<'a> {
         let Some(book) = self.gathering().book.clone() else { return Ok(()); };
         self.read(&book);
         self.constant(Value::text(name));
-        self.act(Action::Builtin(Builtin::Erase, Rc::from("unset")), 2);
+        self.act(Action::Builtin(if self.lang.class_builder.is_empty() { Builtin::Erase } else { Builtin::ClassTool(20) }, Rc::from("unset")), 2);
         self.write(&book);
         Ok(())
     }
@@ -5742,7 +5742,7 @@ impl<'a> Compiler<'a> {
                 };
                 self.read(&book);
                 self.constant(Value::text(&name));
-                self.act(Action::Builtin(Builtin::Erase, Rc::from("unset")), 2);
+                self.act(Action::Builtin(if self.lang.class_builder.is_empty() { Builtin::Erase } else { Builtin::ClassTool(20) }, Rc::from("unset")), 2);
                 self.write(&book);
                 continue;
             };
@@ -5864,6 +5864,7 @@ impl<'a> Compiler<'a> {
         if self.on_any(&lang.type_params_open) { self.class_type_parameters()?; }
         let count = if lang.bases_open.as_ref().is_some_and(|open| self.at_symbol(open)) {
             self.take();
+            if self.comprehension_ahead().is_some() { return Err("SyntaxError: invalid syntax".into()); }
             let pair = lang.calling.clone().expect("class arguments");
             self.arguments(&pair)?
         } else { 0 };
@@ -7438,6 +7439,15 @@ impl<'a> Compiler<'a> {
         listed |= !commas.is_empty();
         if !listed {
             self.pos = begin;
+            if !self.lang.class_builder.is_empty() && self.in_class_body() && end == begin + 1
+                && self.look().shape == Shape::Instr && !self.declared_outside_class(&self.look().lexeme) {
+                let name = self.take().lexeme;
+                let place = self.member_place(&name, "attribute");
+                self.read(held); self.write(&place);
+                self.member_kept(&name, &place);
+                self.mirror_member(&name, &place)?;
+                return Ok(());
+            }
             let from = self.mark();
             let reading = std::mem::replace(&mut self.writing_place, true);
             let place = if end == begin + 1 && self.look().shape == Shape::Instr {

@@ -30,6 +30,12 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { outline: Some(format!("<class '{word}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) });
+        if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=10))) {
+            c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(44, vec![])));
+            if self.lang.builtins.get(word) == Some(&Builtin::ClassTool(9)) {
+                c.shared.borrow_mut().push((self.class_word("call").to_string(), Self::adapter(45, vec![])));
+            }
+        }
         self.kind_classes.push((word.to_string(), c.clone()));
         c
     }
@@ -288,6 +294,9 @@ impl<'a> Engine<'a> {
         }
         if let Some((_, held)) = members.iter().find(|(n, _)| n == self.class_word("qualified")) {
             if !matches!(held.contents(), Value::Text(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", held.core_kind()).into()); }
+        }
+        if !self.lang.class_builder.is_empty() && !members.iter().any(|(key, _)| key == self.class_word("doc")) {
+            members.push((self.class_word("doc").to_owned(), Value::Null));
         }
         let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
@@ -692,6 +701,18 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                44 => {
+                    let [descriptor, instance, Value::Class(owner)] = args.as_slice() else { return Err(self.class_refusal()); };
+                    let held = Self::worth_of(descriptor).ok_or_else(|| self.class_refusal())?;
+                    let receiver = (!matches!(instance, Value::Null)).then(|| instance.clone());
+                    self.bind_class_value(held, receiver, owner.clone())
+                }
+                45 => {
+                    if args.is_empty() { return Err(self.class_refusal()); }
+                    let descriptor = args.remove(0);
+                    let held = Self::worth_of(&descriptor).ok_or_else(|| self.class_refusal())?;
+                    self.class_apply(held, args)
+                }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
                 5 => Err(self.core_fault("core.uncallable", "classmethod").into()),
                 13 if args.len() == 1 => {
@@ -1041,7 +1062,7 @@ impl<'a> Engine<'a> {
                 16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
-                20..=27 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                20..=27 | 44..=45 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match subject { Some(Value::Object(o)) => Ok(self.property_reading(&o, &w.1[0].plain())), _ => Ok(value) },
                 _ => Ok(value),
             };
@@ -2156,12 +2177,21 @@ impl<'a> Engine<'a> {
         512 + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
+        if !self.lang.class_builder.is_empty() && self.names_property_class(&value.contents()) { return Ok(self.property_class()); }
         match value.contents() {
             Value::Class(class) if Self::class_sealed(&class) => Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()),
             Value::Class(class) => Ok(class),
             Value::Native(Builtin::SortOf, _) => Ok(self.metaclass_root()),
             Value::Native(Builtin::Bool, _) => Err(self.lang.bool_base.clone().unwrap_or_default().into()),
-            Value::Native(_, name) if Lang::spells(&self.lang.builtin_bases, &name) => Ok(self.kind_class(&name)),
+            Value::Native(operation, name) if Lang::spells(&self.lang.builtin_bases, &name)
+                || (!self.lang.class_builder.is_empty() && matches!(operation, Builtin::ClassTool(9..=11))) => Ok(self.kind_class(&name)),
+            Value::ByteKind(_, _) | Value::SortOf(_) | Value::Adapter(_) if !self.lang.class_builder.is_empty() => {
+                let name = value.kind_it_names().map(Rc::from).or_else(|| self.kind_spelled(value));
+                if let Some(name) = name {
+                    if Lang::spells(&self.lang.builtin_bases, &name) || matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::ClassTool(9..=11))) { return Ok(self.kind_class(&name)); }
+                }
+                Err("TypeError: bases must be types".into())
+            },
             _ => Err("TypeError: bases must be types".to_string().into()),
         }
     }
@@ -2398,6 +2428,7 @@ impl<'a> Engine<'a> {
             15 => self.class_body_book(one),
             16 => self.dispatch_class_builder(args),
             18 => self.class_namespace_read(args),
+            20 => self.class_namespace_remove(args),
             12 if args.len() == 1 => Ok(Value::Flag(match &one {
                 Value::Object(object) => self.slots_allow(&object.class_now(), self.class_word("namespace"))
                     && Self::kind_beneath(&object.class_now()).is_none()

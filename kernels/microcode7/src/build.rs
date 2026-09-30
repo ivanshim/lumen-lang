@@ -1553,7 +1553,7 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
-        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
+        if self.table.has_any("ext.stmt.class.builder") && self.place_depth == 0 && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
             if let Some(book) = self.parts().book.clone() {
                 let found = self.gensym("class_lookup");
                 let read = prim_call(Prim::ClassWork(18), vec![Form::Read(book), constant(Value::text(name))]);
@@ -4537,7 +4537,7 @@ impl<'a> Builder<'a> {
                 };
                 let target = self.read_to_write(&book.ident.to_string());
                 let key = constant(Value::text(&word));
-                let erased = prim_call(Prim::Erase, vec![target, key]);
+                let erased = prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(20) } else { Prim::Erase }, vec![target, key]);
                 steps.push(self.write(&book.ident.to_string(), erased));
                 continue;
             };
@@ -4710,7 +4710,9 @@ impl<'a> Builder<'a> {
         if named == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let args = if self.table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
-            self.advance(); self.args("syntax.call.close", "syntax.call.separator")?
+            self.advance();
+            if self.ahead_in_item("ext.op.comprehension.for").is_some() { return Err("SyntaxError: invalid syntax".into()); }
+            self.args("syntax.call.close", "syntax.call.separator")?
         } else { Vec::new() };
         let header = self.gensym("class_header");
         setup.push(Form::Write(header.clone(), Box::new(prim_call(Prim::MakeTuple, args))));
@@ -7262,6 +7264,15 @@ impl<'a> Builder<'a> {
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
             self.pos = lo;
+            if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() && hi == lo + 1
+                && self.look().shape == Shape::Bare && !self.declared_outside_class(&self.look().lexeme) {
+                let word = self.advance().lexeme;
+                let place = self.member_address(&word, "attribute");
+                let value = self.read(source);
+                let written = Form::Write(place.clone(), Box::new(value));
+                self.member_noted(&word, place.clone());
+                return Ok(match self.mirror_member(&word, &place) { Some(mirror) => sequence(vec![written, mirror]), None => written });
+            }
             self.place_depth += 1;
             let reading = if hi == lo + 1 && self.look().shape == Shape::Bare {
                 let word = self.advance().lexeme;

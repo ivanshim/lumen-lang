@@ -1798,7 +1798,12 @@ impl<'a> Machine<'a> {
     }
 
     fn what_it_spells(&self, v: Value) -> Value {
-        let v = if self.table.has_any("ext.stmt.class.builder") { v.settled() } else { v };
+        if self.table.has_any("ext.stmt.class.builder") {
+            if let Value::Shared(cell) = &v {
+                let held = cell.borrow().clone();
+                if !matches!(held, Value::Vector(_) | Value::Dict(_)) { return self.what_it_spells(held); }
+            }
+        }
         let Value::Text(name) = &v else { return v };
         if !self.spelled_stands {
             return v;
@@ -5245,6 +5250,9 @@ impl<'a> Machine<'a> {
                     Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
                     callable => callable,
                 };
+                if args.is_empty() && self.table.has_any("ext.stmt.class.builder") && matches!(stands, Value::Intrinsic(Prim::ClassWork(8), _)) {
+                    return self.names_here(frame, Prim::ClassWork(8)).map_err(Escape::Error);
+                }
                 if let Value::Adorned(adornment) = &stands {
                     let given = self.value_list(args, frame)?;
                     return self.call_adornment(adornment, given, frame);
@@ -5990,7 +5998,7 @@ impl<'a> Machine<'a> {
                     // language names such methods and the class is
                     // written with them, they stand in its place.
                     if *op == Prim::Of && self.table.has_any("ext.stmt.class.builder") {
-                        if let Some(subject) = values.first_mut() { *subject = subject.settled(); }
+                        if let Some(subject) = values.first_mut() { *subject = self.what_it_spells(subject.clone()); }
                     }
                     if self.has_class_order() {
                         match op {
@@ -18770,7 +18778,11 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn class_namespace_write(&mut self, values: Vec<Value>, remove: bool) -> Result<Value, Escape> {
-        self.mapping_write(&values[0], &values[1].bare(), if remove { None } else { Some(values[2].clone()) })?;
+        let word = values[1].bare();
+        if let Err(fault) = self.mapping_write(&values[0], &word, if remove { None } else { Some(values[2].clone()) }) {
+            if remove && self.escape_names(&fault, "KeyError") { return Err(format!("NameError: name '{}' is not defined", word).into()); }
+            return Err(fault);
+        }
         Ok(values[0].clone())
     }
 
@@ -18796,7 +18808,10 @@ impl<'a> Machine<'a> {
             if self.table.spells("ext.stmt.class.metaclass", &key) { asked = Some(value); }
             else { keywords.push(Value::Couple(Rc::new((Value::text(&key), value)))); }
         }
-        let requested = asked.as_ref().map(Value::settled);
+        let implicit = if asked.is_none() && plain.first().is_some_and(|base| !self.stands_for_a_kind(&base.settled())) {
+            Some(self.apply_held(self.kind_builder_word(), vec![plain[0].clone()])?)
+        } else { None };
+        let requested = asked.as_ref().map(Value::settled).or(implicit);
         let custom = requested.as_ref().is_some_and(|value| match value {
             Value::Intrinsic(Prim::SortOf, _) => false,
             Value::Blueprint(class) => !self.builds_classes(class) && !class.ancestry.iter().any(|base| self.builds_classes(base)),
@@ -18821,7 +18836,7 @@ impl<'a> Machine<'a> {
         let captured = namespace.unwrap_or_else(|| Value::Dict(Rc::new(Vec::new().into())));
         let (mapping, class_cell) = match captured { Value::Tuple(values) if values.len() == 2 => (values[0].clone(), Some(values[1].clone())), value => (value, None) };
         let result = if let Some(factory) = factory {
-            let mut given = vec![Value::Text(name.clone()), bases, mapping]; given.extend(keywords); self.apply_class_member(factory, given)?
+            let mut given = vec![Value::Text(name.clone()), bases, mapping]; given.extend(keywords); self.apply_held(factory, given)?
         } else {
             let Value::Dict(entries) = mapping.settled() else { return Err("TypeError: class namespace must be a mapping".to_owned().into()); };
             let mut members = entries.iter().map(|(key, value)| (key.bare(), value.clone())).collect::<Vec<_>>();
@@ -18888,7 +18903,13 @@ impl<'a> Machine<'a> {
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
-        let book = if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
+        let class_book = self.frames_named.last().and_then(|program| program.class_namespace.as_ref().and_then(|(name, _)| program.idents.iter().position(|word| word == name))).map(|at| frame.cells.borrow()[at].clone());
+        let book = if op != Prim::WorldBook && class_book.is_some() {
+            match self.what_it_spells(class_book.unwrap()) {
+                Value::Shared(cell) | Value::Mutable(cell, _) => cell,
+                value => Rc::new(RefCell::new(value)),
+            }
+        } else if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
             self.book_about(op == Prim::WorldBook)
         } else {
             let mut entries = Vec::new();
