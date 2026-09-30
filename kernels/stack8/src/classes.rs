@@ -1107,6 +1107,21 @@ impl<'a> Engine<'a> {
             if let Some(value) = self.frame_member(object, name) { return Ok(value); }
         }
         if let Value::Generator(generator) = &subject {
+            if self.is_async_generator(&subject) {
+                if let Some(index) = self.lang.async_generator_fields.iter().position(|word| word == name) {
+                    if index == 2 { return Ok(Value::Flag(generator.try_borrow().is_err())); }
+                    let state = generator.try_borrow().map_err(|_| self.class_refusal())?;
+                    return Ok(match index {
+                        0 => state.program.as_ref().map_or(Value::Null, |body| self.routine_code(body)),
+                        1 => if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) },
+                        2 => Value::Flag(false),
+                        _ => state.delegate.clone().unwrap_or(Value::Null),
+                    });
+                }
+                if self.lang.trace_fields.iter().position(|key| key == name).is_some_and(|at| matches!(at, 14 | 15 | 19..=25)) {
+                    return Err(self.missing_member(&subject, name));
+                }
+            }
             let index = self.lang.trace_fields.iter().position(|key| key == name);
             if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 25)) {
                 if index == Some(25) && generator.try_borrow().is_err() { return Ok(Value::text("GEN_RUNNING")); }
@@ -1451,7 +1466,7 @@ impl<'a> Engine<'a> {
                 let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
                 return Ok(Value::text(if name == self.class_word("name") { &state.name } else { &state.qualified }));
             }
-            Value::Generator(held) if !self.lang.yield_running.is_empty() && name==self.lang.yield_running[0] => {
+            Value::Generator(held) if !self.is_async_generator(&subject) && !self.lang.yield_running.is_empty() && name==self.lang.yield_running[0] => {
                 // Running exactly while its own frame is on the way
                 // through the machine, which is exactly when the cell
                 // that holds it cannot be borrowed a second time.
@@ -1501,6 +1516,14 @@ impl<'a> Engine<'a> {
                 let copied=carried.iter().any(|word|!word.is_empty()&&*word==name)
                     || self.lang.class_annotations.first().map_or(false,|word|word==name);
                 if copied { return self.class_get(inner,name,true); }
+            }
+            Value::Adapter(w) if w.0==32 => {
+                if ["send", "throw", "close"].contains(&name)
+                    || self.lang.class_special.get(15).is_some_and(|word| word == name)
+                    || self.lang.class_special.get(16).is_some_and(|word| word == name)
+                    || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name) {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                }
             }
             Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
                 return Self::cell_held(w).ok_or_else(||self.class_word("cell.empty").to_string().into());
@@ -2037,6 +2060,14 @@ impl<'a> Engine<'a> {
             }
             // A cell takes what it holds, and taking that away leaves it
             // empty; it keeps nothing else.
+            Value::Adapter(w) if w.0==32 => {
+                if ["send", "throw", "close"].contains(&name)
+                    || self.lang.class_special.get(15).is_some_and(|word| word == name)
+                    || self.lang.class_special.get(16).is_some_and(|word| word == name)
+                    || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name) {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                }
+            }
             Value::Adapter(w) if w.0==31 && name==self.class_word("cell.contents") => {
                 let (Some(Value::Binding(held)) | Some(Value::Bond(held)))=w.1.first() else {return Err(absent)};
                 *held.borrow_mut()=value.unwrap_or(Value::Blank);
@@ -2117,6 +2148,7 @@ impl<'a> Engine<'a> {
             // rather than by the name that module goes by.
             [Value::Object(_)] if self.module_holding(&args[0]).is_some()=>Ok(self.named_kind(&args[0])),
             [Value::Object(o)]=>Ok(Value::Class(o.class_now().clone())),
+            [Value::Generator(_)] if self.is_async_generator(&args[0]) => Ok(Value::Class(self.kind_class("async_generator"))),
             // A class is of the kind that made it: the metaclass named
             // for it or for a class it stands on, and otherwise the kind
             // builtin itself, under whatever word spells it.
@@ -2132,7 +2164,7 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
-            [Value::Adapter(w)] if matches!(w.0,7|31)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,7|31|32)=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){parents.push(self.type_base(b)?);}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}
@@ -2206,7 +2238,7 @@ impl<'a> Engine<'a> {
     /// own for, named as the reference names that kind. It is made once
     /// and kept, so that two askings answer with the very same class.
     pub(super) fn named_kind(&mut self,value:&Value)->Value {
-        let word=match self.module_holding(value) {Some(_)=>String::from("module"),None=>value.core_kind()};
+        let word=if self.is_async_generator(value) { String::from("async_generator") } else { match self.module_holding(value) {Some(_)=>String::from("module"),None=>value.core_kind()} };
         // Where the definition spells that very kind, its builtin word
         // is the answer, so that a kind asked for and a kind answered
         // with are the one value: `type(enumerate(r)) is enumerate`.
@@ -2388,11 +2420,27 @@ impl<'a> Engine<'a> {
                     names.sort();names.dedup();
                     return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
                 }
+                if matches!(&one, Value::Adapter(parts) if parts.0 == 32) {
+                    let mut names = Vec::new();
+                    names.extend(self.lang.async_generator_methods.iter().skip(3).cloned());
+                    names.extend([15, 16].iter().filter_map(|index| self.lang.class_special.get(*index).cloned()));
+                    for words in [&self.lang.yield_send, &self.lang.yield_throw, &self.lang.yield_close] {
+                        names.extend(words.iter().cloned());
+                    }
+                    names.sort(); names.dedup();
+                    return Ok(Value::array(names.iter().map(|name| Value::text(name)).collect()));
+                }
                 // A walk over a routine's own body lists the walking
                 // pair it answers to (through the family below) and the
                 // few names a language gives it for stepping it by hand.
                 if let Value::Generator(_)=&one {
                     let mut names=self.kind_member_names(&one);
+                    if self.is_async_generator(&one) {
+                        names.extend(self.lang.async_generator_methods.iter().take(3).cloned());
+                        names.extend(self.lang.async_generator_fields.iter().cloned());
+                        names.sort(); names.dedup();
+                        return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
+                    }
                     for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
                         if let Some(w)=words.first() { names.push(w.clone()); }
                     }

@@ -1431,6 +1431,9 @@ impl<'a> Machine<'a> {
         self.apply_class_member(bound,vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key))
     }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if matches!(&value, Value::Wrapped(62, _)) {
+            if let Some(method) = self.attribute(&value, key) { return Ok(method); }
+        }
         if let Value::Wrapped(60, parts) = &value {
             if let [Value::Text(kind), Value::Text(word)] = parts.as_slice() {
                 if key==self.detail("qualified") { return Ok(Value::text(&format!("{}.{}", kind, word))); }
@@ -1759,8 +1762,21 @@ impl<'a> Machine<'a> {
             // calling it does what calling the routine directly does.
             if key==self.detail("call"){return Ok(value.clone());}
         }else if let Value::Generator(state)=&value {
+            if self.is_async_generator(&value) {
+                if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == key) {
+                    if index == 2 { return Ok(Value::Flag(state.try_borrow().is_err())); }
+                    let held = state.try_borrow().map_err(|_| self.class_unready())?;
+                    return Ok(match index {
+                        0 => held.of.as_ref().map_or(Value::Nil, |body| self.code_handle(body)),
+                        1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
+                        2 => Value::Flag(false),
+                        _ => held.inner.clone().unwrap_or(Value::Nil),
+                    });
+                }
+                if let Some(method) = self.attribute(&value, key) { return Ok(method); }
+            }
             let running=self.table.strings("ext.stmt.yield.running");
-            if running.first().map_or(false,|w|w==key) {
+            if !self.is_async_generator(&value) && running.first().map_or(false,|w|w==key) {
                 // Running exactly while its own frame is on the way
                 // through the machine, which is exactly when the cell
                 // that holds it cannot be borrowed a second time.
@@ -2165,13 +2181,14 @@ impl<'a> Machine<'a> {
         // not by the name that namespace goes by.
         if values.len()==1 && self.namespace_holding(&values[0]).is_some() {return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 {if let Value::Thing(t)=&values[0]{return Ok(Value::Blueprint(t.blueprint().clone()));}}
+        if values.len()==1 && self.is_async_generator(&values[0]) { return Ok(Value::Blueprint(self.native_kind("async_generator"))); }
         // A routine and a method are of kinds the table does not name,
         // so each takes the word the reference gives its kind; an
         // intrinsic word read as a class is of the kind builder's kind.
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         // A method or a data member read off a native kind's own word
         // is of the descriptor kind CPython gives it.
-        if let [Value::Wrapped(7|35|60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(7|35|60|62,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind
@@ -2252,7 +2269,7 @@ impl<'a> Machine<'a> {
     /// own for, named as the reference names that kind. It is built
     /// once and kept, so two askings answer with the very same one.
     pub(super) fn kind_named_after(&mut self,value:&Value)->Value{
-        let word=match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()};
+        let word=if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
         // A table spelling that very kind answers with its intrinsic
         // word, so that the kind asked for and the kind answered with
         // are one value: `type(enumerate(r)) is enumerate`.
@@ -2467,11 +2484,27 @@ impl<'a> Machine<'a> {
                 names.sort();names.dedup();
                 return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
             }
+            if matches!(&values[0], Value::Wrapped(62, _)) {
+                let mut names = Vec::new();
+                names.extend(self.table.strings("ext.stmt.async.generator.methods").iter().skip(3).cloned());
+                names.extend([15, 16].iter().filter_map(|index| self.table.strings("ext.stmt.class.special").get(*index).cloned()));
+                for label in ["ext.stmt.yield.send", "ext.stmt.yield.throw", "ext.stmt.yield.close"] {
+                    names.extend(self.table.strings(label).iter().cloned());
+                }
+                names.sort(); names.dedup();
+                return Ok(Value::Vector(Rc::new(names.iter().map(|name| Value::text(name)).collect())));
+            }
             // A walk over a routine's own body lists the walking pair it
             // answers to (through the mark below) and the few names a
             // language gives it for stepping it by hand.
             if let Value::Generator(_)=&values[0] {
                 let mut names=self.native_directory(&values[0]);
+                if self.is_async_generator(&values[0]) {
+                    names.extend(self.table.strings("ext.stmt.async.generator.methods").iter().take(3).cloned());
+                    names.extend(self.table.strings("ext.stmt.async.generator.fields").iter().cloned());
+                    names.sort(); names.dedup();
+                    return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
+                }
                 for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
                     if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
                 }

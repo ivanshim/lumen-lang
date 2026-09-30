@@ -80,6 +80,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
             Value::Adapter(w) if w.0 == 31 => "cell",
+            Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => return o.class_now().name.clone(),
