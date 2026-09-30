@@ -1375,7 +1375,16 @@ impl Value {
             }
             Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
-            Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
+            Value::Blueprint(b) => {
+                if let Some(names) = b.type_names.borrow().as_ref() {
+                    let module = b.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
+                    let full = if let Value::Thing(thing) = names.full.settled() {
+                        thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying").map_or_else(|| names.full.bare(), |entry| entry.1.bare())
+                    } else { names.full.bare() };
+                    return format!("<class '{}'>", module.filter(|word| word != "builtins").map_or(full.clone(), |word| format!("{word}.{full}")));
+                }
+                b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name))
+            },
             // A method or a data member carried by a native kind and
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
@@ -1535,7 +1544,18 @@ pub enum Reach {
 }
 
 #[derive(Debug)]
+pub struct TypeNames {
+    pub short: Value,
+    pub full: Value,
+    pub module_key: String,
+    /// The declaration reference used by a compiled super call.
+    pub declared: Value,
+}
+
+#[derive(Debug)]
 pub struct Blueprint {
+    /// The mutable names of a Python class, outside its dictionary.
+    pub type_names: RefCell<Option<TypeNames>>,
     pub ancestry: Vec<Rc<Blueprint>>,
     pub parents: Vec<Rc<Blueprint>>,
     pub presentation: Option<String>,

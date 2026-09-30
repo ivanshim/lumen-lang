@@ -5579,3 +5579,10 @@ stop_exception class or tuple of classes for callable iterators.
 
 `ext.builtin.iter.stop_exception` names the corresponding keyword accepted by Python callable iterators.
 `ext.stmt.class.detail.code.fields` names code metadata members (name, qualified name, positional-only and keyword-only counts, local count, names, constants, flags, filename, first line) and the lazy function annotation member. Code values use the same wrapper as traceback frame code.
+
+The Python class detail labels `name`, `qualified`, `doc`, and `module`
+keep heap-type names separate from dictionary entries. Construction validates
+UTF-8 names and string docs, refusing surrogate names or docs and NUL names;
+qualified names permit NULs and surrogates. Name assignment validates before
+changing metadata, while doc assignment keeps arbitrary objects. Builtin types
+refuse metadata writes, and heap-type names and docs cannot be deleted.

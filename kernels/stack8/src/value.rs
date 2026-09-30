@@ -1462,7 +1462,17 @@ impl Value {
             }
             Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
-            Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
+            Value::Class(c) => {
+                if let Some((_, qualified, module_key, _)) = c.python_names.borrow().as_ref() {
+                    let prefix = c.shared.borrow().iter().find(|(key, _)| key == module_key).and_then(|(_, value)| match value.contents() { Value::Text(text) => Some(text.to_string()), _ => None });
+                    let local = match qualified.contents() {
+                        Value::Object(object) => object.fields.borrow().iter().find(|(key, _)| key == "\0worth").map_or_else(|| qualified.plain(), |(_, text)| text.plain()),
+                        text => text.plain(),
+                    };
+                    return format!("<class '{}'>", match prefix { Some(module) if module != "builtins" => format!("{module}.{local}"), _ => local });
+                }
+                c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name))
+            },
             // A kind's own method read from the kind itself is bound to
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
@@ -1638,6 +1648,9 @@ pub const MAKER_MEMBER: &str = "\0metaclass";
 /// and the values it keeps for itself.
 #[derive(Debug)]
 pub struct Class {
+    /// Python heap-type names, the module label, and the original
+    /// qualification identifying the declaration for lexical super calls.
+    pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
     pub lineage: Vec<Rc<Class>>,
     pub direct: Vec<Rc<Class>>,
     pub outline: Option<String>,
