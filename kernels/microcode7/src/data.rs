@@ -14,12 +14,13 @@ use crate::form::{Prim, Routine};
 /// A run-time frame: slots, and the frame the program was made in.
 pub struct Env {
     pub cells: RefCell<Vec<Value>>,
+    pub capture_slots: RefCell<HashSet<usize>>,
     pub outer: Option<Rc<Env>>,
 }
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), outer: parent })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent })
     }
 }
 

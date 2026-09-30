@@ -2679,20 +2679,25 @@ impl<'a> Machine<'a> {
         // sees afterwards, as the reference has it. A name the text
         // binds anew is still the text's alone, since binding writes the
         // frame's slot rather than anything the slot holds.
-        let apart = |held: &Value| held.clone();
+        let apart = |source: &Rc<Env>, at: usize| {
+            let held = source.cells.borrow()[at].clone();
+            if source.capture_slots.borrow().contains(&at) {
+                let Value::Shared(cell) = held else { unreachable!() };
+                let copied = cell.borrow().clone();
+                copied
+            } else { held }
+        };
         let mut names = program.idents.clone();
-        let mut cells: Vec<Value> = frame.cells.borrow().iter().map(apart).collect();
+        let mut cells: Vec<Value> = (0..frame.cells.borrow().len()).map(|at| apart(frame, at)).collect();
         cells.resize(names.len(), Value::Unset);
         for slot in &program.reaching {
             if names.iter().any(|word| word == slot.ident.as_ref()) { continue; }
-            let held = match ascend(frame, slot.up).cells.borrow().get(slot.at) {
-                Some(held) => apart(held),
-                None => continue,
-            };
+            let source = ascend(frame, slot.up);
+            if slot.at >= source.cells.borrow().len() { continue; }
             names.push(slot.ident.to_string());
-            cells.push(held);
+            cells.push(apart(source, slot.at));
         }
-        (names, Rc::new(Env { cells: RefCell::new(cells), outer: under }))
+        (names, Rc::new(Env { cells: RefCell::new(cells), capture_slots: RefCell::new(Default::default()), outer: under }))
     }
 
     /// Build source against the globals this run already has and run it
@@ -2946,6 +2951,11 @@ impl<'a> Machine<'a> {
         // binding may hold the very same cell; only a plain local's
         // own value, or the value a closed-over one keeps, is this
         // read's alone to move out.
+        if f.capture_slots.borrow().contains(&slot.at) {
+            let Value::Shared(cell) = &f.cells.borrow()[slot.at] else { unreachable!() };
+            let held = cell.borrow().clone();
+            return if matches!(held, Value::Unset) { self.fetch(slot, frame) } else { Ok(held) };
+        }
         if let Value::Shared(cell) = &f.cells.borrow()[slot.at] {
             if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) {
                 return Ok(Value::Shared(cell.clone()));
@@ -2965,6 +2975,11 @@ impl<'a> Machine<'a> {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
         }
         let mut v = f.cells.borrow()[slot.at].clone();
+        if f.capture_slots.borrow().contains(&slot.at) {
+            let Value::Shared(cell) = &v else { unreachable!() };
+            let captured = cell.borrow().clone();
+            v = captured;
+        }
         if let Value::Shared(cell) = &v {
             if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
             let held = cell.borrow().clone();
@@ -3033,6 +3048,11 @@ impl<'a> Machine<'a> {
         if self.names_in_calls {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
+            if destination.capture_slots.borrow().contains(&slot.at) {
+                let Value::Shared(cell) = &destination.cells.borrow()[slot.at] else { unreachable!() };
+                *cell.borrow_mut() = stored;
+                return Ok(());
+            }
             if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
                 if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
             }
@@ -3078,6 +3098,22 @@ impl<'a> Machine<'a> {
         }));
         f.cells.borrow_mut()[slot.at] = Value::Shared(cell.clone());
         cell
+    }
+
+    /// The mutable value behind a name. A captured binding can itself
+    /// hold a collection cell; writes to places in that collection must
+    /// reach the collection, while rebinding the name reaches its outer
+    /// capture cell.
+    fn value_cell(&self, frame: &Rc<Env>, at: usize) -> Option<Rc<RefCell<Value>>> {
+        let Value::Shared(binding) = &frame.cells.borrow()[at] else { return None };
+        if frame.capture_slots.borrow().contains(&at) {
+            let nested = match &*binding.borrow() {
+                Value::Shared(value) => Some(value.clone()),
+                _ => None,
+            };
+            if nested.is_some() { return nested; }
+        }
+        Some(binding.clone())
     }
 
     /// The frame and index an array lives in, for writing it in place.
@@ -4383,6 +4419,45 @@ impl<'a> Machine<'a> {
         if let Some((_, field)) = fields.iter_mut().find(|(key, _)| key == &slot) { *field = Value::Backtrace(Rc::new(link)); }
     }
 
+    /// A Python closure owns only the bindings it reaches. Each captured
+    /// binding has one cell shared with the defining frame, so later writes
+    /// and closures made before a binding is set see the same value. The
+    /// shadow frames retain lexical address depths without retaining other
+    /// locals (notably the finalizer's self).
+    fn closure_environment(&self, program: &Routine, defining: &Rc<Env>) -> Rc<Env> {
+        if program.frameless || !self.table.flag("ext.stmt.function.closes_over") {
+            return defining.clone();
+        }
+        let mut frames = Vec::new();
+        let mut root = defining.clone();
+        while !Rc::ptr_eq(&root, &self.outermost) {
+            let Some(parent) = &root.outer else { break };
+            frames.push(root.clone());
+            root = parent.clone();
+        }
+        let mut outer = root;
+        for (depth, source) in frames.into_iter().enumerate().rev() {
+            let projected = Env::make(source.cells.borrow().len(), Some(outer));
+            for address in &program.reaching {
+                if address.up != depth + 1 { continue; }
+                let cell = if source.capture_slots.borrow().contains(&address.at) {
+                    let Value::Shared(cell) = &source.cells.borrow()[address.at] else { unreachable!() };
+                    cell.clone()
+                } else {
+                    let held = source.cells.borrow()[address.at].clone();
+                    let cell = Rc::new(RefCell::new(held));
+                    source.cells.borrow_mut()[address.at] = Value::Shared(cell.clone());
+                    source.capture_slots.borrow_mut().insert(address.at);
+                    cell
+                };
+                projected.cells.borrow_mut()[address.at] = Value::Shared(cell);
+                projected.capture_slots.borrow_mut().insert(address.at);
+            }
+            outer = projected;
+        }
+        outer
+    }
+
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
         if self.active_trace.is_none() {
             if let Some(body) = self.frames_named.last().cloned() { self.active_trace = self.activation(&body, frame, None); }
@@ -4399,13 +4474,14 @@ impl<'a> Machine<'a> {
         }
         match node {
             Form::Const(Value::Routine(p)) => {
-                // A closure can keep its defining frame, which in turn keeps
-                // the closure. Remember the frame so collection can find and
-                // break that otherwise invisible cycle (and run finalizers).
+                // A closure can keep captured cells, which can in turn
+                // keep the closure. Note the environment it actually owns
+                // so collection can find and break that round.
+                let environment = self.closure_environment(p, frame);
                 if crate::ghost::bidding() {
-                    crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(p), Rc::downgrade(frame)));
+                    crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(p), Rc::downgrade(&environment)));
                 }
-                Ok(Value::Bound(p.clone(), frame.clone()))
+                Ok(Value::Bound(p.clone(), environment))
             }
             Form::Const(Value::OctetKind { changeable, .. }) if !self.wildcard_names.is_empty() => {
                 let held = self.spread_value(self.octet_kind_word(*changeable));
@@ -4418,12 +4494,23 @@ impl<'a> Machine<'a> {
                 let value = self.fetch(slot, frame)?;
                 // Only the private slot goes away, not the shared value
                 // it may contain (a frame's locals dictionary, for example).
-                ascend(frame, slot.up).cells.borrow_mut()[slot.at] = Value::Unset;
+                let f = ascend(frame, slot.up);
+                if f.capture_slots.borrow().contains(&slot.at) {
+                    let Value::Shared(cell) = &f.cells.borrow()[slot.at] else { unreachable!() };
+                    *cell.borrow_mut() = Value::Unset;
+                } else {
+                    f.cells.borrow_mut()[slot.at] = Value::Unset;
+                }
                 Ok(value)
             }
             Form::Glance(slot) => {
                 let f = ascend(frame, slot.up);
-                let held = f.cells.borrow()[slot.at].clone();
+                let mut held = f.cells.borrow()[slot.at].clone();
+                if f.capture_slots.borrow().contains(&slot.at) {
+                    let Value::Shared(cell) = &held else { unreachable!() };
+                    let captured = cell.borrow().clone();
+                    held = captured;
+                }
                 let held = match (&held, slot.fallback) {
                     (Value::Unset, Some(g)) => self.outermost.cells.borrow()[g].clone(),
                     _ => held,
@@ -4652,16 +4739,11 @@ impl<'a> Machine<'a> {
             Form::ShareItem(slot, place) => {
                 let at = self.value_of(place, frame)?;
                 let f = ascend(frame, slot.up);
-                let mut cells = f.cells.borrow_mut();
-                let held = &mut cells[slot.at];
-                // Through the shared cell when the name stands for one.
-                if let Value::Shared(cell) = held {
-                    let cell = cell.clone();
-                    drop(cells);
+                if let Some(cell) = self.value_cell(f, slot.at) {
                     let mut inside = cell.borrow_mut();
                     return Ok(Value::Shared(shared_item(&mut inside, &at)?));
                 }
-                Ok(Value::Shared(shared_item(held, &at)?))
+                Ok(Value::Shared(shared_item(&mut f.cells.borrow_mut()[slot.at], &at)?))
             }
             Form::SharePlace(slot, places) => {
                 let mut keys = Vec::with_capacity(places.len());
@@ -4671,22 +4753,20 @@ impl<'a> Machine<'a> {
                 }
                 let makes = self.builds_places;
                 let f = ascend(frame, slot.up);
-                let mut cells = f.cells.borrow_mut();
-                let held = &mut cells[slot.at];
-                // Through the shared cell where the name stands for one.
-                if let Value::Shared(cell) = held {
-                    let cell = cell.clone();
-                    drop(cells);
+                if let Some(cell) = self.value_cell(f, slot.at) {
                     let mut inside = cell.borrow_mut();
                     return Ok(Value::Shared(shared_deep(&mut inside, &keys, makes)?));
                 }
-                Ok(Value::Shared(shared_deep(held, &keys, makes)?))
+                Ok(Value::Shared(shared_deep(&mut f.cells.borrow_mut()[slot.at], &keys, makes)?))
             }
             Form::Ready(slot) => {
                 let f = ascend(frame, slot.up);
-                let mut cells = f.cells.borrow_mut();
-                if matches!(cells[slot.at], Value::Unset) {
-                    cells[slot.at] = Value::Nil;
+                if f.capture_slots.borrow().contains(&slot.at) {
+                    let Value::Shared(cell) = &f.cells.borrow()[slot.at] else { unreachable!() };
+                    if matches!(*cell.borrow(), Value::Unset) { *cell.borrow_mut() = Value::Nil; }
+                } else {
+                    let mut cells = f.cells.borrow_mut();
+                    if matches!(cells[slot.at], Value::Unset) { cells[slot.at] = Value::Nil; }
                 }
                 Ok(Value::Nil)
             }
@@ -4695,6 +4775,7 @@ impl<'a> Machine<'a> {
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
+                    Value::Shared(cell) if f.capture_slots.borrow().contains(&slot.at) => *cell.borrow_mut() = Value::Unset,
                     Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") && !self.names_in_calls => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }
@@ -5881,13 +5962,12 @@ impl<'a> Machine<'a> {
                             })?;
                             value = Value::Vector(Rc::new(members));
                         }
-                        let old = f.cells.borrow()[i].clone();
-                        match old {
-                            Value::Shared(cell) => {
+                        match self.value_cell(&f, i) {
+                            Some(cell) => {
                                 let mut row = cell.borrow_mut();
                                 self.span_written(&mut row, bounds, &value)?;
                             }
-                            _ => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
+                            None => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
                         }
                         if booked_here { self.booked_write(i, &slot.ident, Some(f.cells.borrow()[i].clone())); }
                         return Ok(Value::Nil);
@@ -5907,11 +5987,7 @@ impl<'a> Machine<'a> {
                     // reaching it holds the frame the name lives in.
                     let letter = self.letter_places.then(|| value.render(self.wording()));
                     // Through the shared cell when the name stands for one.
-                    let shared = match &f.cells.borrow()[i] {
-                        Value::Shared(cell) => Some(cell.clone()),
-                        _ => None,
-                    };
-                    let over = match shared {
+                    let over = match self.value_cell(&f, i) {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
                             written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?
@@ -5957,11 +6033,7 @@ impl<'a> Machine<'a> {
                     }
                     let Form::Read(slot) = first else { unreachable!("a name read in place") };
                     let (f, i) = self.locate(slot, frame)?;
-                    let shared = match &f.cells.borrow()[i] {
-                        Value::Shared(cell) => Some(cell.clone()),
-                        _ => None,
-                    };
-                    let many = match shared {
+                    let many = match self.value_cell(&f, i) {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
                             put_before(&mut held, coming, name)?
@@ -19237,6 +19309,7 @@ impl<'a> Machine<'a> {
                         let Some(linked) = linked else { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); };
                         let slot = &program.reaching[indices[position]];
                         levels[slot.up].cells.borrow_mut()[slot.at] = Value::Shared(linked);
+                        levels[slot.up].capture_slots.borrow_mut().insert(slot.at);
                     }
                     return self.invoke(program.clone(), outer, Vec::new())
                         .map(|_| Value::Nil).map_err(|escape| self.suspension_fault(escape));
