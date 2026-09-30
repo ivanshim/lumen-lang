@@ -688,6 +688,10 @@ impl Value {
                 if count.is_one() { return Ok(format!("walk:1:{}", sequence.first)); }
                 Ok(format!("walk:{}:{}:{}", count, sequence.first, sequence.stride))
             }
+            // Whole numbers already have a denominator of one, so
+            // their address needs no temporary ratio or reduction.
+            Value::Small(n) => Ok(format!("number:{n}:1")),
+            Value::Huge(n) => Ok(format!("number:{n}:1")),
             Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
             Value::Nil => Ok("nothing".to_owned()),
             Value::Ellipsis => Ok("ellipsis".to_owned()),
