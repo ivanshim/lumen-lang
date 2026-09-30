@@ -1963,14 +1963,23 @@ impl<'a> Machine<'a> {
     /// while another is being let go is let go in its own turn.
     pub fn let_things_go(&mut self) {
         self.attend_to_gone();
-        let Some(named) = self.table.single("ext.stmt.class.destructor").map(str::to_string) else { return };
+        let destructor = self.table.single("ext.stmt.class.destructor").map(str::to_string);
         let mut reached = 0;
         while let Some(loosely) = { let all = self.things.borrow(); all.get(reached).cloned() } {
             reached += 1;
             let Some(thing) = loosely.upgrade() else { continue };
-            let Some(program) = thing.blueprint().program(&named).cloned() else { continue };
-            if !crate::ghost::first_farewell(&thing) { continue; }
-            let _ = self.invoke(program, self.outermost.clone(), vec![Value::Thing(thing)]);
+            // The words a thing says as it goes: the destructor the
+            // language names outright, or its finaliser's farewell,
+            // whichever the language has.
+            if let Some(named) = destructor.as_deref() {
+                let Some(program) = thing.blueprint().program(named).cloned() else { continue };
+                if !crate::ghost::first_farewell(&thing) { continue; }
+                let _ = self.invoke(program, self.outermost.clone(), vec![Value::Thing(thing)]);
+            } else {
+                let Some(farewell) = crate::ghost::farewell_of(&thing.of) else { continue };
+                if !crate::ghost::first_farewell(&thing) { continue; }
+                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
+            }
         }
         self.things.borrow_mut().clear();
     }
@@ -5507,7 +5516,8 @@ impl<'a> Machine<'a> {
                     if crate::ghost::bidding() && crate::ghost::farewell_of(&class).is_some() {
                         crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(&thing)));
                     }
-                    if self.table.single("ext.stmt.class.destructor").is_some() {
+                    if self.table.single("ext.stmt.class.destructor").is_some()
+                        || self.table.single("ext.stmt.class.finaliser").is_some() {
                         self.things.borrow_mut().push(Rc::downgrade(&thing));
                     }
                     let maker = self.table.single("ext.stmt.class.constructor").and_then(|m| class.program(m)).cloned();
@@ -18693,6 +18703,21 @@ impl<'a> Machine<'a> {
         let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
         self.world_book = Some(book.clone());
         book
+    }
+
+    /// The main program's own module, registered under the name the
+    /// language gives it so that `sys.modules[__name__]` answers with
+    /// the very dictionary `globals()` answers with. A language with no
+    /// such name, or no cache of modules, is left alone. The book is
+    /// made here, before the program runs, so that the dictionary an
+    /// import of the main module later returns is the selfsame one the
+    /// program has been writing through all along.
+    pub fn register_main_module(&mut self) {
+        let main = self.detail("main").to_string();
+        if main.is_empty() { return; }
+        let book = self.world_kept();
+        self.imported.insert(main, Value::Shared(book));
+        self.refresh_import_table();
     }
 
     /// The dictionary of the names where the run stands: the reading

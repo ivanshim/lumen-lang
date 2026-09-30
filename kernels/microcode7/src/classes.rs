@@ -845,6 +845,10 @@ impl<'a> Machine<'a> {
             // A thing whose class bids farewell is noted, so that a round
             // holding it can be found when the program asks.
             if crate::ghost::bidding()&&crate::ghost::farewell_of(&thing.of).is_some() {crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(thing)));}
+            if self.table.single("ext.stmt.class.destructor").is_some()
+                || self.table.single("ext.stmt.class.finaliser").is_some() {
+                self.things.borrow_mut().push(Rc::downgrade(thing));
+            }
             let belongs=Rc::ptr_eq(&thing.blueprint(),&class)||thing.blueprint().ancestry.iter().any(|c|Rc::ptr_eq(c,&class));
             if belongs {
                 let constructor=self.table.single("ext.stmt.class.constructor").and_then(|word|self.inherited_entry(&thing.blueprint(),word));

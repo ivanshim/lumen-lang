@@ -1488,7 +1488,7 @@ impl<'a> Engine<'a> {
     /// order the objects were made, each by the method its class names
     /// for it. An object made by one of those is let go in its turn.
     pub fn let_things_go(&mut self) {
-        let Some(named) = self.lang.destructor.clone() else { return };
+        let destructor = self.lang.destructor.clone();
         let mut at = 0;
         loop {
             let standing = {
@@ -1500,9 +1500,18 @@ impl<'a> Engine<'a> {
             };
             at += 1;
             let Some(thing) = standing else { continue };
-            let Some(method) = thing.class_now().method(&named).cloned() else { continue };
-            if !crate::faint::first_words(&thing) { continue; }
-            let _ = self.invoke(&method, vec![Value::Object(thing)]);
+            // The words an object says as it goes: the destructor the
+            // language names outright, or its finaliser's last words,
+            // whichever the language has.
+            if let Some(named) = destructor.as_deref() {
+                let Some(method) = thing.class_now().method(named).cloned() else { continue };
+                if !crate::faint::first_words(&thing) { continue; }
+                let _ = self.invoke(&method, vec![Value::Object(thing)]);
+            } else {
+                let Some(words) = crate::faint::last_word_of(&thing.class_now()) else { continue };
+                if !crate::faint::first_words(&thing) { continue; }
+                self.speak_ignoring(words, vec![Value::Object(thing)], "deallocator");
+            }
         }
         self.things_made.borrow_mut().clear();
     }
@@ -8701,7 +8710,7 @@ impl<'a> Engine<'a> {
                 if self.lang.finaliser.is_some() && crate::faint::last_word_of(&class).is_some() {
                     crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&object)));
                 }
-                if self.lang.destructor.is_some() {
+                if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
                     self.things_made.borrow_mut().push(Rc::downgrade(&object));
                 }
                 let maker = self.lang.constructor.as_deref().and_then(|m| class.method(m)).cloned();
@@ -18983,6 +18992,21 @@ impl Engine<'_> {
         let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.outer_book = Some(book.clone());
         book
+    }
+
+    /// The main program's own module, registered under the name the
+    /// language gives it so that `sys.modules[__name__]` answers with
+    /// the very dictionary `globals()` answers with. A language with no
+    /// such name, or no cache of modules, is left alone. The book is
+    /// made here, before the program runs, so that the dictionary an
+    /// import of the main module later returns is the selfsame one the
+    /// program has been writing through all along.
+    pub fn register_main_module(&mut self) {
+        let main = self.class_word("main").to_string();
+        if main.is_empty() { return; }
+        let book = self.outer_book_made();
+        self.modules.insert(main, Value::Bond(book));
+        self.refresh_module_cache();
     }
 
     /// The dictionary standing for the names where the run is: the

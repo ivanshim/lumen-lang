@@ -832,6 +832,9 @@ impl<'a> Engine<'a> {
             if self.lang.finaliser.is_some() && crate::faint::last_word_of(&o.class).is_some() {
                 crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(o)));
             }
+            if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
+                self.things_made.borrow_mut().push(Rc::downgrade(o));
+            }
             if Rc::ptr_eq(&o.class_now(),&c) || o.class_now().lineage.iter().any(|b| Rc::ptr_eq(b,&c)) {
                 let init = self.lang.constructor.as_deref().and_then(|n| self.class_value(&o.class_now(),n));
                 if let Some(f) = init {
