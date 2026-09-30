@@ -5612,3 +5612,14 @@ restores ordinary non-package rejection. The path wrapper delegates all
 existing parent path operations, including `realpath`, without changing
 their implementations. Cached children remain
 available after a package changes its search path, as ordinary imports do.
+
+Recreating a genuine embedded parent binds each declared alias to the
+loader's returned module, including a retained cached child. Virtual source
+locations are absolute logical paths. Equivalent search-directory spellings
+resolve against those locations; traversal requires a real directory or a
+manifest-declared virtual directory. Existing filesystem symlinks are expanded
+before parent components, with a bounded link count. A missing unrelated
+directory, a file used as a directory, or an escaping link cannot gain access
+by lexical cancellation. This lookup does not change the path wrapper's
+inherited `realpath` implementation or provide namespace-package/importlib
+protocols.

@@ -541,6 +541,52 @@ fn made_absolute(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
 }
 
+/// Virtual library directories remain usable when host sources are absent.
+/// Resolve existing links before parent components, and admit missing traversal
+/// directories only when the manifest declares that logical directory.
+fn library_location(input: &std::path::Path, virtual_dirs: Option<&std::collections::HashSet<std::path::PathBuf>>) -> Option<std::path::PathBuf> {
+    use std::path::{Component, Path, PathBuf};
+    let starting = if input.is_absolute() { input.to_owned() } else { std::env::current_dir().ok()?.join(input) };
+    let mut remaining: Vec<_> = starting.components().rev().map(|component| component.as_os_str().to_os_string()).collect();
+    let mut location = PathBuf::new();
+    let mut followed = 0;
+    while let Some(component) = remaining.pop() {
+        match Path::new(&component).components().next()? {
+            Component::Prefix(prefix) => location.push(prefix.as_os_str()),
+            Component::RootDir => location.push(std::path::MAIN_SEPARATOR.to_string()),
+            part => {
+                let directory = match std::fs::metadata(&location) {
+                    Ok(stat) => stat.is_dir(),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => virtual_dirs.is_none_or(|declared| declared.contains(&location)),
+                    Err(_) => false,
+                };
+                if !directory { return None; }
+                match part {
+                    Component::CurDir => {},
+                    Component::ParentDir => { location.pop(); },
+                    Component::Normal(filename) => {
+                        location.push(filename);
+                        match std::fs::symlink_metadata(&location) {
+                            Ok(stat) if stat.file_type().is_symlink() => {
+                                followed += 1;
+                                if followed > 40 { return None; }
+                                let destination = std::fs::read_link(&location).ok()?;
+                                location.pop();
+                                remaining.extend(destination.components().rev().map(|part| part.as_os_str().to_os_string()));
+                            },
+                            Ok(_) => {},
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                            Err(_) => return None,
+                        }
+                    },
+                    _ => unreachable!(),
+                }
+            },
+        }
+    }
+    Some(location)
+}
+
 /// Letters this run has a fair chance of never having spelled before,
 /// for naming a fresh temporary directory: the moment down to the
 /// nanosecond, mixed with a counter this process alone advances, both
@@ -18519,18 +18565,29 @@ impl Machine<'_> {
         // These are source-backed module aliases, initialized with their
         // genuine library parent rather than borrowed helper instances.
         if from_library {
-            let aliases: Vec<String> = self.library_aliases.iter().filter_map(|(full, member)| {
+            let aliases: Vec<(String, String)> = self.library_aliases.iter().filter_map(|(full, member)| {
                 let (owner, _) = full.rsplit_once('.')?;
                 if owner != path { return None; }
                 if let Value::Thing(parent) = &value {
-                    if parent.holds.borrow().iter().any(|entry| &entry.0 == member) { return Some(full.clone()); }
+                    if parent.holds.borrow().iter().any(|entry| &entry.0 == member) { return Some((full.clone(), member.clone())); }
                 }
                 None
             }).collect();
-            for full in aliases {
-                if let Err(message) = self.load_namespace(&full) {
-                    self.importing.remove(path); self.library_origins.remove(path);
-                    self.imported.remove(path); self.refresh_import_table(); return Err(message);
+            for (full, member) in aliases {
+                let namespace = match self.load_namespace(&full) {
+                    Ok(namespace) => namespace,
+                    Err(message) => {
+                        self.importing.remove(path); self.library_origins.remove(path);
+                        self.imported.remove(path); self.refresh_import_table(); return Err(message);
+                    },
+                };
+                // Loading may return a retained child of the previous parent.
+                if let Value::Thing(parent) = &value {
+                    let mut entries = parent.holds.borrow_mut();
+                    if let Some(entry) = entries.iter_mut().find(|entry| entry.0 == member) {
+                        if let Value::Shared(cell) = &entry.1 { *cell.borrow_mut() = namespace; }
+                        else { entry.1 = namespace; }
+                    } else { entries.push((member, namespace)); }
                 }
             }
         }
@@ -18556,6 +18613,21 @@ impl Machine<'_> {
             Value::Tuple(items) if self.table.single("ext.system.module.path").is_some() => items,
             _ => return None,
         };
+        let mut sources = std::collections::HashMap::new();
+        let mut virtual_dirs = std::collections::HashSet::new();
+        if self.table.single("ext.system.module.path").is_some() {
+            for name in self.library_files.keys() {
+                if let Some(file) = self.library_module_file(name) {
+                    let location = std::path::PathBuf::from(file);
+                    let mut parent = location.parent();
+                    while let Some(directory) = parent {
+                        virtual_dirs.insert(directory.to_path_buf());
+                        parent = directory.parent();
+                    }
+                    sources.insert(location, name);
+                }
+            }
+        }
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.table.single("ext.system.module.path").is_none() { continue; }
@@ -18564,10 +18636,12 @@ impl Machine<'_> {
             let package = folder.join(filename).join("__init__.py");
             let choices = if self.table.single("ext.system.module.path").is_some() { vec![package, ordinary] } else { vec![ordinary] };
             for location in choices {
-                let absolute = made_absolute(&location.to_string_lossy());
                 if self.table.single("ext.system.module.path").is_some() {
-                    let stored = self.library_files.keys().find(|name| self.library_module_file(name).as_deref() == Some(absolute.as_str()));
-                    if let Some(text) = stored.and_then(|name| self.library_sources.get(name)) { return Some((absolute, text.clone())); }
+                    if let Some(resolved) = library_location(&location, Some(&virtual_dirs)) {
+                        if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(*name)) {
+                            return Some((resolved.to_string_lossy().into_owned(), text.clone()));
+                        }
+                    }
                 }
                 if let Ok(text) = std::fs::read_to_string(&location) {
                     return Some((made_absolute(&location.to_string_lossy()), text));
@@ -18584,7 +18658,9 @@ impl Machine<'_> {
             std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules"))
         });
         if self.table.single("ext.system.module.path").is_some() {
-            if let Some(file) = self.library_files.get(path) { return Some(made_absolute(&directory.join(file).to_string_lossy())); }
+            if let Some(file) = self.library_files.get(path) {
+                return library_location(&directory.join(file), None).map(|file| file.to_string_lossy().into_owned());
+            }
         }
         let name = path.replace('.', "/");
         for relative in [format!("{name}.py"), format!("{name}/__init__.py")] {

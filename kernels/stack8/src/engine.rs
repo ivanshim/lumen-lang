@@ -409,6 +409,51 @@ fn made_absolute(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
 }
 
+/// Resolve a declared virtual location without requiring its source file on disk.
+/// Search paths may traverse only real directories or declared virtual ones.
+/// Existing symlinks are expanded before `..`; files and unknown missing
+/// directories cannot be traversed, even when a later `..` would erase them.
+fn module_location(path: &std::path::Path, directories: Option<&std::collections::HashSet<std::path::PathBuf>>) -> Option<std::path::PathBuf> {
+    use std::path::{Component, Path, PathBuf};
+    let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().ok()?.join(path) };
+    let mut pending: std::collections::VecDeque<_> = absolute.components().map(|part| part.as_os_str().to_os_string()).collect();
+    let mut resolved = PathBuf::new();
+    let mut links = 0;
+    while let Some(piece) = pending.pop_front() {
+        let part = Path::new(&piece).components().next()?;
+        if matches!(part, Component::Normal(_) | Component::ParentDir | Component::CurDir) {
+            match std::fs::metadata(&resolved) {
+                Ok(info) if info.is_dir() => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                    && directories.is_none_or(|known| known.contains(&resolved)) => {},
+                _ => return None,
+            }
+        }
+        match part {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(part.as_os_str()),
+            Component::CurDir => {},
+            Component::ParentDir => { resolved.pop(); },
+            Component::Normal(name) => {
+                resolved.push(name);
+                match std::fs::symlink_metadata(&resolved) {
+                    Ok(info) if info.file_type().is_symlink() => {
+                        links += 1;
+                        if links > 40 { return None; }
+                        let target = std::fs::read_link(&resolved).ok()?;
+                        resolved.pop();
+                        for component in target.components().rev() { pending.push_front(component.as_os_str().to_os_string()); }
+                    },
+                    Ok(_) => {},
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(_) => return None,
+                }
+            },
+        }
+    }
+    Some(resolved)
+}
+
 /// A number written in base 36, lowercase, with no leading zeroes kept
 /// bare: short, and safe inside a file name on every host this runs on.
 fn to_radix36(mut n: u64) -> String {
@@ -18772,14 +18817,26 @@ impl Engine<'_> {
         // Register real source modules while their embedded parent initializes.
         // The temporary registration privilege is gone after initialization.
         if embedded {
-            let aliases: Vec<String> = self.module_aliases.iter().filter(|(child, member)| {
+            let aliases: Vec<(String, String)> = self.module_aliases.iter().filter(|(child, member)| {
                 child.rsplit_once('.').map(|(owner, _)| owner) == Some(path)
                     && matches!(&module, Value::Object(parent) if parent.fields.borrow().iter().any(|(name, _)| name == *member))
-            }).map(|(child, _)| child.clone()).collect();
-            for child in aliases {
-                if let Err(fault) = self.import_module(&child) {
-                    self.importing.remove(path); self.embedded_names.remove(path);
-                    self.modules.remove(path); self.refresh_module_cache(); return Err(fault);
+            }).map(|(child, member)| (child.clone(), member.clone())).collect();
+            for (child, member) in aliases {
+                let loaded = match self.import_module(&child) {
+                    Ok(loaded) => loaded,
+                    Err(fault) => {
+                        self.importing.remove(path); self.embedded_names.remove(path);
+                        self.modules.remove(path); self.refresh_module_cache(); return Err(fault);
+                    },
+                };
+                // A cached alias must also be bound on this newly initialized parent.
+                if let Value::Object(parent) = &module {
+                    let mut fields = parent.fields.borrow_mut();
+                    match fields.iter_mut().find(|(name, _)| name == &member) {
+                        Some((_, Value::Bond(cell))) => *cell.borrow_mut() = loaded,
+                        Some((_, value)) => *value = loaded,
+                        None => fields.push((member, loaded)),
+                    }
                 }
             }
         }
@@ -18806,6 +18863,17 @@ impl Engine<'_> {
             Value::Tuple(items) if self.lang.module_path.is_some() => items,
             _ => return None,
         };
+        let mut locations = std::collections::HashMap::new();
+        let mut directories = std::collections::HashSet::new();
+        if self.lang.module_path.is_some() {
+            for name in self.module_files.keys() {
+                if let Some(file) = self.library_module_file(name) {
+                    let location = std::path::PathBuf::from(file);
+                    for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
+                    locations.insert(location, name);
+                }
+            }
+        }
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.lang.module_path.is_none() { continue; }
@@ -18818,10 +18886,9 @@ impl Engine<'_> {
                 // Embedded text has a location, just like disk text. It is
                 // eligible only at a directory in the actual search list.
                 if self.lang.module_path.is_some() {
-                    let absolute = made_absolute(&file);
-                    for name in self.module_files.keys() {
-                        if self.library_module_file(name).as_deref() == Some(absolute.as_str()) {
-                            if let Some(source) = self.module_sources.get(name) { return Some((absolute, source.clone())); }
+                    if let Some(location) = module_location(std::path::Path::new(&file), Some(&directories)) {
+                        if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(*name)) {
+                            return Some((location.to_string_lossy().into_owned(), source.clone()));
                         }
                     }
                 }
@@ -18839,7 +18906,9 @@ impl Engine<'_> {
         const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
         let root = self.library_root.as_deref().unwrap_or(ROOT);
         if self.lang.module_path.is_some() {
-            if let Some(relative) = self.module_files.get(path) { return Some(made_absolute(&format!("{root}/{relative}"))); }
+            if let Some(relative) = self.module_files.get(path) {
+                return module_location(&std::path::Path::new(root).join(relative), None).map(|location| location.to_string_lossy().into_owned());
+            }
         }
         let stem = path.replace('.', "/");
         let flat = format!("{root}/{stem}.py");
