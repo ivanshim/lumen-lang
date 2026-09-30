@@ -196,7 +196,7 @@ ext.op.sequence.values:B ext.op.sequence.concat:L ext.op.sequence.repeat:L ext.o
 ext.op.sequence.subscript:L ext.op.sequence.missing:L ext.op.sequence.assign:L ext.builtin.globals:L ext.builtin.locals:L \
 ext.builtin.exec:L ext.builtin.compile:L ext.builtin.compile.modes:L ext.builtin.compile.parameters:L \
 ext.builtin.compile.kind:L ext.builtin.source.syntax:L ext.builtin.source.syntax.place:L ext.builtin.source.unready:L ext.builtin.source.builtins_immutable:L \
-ext.builtin.import:L ext.system.module.doc:L ext.system.module.builtins:L ext.system.names.module:L ext.system.syntax_warnings:L ext.builtin.ascii:L \
+ext.builtin.import:L ext.system.module.doc:L ext.builtin.build_class:L ext.stmt.class.builder:L ext.system.module.kind:L ext.system.module.builtins:L ext.system.names.module:L ext.system.syntax_warnings:L ext.builtin.ascii:L \
 ext.text.format.complex.zero:L ext.text.format.complex.align:L ext.op.rem.format.byte:L ext.builtin.frozenset:L  ext.builtin.iter.stop_value:L ext.builtin.iter.stop_exception:L";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -228,7 +228,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 295] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 296] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -427,7 +427,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 295] = [
             ("ext.builtin.text.length", Prim::Textual(crate::text::Work::LENGTH)),
             ("ext.builtin.text.repr", Prim::Textual(crate::text::Work::REPR)),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
-     ("ext.builtin.inline_values", Prim::ClassWork(12)), ("ext.builtin.issubclass", Prim::ClassWork(1)),       ("ext.builtin.dir", Prim::ClassWork(8)), ("ext.builtin.staticmethod", Prim::ClassWork(9)), ("ext.builtin.classmethod", Prim::ClassWork(10)), ("ext.builtin.property", Prim::ClassWork(11)),
+     ("ext.builtin.build_class", Prim::ClassWork(13)), ("ext.builtin.inline_values", Prim::ClassWork(12)), ("ext.builtin.issubclass", Prim::ClassWork(1)),       ("ext.builtin.dir", Prim::ClassWork(8)), ("ext.builtin.staticmethod", Prim::ClassWork(9)), ("ext.builtin.classmethod", Prim::ClassWork(10)), ("ext.builtin.property", Prim::ClassWork(11)),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
     ("builtin.precision", Prim::Places), ("builtin.to_string", Prim::AsText), ("builtin.to_int", Prim::AsInt),

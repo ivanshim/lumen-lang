@@ -350,6 +350,7 @@ pub struct Machine<'a> {
     /// made when first asked for and kept, so that every asking is
     /// answered by the selfsame thing and the selfsame dictionary.
     builtins_stand_in: Option<Value>,
+    body_namespace: Option<(Rc<Routine>, Option<Value>)>,
     code_kind: Option<Rc<Blueprint>>,
     ancestor: Option<Rc<Blueprint>>,
     /// The blueprint of properties, once one has been asked for.
@@ -1257,6 +1258,7 @@ impl<'a> Machine<'a> {
             reading_now: None,
             natives_book: None,
             builtins_stand_in: None,
+            body_namespace: None,
             code_kind: None,
             ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
             table,
@@ -2970,7 +2972,7 @@ impl<'a> Machine<'a> {
     /// or cannot be read at all, the name stays missing.
     fn spare_name(&mut self, wanted: &str) -> Option<Value> {
         if self.within_spare { return None; }
-        if self.names_the_builtins(wanted) { return Some(self.builtins_stand_in()); }
+        if self.names_the_builtins(wanted) { return self.builtins_stand_in().ok(); }
         let named = self.table.strings("ext.system.names.module").first()?.clone();
         if !self.imported.contains_key(&named) {
             self.within_spare = true;
@@ -5090,6 +5092,7 @@ impl<'a> Machine<'a> {
                 ending
             }
             Form::Class { plan, values } => {
+                self.check_class_builtin()?;
                 // What was written: the class it is built on, then a value
                 // for every property, kept value and constant, in the
                 // order the plan names them.
@@ -9185,6 +9188,14 @@ impl<'a> Machine<'a> {
             }
         };
         let outcome = self.traced_result(outcome);
+        if self.body_namespace.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, &program)) {
+            let entries = program.idents.iter().zip(frame.cells.borrow().iter())
+                .filter(|(name, value)| Self::visible_name(name) && !matches!(value.settled(), Value::Unset))
+                .map(|(name, value)| (Value::text(name), value.clone())).collect::<Vec<_>>();
+            if let Some((_, namespace)) = &mut self.body_namespace {
+                *namespace = Some(Value::Dict(Rc::new(entries.into())));
+            }
+        }
         self.update_watched_locals();
         if mine { self.active_trace = caller_trace; self.extent = parent_extent; }
         self.gathering_locals = earlier_gathering;
@@ -18534,7 +18545,7 @@ impl<'a> Machine<'a> {
             Held::World => {
                 let book = self.world_book.as_ref()?;
                 if let Some(worth) = looked_up(book, name) {
-                    if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(Ok(self.builtins_stand_in())); }
+                    if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
                     return Some(Ok(worth));
                 }
                 let cell = self.outermost.cells.borrow()[at].clone();
@@ -18564,7 +18575,7 @@ impl<'a> Machine<'a> {
                 // for the very way any other name is.
                 let roots = outer.unwrap_or(near);
                 let named = match self.table.single("ext.system.module.builtins") {
-                    Some(word) => match self.booked_get(&roots, word) {
+                    Some(word) => match self.builtin_entry(&roots, word) {
                         Ok(v) => v,
                         Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
                     },
@@ -18583,9 +18594,13 @@ impl<'a> Machine<'a> {
                             None => None,
                         }
                     }
-                    Some(other) => match self.mapping_read(&other, name) {
-                        Ok(v) => v,
-                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                    Some(other) => {
+                        let found = self.builtin_dictionary(other)
+                            .and_then(|dictionary| self.mapping_read(&dictionary.settled(), name));
+                        match found {
+                            Ok(value) => value,
+                            Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                        }
                     },
                     None => match self.native_of(name) {
                         Some(worth) => Some(worth),
@@ -18607,8 +18622,16 @@ impl<'a> Machine<'a> {
                     Some(outer) if book.declared.iter().any(|word| word == name) => outer,
                     _ => &book.near,
                 };
+                let deleting_name = worth.is_none() && !book.declared.iter().any(|word| word == name);
                 let goes_to = goes_to.clone();
-                if let Err(escape) = self.booked_put(&goes_to, name, worth) { self.got_away = Some(escape); }
+                if let Err(escape) = self.booked_put(&goes_to, name, worth) {
+                    // Refusal by the locals mapping means DELETE_NAME
+                    // cannot remove that binding. Global/subscript
+                    // deletion remains an ordinary mapping operation.
+                    self.got_away = Some(if deleting_name {
+                        Escape::Error(format!("Undefined variable: {name}"))
+                    } else { escape });
+                }
             }
             None => {}
         }
@@ -18634,15 +18657,35 @@ impl<'a> Machine<'a> {
     /// of builtin words. One thing is made and kept, so that the name
     /// gives the same answer every time and the dictionary it hands
     /// out is the one dictionary.
-    fn builtins_stand_in(&mut self) -> Value {
-        if let Some(held) = &self.builtins_stand_in { return held.clone(); }
-        let of = self.common_ancestor();
+    fn builtins_stand_in(&mut self) -> Result<Value, String> {
+        if let Some(held) = &self.builtins_stand_in { return Ok(held.clone()); }
+        if let Some(path) = self.table.strings("ext.system.names.module").first().cloned() {
+            let module = self.load_namespace(&path)?;
+            let dictionary = self.natives_kept();
+            if let Value::Thing(namespace) = module {
+                let fields = namespace.holds.borrow().clone();
+                for (word, value) in fields {
+                    if Self::visible_name(&word) && !matches!(value.settled(), Value::Unset) {
+                        set_down(&dictionary, &word, Some(value.settled()));
+                    }
+                }
+            }
+        }
+        let kind = self.table.strings("ext.system.module.kind").to_vec();
+        let of = if let [path, name] = kind.as_slice() {
+            let namespace = self.load_namespace(path)?;
+            match self.read_class_member(namespace, name, false)
+                .map_err(|escape| self.suspension_fault(escape))?.settled() {
+                Value::Blueprint(of) => of,
+                _ => return Err(self.bad_answer()),
+            }
+        } else { self.common_ancestor() };
         let words = Value::Mutable(self.natives_kept(), true);
         self.made += 1;
         let made = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, turn: self.made,
             holds: RefCell::new(vec![("\0dictionary".to_owned(), words)]) }));
         self.builtins_stand_in = Some(made.clone());
-        made
+        Ok(made)
     }
 
     /// The builtins in force where the run now stands: what the reading
@@ -18657,6 +18700,37 @@ impl<'a> Machine<'a> {
             }
         }
         Value::Mutable(self.natives_kept(), true)
+    }
+
+    fn check_class_builtin(&mut self) -> Result<(), Escape> {
+        let names = self.table.strings("ext.stmt.class.builder").to_vec();
+        let Some(word) = names.first() else { return Ok(()) };
+        if self.reading_now.is_none() { return Ok(()); }
+        let roots = self.book_about(true);
+        let key = self.table.single("ext.system.module.builtins").unwrap_or_default().to_owned();
+        if let Some(mut builtins) = self.builtin_entry(&roots, &key)? {
+            builtins = self.builtin_dictionary(builtins)?;
+            if self.mapping_read(&builtins.settled(), word)?.is_some() { return Ok(()); }
+        }
+        Err(names.get(1).cloned().unwrap_or_default().into())
+    }
+
+    pub(super) fn class_from_function(&mut self, mut supplied: Vec<Value>) -> Result<Value, Escape> {
+        if supplied.len() < 2 { return Err("TypeError: __build_class__: not enough arguments".to_owned().into()); }
+        let callable = supplied.remove(0).settled();
+        let (body, environment) = match callable {
+            Value::Bound(body, environment) => (body, environment),
+            Value::Routine(body) => (body, self.outermost.clone()),
+            _ => return Err("TypeError: __build_class__: func must be a function".to_owned().into()),
+        };
+        let Value::Text(name) = supplied.remove(0).settled() else { return Err("TypeError: __build_class__: name is not a string".to_owned().into()) };
+        let old_capture = self.body_namespace.replace((body.clone(), None));
+        let result = self.invoke(body, environment, Vec::new());
+        let namespace = self.body_namespace.take().and_then(|(_, value)| value);
+        self.body_namespace = old_capture;
+        result?;
+        let mapping = namespace.unwrap_or_else(|| Value::Dict(Rc::new(Vec::new().into())));
+        self.class_from_type(vec![Value::Text(name), Value::Tuple(Rc::new(supplied)), mapping])
     }
 
     /// The dictionary of every builtin word, made once.
@@ -18833,7 +18907,11 @@ impl<'a> Machine<'a> {
     fn mapping_write(&mut self, held: &Value, name: &str, given: Option<Value>) -> Result<(), Escape> {
         let key = Value::text(name);
         let outcome = match given {
+            Some(value) if self.appointed(held, 12).is_some() =>
+                self.ask_special(held, 12, &[key, value]).map(|_| Some(held.clone())),
             Some(value) => self.user_operation(Prim::Placed, &[held.clone(), key, value]),
+            None if self.appointed(held, 13).is_some() =>
+                self.ask_special(held, 13, &[key]).map(|_| Some(held.clone())),
             None => self.user_operation(Prim::Erase, &[held.clone(), key]),
         };
         match outcome {
@@ -18847,6 +18925,29 @@ impl<'a> Machine<'a> {
                 None => Escape::Error(words),
             }),
         }
+    }
+
+    // The interpreter obtains a dict subclass's builtin namespace
+    // from its storage; its __getitem__ remains active for user names.
+    fn builtin_entry(&mut self, book: &Rc<RefCell<Value>>, word: &str) -> Result<Option<Value>, Escape> {
+        let owner = book.borrow().clone();
+        if let Some(native) = Self::underlying(&owner) {
+            let stored = native.settled();
+            if matches!(stored, Value::Dict(_)) { return self.mapping_read(&stored, word); }
+        }
+        self.booked_get(book, word)
+    }
+
+    pub(super) fn builtin_dictionary(&mut self, value: Value) -> Result<Value, Escape> {
+        let settled = value.settled();
+        let kind = self.table.strings("ext.system.module.kind").last();
+        let is_module = self.namespace_holding(&settled).is_some()
+            || matches!(&settled, Value::Thing(t) if kind.is_some_and(|name| t.blueprint().goes_by(name, false)));
+        if is_module {
+            let key = self.detail("namespace").to_owned();
+            return self.read_class_member(value, &key, false);
+        }
+        Ok(value)
     }
 
     /// A name read out of a cell kept for such a dictionary, whichever
@@ -19432,7 +19533,7 @@ impl<'a> Machine<'a> {
         // such a dictionary of its own is asked for them the very way
         // any other name is asked for, since it need not be a plain one.
         if let Some(word) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
-            let already = match self.booked_get(&outer, &word) {
+            let already = match self.builtin_entry(&outer, &word) {
                 Ok(v) => v,
                 Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
             };
@@ -19444,15 +19545,18 @@ impl<'a> Machine<'a> {
             }
             if already.is_none() {
                 let natives = self.natives_kept();
-                if self.booked_put(&outer, &word, Some(Value::Shared(natives))).is_err() {
-                    // A value with no way to be written into refuses
-                    // this seeding under its own particular words, not
-                    // the plain complaint an ordinary write refused
-                    // gives, since the key here is the module's own and
-                    // not one the program asked to write itself.
-                    let outer_held = outer.borrow().clone();
-                    let kind = match &outer_held { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
+                let value = outer.borrow().clone();
+                if matches!(&value, Value::Thing(_)) && self.appointed(&value, 12).is_none() && Self::underlying(&value).is_none() {
+                    let kind = match &value { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
                     return Err(self.core_complaint("source.builtins_immutable", &kind));
+                }
+                let destination = match Self::underlying(&value) {
+                    Some(Value::Shared(cell) | Value::Mutable(cell, _)) if matches!(&*cell.borrow(), Value::Dict(_)) => cell,
+                    _ => outer.clone(),
+                };
+                if let Err(escape) = self.booked_put(&destination, &word, Some(Value::Shared(natives))) {
+                    self.got_away = Some(escape);
+                    return Err(self.bad_answer());
                 }
             }
         }
@@ -19551,10 +19655,13 @@ impl<'a> Machine<'a> {
         // Where the outer dictionary names a dictionary of builtins of
         // its own, every builtin word is read as a name, and the text
         // reaches only what that dictionary holds.
-        let own_natives = match self.table.single("ext.system.module.builtins").and_then(|word| looked_up(&outer, word)) {
-            Some(Value::Shared(cell)) => self.natives_book.as_ref().map_or(true, |natives| !Rc::ptr_eq(&cell, natives)),
-            _ => false,
-        };
+        let own_natives = if let Some(word) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
+            match self.builtin_entry(&outer, &word) {
+                Ok(Some(value)) => !self.is_our_natives(&value),
+                Ok(None) => false,
+                Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+            }
+        } else { false };
         let shadowed: Vec<String> = if own_natives { self.table.prims.keys().cloned().collect() } else { Vec::new() };
         // The dictionary the text was handed and the builtins in force
         // there go onto every routine it makes, so a routine can answer
@@ -19566,7 +19673,7 @@ impl<'a> Machine<'a> {
         // dictionary.
         let framed_in = looked_up(&outer, "__name__").and_then(|held| match held.settled() { Value::Text(named) => Some(named.clone()), _ => None });
         let born = match self.table.single("ext.system.module.builtins").map(str::to_owned) {
-            Some(word) => match self.booked_get(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
+            Some(word) => match self.builtin_entry(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
             None => Value::Mutable(self.natives_kept(), true),
         };
         let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone())?;

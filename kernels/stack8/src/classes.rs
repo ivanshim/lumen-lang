@@ -1710,7 +1710,11 @@ impl<'a> Engine<'a> {
     /// A module handed over where a dictionary of builtins is wanted
     /// stands for the dictionary it keeps, as the reference reads it.
     pub(super) fn as_builtins_dictionary(&mut self, held: Value) -> Flow<Value> {
-        if self.module_holding(&held).is_some() {
+        let value = held.contents();
+        let module_kind = self.lang.module_kind.last();
+        let module = self.module_holding(&value).is_some()
+            || matches!(&value, Value::Object(o) if module_kind.is_some_and(|name| o.class_now().named(name, false)));
+        if module {
             let word = self.class_word("namespace").to_string();
             return self.class_get(held, &word, false);
         }
@@ -2370,6 +2374,8 @@ impl<'a> Engine<'a> {
         }
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {
+            13 => self.build_body_class(args),
+            14 => { self.require_class_builder()?; Ok(Value::Null) },
             12 if args.len() == 1 => Ok(Value::Flag(match &one {
                 Value::Object(object) => self.slots_allow(&object.class_now(), self.class_word("namespace"))
                     && Self::kind_beneath(&object.class_now()).is_none()

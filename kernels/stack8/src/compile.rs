@@ -5838,6 +5838,10 @@ impl<'a> Compiler<'a> {
 
     fn explicit_class(&mut self) -> Res<bool> {
         let lang = self.lang;
+        if !lang.class_builder.is_empty() {
+            self.act(Action::Builtin(Builtin::ClassTool(14), Rc::from("")), 0);
+            self.discard();
+        }
         self.take();
         let original_name = self.spelled[self.pos].lexeme.clone();
         let name = self.want_name("as the class name")?;

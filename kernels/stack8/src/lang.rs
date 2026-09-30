@@ -783,6 +783,8 @@ pub struct Lang {
     /// (ext.system.module.doc), and the one it keeps the dictionary of
     /// builtin words under (ext.system.module.builtins).
     pub module_doc: Vec<String>,
+    pub class_builder: Vec<String>,
+    pub module_kind: Vec<String>,
     pub module_builtins: Vec<String>,
     /// The module a name nothing has bound is looked for in
     /// (ext.system.names.module), which is how Python reaches the names
@@ -1379,7 +1381,7 @@ w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
  | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.power.overflow | w ext.builtin.complex.power.modulo | w ext.builtin.complex.integer.overflow | w ext.builtin.complex.unready
 w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long | w ext.builtin.map.short | w ext.builtin.map.long
-w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.syntax.place | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | w ext.system.names.module | w ext.system.syntax_warnings | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign  | w ext.builtin.ascii  | w ext.text.format.complex.zero | w ext.text.format.complex.align  | w ext.op.rem.format.byte  | w ext.builtin.iter.stop_value | w ext.builtin.iter.stop_exception";
+w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.syntax.place | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.builtin.build_class | w ext.stmt.class.builder | w ext.system.module.kind | w ext.system.module.builtins | w ext.system.names.module | w ext.system.syntax_warnings | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign  | w ext.builtin.ascii  | w ext.text.format.complex.zero | w ext.text.format.complex.align  | w ext.op.rem.format.byte  | w ext.builtin.iter.stop_value | w ext.builtin.iter.stop_exception";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -2094,7 +2096,7 @@ impl Lang {
             ("ext.builtin.text.repr", Builtin::Text(crate::strings::TextOp::Repr)),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
-             ("ext.builtin.inline_values", Builtin::ClassTool(12)), ("ext.builtin.issubclass", Builtin::ClassTool(1)),       ("ext.builtin.dir", Builtin::ClassTool(8)), ("ext.builtin.staticmethod", Builtin::ClassTool(9)), ("ext.builtin.classmethod", Builtin::ClassTool(10)), ("ext.builtin.property", Builtin::ClassTool(11)),
+             ("ext.builtin.build_class", Builtin::ClassTool(13)), ("ext.builtin.inline_values", Builtin::ClassTool(12)), ("ext.builtin.issubclass", Builtin::ClassTool(1)),       ("ext.builtin.dir", Builtin::ClassTool(8)), ("ext.builtin.staticmethod", Builtin::ClassTool(9)), ("ext.builtin.classmethod", Builtin::ClassTool(10)), ("ext.builtin.property", Builtin::ClassTool(11)),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
             ("builtin.extern", Builtin::External), ("builtin.range", Builtin::Span), ("builtin.real", Builtin::MakeReal),
             ("builtin.precision", Builtin::Places),    ("builtin.to_string", Builtin::ToText),
@@ -2706,6 +2708,8 @@ impl Lang {
             module_cache: r.strings("ext.system.module.cache")?,
             module_names: r.strings("ext.system.module.name")?,
             module_doc: r.strings("ext.system.module.doc")?,
+            class_builder: r.strings("ext.stmt.class.builder")?,
+            module_kind: r.strings("ext.system.module.kind")?,
             module_builtins: r.strings("ext.system.module.builtins")?,
             names_module: r.strings("ext.system.names.module")?,
             syntax_warning_words: r.strings("ext.system.syntax_warnings")?,
