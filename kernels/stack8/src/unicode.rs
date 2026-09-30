@@ -6333,3 +6333,61 @@ static CASES: &[(u32, [&str; 4])] = &[
     (0x1e942, ["\u{1e942}", "\u{1e920}", "\u{1e920}", "\u{1e942}"]),
     (0x1e943, ["\u{1e943}", "\u{1e921}", "\u{1e921}", "\u{1e943}"]),
 ];
+
+
+/// Unicode 16.0 character names, aliases, and the
+/// algorithmic Hangul/CJK/Tangut names described by UAX #44.
+/// Data: https://www.unicode.org/Public/16.0.0/ucd/ (Unicode License).
+pub fn named_text(name: &str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static NAMES: OnceLock<HashMap<String, String>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        let mut names = HashMap::new();
+        let mut range: Option<(u32, String)> = None;
+        for line in include_str!("../../../unicode-data/UnicodeData.txt").lines() {
+            let mut fields = line.split(';');
+            let Some(code) = fields.next().and_then(|s| u32::from_str_radix(s, 16).ok()) else { continue };
+            let label = fields.next().unwrap_or("");
+            if let Some(kind) = label.strip_prefix('<').and_then(|s| s.strip_suffix(", First>")) {
+                range = Some((code, kind.to_owned()));
+            } else if label.ends_with(", Last>") {
+                if let Some((first, kind)) = range.take() {
+                    let family = if kind.starts_with("CJK Ideograph") { Some("CJK UNIFIED IDEOGRAPH") }
+                        else if kind.starts_with("Tangut Ideograph") { Some("TANGUT IDEOGRAPH") }
+                        else { None };
+                    if let Some(family) = family {
+                        for number in first..=code {
+                            if let Some(ch) = char::from_u32(number) {
+                                names.insert(format!("{family}-{number:04X}"), ch.to_string());
+                            }
+                        }
+                    }
+                }
+            } else if !label.starts_with('<') {
+                if let Some(ch) = char::from_u32(code) { names.insert(label.to_owned(), ch.to_string()); }
+            }
+        }
+        let leads = ["G", "GG", "N", "D", "DD", "R", "M", "B", "BB", "S", "SS", "", "J", "JJ", "C", "K", "T", "P", "H"];
+        let vowels = ["A", "AE", "YA", "YAE", "EO", "E", "YEO", "YE", "O", "WA", "WAE", "OE", "YO", "U", "WEO", "WE", "WI", "YU", "EU", "YI", "I"];
+        let tails = ["", "G", "GG", "GS", "N", "NJ", "NH", "D", "L", "LG", "LM", "LB", "LS", "LT", "LP", "LH", "M", "B", "BS", "S", "SS", "NG", "J", "C", "K", "T", "P", "H"];
+        for offset in 0..11172u32 {
+            let lead = leads[(offset / 588) as usize];
+            let vowel = vowels[((offset % 588) / 28) as usize];
+            let tail = tails[(offset % 28) as usize];
+            let syllable = char::from_u32(0xAC00 + offset).expect("Hangul syllable");
+            names.insert(format!("HANGUL SYLLABLE {lead}{vowel}{tail}"), syllable.to_string());
+        }
+        for row in include_str!("../../../unicode-data/NameAliases.txt").lines() {
+            if row.starts_with('#') || row.is_empty() { continue; }
+            let mut parts = row.split(';');
+            if let (Some(hex), Some(alias)) = (parts.next(), parts.next()) {
+                if let Ok(code) = u32::from_str_radix(hex, 16) {
+                    if let Some(ch) = char::from_u32(code) { names.insert(alias.to_owned(), ch.to_string()); }
+                }
+            }
+        }
+        names
+    });
+    names.get(&name.to_ascii_uppercase()).cloned()
+}

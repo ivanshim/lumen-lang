@@ -2023,13 +2023,13 @@ impl<'a> Machine<'a> {
             for (thing, farewell) in farewells {
                 self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
             }
+            for (notify, bearer) in notices {
+                self.call_unheard(notify, vec![bearer], "callback");
+            }
             for walk in walks {
                 if let Err(away) = self.shut_generator(&walk) {
                     self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
                 }
-            }
-            for (notify, bearer) in notices {
-                self.call_unheard(notify, vec![bearer], "callback");
             }
         }
     }
@@ -3568,6 +3568,11 @@ impl<'a> Machine<'a> {
         let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
         if let Some(value) = hurled.clone() {
             if state.ended || !state.begun || state.of.is_none() {
+                if !state.begun && !state.ended {
+                    let caller = std::mem::replace(&mut self.active_trace, state.trace_state.clone());
+                    self.save_traceback(&value, false);
+                    self.active_trace = caller;
+                }
                 state.ended = true;
                 state.trace_state = None;
                 state.frame = Env::make(0, None);
@@ -8858,6 +8863,9 @@ impl<'a> Machine<'a> {
         state.titles[1] = self.read_class_member(callable, &self.detail("qualified").to_owned(), true)?.bare();
         state.trace_state = self.activation(program, &state.frame, None);
         let walk = Rc::new(RefCell::new(state));
+        if crate::ghost::bidding() {
+            crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
+        }
         if let Some(frame) = &walk.borrow().trace_state {
             self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
         }
@@ -8941,7 +8949,11 @@ impl<'a> Machine<'a> {
             let mut suspension = Suspension::body(&program, frame.clone());
             suspension.source_reading = self.reading_now;
             suspension.trace_state = self.activation(&program, &frame, None);
-            return Ok(Value::Generator(Rc::new(RefCell::new(suspension))));
+            let walk = Rc::new(RefCell::new(suspension));
+            if crate::ghost::bidding() {
+                crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
+            }
+            return Ok(Value::Generator(walk));
         }
         // A call that would stand deeper than the table allows is refused
         // before it runs, in the table's own words, so that a clause may
@@ -9050,6 +9062,9 @@ impl<'a> Machine<'a> {
                         let mut suspension = Suspension::body(&p, f.clone());
                         suspension.trace_state = self.activation(&p, &f, None);
                         let walk = Rc::new(RefCell::new(suspension));
+                        if crate::ghost::bidding() {
+                            crate::ghost::note(crate::ghost::Ghost::Walk(Rc::downgrade(&walk)));
+                        }
                         if let Some(frame) = &walk.borrow().trace_state {
                             self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
                         }
@@ -19354,6 +19369,9 @@ impl<'a> Machine<'a> {
         let was_reading = self.reading_now.replace(self.readings.len() - 1);
         let answer = self.text_concluded(&built, &file, mode, shown);
         self.reading_now = was_reading;
+        // These slots mirror names owned by the dictionary only while
+        // this reading runs; leave no stale strong holds behind.
+        self.outermost.cells.borrow_mut()[beginning..beginning + fresh.len()].fill(Value::Unset);
         answer
     }
 

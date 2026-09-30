@@ -295,7 +295,7 @@ def unraisablehook(unraisable):
         print(unraisable.err_msg, file=stderr)
     import traceback
     traceback.print_exception(unraisable.exc_type, unraisable.exc_value,
-                              unraisable.exc_traceback, file=stderr)
+                              unraisable.exc_traceback, file=stderr, chain=False)
 
 
 __unraisablehook__ = unraisablehook
@@ -325,8 +325,15 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
         message = 'Exception ignored while closing generator ' + repr(about)
     else:
         message = None
-    unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
-                                     exc_traceback, message, about))
+    target = None if kind == 'generator' else about
+    try:
+        unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
+                                         exc_traceback, message, target))
+    except BaseException as hook_error:
+        stderr.write('Exception ignored in sys.unraisablehook: ' + repr(unraisablehook) + '\n')
+        import traceback
+        traceback.print_exception(type(hook_error), hook_error,
+                                  hook_error.__traceback__, file=stderr, chain=False)
 
 
 def excepthook(exc_type, exc_value, exc_traceback):

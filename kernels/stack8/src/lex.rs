@@ -593,6 +593,7 @@ impl<'a> Cursor<'a> {
             for _ in 0..prefix + mark.chars().count() { self.step(); }
             if format { self.push(Shape::StringBegin, self.template.map(|c| c.to_string()).unwrap_or_default(), 0, line, col); }
             let mut warned = false;
+            let mut body_start = self.at;
             let (mut text, mut fault) = (String::new(), false);
             loop {
                 if at_word(&self.text, self.at, mark) {
@@ -627,11 +628,12 @@ impl<'a> Cursor<'a> {
                         self.step(); self.step(); text.push(c); warned = false;
                     } else if c == '{' {
                         self.string_text(&mut text, &mut fault, line, col);
-                        self.string_field(raw, depth, mark, 0)?;
+                        self.string_field(body_start, raw, depth, mark, 0)?;
+                        body_start = self.at;
                         warned = false;
                     } else { return Err(self.field_error(1)); }
                 } else if c == '\\' {
-                    self.rich_escape(raw, format, bytes, &mut text, &mut fault, &mut warned)?;
+                    self.rich_escape(body_start, raw, format, bytes, &mut text, &mut fault, &mut warned)?;
                 } else { text.push(self.step()); }
             }
             if bytes { self.push(Shape::Bytes, text, 0, line, col); }
@@ -669,7 +671,7 @@ impl<'a> Cursor<'a> {
         Some((next.to_string(), false))
     }
 
-    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool, warned: &mut bool) -> Result<(), String> {
+    fn rich_escape(&mut self, body_start: usize, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool, warned: &mut bool) -> Result<(), String> {
         let Some(next) = self.look(1) else { return Err(self.string_words()); };
         if raw {
             text.push(self.step());
@@ -702,7 +704,7 @@ impl<'a> Cursor<'a> {
         }
         if Some(next) == lang.named_letter {
             let begin = self.at;
-            let position = text.len();
+            let position: usize = self.text[body_start..begin].iter().map(|c| c.len_utf8()).sum();
             self.step(); self.step();
             if self.look(0) == Some('{') {
                 self.step();
@@ -710,10 +712,15 @@ impl<'a> Cursor<'a> {
                 if self.look(0) == Some('}') && self.at > begin + 3 {
                     let name: String = self.text[begin + 3..self.at].iter().collect();
                     self.step();
-                    match named_codepoint(&name).or_else(|| match name.as_str() {
-                        "EM SPACE" => Some(0x2003), "EN SPACE" => Some(0x2002), _ => None,
-                    }) {
-                        Some(found) => text.push(char::from_u32(found).expect("a named character is always one char")),
+                    match crate::unicode::named_text(&name) {
+                        Some(found) => text.push_str(&found),
+                        None if lang.named_unknown.is_some() => {
+                            let end = self.text[begin..self.at].iter().map(|c| c.len_utf8()).sum::<usize>();
+                            let message = lang.named_unknown.as_ref().expect("checked above")
+                                .replacen("{}", &position.to_string(), 1)
+                                .replacen("{}", &(position + end - 1).to_string(), 1);
+                            return Err(message);
+                        }
                         None => *fault = true,
                     }
                     return Ok(());
@@ -776,7 +783,7 @@ impl<'a> Cursor<'a> {
         self.lang.field_errors.get(number).cloned().unwrap_or_else(|| self.string_words())
     }
 
-    fn string_field(&mut self, raw: bool, depth: u32, outer: &str, spec_depth: u32) -> Result<(), String> {
+    fn string_field(&mut self, body_start: usize, raw: bool, depth: u32, outer: &str, spec_depth: u32) -> Result<(), String> {
         if spec_depth > 2 { return Err(self.field_error(18)); }
         let (line, col) = (self.row, self.column);
         self.step();
@@ -908,8 +915,8 @@ impl<'a> Cursor<'a> {
                 match self.look(0) {
                     Some('}') => break,
                     Some('\n' | '\r') if outer.len() == 1 => return Err(self.field_error(17)),
-                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw, depth, outer, spec_depth + 1)?; warned = false; }
-                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault, &mut warned)?,
+                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(body_start, raw, depth, outer, spec_depth + 1)?; warned = false; }
+                    Some('\\') => self.rich_escape(body_start, raw, true, false, &mut text, &mut fault, &mut warned)?,
                     Some(_) => text.push(self.step()),
                     None => return Err(self.field_error(0)),
                 }
@@ -1534,215 +1541,8 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
     Ok(out)
 }
 
-/// A source that is text with code in it (ext.lexical.template): what
-/// stands between the prologue and the epilogue is read as code, and
-/// everything else is written out as it stands, as though the program
-/// had said so itself.
-/// The bytes that spell a character's number, by the rule that spells
-/// The Latin-1 quarter of the Unicode name table the library's own
-/// `unicodedata` module answers from; a `\N{...}` escape naming
-/// anything past it is past what either can answer, and the escape
-/// is left unavailable exactly as an escape naming no character is.
-const LATIN1_NAMES: &[(&str, u32)] = &[
-    ("SPACE", 0x20),
-    ("EXCLAMATION MARK", 0x21),
-    ("QUOTATION MARK", 0x22),
-    ("NUMBER SIGN", 0x23),
-    ("DOLLAR SIGN", 0x24),
-    ("PERCENT SIGN", 0x25),
-    ("AMPERSAND", 0x26),
-    ("APOSTROPHE", 0x27),
-    ("LEFT PARENTHESIS", 0x28),
-    ("RIGHT PARENTHESIS", 0x29),
-    ("ASTERISK", 0x2a),
-    ("PLUS SIGN", 0x2b),
-    ("COMMA", 0x2c),
-    ("HYPHEN-MINUS", 0x2d),
-    ("FULL STOP", 0x2e),
-    ("SOLIDUS", 0x2f),
-    ("DIGIT ZERO", 0x30),
-    ("DIGIT ONE", 0x31),
-    ("DIGIT TWO", 0x32),
-    ("DIGIT THREE", 0x33),
-    ("DIGIT FOUR", 0x34),
-    ("DIGIT FIVE", 0x35),
-    ("DIGIT SIX", 0x36),
-    ("DIGIT SEVEN", 0x37),
-    ("DIGIT EIGHT", 0x38),
-    ("DIGIT NINE", 0x39),
-    ("COLON", 0x3a),
-    ("SEMICOLON", 0x3b),
-    ("LESS-THAN SIGN", 0x3c),
-    ("EQUALS SIGN", 0x3d),
-    ("GREATER-THAN SIGN", 0x3e),
-    ("QUESTION MARK", 0x3f),
-    ("COMMERCIAL AT", 0x40),
-    ("LATIN CAPITAL LETTER A", 0x41),
-    ("LATIN CAPITAL LETTER B", 0x42),
-    ("LATIN CAPITAL LETTER C", 0x43),
-    ("LATIN CAPITAL LETTER D", 0x44),
-    ("LATIN CAPITAL LETTER E", 0x45),
-    ("LATIN CAPITAL LETTER F", 0x46),
-    ("LATIN CAPITAL LETTER G", 0x47),
-    ("LATIN CAPITAL LETTER H", 0x48),
-    ("LATIN CAPITAL LETTER I", 0x49),
-    ("LATIN CAPITAL LETTER J", 0x4a),
-    ("LATIN CAPITAL LETTER K", 0x4b),
-    ("LATIN CAPITAL LETTER L", 0x4c),
-    ("LATIN CAPITAL LETTER M", 0x4d),
-    ("LATIN CAPITAL LETTER N", 0x4e),
-    ("LATIN CAPITAL LETTER O", 0x4f),
-    ("LATIN CAPITAL LETTER P", 0x50),
-    ("LATIN CAPITAL LETTER Q", 0x51),
-    ("LATIN CAPITAL LETTER R", 0x52),
-    ("LATIN CAPITAL LETTER S", 0x53),
-    ("LATIN CAPITAL LETTER T", 0x54),
-    ("LATIN CAPITAL LETTER U", 0x55),
-    ("LATIN CAPITAL LETTER V", 0x56),
-    ("LATIN CAPITAL LETTER W", 0x57),
-    ("LATIN CAPITAL LETTER X", 0x58),
-    ("LATIN CAPITAL LETTER Y", 0x59),
-    ("LATIN CAPITAL LETTER Z", 0x5a),
-    ("LEFT SQUARE BRACKET", 0x5b),
-    ("REVERSE SOLIDUS", 0x5c),
-    ("RIGHT SQUARE BRACKET", 0x5d),
-    ("CIRCUMFLEX ACCENT", 0x5e),
-    ("LOW LINE", 0x5f),
-    ("GRAVE ACCENT", 0x60),
-    ("LATIN SMALL LETTER A", 0x61),
-    ("LATIN SMALL LETTER B", 0x62),
-    ("LATIN SMALL LETTER C", 0x63),
-    ("LATIN SMALL LETTER D", 0x64),
-    ("LATIN SMALL LETTER E", 0x65),
-    ("LATIN SMALL LETTER F", 0x66),
-    ("LATIN SMALL LETTER G", 0x67),
-    ("LATIN SMALL LETTER H", 0x68),
-    ("LATIN SMALL LETTER I", 0x69),
-    ("LATIN SMALL LETTER J", 0x6a),
-    ("LATIN SMALL LETTER K", 0x6b),
-    ("LATIN SMALL LETTER L", 0x6c),
-    ("LATIN SMALL LETTER M", 0x6d),
-    ("LATIN SMALL LETTER N", 0x6e),
-    ("LATIN SMALL LETTER O", 0x6f),
-    ("LATIN SMALL LETTER P", 0x70),
-    ("LATIN SMALL LETTER Q", 0x71),
-    ("LATIN SMALL LETTER R", 0x72),
-    ("LATIN SMALL LETTER S", 0x73),
-    ("LATIN SMALL LETTER T", 0x74),
-    ("LATIN SMALL LETTER U", 0x75),
-    ("LATIN SMALL LETTER V", 0x76),
-    ("LATIN SMALL LETTER W", 0x77),
-    ("LATIN SMALL LETTER X", 0x78),
-    ("LATIN SMALL LETTER Y", 0x79),
-    ("LATIN SMALL LETTER Z", 0x7a),
-    ("LEFT CURLY BRACKET", 0x7b),
-    ("VERTICAL LINE", 0x7c),
-    ("RIGHT CURLY BRACKET", 0x7d),
-    ("TILDE", 0x7e),
-    ("NO-BREAK SPACE", 0xa0),
-    ("INVERTED EXCLAMATION MARK", 0xa1),
-    ("CENT SIGN", 0xa2),
-    ("POUND SIGN", 0xa3),
-    ("CURRENCY SIGN", 0xa4),
-    ("YEN SIGN", 0xa5),
-    ("BROKEN BAR", 0xa6),
-    ("SECTION SIGN", 0xa7),
-    ("DIAERESIS", 0xa8),
-    ("COPYRIGHT SIGN", 0xa9),
-    ("FEMININE ORDINAL INDICATOR", 0xaa),
-    ("LEFT-POINTING DOUBLE ANGLE QUOTATION MARK", 0xab),
-    ("NOT SIGN", 0xac),
-    ("SOFT HYPHEN", 0xad),
-    ("REGISTERED SIGN", 0xae),
-    ("MACRON", 0xaf),
-    ("DEGREE SIGN", 0xb0),
-    ("PLUS-MINUS SIGN", 0xb1),
-    ("SUPERSCRIPT TWO", 0xb2),
-    ("SUPERSCRIPT THREE", 0xb3),
-    ("ACUTE ACCENT", 0xb4),
-    ("MICRO SIGN", 0xb5),
-    ("PILCROW SIGN", 0xb6),
-    ("MIDDLE DOT", 0xb7),
-    ("CEDILLA", 0xb8),
-    ("SUPERSCRIPT ONE", 0xb9),
-    ("MASCULINE ORDINAL INDICATOR", 0xba),
-    ("RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK", 0xbb),
-    ("VULGAR FRACTION ONE QUARTER", 0xbc),
-    ("VULGAR FRACTION ONE HALF", 0xbd),
-    ("VULGAR FRACTION THREE QUARTERS", 0xbe),
-    ("INVERTED QUESTION MARK", 0xbf),
-    ("LATIN CAPITAL LETTER A WITH GRAVE", 0xc0),
-    ("LATIN CAPITAL LETTER A WITH ACUTE", 0xc1),
-    ("LATIN CAPITAL LETTER A WITH CIRCUMFLEX", 0xc2),
-    ("LATIN CAPITAL LETTER A WITH TILDE", 0xc3),
-    ("LATIN CAPITAL LETTER A WITH DIAERESIS", 0xc4),
-    ("LATIN CAPITAL LETTER A WITH RING ABOVE", 0xc5),
-    ("LATIN CAPITAL LETTER AE", 0xc6),
-    ("LATIN CAPITAL LETTER C WITH CEDILLA", 0xc7),
-    ("LATIN CAPITAL LETTER E WITH GRAVE", 0xc8),
-    ("LATIN CAPITAL LETTER E WITH ACUTE", 0xc9),
-    ("LATIN CAPITAL LETTER E WITH CIRCUMFLEX", 0xca),
-    ("LATIN CAPITAL LETTER E WITH DIAERESIS", 0xcb),
-    ("LATIN CAPITAL LETTER I WITH GRAVE", 0xcc),
-    ("LATIN CAPITAL LETTER I WITH ACUTE", 0xcd),
-    ("LATIN CAPITAL LETTER I WITH CIRCUMFLEX", 0xce),
-    ("LATIN CAPITAL LETTER I WITH DIAERESIS", 0xcf),
-    ("LATIN CAPITAL LETTER ETH", 0xd0),
-    ("LATIN CAPITAL LETTER N WITH TILDE", 0xd1),
-    ("LATIN CAPITAL LETTER O WITH GRAVE", 0xd2),
-    ("LATIN CAPITAL LETTER O WITH ACUTE", 0xd3),
-    ("LATIN CAPITAL LETTER O WITH CIRCUMFLEX", 0xd4),
-    ("LATIN CAPITAL LETTER O WITH TILDE", 0xd5),
-    ("LATIN CAPITAL LETTER O WITH DIAERESIS", 0xd6),
-    ("MULTIPLICATION SIGN", 0xd7),
-    ("LATIN CAPITAL LETTER O WITH STROKE", 0xd8),
-    ("LATIN CAPITAL LETTER U WITH GRAVE", 0xd9),
-    ("LATIN CAPITAL LETTER U WITH ACUTE", 0xda),
-    ("LATIN CAPITAL LETTER U WITH CIRCUMFLEX", 0xdb),
-    ("LATIN CAPITAL LETTER U WITH DIAERESIS", 0xdc),
-    ("LATIN CAPITAL LETTER Y WITH ACUTE", 0xdd),
-    ("LATIN CAPITAL LETTER THORN", 0xde),
-    ("LATIN SMALL LETTER SHARP S", 0xdf),
-    ("LATIN SMALL LETTER A WITH GRAVE", 0xe0),
-    ("LATIN SMALL LETTER A WITH ACUTE", 0xe1),
-    ("LATIN SMALL LETTER A WITH CIRCUMFLEX", 0xe2),
-    ("LATIN SMALL LETTER A WITH TILDE", 0xe3),
-    ("LATIN SMALL LETTER A WITH DIAERESIS", 0xe4),
-    ("LATIN SMALL LETTER A WITH RING ABOVE", 0xe5),
-    ("LATIN SMALL LETTER AE", 0xe6),
-    ("LATIN SMALL LETTER C WITH CEDILLA", 0xe7),
-    ("LATIN SMALL LETTER E WITH GRAVE", 0xe8),
-    ("LATIN SMALL LETTER E WITH ACUTE", 0xe9),
-    ("LATIN SMALL LETTER E WITH CIRCUMFLEX", 0xea),
-    ("LATIN SMALL LETTER E WITH DIAERESIS", 0xeb),
-    ("LATIN SMALL LETTER I WITH GRAVE", 0xec),
-    ("LATIN SMALL LETTER I WITH ACUTE", 0xed),
-    ("LATIN SMALL LETTER I WITH CIRCUMFLEX", 0xee),
-    ("LATIN SMALL LETTER I WITH DIAERESIS", 0xef),
-    ("LATIN SMALL LETTER ETH", 0xf0),
-    ("LATIN SMALL LETTER N WITH TILDE", 0xf1),
-    ("LATIN SMALL LETTER O WITH GRAVE", 0xf2),
-    ("LATIN SMALL LETTER O WITH ACUTE", 0xf3),
-    ("LATIN SMALL LETTER O WITH CIRCUMFLEX", 0xf4),
-    ("LATIN SMALL LETTER O WITH TILDE", 0xf5),
-    ("LATIN SMALL LETTER O WITH DIAERESIS", 0xf6),
-    ("DIVISION SIGN", 0xf7),
-    ("LATIN SMALL LETTER O WITH STROKE", 0xf8),
-    ("LATIN SMALL LETTER U WITH GRAVE", 0xf9),
-    ("LATIN SMALL LETTER U WITH ACUTE", 0xfa),
-    ("LATIN SMALL LETTER U WITH CIRCUMFLEX", 0xfb),
-    ("LATIN SMALL LETTER U WITH DIAERESIS", 0xfc),
-    ("LATIN SMALL LETTER Y WITH ACUTE", 0xfd),
-    ("LATIN SMALL LETTER THORN", 0xfe),
-    ("LATIN SMALL LETTER Y WITH DIAERESIS", 0xff),
-];
-
-fn named_codepoint(name: &str) -> Option<u32> {
-    LATIN1_NAMES.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
-}
-
-/// every one of them: a number under a hundred and twenty-eight stands
-/// alone, and each wider band is written with one leading byte saying
+/// The bytes that spell a character's number: one under a hundred and
+/// twenty-eight stands alone, and each wider band is written with one leading byte saying
 /// how many follow. Half of a pair standing for one character between
 /// them is spelled here like any other number, the reference spelling
 /// it so where text is bytes.

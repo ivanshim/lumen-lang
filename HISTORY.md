@@ -2207,3 +2207,27 @@ Merged, the fifty files count 2610 on both stack8 and microcode7, up from
 2606 on both, with no passing test lost. Complete build-machine runs
 supply microcode7's test_math, test_str and test_long counts (82, 127 and
 34) where Lambda reaches its time limit.
+
+### 1aq. Batch 20o merged as #522; batch 20p: Unicode names and generator cleanup
+
+Batch 20p folds two branches, integrated by a GPT-6 Sol worker.
+fix/unicode-names (Sol; test_fstring 90 to 91) replaces a small name
+lookup with Unicode 16 character names and aliases, including algorithmic
+Hangul, CJK and Tangut names. Named sequences are correctly refused in
+string escapes; source-byte error offsets survive preceding escapes.
+The vendored Unicode data retains its provenance and license.
+fix/generator-drop (Sol; test_generators 55 to 56) registers suspended
+generators with collection, releases temporary exec namespace holds and
+runs genuine cleanup, preserving traceback and unraisable-hook behavior.
+A review correction registered two previously missed microcode7 generator
+creation paths so a later cycle is collected after an earlier close error.
+
+The merges retain batch 20o's interactive single-mode parse correction;
+test_syntax remains 93 on both kernels. Only the measured f-string scratch
+record changes. Generator resurrection and sys.getrefcount remain
+unsupported; no test is weakened or replaced with fabricated behavior.
+
+Merged, the fifty files count 2612 on both stack8 and microcode7, up from
+2610 on both, with no passing test lost. Complete build-machine runs
+confirm microcode7's test_math, test_str and test_long at 82, 127 and 34
+where Lambda reaches its time limit.
