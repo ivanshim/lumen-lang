@@ -333,7 +333,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(0,0)?;
                     let Some((key,value))=pairs.pop() else {return Err(fault("popitem"));};
                     store(Value::Map(Rc::new(pairs)))?;
-                    return Ok(Value::Tuple(Rc::new(vec![key,value])));
+                    return Ok(Value::tuple(vec![key,value]));
                 }
                 "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs)).held(true));}
                 "clear" => {arity(0,0)?;pairs.clear();}
@@ -380,7 +380,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "imag" => Ok(if real {crate::complex::real(0.0)} else {Value::Small(0)}),
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
-                "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(r)=>return Err(if r.no_number() { "ValueError: cannot convert NaN to integer ratio".to_string() } else { "OverflowError: cannot convert Infinity to integer ratio".to_string() }),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::Tuple(Rc::new(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)])))},
+                "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(r)=>return Err(if r.no_number() { "ValueError: cannot convert NaN to integer ratio".to_string() } else { "OverflowError: cannot convert Infinity to integer ratio".to_string() }),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::tuple(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)]))},
                 // The int nearest a float, one side or the other: an
                 // infinity carries no such int, and a nan is not one of
                 // the numbers at all, so each fails the way turning it

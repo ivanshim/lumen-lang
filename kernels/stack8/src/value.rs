@@ -7,6 +7,8 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::rc::Rc;
 
+use crate::tuples::Items;
+
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
@@ -256,7 +258,7 @@ pub enum CursorSource {
     /// walk stands at and nothing more: the row itself is one member
     /// of the cursor's own state, shared out to every step of it
     /// rather than copied out and back again at each one.
-    Items(Rc<Vec<Value>>, usize),
+    Items(Items, usize),
     /// A counted row walked place by place, never made whole.
     Counted(Rc<Counted>, BigInt),
     /// A list walked through the cell it lives in, read as it stands at
@@ -324,8 +326,8 @@ pub enum Value {
     Flag(bool),
     Null,
     Ellipsis,
-    Array(Rc<Vec<Value>>),
-    Tuple(Rc<Vec<Value>>),
+    Array(Items),
+    Tuple(Items),
     Generator(Rc<RefCell<Generator>>),
     Set(Rc<RefCell<Members>>),
     SetWalk(Rc<RefCell<Members>>, usize),
@@ -672,6 +674,8 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
 }
 
 impl Value {
+    pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }
+
     pub fn keeps_point(&self) -> bool {
         match self {
             Value::Real(r) => r.point,
@@ -704,7 +708,7 @@ impl Value {
                         // A reading of the map itself walks, and is
                         // measured, the very way its keys are: the map
                         // read only is asked after by key alone.
-                        "keys" | "mapping" => bare, "values" => v.clone(), _ => Value::Tuple(Rc::new(vec![bare,v.clone()])),
+                        "keys" | "mapping" => bare, "values" => v.clone(), _ => Value::tuple(vec![bare,v.clone()]),
                     }
                 }).collect())
             }
@@ -995,7 +999,7 @@ impl Value {
     }
 
     pub fn array(items: Vec<Value>) -> Value {
-        Value::Array(Rc::new(items))
+        Value::Array(crate::tuples::Items::plain(items))
     }
 
     pub fn sort(&self) -> Option<Sort> {
@@ -1651,6 +1655,9 @@ pub struct Class {
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: RefCell<Vec<(String, Value)>>,
+    /// The weak-reference layout fixed when a Python class is created.
+    /// Namespace writes cannot change an already allocated layout.
+    pub weak_storage: std::cell::Cell<Option<bool>>,
     /// Whether the class was sealed against change by the sealing
     /// builtin: a sealed class refuses writes and removals among its
     /// members and cannot stand as a base. Kept out of the members so

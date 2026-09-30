@@ -223,7 +223,7 @@ impl Value {
                 let length = span.length();
                 let start = if length.is_zero() { Value::Null } else { Value::of_big(span.start.clone()) };
                 let step = if length > BigInt::from(1) { Value::of_big(span.step.clone()) } else { Value::Null };
-                Value::Tuple(std::rc::Rc::new(vec![Value::of_big(length), start, step])).core_hash()
+                Value::tuple(vec![Value::of_big(length), start, step]).core_hash()
             }
             _ => None,
         }

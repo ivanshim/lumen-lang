@@ -452,7 +452,7 @@ impl<'a> Engine<'a> {
             classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
+                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
             }));
         }
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
@@ -544,7 +544,7 @@ impl<'a> Engine<'a> {
                 fields.push((key.clone(), value.unwrap_or(Value::Null)));
             }
             let names = self.lang.syntax_members.iter().map(|n| Value::text(n)).collect();
-            fields.push(("\0syntax-fields".into(), Value::Tuple(Rc::new(names))));
+            fields.push(("\0syntax-fields".into(), Value::tuple(names)));
         }
         if self.stands_on(&class, 36) { fields.push(("_metadata".into(), Value::Null)); }
         if self.stands_on(&class, 19) {
@@ -552,7 +552,7 @@ impl<'a> Engine<'a> {
             for name in ["path", "name_from"] { fields.push((name.into(), Value::Null)); }
         }
         if self.stands_on(&class, 17) {
-            let code = match args.as_slice() { [] => Value::Null, [one] => one.clone(), _ => Value::Tuple(Rc::new(args.clone())) };
+            let code = match args.as_slice() { [] => Value::Null, [one] => one.clone(), _ => Value::tuple(args.clone()) };
             fields.push(("code".into(), code));
         }
         let mut args = args;
@@ -560,7 +560,7 @@ impl<'a> Engine<'a> {
             fields.push(("filename2".into(), args.get(4).cloned().unwrap_or(Value::Null)));
             if (3..=5).contains(&args.len()) && !matches!(args[2], Value::Null) { args.truncate(2); }
         }
-        let args = Value::Tuple(Rc::new(args));
+        let args = Value::tuple(args);
         fields.push(("\0arguments".into(), args.clone()));
         if let Some(name) = &self.lang.exception_args { fields.push((name.clone(), args)); }
         if let Some(name) = &self.lang.exception_cause { fields.push((name.clone(), cause)); }
@@ -721,7 +721,7 @@ impl<'a> Engine<'a> {
         };
         let sp = self.wording();
         let count = members.len();
-        let members = Value::Tuple(Rc::new(members));
+        let members = Value::tuple(members);
         let made = self.exception_instance(class, vec![heading.clone(), members.clone()], Value::Null);
         if let Value::Object(object) = &made {
             let mut fields = object.fields.borrow_mut();
@@ -865,7 +865,7 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Null);
             }
             let key = self.lang.exception_args.clone().unwrap_or_default();
-            return self.class_write(Value::Object(object), &key, Some(Value::Tuple(Rc::new(args.to_vec()))), true);
+            return self.class_write(Value::Object(object), &key, Some(Value::tuple(args.to_vec())), true);
         }
         let unready = self.lang.exception_unready.clone().unwrap_or_default();
         if self.lang.reduce_method.as_deref() == Some(name) {
@@ -873,7 +873,7 @@ impl<'a> Engine<'a> {
             let class = object.class_now();
             let args_key = self.lang.exception_args.as_deref().unwrap_or("args");
             let fields = object.fields.borrow();
-            let positional = fields.iter().find(|(key, _)| key == args_key).map(|(_, value)| value.clone()).unwrap_or(Value::Tuple(Rc::new(Vec::new())));
+            let positional = fields.iter().find(|(key, _)| key == args_key).map(|(_, value)| value.clone()).unwrap_or(Value::tuple(Vec::new()));
             let mut passed = match positional { Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
             if self.stands_on(&class, 20) {
                 if let Some((_, file)) = fields.iter().find(|(key, _)| key == "filename") {
@@ -887,9 +887,9 @@ impl<'a> Engine<'a> {
             let import_fault = self.stands_on(&class, 19);
             let attribute_fault = self.stands_on(&class, 12);
             let extras: Vec<_> = fields.iter().filter(|(key, value)| !key.starts_with('\0') && ![args_key, "__traceback__", "__cause__", "__context__", "__suppress_context__", "__notes__", "name", "obj", "errno", "strerror", "filename", "filename2", "encoding", "object", "start", "end", "reason", "msg", "lineno", "offset", "text", "end_lineno", "end_offset", "print_file_and_line", "path", "name_from", "code", "value", "_metadata"].contains(&key.as_str()) || (import_fault && ["name", "path"].contains(&key.as_str()) || attribute_fault && key == "name") && !matches!(value, Value::Null)).map(|(key, item)| (Value::text(key), item.clone())).collect();
-            let mut answer = vec![Value::Class(class), Value::Tuple(Rc::new(passed))];
+            let mut answer = vec![Value::Class(class), Value::tuple(passed)];
             if !extras.is_empty() { answer.push(Value::Map(Rc::new(extras.into()))); }
-            return Ok(Value::Tuple(Rc::new(answer)));
+            return Ok(Value::tuple(answer));
         }
         if self.lang.setstate_method.as_deref() == Some(name) {
             let [state] = args else { return Err("TypeError: state is not a dictionary".into()) };
@@ -936,7 +936,7 @@ impl<'a> Engine<'a> {
             _ => return Err(unready.into()),
         };
         let (taken, left) = self.part_group(whole, &chooser)?;
-        Ok(if split { Value::Tuple(Rc::new(vec![taken.unwrap_or(Value::Null), left.unwrap_or(Value::Null)])) } else { taken.unwrap_or(Value::Null) })
+        Ok(if split { Value::tuple(vec![taken.unwrap_or(Value::Null), left.unwrap_or(Value::Null)]) } else { taken.unwrap_or(Value::Null) })
     }
 
     /// A cause written onto an exception, nothing included, hushes the
@@ -1124,7 +1124,7 @@ impl<'a> Engine<'a> {
             if let (Some(slot), Some(name)) = (find(&lang.fault_value), &lang.fault_value) {
                 world[slot] = Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                     name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
                 }));
             }
         }
@@ -1988,7 +1988,7 @@ impl<'a> Engine<'a> {
             if let Some(Value::Class(class)) = self.native_exceptions.get(&self.lang.special_stop[0]).cloned() {
                 return Some(self.exception_instance(class, vec![], Value::Null));
             }
-            let class = Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]), sealed: std::cell::Cell::new(false) };
+            let class = Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) };
             self.made += 1;
             return Some(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: Rc::new(class), fields: RefCell::new(vec![]), mark: self.made })));
         }
@@ -2425,7 +2425,7 @@ impl<'a> Engine<'a> {
         // that holds nothing holds an empty array as far as the write
         // is concerned, and nothing is said about it.
         if slot.moving && self.lang.makes_places && (unbound || matches!(self.world[slot.far], Value::Null)) {
-            return Ok(Value::Array(std::rc::Rc::new(Vec::new())));
+            return Ok(Value::Array(crate::tuples::Items::plain(Vec::new())));
         }
         // A language that has a word for a warning does not stop for a
         // binding never written: it says so and reads nothing there.
@@ -2992,7 +2992,7 @@ impl<'a> Engine<'a> {
         }
         // What a gathering place takes is a tuple, as the language has
         // it: the spare worths stand together and cannot be changed.
-        if let Some(i) = rest { frame[i] = Value::Tuple(Rc::new(tail)); }
+        if let Some(i) = rest { frame[i] = Value::tuple(tail); }
         if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords.into())); }
         // Empty places are spoken of all together: those filled in order
         // first, and only when none of them is empty those filled by name.
@@ -4044,7 +4044,7 @@ impl<'a> Engine<'a> {
             None => {
                 let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false) });
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
                 self.frame_class = Some(class.clone());
                 class
             }
@@ -4056,7 +4056,7 @@ impl<'a> Engine<'a> {
             (keys[5].clone(), code),
             (keys[11].clone(), back.map_or(Value::Null, Value::Object)),
             (keys[12].clone(), Value::Null), (keys[13].clone(), Value::Null),
-            ("\0slots".into(), Value::Tuple(Rc::new(locals.to_vec()))),
+            ("\0slots".into(), Value::tuple(locals.to_vec())),
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
         ]) }))
@@ -5017,7 +5017,7 @@ impl<'a> Engine<'a> {
         // Retain the concrete kind while using an empty walk to ask
         // which protocol members the native type exposes.
         if matches!(word, "iterator" | "list_iterator" | "list_reverseiterator" | "tuple_iterator" | "str_ascii_iterator" | "str_iterator" | "range_iterator" | "longrange_iterator" | "set_iterator" | "dict_keyiterator" | "dict_valueiterator" | "dict_itemiterator" | "dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator" | "bytes_iterator" | "bytearray_iterator" | "callable_iterator" | "enumerate" | "zip" | "map" | "filter" | "reversed" | "generator") {
-            return Some(Self::core_cursor_walked(CursorSource::Items(Rc::new(Vec::new()), 0), Some(Rc::from(word))));
+            return Some(Self::core_cursor_walked(CursorSource::Items(Rc::new(Vec::new()).into(), 0), Some(Rc::from(word))));
         }
         if let Some(portion) = match word { "dict_keys" => Some("keys"), "dict_values" => Some("values"), "dict_items" => Some("items"), "mappingproxy" => Some("mapping"), _ => None } {
             return Some(Value::View(Rc::new((Value::Map(Rc::new(Vec::new().into())), portion.to_string()))));
@@ -5029,7 +5029,7 @@ impl<'a> Engine<'a> {
             Builtin::AsReal => crate::complex::real(0.0),
             Builtin::Complex => crate::complex::made(self.lang, 0.0, 0.0),
             Builtin::List => Value::array(Vec::new()),
-            Builtin::Tuple => Value::Tuple(Rc::new(Vec::new())),
+            Builtin::Tuple => Value::tuple(Vec::new()),
             Builtin::Dict => Value::Map(Rc::new(Vec::new().into())),
             kind @ (Builtin::Set | Builtin::Frozen) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string(), *kind == Builtin::Frozen)))),
             Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
@@ -5546,7 +5546,7 @@ impl<'a> Engine<'a> {
             if place == 74 { return Ok(receiver.contents()); }
             if place == 82 {
                 let (r,i) = crate::complex::parts(&receiver.contents()).expect("complex receiver");
-                return Ok(Value::Tuple(Rc::new(vec![crate::complex::real(r), crate::complex::real(i)])));
+                return Ok(Value::tuple(vec![crate::complex::real(r), crate::complex::real(i)]));
             }
             if (4..=7).contains(&place) {
                 return Ok(Value::Declined(Rc::from(self.lang.special_declined.first().map_or("", String::as_str))));
@@ -6854,7 +6854,7 @@ impl<'a> Engine<'a> {
             if let (Action::Mul, Ok(Value::Tuple(row))) = (op, &outcome) {
                 let from_subclass = left.iter().chain(right.iter())
                     .any(|worth| matches!(worth, Value::Tuple(source) if Rc::ptr_eq(source, row)));
-                if from_subclass { return Ok(Value::Tuple(Rc::new(row.as_ref().clone()))); }
+                if from_subclass { return Ok(Value::tuple(row.as_ref().clone())); }
             }
             // A thing standing on a builtin kind is named by its own
             // class where the working is refused by the kinds it was
@@ -6944,7 +6944,7 @@ impl<'a> Engine<'a> {
     /// of things is the kernel's to invent. Anything else is left to the
     /// plain working, which knows its own kinds.
     fn ordered_apart(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Option<Value>> {
-        let stretched = |v: &Value| match v { Value::Array(items) | Value::Tuple(items) => Some(Rc::clone(items)), _ => None };
+        let stretched = |v: &Value| match v { Value::Array(items) | Value::Tuple(items) => Some(items.clone()), _ => None };
         let alike = matches!(a, Value::Array(_)) == matches!(b, Value::Array(_));
         if let (Some(left), Some(right), true) = (stretched(a), stretched(b), alike) {
             for (one, other) in left.iter().zip(right.iter()) {
@@ -7062,7 +7062,7 @@ impl<'a> Engine<'a> {
                 state.borrow_mut().origin = Some(thing.clone());
             }
             if let (Builtin::Tuple, Value::Tuple(row)) = (op, &answer) {
-                return Ok(Some(Value::Tuple(Rc::new(row.as_ref().clone()))));
+                return Ok(Some(Value::tuple(row.as_ref().clone())));
             }
             return Ok(Some(answer));
         }
@@ -7450,7 +7450,7 @@ impl<'a> Engine<'a> {
                 let extra = items.len() - fixed;
                 for (i, part) in parts.iter().enumerate() {
                     let held = if *star == Some(i) {
-                        Value::Array(Rc::new(items[i..i + extra].to_vec()))
+                        Value::Array(crate::tuples::Items::plain(items[i..i + extra].to_vec()))
                     } else {
                         let at = if star.map_or(false, |s| i > s) { i + extra - 1 } else { i };
                         items[at].clone()
@@ -7653,9 +7653,9 @@ impl<'a> Engine<'a> {
                 let mut bindings = Vec::new();
                 match self.fit_pattern(pattern, &subject, &mut bindings, *tuple, &given)? {
                     false => Value::Null,
-                    true => Value::Array(Rc::new(names.iter().map(|name| {
+                    true => Value::Array(crate::tuples::Items::plain(names.iter().map(|name| {
                         bindings.iter().find(|(n, _)| n == name).expect("a pattern binding").1.clone()
-                    }).collect())),
+                    }).collect::<Vec<_>>())),
                 }
             }
             Action::WalkAsync => {
@@ -8459,7 +8459,7 @@ impl<'a> Engine<'a> {
                 }
             }
             Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
-            Action::MakeTuple => Value::Tuple(Rc::new(self.drop_many(argc)?)),
+            Action::MakeTuple => Value::tuple(self.drop_many(argc)?),
             Action::MakeSet => Value::Set(Rc::new(RefCell::new(self.set_from(Vec::new())?))),
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
@@ -8680,7 +8680,7 @@ impl<'a> Engine<'a> {
                     methods: plan.methods.clone(),
                     shared: RefCell::new(take(&plan.shared_names)),
                     constants: take(&plan.constant_names),
-                    sealed: std::cell::Cell::new(false),
+                    weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
                 }))
             }
             Action::Make => {
@@ -8922,7 +8922,7 @@ impl<'a> Engine<'a> {
                         let held = o.fields.borrow();
                         held.iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone()).or_else(|| {
                             let args = held.iter().find(|(n, _)| n == "message").map(|(_, v)| vec![v.clone()]).unwrap_or_default();
-                            Some(Value::Tuple(Rc::new(args)))
+                            Some(Value::tuple(args))
                         })
                     } else {
                         let held = o.fields.borrow();
@@ -9396,7 +9396,7 @@ impl<'a> Engine<'a> {
                             lineage: Vec::new(), direct: Vec::new(), outline: None,
                             name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
                             answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
-                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
+                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
                         });
                         self.made += 1;
                         let fields = if bare { Vec::new() } else { vec![("message".to_string(), message)] };
@@ -10398,7 +10398,7 @@ impl<'a> Engine<'a> {
                     (Value::Tuple(_), Value::Tuple(_)) => {
                         let mut row = items(a);
                         row.extend(items(b));
-                        Value::Tuple(Rc::new(row))
+                        Value::tuple(row)
                     }
                     // Only a sequence can be joined to; where the
                     // left side is none, both kinds are named instead,
@@ -10413,7 +10413,7 @@ impl<'a> Engine<'a> {
                 let count = self.sequence_count(by)?;
                 if matches!(row, Value::Tuple(_)) && count == 1 { return Ok(Some(row.clone())); }
                 let repeated = self.sequence_repeated(&items(row), count)?;
-                Ok(Some(match row { Value::Tuple(_) => Value::Tuple(Rc::new(repeated)), _ => Value::array(repeated) }))
+                Ok(Some(match row { Value::Tuple(_) => Value::tuple(repeated), _ => Value::array(repeated) }))
             }
             // Text repeated stands apart, since the count it takes is
             // worked out below; only a count that is no whole number is
@@ -10470,7 +10470,7 @@ impl<'a> Engine<'a> {
             row.extend(taken);
             row
         };
-        *cell.borrow_mut() = Value::Array(Rc::new(row));
+        *cell.borrow_mut() = Value::Array(crate::tuples::Items::plain(row));
         Ok(Some(target.clone()))
     }
 
@@ -10635,7 +10635,7 @@ impl<'a> Engine<'a> {
         // another union; but at least one side must itself be a kind or
         // an already-built union; `None` on both sides is no union.
         if matches!(op, Action::BitEither) && self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
-            return Ok(Value::Tuple(Rc::new(vec![a.clone(), b.clone()])));
+            return Ok(Value::tuple(vec![a.clone(), b.clone()]));
         }
         // Rows, tuples and text as a language of sequences works them:
         // adding joins two of one kind, multiplying repeats one a whole
@@ -10971,7 +10971,7 @@ impl<'a> Engine<'a> {
                 let found = self.element(a, b, Reading::Plain).unwrap_or(Value::Null);
                 self.hushed.set(self.hushed.get() - 1);
                 match found {
-                    Value::Null | Value::Blank | Value::Gap => Value::Array(std::rc::Rc::new(Vec::new())),
+                    Value::Null | Value::Blank | Value::Gap => Value::Array(crate::tuples::Items::plain(Vec::new())),
                     held => held,
                 }
             }
@@ -11775,7 +11775,7 @@ impl<'a> Engine<'a> {
             Value::Array(items) | Value::Tuple(items) => {
                 let (_, _, _, places) = self.slice_places(parts, items.len())?;
                 let selected = places.into_iter().map(|i| items[i].clone()).collect();
-                Ok(if matches!(target, Value::Tuple(_)) { Value::Tuple(Rc::new(selected)) } else { Value::array(selected) })
+                Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
                 let letters: Vec<char> = text.chars().collect();
@@ -12242,7 +12242,7 @@ impl<'a> Engine<'a> {
             let Some(Value::View(view)) = args.first() else { unreachable!() };
             let items = match view.0.contents() { Value::Map(pairs) => pairs.iter().map(|(k, v)| {
                 let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                if view.1 == "keys" { bare } else { Value::Tuple(Rc::new(vec![bare, v.clone()])) }
+                if view.1 == "keys" { bare } else { Value::tuple(vec![bare, v.clone()]) }
             }).collect(), _ => Vec::new() };
             turned = std::iter::once(Value::Set(Rc::new(RefCell::new(self.set_gathered(items)?)))).chain(args[1..].iter().cloned()).collect::<Vec<_>>();
             turned.as_slice()
@@ -12830,7 +12830,7 @@ impl<'a> Engine<'a> {
                             if let Value::Binding(cell) = slot { *cell.borrow_mut() = Value::Blank; }
                         }
                     }
-                    fields[5].1 = Value::Tuple(Rc::new(Vec::new()));
+                    fields[5].1 = Value::tuple(Vec::new());
                     fields[3].1 = Value::Null;
                     fields[7].1 = Value::Null;
                     return Ok(Value::Null);
@@ -13006,7 +13006,7 @@ impl<'a> Engine<'a> {
             match (operation, args.len()) {
                 ("indices", 1) => {
                     let clipped = self.slice_clipped(bounds, &args[0])?;
-                    return Ok(Value::Tuple(Rc::new(clipped.into_iter().map(Value::of_big).collect())));
+                    return Ok(Value::tuple(clipped.into_iter().map(Value::of_big).collect()));
                 }
                 ("slice_hash", 0) => return self.slice_hashed(&contents),
                 _ => return Err(self.lang.method_errors["arguments"].clone()),
@@ -13162,7 +13162,7 @@ impl<'a> Engine<'a> {
             // it was; a key that writes into the empty row has the
             // ordering told of afterwards, the ordered row standing.
             let vacant = Rc::new(Vec::new());
-            let held = cell.replace(Value::Array(Rc::clone(&vacant)));
+            let held = cell.replace(Value::Array(Rc::clone(&vacant).into()));
             let outcome = self.order_values(&held, &named);
             let meddled = !matches!(&*cell.borrow(), Value::Array(row) if Rc::ptr_eq(row, &vacant));
             match outcome {
@@ -13687,7 +13687,7 @@ impl<'a> Engine<'a> {
                     None if task == 26 => vec![row.to_vec(), Vec::new(), Vec::new()],
                     None => vec![Vec::new(), Vec::new(), row.to_vec()],
                 };
-                Ok(Value::Tuple(Rc::new(three.into_iter().map(made).collect())))
+                Ok(Value::tuple(three.into_iter().map(made).collect()))
             }
             // The lines of the row, which end at a line feed, at a
             // return, or at the two together, and nowhere else.
@@ -14989,7 +14989,11 @@ impl<'a> Engine<'a> {
             }
             Builtin::WeakMake => {
                 arity(3)?;
-                let Some(hold) = crate::faint::hold_of(&args[0]) else {
+                let eligible = match args[0].contents() {
+                    Value::Object(o) => self.weak_layout(&o.class_now()),
+                    _ => true,
+                };
+                let Some(hold) = eligible.then(|| crate::faint::hold_of(&args[0])).flatten() else {
                     let kind = args[0].core_kind();
                     let head = self.lang.weak_refused.first().cloned().unwrap_or_default();
                     let tail = self.lang.weak_refused.get(1).cloned().unwrap_or_default();
@@ -15396,7 +15400,7 @@ impl<'a> Engine<'a> {
                 Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                     name: title.to_string(), base: Some(parent.clone()), answers: Vec::new(),
                     fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                    constants: Vec::new(), shared: RefCell::new(shared), sealed: std::cell::Cell::new(false),
+                    constants: Vec::new(), shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
                 }))
             }
             Builtin::CopyValue => {
@@ -16149,7 +16153,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Class(Rc::new(Class {
                         lineage: Vec::new(), direct: Vec::new(), outline: None, name: word.clone(), base: None,
                         answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                        constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
+                        constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
                     })));
                 }
                 // A thing is of no kind the core knows, so a language
@@ -16199,7 +16203,7 @@ impl<'a> Engine<'a> {
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
                 let target = match target {
-                    Value::Null | Value::Blank if self.lang.makes_places => Value::Array(Rc::new(Vec::new())),
+                    Value::Null | Value::Blank if self.lang.makes_places => Value::Array(crate::tuples::Items::plain(Vec::new())),
                     held => held,
                 };
                 match target {
@@ -16245,7 +16249,7 @@ impl<'a> Engine<'a> {
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
                 let target = match target {
-                    Value::Null | Value::Blank if self.lang.makes_places => Value::Array(std::rc::Rc::new(Vec::new())),
+                    Value::Null | Value::Blank if self.lang.makes_places => Value::Array(crate::tuples::Items::plain(Vec::new())),
                     held => held,
                 };
                 // A place in a piece of text holds one letter, and
@@ -16883,7 +16887,7 @@ fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Res<Rc<RefCell<
 
 fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut Value> {
     if makes && matches!(held, Value::Null | Value::Blank | Value::Gap) {
-        *held = Value::Array(Rc::new(Vec::new()));
+        *held = Value::Array(crate::tuples::Items::plain(Vec::new()));
     }
     // A list holds only the places it already has: a key that is no
     // whole number, or one past the last, makes it a map, which is what
@@ -17175,7 +17179,7 @@ impl Engine<'_> {
     }
 
     fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
-        let pack = |parts: Vec<Value>| Value::Tuple(Rc::new(parts));
+        let pack = |parts: Vec<Value>| Value::tuple(parts);
         let native = |op: Builtin| {
             let word = self.lang.builtins.iter().find(|(_, candidate)| **candidate == op).map(|(word, _)| word.clone()).unwrap_or_default();
             Value::Native(op, Rc::from(word))
@@ -17311,12 +17315,12 @@ impl Engine<'_> {
 
     fn native_reduce(&self, value: &Value) -> Value {
         if let Value::Class(c) = value {
-            return Value::Tuple(Rc::new(vec![Value::text("class"), Value::text(&c.name)]));
+            return Value::tuple(vec![Value::text("class"), Value::text(&c.name)]);
         }
         if let Value::Object(o) = value {
             let Some(Value::Cursor(cell)) = Self::worth_of(value) else { return Value::Null };
             let CursorSource::Numbered(walk, n) = &cell.borrow().source else { return Value::Null };
-            return Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Class(o.class_now().clone()), walk.clone(), Value::of_big(n.clone())]));
+            return Value::tuple(vec![Value::text("numbered"), Value::Class(o.class_now().clone()), walk.clone(), Value::of_big(n.clone())]);
         }
         let Value::Cursor(cell) = value else { return Value::Null };
         let held = cell.borrow();
@@ -17324,16 +17328,16 @@ impl Engine<'_> {
         match &held.source {
             CursorSource::Items(items, at) => {
                 let remaining: Vec<Value> = items.get(*at..).map(<[Value]>::to_vec).unwrap_or_default();
-                Value::Tuple(Rc::new(vec![Value::text("items"), walked, Value::Tuple(Rc::new(remaining))]))
+                Value::tuple(vec![Value::text("items"), walked, Value::tuple(remaining)])
             }
-            CursorSource::Counted(row, at) => Value::Tuple(Rc::new(vec![
+            CursorSource::Counted(row, at) => Value::tuple(vec![
                 Value::text("counted"), walked,
                 Value::of_big(row.start.clone()), Value::of_big(row.stop.clone()), Value::of_big(row.step.clone()),
                 Value::text(&row.name), Value::of_big(at.clone()),
-            ])),
-            CursorSource::IndexedBack(thing, at) => Value::Tuple(Rc::new(vec![Value::text("back"), walked, thing.clone(), Value::of_big(at.clone())])),
-            CursorSource::Numbered(walk, n) => Value::Tuple(Rc::new(vec![Value::text("numbered"), Value::Null, walk.clone(), Value::of_big(n.clone())])),
-            CursorSource::Handed(thing) => Value::Tuple(Rc::new(vec![Value::text("handed"), thing.clone()])),
+            ]),
+            CursorSource::IndexedBack(thing, at) => Value::tuple(vec![Value::text("back"), walked, thing.clone(), Value::of_big(at.clone())]),
+            CursorSource::Numbered(walk, n) => Value::tuple(vec![Value::text("numbered"), Value::Null, walk.clone(), Value::of_big(n.clone())]),
+            CursorSource::Handed(thing) => Value::tuple(vec![Value::text("handed"), thing.clone()]),
             _ => Value::Null,
         }
     }
@@ -17360,7 +17364,7 @@ impl Engine<'_> {
             "items" => {
                 let walked = text_at(1);
                 let Some(Value::Tuple(items)) = parts.get(2) else { return Err(malformed()) };
-                Ok(Self::core_cursor_walked(CursorSource::Items(Rc::new(items.to_vec()), 0), walked))
+                Ok(Self::core_cursor_walked(CursorSource::Items(Rc::new(items.to_vec()).into(), 0), walked))
             }
             "counted" => {
                 let walked = text_at(1);
@@ -17431,7 +17435,7 @@ impl Engine<'_> {
             }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
-        let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?), 0));
+        let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?).into(), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
         if let (Value::Cursor(state), Value::Object(_)) = (&walk, source) { state.borrow_mut().origin = Some(source.clone()); }
         Ok(walk)
@@ -17583,7 +17587,7 @@ impl Engine<'_> {
             CursorSource::Handed(thing) => self.special_step(thing),
             CursorSource::Numbered(inner, count) => {
                 let Some(value) = self.core_step(inner)? else { return Ok(None); };
-                let numbered = Value::Tuple(Rc::new(vec![Value::of_big(count.clone()), value]));
+                let numbered = Value::tuple(vec![Value::of_big(count.clone()), value]);
                 *count += 1;
                 Ok(Some(numbered))
             }
@@ -17609,7 +17613,7 @@ impl Engine<'_> {
                         }
                     }
                 }
-                let Some(work) = work else { return Ok(Some(Value::Tuple(Rc::new(row)))) };
+                let Some(work) = work else { return Ok(Some(Value::tuple(row))) };
                 match self.core_apply(work, row) {
                     Ok(made) => Ok(Some(made)),
                     Err(words) => if self.stop_raised() { Ok(None) } else { Err(words) },
@@ -18017,7 +18021,7 @@ impl Engine<'_> {
                 let held = args[0].contents();
                 let id = match &held {
                     Value::Array(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Tuple(a) => a.as_ptr() as usize as u64,
+                    Value::Tuple(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Set(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Map(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Text(a) => a.as_ptr() as usize as u64,
@@ -18081,7 +18085,7 @@ impl Engine<'_> {
                     }
                     return Ok(Value::Set(gathered));
                 }
-                if b == Builtin::Tuple { Value::Tuple(Rc::new(items)) } else { Value::Set(Rc::new(RefCell::new(self.set_gathered(items)?))) }
+                if b == Builtin::Tuple { Value::tuple(items) } else { Value::Set(Rc::new(RefCell::new(self.set_gathered(items)?))) }
             }
             Builtin::Dict => {
                 arity(0, 1)?;
@@ -18152,7 +18156,7 @@ impl Engine<'_> {
                 if let Value::Fields(owner) = &args[0] {
                     let mut keys: Vec<Value> = Self::fields_entries(owner).into_iter().map(|(key, _)| key).collect();
                     keys.reverse();
-                    return Ok(Self::core_cursor_walked(CursorSource::Items(Rc::new(keys), 0), Some(Rc::from("dict_reversekeyiterator"))));
+                    return Ok(Self::core_cursor_walked(CursorSource::Items(Rc::new(keys).into(), 0), Some(Rc::from("dict_reversekeyiterator"))));
                 }
                 // A map is walked backwards from the last key written to
                 // the first, under the same watch as a walk forwards.
@@ -18199,7 +18203,7 @@ impl Engine<'_> {
                     return Ok(Self::core_cursor_walked(CursorSource::IndexedBack(args[0].clone(), BigInt::from(items.len()) - 1), Some(Rc::from("list_reverseiterator"))));
                 }
                 let mut items = self.core_members(&source)?; items.reverse();
-                let walk = Self::core_cursor(CursorSource::Items(Rc::new(items), 0));
+                let walk = Self::core_cursor(CursorSource::Items(Rc::new(items).into(), 0));
                 // A row walked backwards has a word of its own; anything
                 // else walked backwards the reference names after the
                 // builtin that turned it about.
@@ -18261,7 +18265,7 @@ impl Engine<'_> {
                 // must be and the key is asked in the order they come.
                 // The one standing keeps its place against an equal, so
                 // that the first of several alike is the one answered.
-                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(Rc::new(args.clone()), 0)) };
+                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(Rc::new(args.clone()).into(), 0)) };
                 let wanted = if b == Builtin::Maximum { Action::Gt } else { Action::Lt };
                 let mut standing: Option<(Value, Value)> = None;
                 while let Some(value) = self.core_step(&walk)? {
@@ -18306,7 +18310,7 @@ impl Engine<'_> {
                     let divisor = z.as_big()?;
                     if divisor.is_zero() { return Err("ZeroDivisionError: division by zero".into()); }
                     let (q,r) = a.as_big()?.div_mod_floor(&divisor);
-                    Value::Tuple(Rc::new(vec![Value::of_big(q),Value::of_big(r)]))
+                    Value::tuple(vec![Value::of_big(q),Value::of_big(r)])
                 } else {
                     let (p,q) = arith::parts(&a).ok_or_else(|| self.core_fault("core.unready", name))?;
                     if let Value::Real(real) = &z {
@@ -18317,10 +18321,10 @@ impl Engine<'_> {
                                 let opposite = x != 0.0 && x.is_sign_negative() != y.is_sign_negative();
                                 let quotient = if opposite { -1.0 } else { 0.0 };
                                 let remainder = if opposite { y } else { x };
-                                return Ok(Value::Tuple(Rc::new(vec![
+                                return Ok(Value::tuple(vec![
                                     crate::value::real_of(quotient, arith::DEFAULT_PLACES),
                                     crate::value::real_of(remainder, arith::DEFAULT_PLACES),
-                                ])));
+                                ]));
                             }
                         }
                     }
@@ -18334,7 +18338,7 @@ impl Engine<'_> {
                     let mut floor = div.floor();
                     if div - floor > 0.5 { floor += 1.0; }
                     if div == 0.0 { floor = 0.0f64.copysign(x/y); }
-                    Value::Tuple(Rc::new(vec![crate::value::real_of(floor,arith::DEFAULT_PLACES), crate::value::real_of(rem,arith::DEFAULT_PLACES)]))
+                    Value::tuple(vec![crate::value::real_of(floor,arith::DEFAULT_PLACES), crate::value::real_of(rem,arith::DEFAULT_PLACES)])
                 }
             }
             Builtin::Power => {
@@ -18600,7 +18604,7 @@ impl Engine<'_> {
         }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
-            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false) }),
+            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) }),
             fields: RefCell::new(fields), mark: self.made,
         });
         let module = Value::Object(object);
@@ -19044,7 +19048,7 @@ impl Engine<'_> {
         if let Some(class) = &self.code_class { return class.clone(); }
         let class = Rc::new(Class {
             direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.compile_kind.clone().unwrap_or_default(),
-            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false),
+            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
         });
         self.code_class = Some(class.clone());
         class
@@ -19175,13 +19179,13 @@ impl Engine<'_> {
             }
             if row == 0 && mode != 0 && source.is_empty() {
                 let positions = vec![Value::text(file), Value::Small(0), Value::Small(0), Value::text(""), Value::Small(0), Value::Small(0)];
-                let raised = self.exception_instance(class, vec![Value::text(message), Value::Tuple(Rc::new(positions))], Value::Null);
+                let raised = self.exception_instance(class, vec![Value::text(message), Value::tuple(positions)], Value::Null);
                 self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
                 return String::new();
             }
             if row == 0 {
                 let bom_conflict = message.starts_with("encoding problem:") && message.ends_with(" with BOM");
-                let details = Value::Tuple(Rc::new(vec![Value::text(file), Value::Small(if bom_conflict { 1 } else { 0 }), Value::Small(if bom_conflict { 0 } else { -1 }), Value::Null]));
+                let details = Value::tuple(vec![Value::text(file), Value::Small(if bom_conflict { 1 } else { 0 }), Value::Small(if bom_conflict { 0 } else { -1 }), Value::Null]);
                 let raised = self.exception_instance(class, vec![Value::text(message), details], Value::Null);
                 self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
                 return String::new();
@@ -19245,7 +19249,7 @@ impl Engine<'_> {
                 std::fs::read_to_string(file).ok().and_then(|contents| contents.replace("\r\n", "\n").replace('\r', "\n").split_inclusive('\n').nth(row - 1).map(Value::text)).unwrap_or(Value::Null)
             } else { Value::text(&text) };
             let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(col), line_text, Value::Small(end_row as i64), Value::Small(finish)];
-            let raised = self.exception_instance(class, vec![Value::text(&message), Value::Tuple(Rc::new(details))], Value::Null);
+            let raised = self.exception_instance(class, vec![Value::text(&message), Value::tuple(details)], Value::Null);
             self.chain_context(&raised);
             self.carried = Some(Fault::Thrown(raised));
             return String::new();
