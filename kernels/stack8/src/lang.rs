@@ -1558,6 +1558,16 @@ pub fn identify(text: &str) -> Result<(String, Vec<String>), String> {
     Ok((r.string("language")?, r.strings("extensions")?))
 }
 
+/// Whether a definition says its text is held as the bytes it was
+/// written in, read from the one label that says so without building
+/// the whole definition. A definition that cannot be read stands for
+/// text held as letters, as the fuller reading of it is about to fault
+/// on its own.
+pub fn text_is_bytes(text: &str) -> bool {
+    let Ok(map) = top_object(text) else { return false };
+    matches!(map.get("ext.system.text.bytes"), Some(Json::Bool(b)) if *b)
+}
+
 fn name_like(s: &str, unicode: bool, prefix: Option<char>) -> bool {
     let mut chars = s.chars().peekable();
     if prefix.is_some() && chars.peek().copied() == prefix {
