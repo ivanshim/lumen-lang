@@ -35,15 +35,9 @@ impl Hold {
     /// The value again, while it is still there.
     pub fn revive(&self) -> Option<Value> {
         Some(match self {
-            Hold::Object(w) => {
-                if invalid_object(w) { return None; }
-                Value::Object(w.upgrade()?)
-            },
+            Hold::Object(w) => Value::Object(w.upgrade()?),
             Hold::Class(w) => Value::Class(w.upgrade()?),
-            Hold::Generator(w) => {
-                if invalid_walk(w) { return None; }
-                Value::Generator(w.upgrade()?)
-            },
+            Hold::Generator(w) => Value::Generator(w.upgrade()?),
             Hold::Set(w) => Value::Set(w.upgrade()?),
             Hold::Routine(w) => Value::Routine(w.upgrade()?),
             Hold::Method(o, r) => Value::Method(o.upgrade()?, r.upgrade()?),
@@ -52,9 +46,9 @@ impl Hold {
 
     pub fn gone(&self) -> bool {
         match self {
-            Hold::Object(w) => w.strong_count() == 0 || invalid_object(w),
+            Hold::Object(w) => w.strong_count() == 0,
             Hold::Class(w) => w.strong_count() == 0,
-            Hold::Generator(w) => w.strong_count() == 0 || invalid_walk(w),
+            Hold::Generator(w) => w.strong_count() == 0,
             Hold::Set(w) => w.strong_count() == 0,
             Hold::Routine(w) => w.strong_count() == 0,
             Hold::Method(o, r) => o.strong_count() == 0 || r.strong_count() == 0,
@@ -70,6 +64,17 @@ pub struct Faint {
     pub hold: Hold,
     pub bearer: Weak<Instance>,
     pub told: Option<Value>,
+    dead: Cell<bool>,
+}
+
+impl Faint {
+    /// A reference cleared by cycle collection stays dead even if its
+    /// target is resurrected. A later reference has its own live flag.
+    pub fn revive(&self) -> Option<Value> {
+        if self.dead.get() { None } else { self.hold.revive() }
+    }
+
+    fn gone(&self) -> bool { self.dead.get() || self.hold.gone() }
 }
 
 thread_local! {
@@ -89,9 +94,9 @@ thread_local! {
     static UNFINISHED: RefCell<Vec<Rc<RefCell<Generator>>>> = const { RefCell::new(Vec::new()) };
     /// Objects whose last words were said already, by where they live.
     static SPOKEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
-    /// Weak references cleared when an unreachable cycle is finalized.
-    static INVALID_OBJECTS: RefCell<Vec<Weak<Instance>>> = const { RefCell::new(Vec::new()) };
-    static INVALID_WALKS: RefCell<Vec<Weak<RefCell<Generator>>>> = const { RefCell::new(Vec::new()) };
+    /// Every live weakref object, without owning it. Collection clears
+    /// only the references that existed before finalization began.
+    static REFERENCES: RefCell<Vec<Weak<Faint>>> = const { RefCell::new(Vec::new()) };
     /// A finalizable instance stays itself while its last words run.
     static ANCHORED: RefCell<Vec<Rc<Instance>>> = const { RefCell::new(Vec::new()) };
     /// Everything whose going somebody could notice: the weakly held
@@ -100,28 +105,30 @@ thread_local! {
     static CANDIDATES: RefCell<(Vec<Hold>, usize)> = const { RefCell::new((Vec::new(), 8)) };
 }
 
-fn invalid_object(w: &Weak<Instance>) -> bool {
-    INVALID_OBJECTS.try_with(|all| all.borrow().iter().any(|item| Weak::ptr_eq(item, w))).unwrap_or(false)
-}
-
-fn invalid_walk(w: &Weak<RefCell<Generator>>) -> bool {
-    INVALID_WALKS.try_with(|all| all.borrow().iter().any(|item| Weak::ptr_eq(item, w))).unwrap_or(false)
-}
-
 pub fn invalidate_object(object: &Rc<Instance>) {
-    let weak = Rc::downgrade(object);
-    let _ = INVALID_OBJECTS.try_with(|all| {
-        let mut all = all.borrow_mut();
-        if !all.iter().any(|item| Weak::ptr_eq(item, &weak)) { all.push(weak); }
+    let target = Rc::downgrade(object);
+    let _ = REFERENCES.try_with(|all| {
+        all.borrow_mut().retain(|weak| {
+            let Some(reference) = weak.upgrade() else { return false };
+            if let Hold::Object(held) = &reference.hold {
+                if Weak::ptr_eq(held, &target) { reference.dead.set(true); }
+            }
+            true
+        });
     });
     note_death();
 }
 
 pub fn invalidate_walk(walk: &Rc<RefCell<Generator>>) {
-    let weak = Rc::downgrade(walk);
-    let _ = INVALID_WALKS.try_with(|all| {
-        let mut all = all.borrow_mut();
-        if !all.iter().any(|item| Weak::ptr_eq(item, &weak)) { all.push(weak); }
+    let target = Rc::downgrade(walk);
+    let _ = REFERENCES.try_with(|all| {
+        all.borrow_mut().retain(|weak| {
+            let Some(reference) = weak.upgrade() else { return false };
+            if let Hold::Generator(held) = &reference.hold {
+                if Weak::ptr_eq(held, &target) { reference.dead.set(true); }
+            }
+            true
+        });
     });
     note_death();
 }
@@ -275,7 +282,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
             let mut watched = w.borrow_mut();
             let mut kept = Vec::with_capacity(watched.len());
             for faint in watched.drain(..) {
-                if !faint.hold.gone() {
+                if !faint.gone() {
                     kept.push(faint);
                     continue;
                 }
@@ -316,7 +323,14 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
 /// asks for a word, and its value as one whose going may be noticed.
 pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
     remember(hold.clone());
-    let faint = Rc::new(Faint { hold, bearer, told });
+    let faint = Rc::new(Faint { hold, bearer, told, dead: Cell::new(false) });
+    let _ = REFERENCES.try_with(|all| {
+        let mut all = all.borrow_mut();
+        if all.len() >= all.capacity().max(64) {
+            all.retain(|weak| weak.strong_count() > 0);
+        }
+        all.push(Rc::downgrade(&faint));
+    });
     if faint.told.is_some() {
         let _ = WATCHED.try_with(|w| w.borrow_mut().push(faint.clone()));
         let _ = WATCHING.try_with(|n| n.set(n.get() + 1));

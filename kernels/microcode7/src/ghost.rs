@@ -36,9 +36,9 @@ impl Ghost {
     /// The thing itself, for as long as it is still about.
     pub fn revive(&self) -> Option<Value> {
         match self {
-            Ghost::Thing(w) => if invalid_thing(w) { None } else { w.upgrade().map(Value::Thing) },
+            Ghost::Thing(w) => w.upgrade().map(Value::Thing),
             Ghost::Blueprint(w) => w.upgrade().map(Value::Blueprint),
-            Ghost::Walk(w) => if invalid_walk(w) { None } else { w.upgrade().map(Value::Generator) },
+            Ghost::Walk(w) => w.upgrade().map(Value::Generator),
             Ghost::Set(w) => w.upgrade().map(Value::Set),
             Ghost::Bound(p, e) => Some(Value::Bound(p.upgrade()?, e.upgrade()?)),
             Ghost::Routine(w) => w.upgrade().map(Value::Routine),
@@ -58,6 +58,17 @@ pub struct Dim {
     pub ghost: Ghost,
     pub bearer: Weak<Thing>,
     pub notify: Option<Value>,
+    dead: Cell<bool>,
+}
+
+impl Dim {
+    /// A cleared reference stays dead across resurrection; a later
+    /// reference to the same target begins live.
+    pub fn revive(&self) -> Option<Value> {
+        if self.dead.get() { None } else { self.ghost.revive() }
+    }
+
+    fn departed(&self) -> bool { self.dead.get() || self.ghost.departed() }
 }
 
 thread_local! {
@@ -69,34 +80,35 @@ thread_local! {
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
     static BIDDEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
-    static INVALID_THINGS: RefCell<Vec<Weak<Thing>>> = const { RefCell::new(Vec::new()) };
-    static INVALID_WALKS: RefCell<Vec<Weak<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
+    static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
     static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
     static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
 }
 
-fn invalid_thing(w: &Weak<Thing>) -> bool {
-    INVALID_THINGS.try_with(|all| all.borrow().iter().any(|item| Weak::ptr_eq(item, w))).unwrap_or(false)
-}
-
-fn invalid_walk(w: &Weak<RefCell<Suspension>>) -> bool {
-    INVALID_WALKS.try_with(|all| all.borrow().iter().any(|item| Weak::ptr_eq(item, w))).unwrap_or(false)
-}
-
 pub fn invalidate_thing(thing: &Rc<Thing>) {
-    let weak = Rc::downgrade(thing);
-    let _ = INVALID_THINGS.try_with(|all| {
-        let mut all = all.borrow_mut();
-        if !all.iter().any(|item| Weak::ptr_eq(item, &weak)) { all.push(weak); }
+    let target = Rc::downgrade(thing);
+    let _ = REFERENCES.try_with(|all| {
+        all.borrow_mut().retain(|weak| {
+            let Some(reference) = weak.upgrade() else { return false };
+            if let Ghost::Thing(held) = &reference.ghost {
+                if Weak::ptr_eq(held, &target) { reference.dead.set(true); }
+            }
+            true
+        });
     });
     anything_departing();
 }
 
 pub fn invalidate_walk(walk: &Rc<RefCell<Suspension>>) {
-    let weak = Rc::downgrade(walk);
-    let _ = INVALID_WALKS.try_with(|all| {
-        let mut all = all.borrow_mut();
-        if !all.iter().any(|item| Weak::ptr_eq(item, &weak)) { all.push(weak); }
+    let target = Rc::downgrade(walk);
+    let _ = REFERENCES.try_with(|all| {
+        all.borrow_mut().retain(|weak| {
+            let Some(reference) = weak.upgrade() else { return false };
+            if let Ghost::Walk(held) = &reference.ghost {
+                if Weak::ptr_eq(held, &target) { reference.dead.set(true); }
+            }
+            true
+        });
     });
     anything_departing();
 }
@@ -223,7 +235,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
             let mut all = l.borrow_mut();
             let mut still = Vec::with_capacity(all.len());
             for dim in all.drain(..) {
-                if !dim.ghost.departed() {
+                if !dim.departed() {
                     still.push(dim);
                 } else if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), dim.notify.as_ref()) {
                     notices.push((notify.clone(), Value::Thing(bearer)));
@@ -265,7 +277,14 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
 pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     note(ghost.clone());
     let wants_telling = notify.is_some();
-    let held = Rc::new(Dim { ghost, bearer, notify });
+    let held = Rc::new(Dim { ghost, bearer, notify, dead: Cell::new(false) });
+    let _ = REFERENCES.try_with(|all| {
+        let mut all = all.borrow_mut();
+        if all.len() >= all.capacity().max(64) {
+            all.retain(|weak| weak.strong_count() > 0);
+        }
+        all.push(Rc::downgrade(&held));
+    });
     if wants_telling {
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));

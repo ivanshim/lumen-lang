@@ -14849,7 +14849,7 @@ impl<'a> Engine<'a> {
             Builtin::WeakGet => {
                 arity(1)?;
                 let Value::Faint(faint) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()) };
-                faint.hold.revive().unwrap_or(Value::Null)
+                faint.revive().unwrap_or(Value::Null)
             }
             Builtin::Collect => {
                 arity(0)?;

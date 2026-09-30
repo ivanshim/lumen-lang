@@ -14291,7 +14291,7 @@ impl<'a> Machine<'a> {
             Prim::WeakGet => {
                 n(1)?;
                 match &v[0] {
-                    Value::Dim(dim) => dim.ghost.revive().unwrap_or(Value::Nil),
+                    Value::Dim(dim) => dim.revive().unwrap_or(Value::Nil),
                     _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                 }
             }
