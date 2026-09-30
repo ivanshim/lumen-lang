@@ -325,6 +325,7 @@ pub struct Machine<'a> {
     activation_kind: Option<Rc<Blueprint>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
+    delegated_answers: std::collections::HashSet<usize>,
     code_handles: HashMap<usize, (Rc<Routine>, Value)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
@@ -1287,6 +1288,7 @@ impl<'a> Machine<'a> {
             activation_kind: None,
             generator_frames: HashMap::new(),
             async_generators: HashMap::new(),
+            delegated_answers: std::collections::HashSet::new(),
             code_handles: HashMap::new(),
             holding_fault: Vec::new(),
             holding_below: 0,
@@ -3607,7 +3609,13 @@ impl<'a> Machine<'a> {
                         }
                     } else {
                         let name = self.table.strings("ext.stmt.yield.throw")[0].clone();
+                        // Retrieving optional throw leaves the parent suspended;
+                        // calling it below restores the active driving boundary.
+                        let driving = self.async_generators.get(&(Rc::as_ptr(generator) as usize))
+                            .map(|(_, _, _, driving)| driving.clone());
+                        let was_driving = driving.as_ref().is_some_and(|busy| busy.replace(false));
                         let member = self.read_class_member(source, &name, false);
+                        if let Some(busy) = driving { busy.set(was_driving); }
                         let member = member.map_err(|fault| self.delegated_fault(fault));
                         match member {
                             Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if t.blueprint().goes_by("AttributeError", false)) => {
@@ -3616,7 +3624,12 @@ impl<'a> Machine<'a> {
                             Err(away) => return Err(away),
                             Ok(member) => match self.apply_class_member(member, if given.is_empty() { vec![value] } else { given.to_vec() })
                                 .map_err(|fault| self.delegated_fault(fault)) {
-                                Ok(item) => return Ok(Some(item)),
+                                Ok(item) => {
+                                    if self.async_generators.contains_key(&(Rc::as_ptr(generator) as usize)) {
+                                        self.delegated_answers.insert(Rc::as_ptr(generator) as usize);
+                                    }
+                                    return Ok(Some(item));
+                                },
                                 Err(Escape::Thrown(fault)) if matches!(&fault, Value::Thing(t) if self.is_stop_kind(&t.blueprint())) => {
                                     if let Value::Shared(returned) = &parts[1] { *returned.borrow_mut() = self.read_class_member(fault, "value", false)?; }
                                     if let Value::Shared(done) = &parts[2] { *done.borrow_mut() = Value::Flag(true); }
@@ -11706,6 +11719,7 @@ impl<'a> Machine<'a> {
         if phase == 0 { *claim.borrow_mut() = Some(stage.clone()); }
         *stage.borrow_mut() = Value::Small(1);
         driving.set(true);
+        self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize));
         let outcome = (|| {
             if ended {
                 if let Some(value) = thrown {
@@ -11739,8 +11753,11 @@ impl<'a> Machine<'a> {
                 let fault = self.exit_value().ok_or_else(|| self.bad_answer())?;
                 self.step_into(generator, Value::Nil, Some(fault), &[])
             };
+            // A delegate callback returns an await token even if a lookup
+            // resumed the parent and cleared its delegation in the meantime.
+            let delegated = self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize));
             match advanced {
-                Ok(Some(item)) if generator.try_borrow().is_ok_and(|held| held.inner.is_some()) => Ok(AsyncStep::Waiting(item)),
+                Ok(Some(item)) if delegated || generator.try_borrow().is_ok_and(|held| held.inner.is_some()) => Ok(AsyncStep::Waiting(item)),
                 Ok(Some(_)) if *operation == 3 => Err(self.table.single("ext.stmt.async.generator.close.ignored").unwrap_or_default().to_owned().into()),
                 Ok(Some(item)) => Ok(AsyncStep::Finished(Some(item))),
                 Ok(None) if *operation == 3 => Ok(AsyncStep::Finished(None)),

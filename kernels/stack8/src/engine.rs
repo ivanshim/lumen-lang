@@ -73,6 +73,7 @@ pub struct Engine<'a> {
     frame_class: Option<Rc<Class>>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
+    delegated_tokens: std::collections::HashSet<usize>,
     frame_codes: HashMap<usize, Value>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
@@ -1159,6 +1160,7 @@ impl<'a> Engine<'a> {
             frame_class: None,
             generator_frames: HashMap::new(),
             async_generators: HashMap::new(),
+            delegated_tokens: std::collections::HashSet::new(),
             frame_codes: HashMap::new(),
             source: Rc::from(""),
             root_source: Rc::from(""),
@@ -3933,7 +3935,13 @@ impl<'a> Engine<'a> {
                         }
                     } else {
                         let name = self.lang.yield_throw[0].clone();
+                        // Optional throw lookup can resume the suspended parent;
+                        // only invoking the retrieved callable makes it busy.
+                        let driving = self.async_generators.get(&(Rc::as_ptr(held) as usize))
+                            .map(|(_, _, _, driving)| driving.clone());
+                        let was_driving = driving.as_ref().is_some_and(|busy| busy.replace(false));
                         let member = self.class_get(source, &name, false);
+                        if let Some(busy) = driving { busy.set(was_driving); }
                         let member = member.map_err(|fault| self.delegated_fault(fault));
                         match member {
                             Err(Fault::Thrown(fault)) if matches!(&fault, Value::Object(o) if o.class_now().named("AttributeError", false)) => {
@@ -3942,7 +3950,12 @@ impl<'a> Engine<'a> {
                             Err(fault) => return Err(fault),
                             Ok(member) => match self.class_apply(member, if given.is_empty() { vec![value] } else { given.to_vec() })
                                 .map_err(|fault| self.delegated_fault(fault)) {
-                                Ok(item) => return Ok(Some(item)),
+                                Ok(item) => {
+                                    if self.async_generators.contains_key(&(Rc::as_ptr(held) as usize)) {
+                                        self.delegated_tokens.insert(Rc::as_ptr(held) as usize);
+                                    }
+                                    return Ok(Some(item));
+                                },
                                 Err(Fault::Thrown(fault)) if matches!(&fault, Value::Object(o) if self.stop_class(&o.class_now())) => {
                                     if let Value::Binding(returned) = &parts.1[1] { *returned.borrow_mut() = self.class_get(fault, "value", false)?; }
                                     if let Value::Binding(done) = &parts.1[2] { *done.borrow_mut() = Value::Flag(true); }
@@ -7615,6 +7628,7 @@ impl<'a> Engine<'a> {
         if phase == 0 { *owner.borrow_mut() = Some(stage.clone()); }
         *stage.borrow_mut() = Value::Small(1);
         driving.set(true);
+        self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize));
         let result = (|| {
             if ended {
                 if let Some(value) = thrown {
@@ -7648,8 +7662,11 @@ impl<'a> Engine<'a> {
                 let value = self.exit_value().ok_or_else(|| self.special_fault())?;
                 self.step_generator(generator, Value::Null, Some(value), &[])
             };
+            // A delegate callback returns an await token even if a lookup
+            // resumed the parent and cleared its delegation in the meantime.
+            let delegated = self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize));
             match stepped {
-                Ok(Some(value)) if generator.try_borrow().is_ok_and(|body| body.delegate.is_some()) => Ok(AsyncStep::Pending(value)),
+                Ok(Some(value)) if delegated || generator.try_borrow().is_ok_and(|body| body.delegate.is_some()) => Ok(AsyncStep::Pending(value)),
                 Ok(Some(_)) if *operation == 3 => Err(self.lang.async_generator_close_ignored[0].clone().into()),
                 Ok(Some(value)) => Ok(AsyncStep::Complete(Some(value))),
                 Ok(None) if *operation == 3 => Ok(AsyncStep::Complete(None)),
