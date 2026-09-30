@@ -93,6 +93,9 @@
   "ext.builtin.subprocess": [
     "__subprocess"
   ],
+  "ext.builtin.signal": [
+    "__signal"
+  ],
   "ext.builtin.wait": [
     "__wait"
   ],

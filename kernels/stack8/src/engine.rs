@@ -63,6 +63,33 @@ struct Beside {
     err_pipe: Option<std::process::ChildStderr>,
 }
 
+/// One bit for each signal number waiting to be taken up: the host's
+/// own handler for an arrived interrupt sets its bit here, and a
+/// program asking for a signal to be raised sets the same bit. The
+/// engine gathers the bits where one statement gives way to the next,
+/// never in the middle of one.
+static SIGNALS_PENDING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether the host has been asked to note interrupts for this
+/// process: it is asked once, the first time a language that takes
+/// signals up between statements runs.
+static HOST_WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn signal_arrived(number: i32) {
+    if (1..=64).contains(&number) {
+        SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Ask the host to note an interrupt's arrival: the note is only a bit
+/// left pending; the run takes it up itself where a raised value is
+/// free to rise and be caught.
+fn watch_host_signals() {
+    if HOST_WATCHING.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
+    unsafe extern "C" { fn signal(number: i32, handler: extern "C" fn(i32)) -> usize; }
+    unsafe { signal(2, signal_arrived) };
+}
+
 pub struct Engine<'a> {
     trace_frame: Option<Rc<Instance>>,
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
@@ -222,6 +249,12 @@ pub struct Engine<'a> {
     /// its own, so a throw or an ending is kept here and raised again
     /// where the reading stood.
     carried: Option<Fault>,
+    /// The handler each signal number was given to answer with: a
+    /// callable of the program's own, the mark for paying the signal no
+    /// mind, or the mark for the signal's own way. A number never given
+    /// one keeps its own way. Only a language taking signals up between
+    /// statements ever writes here.
+    signal_handlers: HashMap<i64, Value>,
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
@@ -1115,6 +1148,9 @@ impl<'a> Engine<'a> {
 
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         crate::faint::name_last_word(lang.finaliser.clone());
+        if lang.signals_between_statements {
+            watch_host_signals();
+        }
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         let mut world: Vec<Value> = idents.iter().map(|word| if lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
@@ -1175,6 +1211,7 @@ impl<'a> Engine<'a> {
             things_made: RefCell::new(Vec::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
+            signal_handlers: HashMap::new(),
             absent_member: None,
             absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
@@ -3193,6 +3230,27 @@ impl<'a> Engine<'a> {
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
         let outcome = self.run_instrs(program, &mut frame);
+        // A signal still left pending as the outermost body's own last
+        // statement is done is taken up here, while the body's frame
+        // and line still stand: what it raises is the run's ending,
+        // exactly as though the last statement had raised it.
+        let outcome = match outcome {
+            Ok(()) if program.body_of_all && self.lang.signals_between_statements => match self.deliver_signals() {
+                Ok(()) => Ok(()),
+                Err(fault) => {
+                    let fault = match fault {
+                        Fault::Note(words) => match self.as_fault(&words) {
+                            Some(value) => Fault::Thrown(value),
+                            None => Fault::Note(words),
+                        },
+                        other => other,
+                    };
+                    if let Fault::Thrown(value) = &fault { self.record_trace(value, program); }
+                    Err(fault)
+                }
+            },
+            other => other,
+        };
         self.trace_frame = caller_frame;
         self.inline_comp = previous_comp;
         self.refresh_observed_frame();
@@ -4504,6 +4562,30 @@ impl<'a> Engine<'a> {
                     // business.
                     self.under = None;
                     self.entering = None;
+                    // A statement's edge is also where a signal left
+                    // pending is taken up; what it raises is offered to
+                    // whoever watches, exactly as though the statement
+                    // just reached had raised it itself.
+                    if self.lang.signals_between_statements {
+                        if let Err(fault) = self.deliver_signals() {
+                            let fault = match fault {
+                                Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
+                                    Some(made) => Fault::Thrown(made),
+                                    None => Fault::Note(told),
+                                },
+                                other => other,
+                            };
+                            let Fault::Thrown(raised) = fault else { return Err(fault) };
+                            let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+                            self.under = None;
+                            self.entering = None;
+                            self.hushed.set(quiet);
+                            self.data.truncate(depth);
+                            self.data.push(raised);
+                            pc = catch;
+                            continue;
+                        }
+                    }
                 }
                 Instr::Mute(quiet) => {
                     let deep = self.muted.get();
@@ -12590,6 +12672,45 @@ impl<'a> Engine<'a> {
         answered
     }
 
+    /// The signals left pending, taken up now that one statement is
+    /// giving way to the next, the lowest number first. A number paid
+    /// no mind goes by; a number left to its own way rises as an
+    /// interrupt where that way is the interrupt signal's own, and is
+    /// let go otherwise — the reference ends the run outright for
+    /// several of the rest, which is further than this runtime goes. A
+    /// number given a callable runs it with the number and nothing for
+    /// a frame, and whatever that raises is the fault this taking-up
+    /// stands for. Whatever is still to take up when a fault rises
+    /// waits for the next edge instead.
+    fn deliver_signals(&mut self) -> Flow<()> {
+        let pending = SIGNALS_PENDING.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if pending == 0 { return Ok(()); }
+        let mut handled = 0u64;
+        for number in 1..=64u32 {
+            let bit = 1u64 << (number - 1);
+            if pending & bit == 0 { continue; }
+            handled |= bit;
+            let handler = self.signal_handlers.get(&(number as i64)).cloned();
+            let outcome: Flow<()> = match handler {
+                Some(Value::Small(1)) => Ok(()),
+                Some(routine) if !matches!(routine, Value::Small(_)) => {
+                    match self.call_held(routine, vec![Value::Small(number as i64), Value::Null]) {
+                        Ok(_) => Ok(()),
+                        Err(words) => Err(match self.carried.take() { Some(fled) => fled, None => Fault::Note(words) }),
+                    }
+                }
+                _ if number == 2 => Err(Fault::Note("\0KeyboardInterrupt:".to_string())),
+                _ => Ok(()),
+            };
+            if let Err(fault) = outcome {
+                let later = pending & !handled;
+                if later != 0 { SIGNALS_PENDING.fetch_or(later, std::sync::atomic::Ordering::Relaxed); }
+                return Err(fault);
+            }
+        }
+        Ok(())
+    }
+
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         if !self.lang.compile_modes.is_empty() && matches!(builtin, Builtin::RunText | Builtin::Eval | Builtin::ReadyText | Builtin::Summon | Builtin::OuterNames | Builtin::NearNames) {
             return self.text_builtin(builtin, name, items);
@@ -15156,6 +15277,37 @@ impl<'a> Engine<'a> {
                         let _ = kept.child.wait();
                         Value::Flag(true)
                     }
+                }
+            }
+            // The host's signals, one step at a time: give a number
+            // the handler it answers with (0), answering the one it had;
+            // ask which handler a number was given (1); or leave a
+            // number pending (2), to be taken up at the next
+            // statement's edge. A number never given a handler keeps
+            // the signal's own way.
+            Builtin::Signal => {
+                if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
+                let step = as_index(&args[0])?;
+                match step {
+                    0 => {
+                        arity(3)?;
+                        let which = as_index(&args[1])? as i64;
+                        self.signal_handlers.insert(which, args[2].clone()).unwrap_or(Value::Null)
+                    }
+                    1 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])? as i64;
+                        self.signal_handlers.get(&which).cloned().unwrap_or(Value::Null)
+                    }
+                    2 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])?;
+                        if (1..=64).contains(&which) {
+                            SIGNALS_PENDING.fetch_or(1u64 << (which - 1), std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Value::Null
+                    }
+                    _ => return Err(format!("{name}() knows no step {step}")),
                 }
             }
             // A second interpreter started beside this one, its writing

@@ -1993,6 +1993,17 @@ impl<'a> Compiler<'a> {
         if let Some(issue) = self.python_type_scope_problem() { return Err(issue); }
         let began = self.pos;
         self.note_syntax_warnings(began);
+        // A language whose run takes signals up between statements gives
+        // every statement a mark of its own, even one standing on the
+        // same line as the statement before it: the mark is where the
+        // run looks. The library's own statements go unmarked, as they
+        // do for a complaint's line, and the statement reader marks none
+        // of this one's again.
+        if self.lang.signals_between_statements && self.look().row as u32 > self.before {
+            let row = self.look().row as u32 - self.before;
+            self.piece().line = row;
+            self.put(Instr::Line(row));
+        }
         self.stmt_read()?;
         self.stmt_closed(began)
     }

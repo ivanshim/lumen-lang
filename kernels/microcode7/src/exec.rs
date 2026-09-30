@@ -70,6 +70,31 @@ pub const KIND_LABELS: [(&str, Kind); 7] = [
     ("system.kind.null", Kind::Nothing),
 ];
 
+/// One bit for every signal waiting to be taken up, set by the host
+/// when such a signal comes in, and by a program asking to have one
+/// raised. The machine gathers the bits where one statement gives way
+/// to the next, never part-way through one.
+static SIGNALS_DUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether the host has been asked to set the interrupt's own bit when
+/// it comes in: it is asked once, by the first run that watches its
+/// statement edges.
+static HOST_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn note_signal(number: i32) {
+    if (1..=64).contains(&number) {
+        SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Ask the host to set the interrupt's bit when it comes in; the
+/// machine takes the bit up itself, where a raised value may be caught.
+fn ask_host_for_signals() {
+    if HOST_ASKED.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
+    unsafe extern "C" { fn signal(number: i32, taker: extern "C" fn(i32)) -> usize; }
+    unsafe { signal(2, note_signal) };
+}
+
 pub enum Escape {
     Error(String),
     /// The run is over and no clause may take it back: a limit the
@@ -503,6 +528,14 @@ pub struct Machine<'a> {
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
     builds_places: bool,
+    /// What each signal number answers with when it is taken up: a
+    /// callable of the program's own, the mark for passing it by, or
+    /// the mark for the signal's own way. A number never given one
+    /// keeps its own way.
+    signal_takers: Vec<(i64, Value)>,
+    /// Whether the run watches the edge between one statement and the
+    /// next for signals left waiting (ext.builtin.signal).
+    watches_signals: bool,
     /// Whether a call fits its arguments to names. The rule is settled
     /// once for the whole run, so a name being read or written need not
     /// go looking for the word again at every turn.
@@ -1226,6 +1259,9 @@ impl<'a> Machine<'a> {
     }
 
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
+        if table.has_any("ext.builtin.signal") {
+            ask_host_for_signals();
+        }
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         let outermost = Env::make(idents.len(), None);
         crate::ghost::set_farewell_name(table.single("ext.stmt.class.finaliser").map(str::to_string));
@@ -1315,6 +1351,8 @@ impl<'a> Machine<'a> {
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
             builds_places: table.flag("ext.op.index.makes"),
+            signal_takers: Vec::new(),
+            watches_signals: table.has_any("ext.builtin.signal"),
             names_in_calls: table.flag("ext.syntax.call.bind_names"),
             words: words_of(table),
             letter_places: table.flag("ext.op.index.text"),
@@ -2800,6 +2838,16 @@ impl<'a> Machine<'a> {
         self.active_trace = self.activation(program, &self.outermost.clone(), None);
         let top = self.outermost.clone();
         let ran = self.value_of(body, &top);
+        // A signal still waiting once the program's own last form has
+        // run is taken up here, before the ending is weighed: its
+        // escape stands as the body's own.
+        let ran = match ran {
+            Ok(value) if self.watches_signals => match self.signals_due_now() {
+                Ok(()) => Ok(value),
+                Err(escape) => Err(escape),
+            },
+            other => other,
+        };
         let ran = match ran {
             Err(Escape::Error(words)) if self.table.has_any("ext.builtin.exceptions") && (words.starts_with('\0') || words.starts_with("Division by zero") || words.starts_with("Undefined property") || words.starts_with("Cannot read property") || words.starts_with("Array index")) => {
                 self.as_raised(&words).map_or(Err(Escape::Error(words)), |value| Err(Escape::Thrown(value)))
@@ -3750,6 +3798,12 @@ impl<'a> Machine<'a> {
                     Form::OnLine(row, body) => {
                         self.row = row;
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
+                        // A statement reached inside a sleeping walk is
+                        // an edge all the same: a signal waiting is
+                        // taken up here.
+                        if self.watches_signals {
+                            self.signals_due_now()?;
+                        }
                         state.owed.push(Owed::Find(*body));
                     }
                     Form::Write(place, body) => { state.owed.push(Owed::Store(place)); state.owed.push(Owed::Find(*body)); }
@@ -4876,6 +4930,13 @@ impl<'a> Machine<'a> {
                 }
                 if let Some(over) = self.past_its_room() {
                     return Err(over);
+                }
+                // The edge between one statement and the next is where
+                // a signal left waiting is taken up; what it raises
+                // stands on the statement reached, exactly as though
+                // that statement had raised it.
+                if self.watches_signals {
+                    self.signals_due_now()?;
                 }
                 let outcome = self.value_of(inner, frame);
                 self.traced_result(outcome)
@@ -8037,6 +8098,51 @@ impl<'a> Machine<'a> {
         let call = Form::Apply(Callee::Code(Box::new(Form::Const(target))), arguments.into_iter().map(Form::Const).collect());
         let scope = self.outermost.clone();
         self.value_of(&call, &scope)
+    }
+
+    /// The signals left waiting, taken up now that one statement gives
+    /// way to the next, the lowest number first. A number passed by
+    /// goes on its way; a number left to the signal's own way rises as
+    /// the interrupt where that way is the interrupt signal's own, and
+    /// passes otherwise — the reference ends the whole run for several
+    /// of the rest, further than this machine goes. A number given a
+    /// callable runs it with the number and nothing for a frame;
+    /// whatever that raises stands as the fault of this taking-up, and
+    /// whatever is still waiting then waits for the next edge instead.
+    fn signals_due_now(&mut self) -> Res<()> {
+        let due = SIGNALS_DUE.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if due == 0 { return Ok(()); }
+        let mut left = due;
+        while left != 0 {
+            let bit = left & left.wrapping_neg();
+            left ^= bit;
+            let number = bit.trailing_zeros() as i64 + 1;
+            let taker = self.signal_takers.iter().find(|(held, _)| *held == number).map(|(_, taker)| taker.clone());
+            let outcome: Res<()> = match taker {
+                Some(Value::Small(1)) => Ok(()),
+                Some(callable) if !matches!(callable, Value::Small(_)) => {
+                    self.apply_held(callable, vec![Value::Small(number), Value::Nil]).map(|_| ())
+                }
+                _ if number == 2 => match self.fault_kinds.get("KeyboardInterrupt").cloned() {
+                    Some(Value::Blueprint(kind)) => {
+                        let raised = self.make_fault(kind, Vec::new(), Value::Nil);
+                        self.keep_context(&raised);
+                        // As where a raise stands: the frames the value
+                        // is raised under are its own from here.
+                        self.raised_on = self.row;
+                        self.save_traceback(&raised, true);
+                        Err(Escape::Thrown(raised))
+                    }
+                    _ => Err(Escape::Error("\0KeyboardInterrupt:".to_owned())),
+                },
+                _ => Ok(()),
+            };
+            if let Err(escape) = outcome {
+                if left != 0 { SIGNALS_DUE.fetch_or(left, std::sync::atomic::Ordering::Relaxed); }
+                return Err(escape);
+            }
+        }
+        Ok(())
     }
 
     /// As `apply_held`, for an operation that answers plain words: an
@@ -14716,6 +14822,40 @@ impl<'a> Machine<'a> {
                         }
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
+                }
+            }
+            // The host's signals, one step at a time: give a number
+            // what answers for it (0), answering what it answered with
+            // before; ask what a number was given (1); or leave a
+            // number waiting (2), to be taken up at the next
+            // statement's edge. A number never given an answer keeps
+            // the signal's own way.
+            Prim::Signal => {
+                if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
+                let step = as_index(&v[0])?;
+                match step {
+                    0 => {
+                        n(3)?;
+                        let number = as_index(&v[1])? as i64;
+                        match self.signal_takers.iter().position(|(held, _)| *held == number) {
+                            Some(at) => std::mem::replace(&mut self.signal_takers[at].1, v[2].clone()),
+                            None => { self.signal_takers.push((number, v[2].clone())); Value::Nil }
+                        }
+                    }
+                    1 => {
+                        n(2)?;
+                        let number = as_index(&v[1])? as i64;
+                        self.signal_takers.iter().find(|(held, _)| *held == number).map(|(_, taker)| taker.clone()).unwrap_or(Value::Nil)
+                    }
+                    2 => {
+                        n(2)?;
+                        let number = as_index(&v[1])?;
+                        if (1..=64).contains(&number) {
+                            SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Value::Nil
+                    }
+                    _ => return Err(format!("{name}() knows no step {step}")),
                 }
             }
             Prim::Clock => {

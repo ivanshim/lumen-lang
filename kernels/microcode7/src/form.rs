@@ -240,6 +240,12 @@ pub enum Prim {
     /// is on. Only a language spelling this may raise a second
     /// interpreter beside itself and read what it writes back.
     Subprocess,
+    /// The host's signals, one word told which step it is on
+    /// (ext.builtin.signal): give a number what answers for it, ask
+    /// what a number was given, or leave a number to be taken up where
+    /// one statement gives way to the next. Only a language spelling
+    /// this watches its statement edges for them.
+    Signal,
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,
