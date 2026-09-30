@@ -1,7 +1,7 @@
 // Values. A program value is a closure: the program and the frame it was
 // made in, so a nested program sees the bindings around it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -1549,6 +1549,10 @@ pub struct Blueprint {
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: RefCell<Vec<(String, Value)>>,
+    /// The seal builtin's mark, kept where no member write of the
+    /// program's can reach it: the class takes no write to a member of
+    /// it and stands as no class's base.
+    pub sealed: Cell<bool>,
 }
 
 impl Blueprint {

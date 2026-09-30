@@ -75,6 +75,10 @@ pub enum Prim {
     WriteMember,
     ReadMember,
     ProgramNames,
+    /// The name of the module the routine a frame runs was written in.
+    FrameModule,
+    /// Mark a class unchangeable: no member writes, no standing as a base.
+    ClassSeal,
     BringModule,
     SpreadModule,
     /// Whether a member, rather than the pipe, takes the name.
@@ -815,6 +819,12 @@ pub struct Routine {
     /// The builtins in force where such a routine was made, kept for
     /// the case that its own dictionary names none of its own.
     pub born: Option<Value>,
+    /// The name the dictionary a routine framed by hand was made in
+    /// gave itself, read off the dictionary when the text was built:
+    /// the module the function answers to, as the reference answers it
+    /// of the globals at the run's start. Nothing where the dictionary
+    /// named none, or where the routine is one the program wrote.
+    pub framed_in: Option<Rc<str>>,
     /// The line this program was written on, which a fault raised on
     /// the way into it names: such a fault belongs where the program
     /// stands and not where the call did.
