@@ -4563,6 +4563,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.short` | - | - | `ValueError: map() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.math.sumprod` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent.class` | - | - | `AttributeError: type object '` `' has no attribute '` `'` | - | - | - | - | - | - | - |
@@ -5460,6 +5461,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.module.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.system.module.path` | - | - | `__path__` | - | - | - | - | - | - | - |
 | `ext.system.names.module` | - | - | `builtins` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |
@@ -5579,3 +5581,15 @@ stop_exception class or tuple of classes for callable iterators.
 
 `ext.builtin.iter.stop_exception` names the corresponding keyword accepted by Python callable iterators.
 `ext.stmt.class.detail.code.fields` names code metadata members (name, qualified name, positional-only and keyword-only counts, local count, names, constants, flags, filename, first line) and the lazy function annotation member. Code values use the same wrapper as traceback frame code.
+
+`ext.system.module.path` names the Python package search-path attribute.
+Regular filesystem packages expose their initializer directory there; dotted
+imports search their parent's path, including paths changed by Python code.
+`ext.builtin.math.sumprod` enables the Python-only native sum of products,
+with checked integer accumulation, three-part compensated binary products,
+and ordinary multiplication/addition for other numeric types.
+
+The embedded `test/test_iter.py` is byte-for-byte CPython `Lib/test/test_iter.py`
+from commit `3b564385e4c9` (the suite source recorded in `tests/README.md`),
+under the PSF license in `tests/python/LICENSE`. It supplies the original
+module for imports by the unchanged math tests.

@@ -775,6 +775,8 @@ pub struct Lang {
     pub import_lazy_words: Vec<String>,
     pub import_as_words: Vec<String>,
     pub math_floating: bool,
+    pub math_sumprod: bool,
+    pub module_path: Option<String>,
     pub module_helper_amiss: String,
     pub member_absent: Vec<String>,
     pub module_cache: Vec<String>,
@@ -1317,7 +1319,7 @@ w ext.syntax.map.resized | w ext.syntax.map.unhashable | b ext.syntax.map.value_
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
 w ext.builtin.module.helper.amiss | w ext.builtin.member.absent | w ext.builtin.member.unwritable | w ext.builtin.member.absent.class | w ext.builtin.member.absent.module
-b ext.builtin.math.floating
+b ext.builtin.math.sumprod | w ext.system.module.path | b ext.builtin.math.floating
 w ext.builtin.class.derive
 w ext.builtin.call.outcome
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.lazy | w ext.stmt.import.as | w ext.system.module.name
@@ -2697,6 +2699,8 @@ impl Lang {
             import_lazy_words: r.strings("ext.stmt.import.lazy")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
             math_floating: r.flag("ext.builtin.math.floating")?,
+            math_sumprod: r.flag("ext.builtin.math.sumprod")?,
+            module_path: r.head("ext.system.module.path")?,
             module_helper_amiss: r.head("ext.builtin.module.helper.amiss")?.unwrap_or_default(),
             member_absent: r.strings("ext.builtin.member.absent")?,
             member_amiss: r.about_two("ext.builtin.method.error.attribute")?,

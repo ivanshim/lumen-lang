@@ -974,8 +974,5 @@ def issubnormal(x):
     _check_real(x)
     return __math('issubnormal', x) != 0.0
 
-def sumprod(p, q):
-    total = 0
-    for p_i, q_i in zip(p, q, strict=True):
-        total = total + p_i * q_i
-    return total
+def sumprod(p, q, /):
+    return __math('sumprod', p, q)

@@ -12636,6 +12636,113 @@ impl<'a> Machine<'a> {
         }
     }
 
+    // The three-component dot-product expansion uses error-free transforms
+    // from Ogita/Rump/Oishi (3.1, 3.5, 5.10), including fused product error.
+    fn dot_add(one: f64, two: f64) -> (f64, f64) {
+        let combined = one + two;
+        let recovered = combined - one;
+        let residue = (two - recovered) + (one - (combined - recovered));
+        (combined, residue)
+    }
+
+    fn dot_coordinate(number: &Value) -> Option<f64> {
+        match number {
+            Value::Small(integer) => Some(*integer as f64),
+            Value::Flag(flag) => Some(f64::from(u8::from(*flag))),
+            Value::Huge(integer) => integer.to_f64().filter(|n| n.is_finite()),
+            Value::Frac(ratio) if ratio.places.is_some() => Some(crate::data::nearest_binary(&ratio.above, &ratio.beneath)),
+            _ => None,
+        }
+    }
+
+    fn dot_binary(&self, x: &Value, y: &Value, product: bool) -> Option<Result<Value, String>> {
+        let floating = |item: &Value| matches!(item, Value::Frac(r) if r.places.is_some());
+        if !floating(x) && !floating(y) { return None; }
+        let accepts = |item: &Value| floating(item) || matches!(item, Value::Flag(_) | Value::Small(_) | Value::Huge(_));
+        if !accepts(x) || !accepts(y) { return None; }
+        let converted = Self::dot_coordinate(x).zip(Self::dot_coordinate(y));
+        Some(converted.map(|(a, b)| crate::data::worth_of_binary(if product { a * b } else { a + b }, self.real_figures()))
+            .ok_or_else(|| "OverflowError: int too large to convert to float".to_owned()))
+    }
+
+    fn dot_accumulate(&mut self, x: &Value, y: &Value) -> Result<Value, String> {
+        if let Some(result) = self.dot_binary(x, y, false) { result }
+        else { self.sum_added(x, y) }
+    }
+
+    fn dot_product(&mut self, first: &Value, second: &Value) -> Result<Value, String> {
+        let mut begin = |offered: &Value| match Self::live_walk(offered) {
+            Some(kind) => Ok(Self::cursor_value(kind)),
+            None => self.iterated_value(&offered.settled()),
+        };
+        let walks = (begin(first)?, begin(second)?);
+        let mut answer = Value::Small(0);
+        let mut whole = Some(0_i64);
+        let mut whole_present = false;
+        let mut expansion = Some([0.0_f64; 3]);
+        let mut binary_present = false;
+        loop {
+            let first_item = self.next_value(&walks.0)?;
+            let second_item = self.next_value(&walks.1)?;
+            let terms = match (first_item, second_item) {
+                (None, None) => None,
+                (Some(x), Some(y)) => Some((x.settled(), y.settled())),
+                _ => return Err("ValueError: Inputs are not the same length".to_owned()),
+            };
+            if let Some(previous) = whole {
+                let updated = match &terms {
+                    Some((Value::Small(x), Value::Small(y))) => x.checked_mul(*y).and_then(|z| previous.checked_add(z)),
+                    _ => None,
+                };
+                if let Some(updated) = updated {
+                    whole = Some(updated);
+                    whole_present = true;
+                    continue;
+                }
+                whole = None;
+                if whole_present { answer = self.dot_accumulate(&answer, &Value::Small(previous))?; }
+            }
+            if let Some(mut parts) = expansion {
+                let inputs = terms.as_ref().and_then(|(x, y)| {
+                    let floating = |v: &Value| matches!(v, Value::Frac(r) if r.places.is_some());
+                    if !floating(x) && !floating(y) { return None; }
+                    Self::dot_coordinate(x).zip(Self::dot_coordinate(y))
+                });
+                if let Some((x, y)) = inputs {
+                    let rounded_product = x * y;
+                    let product_tail = x.mul_add(y, -rounded_product);
+                    let upper = Self::dot_add(parts[0], rounded_product);
+                    if upper.0.is_finite() {
+                        let lower = Self::dot_add(parts[1], product_tail);
+                        let joined = Self::dot_add(lower.0, upper.1);
+                        parts[0] = upper.0;
+                        parts[1] = joined.0;
+                        parts[2] = (parts[2] + lower.1) + joined.1;
+                        expansion = Some(parts);
+                        binary_present = true;
+                        continue;
+                    }
+                }
+                expansion = None;
+                if binary_present {
+                    let merged = Self::dot_add(parts[1], parts[0]);
+                    let result = crate::data::worth_of_binary((parts[2] + merged.1) + merged.0, self.real_figures());
+                    answer = self.dot_accumulate(&answer, &result)?;
+                }
+            }
+            match terms {
+                None => return Ok(answer),
+                Some((x, y)) => {
+                    let term = match self.dot_binary(&x, &y, true) {
+                        Some(result) => result?,
+                        None => self.prim(Prim::Times, "*", &[x, y])?,
+                    };
+                    answer = self.dot_accumulate(&answer, &term)?;
+                }
+            }
+        }
+    }
+
     /// One member added into `sum`'s running total: the exact reckoning
     /// where the two are numbers, and the plain working of `+`
     /// otherwise, so a member `+` itself refuses is refused in the
@@ -12704,6 +12811,11 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::Reckon && self.table.flag("ext.builtin.math.sumprod")
+            && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
+            if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
+            return self.dot_product(&v[1], &v[2]);
+        }
         if matches!(op, Prim::Contains | Prim::Absent) {
             if let [needle, Value::Mutable(cell, _) | Value::Shared(cell)] = v {
                 let current = cell.borrow().clone();
@@ -14910,6 +15022,10 @@ impl<'a> Machine<'a> {
                 let Some(working) = v.first().map(|x| x.render(w)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "sumprod" && self.table.flag("ext.builtin.math.sumprod") {
+                    if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
+                    return self.dot_product(&v[1], &v[2]);
+                }
                 let takes = math::worked_takes(&working);
                 if v.len() != takes + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
@@ -18244,9 +18360,16 @@ impl Machine<'_> {
         }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
+        let split = path.rsplit_once('.');
+        if self.table.single("ext.system.module.path").is_some() {
+            if let Some((owner, _)) = split { self.load_namespace(owner)?; }
+        }
         let from_disk = self.sys_path_source(path);
         let text = match &from_disk {
-            Some((_, text)) => text.clone(),
+            Some((location, text)) => match self.library_module_file(path) {
+                Some(embedded) if self.table.single("ext.system.module.path").is_some() && embedded == *location => self.library_sources.get(path).cloned().unwrap_or_else(|| text.clone()),
+                _ => text.clone(),
+            },
             None => self.library_sources.get(path).cloned().ok_or_else(|| {
                 let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
                 format!("{before}{path}{after}")
@@ -18256,8 +18379,9 @@ impl Machine<'_> {
             Some((file, _)) => Some(file.clone()),
             None => self.library_module_file(path),
         };
-        let split = path.rsplit_once('.');
-        if let Some((owner, _)) = split { self.load_namespace(owner)?; }
+        if self.table.single("ext.system.module.path").is_none() {
+            if let Some((owner, _)) = split { self.load_namespace(owner)?; }
+        }
         let beginning = self.idents.len();
         let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
         let filename = own_file.as_deref().unwrap_or(path);
@@ -18284,20 +18408,27 @@ impl Machine<'_> {
         // any: the same word the running program's own file is bound
         // to, carried here for a module read in besides it.
         let file_word = self.table.single("ext.system.source.file");
+        let path_word = self.table.single("ext.system.module.path");
+        let search = own_file.as_deref().and_then(|file| {
+            let location = std::path::Path::new(file);
+            if location.file_name()?.to_str()? != "__init__.py" { return None; }
+            Some(Value::Mutable(Rc::new(RefCell::new(Value::Vector(Rc::new(vec![Value::text(&location.parent()?.to_string_lossy())])))), false))
+        });
         let mut members = Vec::with_capacity(exported.len());
         {
             let mut world = self.outermost.cells.borrow_mut();
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let is_module_name = module_names.contains(name);
-                let initial = if is_module_name { Value::text(path) }
+                let initial = if path_word == Some(name.as_str()) && search.is_some() { search.clone().unwrap() }
+                    else if is_module_name { Value::text(path) }
                     else if file_word == Some(name.as_str()) { own_file.as_deref().map_or(Value::Nil, Value::text) }
                     else if self.table.flag("ext.stmt.class.this.explicit") && self.table.spells("ext.stmt.class.parent", name) {
                         Value::Wrapped(9, Rc::new(Vec::new()))
                     }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
-                if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
+                if is_module_name || bound.contains(name.as_str()) || (path_word == Some(name.as_str()) && search.is_some()) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
             }
         }
@@ -18313,6 +18444,9 @@ impl Machine<'_> {
             if !members.iter().any(|(name, _)| name == word) {
                 members.push((word.to_string(), own_file.as_deref().map_or(Value::Nil, Value::text)));
             }
+        }
+        if let (Some(word), Some(directories)) = (path_word, search) {
+            if !members.iter().any(|entry| entry.0 == word) { members.push((word.to_owned(), directories)); }
         }
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
@@ -18352,27 +18486,34 @@ impl Machine<'_> {
         Ok(value)
     }
 
-    /// A module written into a directory `sys.path` names, found there
-    /// ahead of the library. Only a plain, undotted name is looked for
-    /// this way, since a directory a program builds for itself holds no
-    /// packages of its own; the file's place is made absolute before it
-    /// comes back, since a name on `sys.path` may be relative to a
-    /// working directory `__file__` must not depend on later changing.
+    /// A dotted name uses its owner's current search directories. Ordinary
+    /// names use sys.path; regular packages precede files in each directory.
     fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
-        if path.contains('.') { return None; }
-        let Value::Thing(sys) = self.imported.get("sys")? else { return None };
-        let held = sys.holds.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
+        let (space_name, attribute, filename) = if let Some((head, tail)) = path.rsplit_once('.') {
+            (head, self.table.single("ext.system.module.path")?, tail)
+        } else { ("sys", "path", path) };
+        let Value::Thing(namespace) = self.imported.get(space_name)? else { return None };
+        let held = namespace.holds.borrow().iter().find(|entry| entry.0 == attribute).map(|entry| entry.1.clone())?;
         let mut value = held;
         while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
             value = cell.borrow().clone();
         }
-        let Value::Vector(items) = value else { return None };
+        let items = match value {
+            Value::Vector(items) => items,
+            Value::Tuple(items) if self.table.single("ext.system.module.path").is_some() => items,
+            _ => return None,
+        };
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
-            if dir.is_empty() { continue; }
-            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
-            if let Ok(text) = std::fs::read_to_string(&file) {
-                return Some((made_absolute(&file), text));
+            if dir.is_empty() && self.table.single("ext.system.module.path").is_none() { continue; }
+            let folder = std::path::Path::new(if dir.is_empty() { "." } else { dir.as_ref() });
+            let ordinary = folder.join(format!("{filename}.py"));
+            let package = folder.join(filename).join("__init__.py");
+            let choices = if self.table.single("ext.system.module.path").is_some() { vec![package, ordinary] } else { vec![ordinary] };
+            for location in choices {
+                if let Ok(text) = std::fs::read_to_string(&location) {
+                    return Some((made_absolute(&location.to_string_lossy()), text));
+                }
             }
         }
         None
@@ -18403,7 +18544,7 @@ impl Machine<'_> {
             }
         }
         let full = format!("{path}.{wanted}");
-        if self.library_sources.contains_key(&full) { return self.load_namespace(&full); }
+        if self.library_sources.contains_key(&full) || self.sys_path_source(&full).is_some() { return self.load_namespace(&full); }
         Err(self.import_member_fault(path, wanted))
     }
 

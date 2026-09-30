@@ -1025,6 +1025,8 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin.math.sumprod": true,
+  "ext.system.module.path": ["__path__"],
   "ext.builtin.max": [
     "max"
   ],
