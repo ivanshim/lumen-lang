@@ -12,7 +12,7 @@
 // that traps them stops them.
 
 use std::collections::HashMap;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use num_bigint::BigInt;
 use std::rc::{Rc, Weak};
 
@@ -598,7 +598,7 @@ impl<'a> Machine<'a> {
             let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                 name: word.clone(), under: parent.and_then(|p| chain.get(p).cloned()),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
-                shared: RefCell::new(vec![("__module__".to_owned(), Value::text("builtins"))]), constants: vec![],
+                shared: RefCell::new(vec![("__module__".to_owned(), Value::text("builtins"))]), constants: vec![], sealed: Cell::new(false),
             };
             chain.push(Rc::new(kind));
         }
@@ -1207,7 +1207,7 @@ impl<'a> Machine<'a> {
                 let blueprint = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     name: idents[at].clone(), under: None, answers: Vec::new(),
                     fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
-                    shared: RefCell::new(Vec::new()), reaches: Vec::new(),
+                    shared: RefCell::new(Vec::new()), reaches: Vec::new(), sealed: Cell::new(false),
                 };
                 outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(blueprint));
             }
@@ -2409,7 +2409,7 @@ impl<'a> Machine<'a> {
             if let Some(Value::Blueprint(kind)) = self.fault_kinds.get(self.table.single("ext.stmt.class.special.stop")?).cloned() {
                 return Some(self.make_fault(kind, vec![], Value::Nil));
             }
-            let of = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: self.table.single("ext.stmt.class.special.stop")?.to_owned(), under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![] };
+            let of = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: self.table.single("ext.stmt.class.special.stop")?.to_owned(), under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![], sealed: Cell::new(false) };
             self.made += 1;
             return Some(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(of), holds: RefCell::new(vec![]), turn: self.made })));
         }
@@ -4158,7 +4158,7 @@ impl<'a> Machine<'a> {
         if self.activation_kind.is_none() {
             self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: None, presentation: Some(format!("<class '{}'>", words[9])),
                 parents: Vec::new(), ancestry: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }));
+                answers: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: Cell::new(false) }));
         }
         let body = Value::Bound(routine.clone(), environment.clone());
         let code = self.code_handle(routine);
@@ -4901,7 +4901,7 @@ impl<'a> Machine<'a> {
                             ancestry: vec![], parents: vec![], presentation: None,
                             name: self.table.single("ext.stmt.assert.kind").unwrap_or_default().to_string(),
                             fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
-                            shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
+                            shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(), sealed: Cell::new(false),
                         };
                         Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), turn: 0, holds: RefCell::new(vec![("message".to_string(), held)]) }))
                     }
@@ -5157,6 +5157,7 @@ impl<'a> Machine<'a> {
                     methods: plan.methods.clone(),
                     constants,
                     shared: RefCell::new(shared),
+                    sealed: Cell::new(false),
                 })))
             }
             Form::Cycle { test, body, step, after, otherwise } => {
@@ -13619,7 +13620,7 @@ impl<'a> Machine<'a> {
                 if self.has_class_order() { return self.build_class_value(title, vec![ancestor], holdings).map_err(|e| self.suspension_fault(e)); }
                 let heir = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     under: Some(ancestor), name: title, shared: RefCell::new(holdings),
-                    methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![],
+                    methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![], sealed: Cell::new(false),
                 };
                 Value::Blueprint(Rc::new(heir))
             }
@@ -13683,7 +13684,7 @@ impl<'a> Machine<'a> {
                 let Some(frame) = at else { return Err(String::from("ValueError: call stack is not deep enough")); };
                 let body = frame.holds.borrow().iter().find(|(word, _)| word == "\0environment").map(|(_, held)| held.clone());
                 match body {
-                    Some(Value::Bound(code, _)) => Value::text(&self.routine_home(&code)),
+                    Some(Value::Bound(code, _)) => self.routine_module(&code),
                     _ => return Err(String::from("ValueError: call stack is not deep enough")),
                 }
             }
@@ -13691,10 +13692,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match v[0].settled() {
                     Value::Blueprint(class) => {
-                        let mut entries = class.shared.borrow_mut();
-                        if entries.iter().all(|(word, _)| word != "\0sealed") {
-                            entries.push(("\0sealed".to_string(), Value::Flag(true)));
-                        }
+                        class.sealed.set(true);
                         Value::Nil
                     }
                     other => return Err(format!("TypeError: expected a class, not {}", other.kind_word())),
@@ -15819,7 +15817,7 @@ impl<'a> Machine<'a> {
                     return Err(self.argument_fault("ext.builtin.exceptions.unready", None));
                 }
                 let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: name.into(), under: None, answers: vec![], reaches: vec![],
-                    fields: vec![], shared: RefCell::new(vec![]), constants: vec![], methods: vec![] };
+                    fields: vec![], shared: RefCell::new(vec![]), constants: vec![], methods: vec![], sealed: Cell::new(false) };
                 self.made += 1;
                 Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), turn: self.made,
                     holds: RefCell::new(vec![("\0walked".into(), source), ("\0walk-step".into(), Value::Small(0))]) }))
@@ -16059,7 +16057,7 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Blueprint(Rc::new(Blueprint {
                         ancestry: vec![], parents: vec![], presentation: None, name: word.to_string(),
                         fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
-                        shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
+                        shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(), sealed: Cell::new(false),
                     })));
                 }
                 // A thing is of no kind the core knows, so a language
@@ -18140,7 +18138,7 @@ impl Machine<'_> {
         }
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
-            shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(),
+            shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), sealed: Cell::new(false),
         };
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
@@ -18589,7 +18587,7 @@ impl<'a> Machine<'a> {
         if let Some(kind) = &self.code_kind { return kind.clone(); }
         let kind = Rc::new(Blueprint {
             parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: self.table.single("ext.builtin.compile.kind").unwrap_or_default().to_owned(),
-            under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+            under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), sealed: Cell::new(false),
         });
         self.code_kind = Some(kind.clone());
         kind
@@ -19044,7 +19042,7 @@ impl<'a> Machine<'a> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await, None, None)?;
+        let (built, _) = self.text_built(&source, &tokens, &[], &file, mode, &[], top_await, None, None, None)?;
         for (message, row, column) in &built.warnings {
             self.syntax_warning(mode, message, &file, *row, *column, &source, None)?;
         }
@@ -19299,7 +19297,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None)?;
+        let (built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         for (message, row, column) in built.warnings.clone() {
@@ -19384,15 +19382,20 @@ impl<'a> Machine<'a> {
         // there go onto every routine it makes, so a routine can answer
         // for both once the reading that made it is over.
         let globe = Value::Shared(outer.clone());
+        // The name the dictionary gives itself is read off it once,
+        // here: every routine the text makes answers to the name as it
+        // stood when the text was built, not to a later write into the
+        // dictionary.
+        let framed_in = looked_up(&outer, "__name__").and_then(|held| match held.settled() { Value::Text(named) => Some(named.clone()), _ => None });
         let born = match self.table.single("ext.system.module.builtins").map(str::to_owned) {
             Some(word) => match self.booked_get(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
             None => Value::Mutable(self.natives_kept(), true),
         };
-        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born))?;
+        let (built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone())?;
         // What the build noted about how the text is written is said
         // under the name the handed globals give the text, each warning
         // through the warnings module.
-        let spoken_as = looked_up(&outer, "__name__").and_then(|held| match held.settled() { Value::Text(named) => Some(named.to_string()), _ => None });
+        let spoken_as = framed_in.as_deref().map(str::to_string);
         for (message, row, column) in built.warnings.clone() {
             self.syntax_warning(mode, &message, &file, row, column, &source, spoken_as.as_deref())?;
         }
@@ -19414,9 +19417,9 @@ impl<'a> Machine<'a> {
     /// statement shown as it runs, which is an expression written out
     /// where it is one; else statements. Says besides whether what the
     /// text leaves is to be written out.
-    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>) -> Result<(crate::build::Built, bool), String> {
+    fn text_built(&mut self, source: &str, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String], top_await: bool, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>) -> Result<(crate::build::Built, bool), String> {
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
-        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, mode == 1, shadowed, top_await, mode == 2)
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2)
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }
 

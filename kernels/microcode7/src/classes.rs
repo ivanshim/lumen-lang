@@ -15,7 +15,7 @@ impl<'a> Machine<'a> {
             let title=self.detail("root").to_owned();
             self.ancestor=Some(Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
                 parents:Vec::new(),ancestry:Vec::new(),under:None,answers:Vec::new(),fields:Vec::new(),
-                reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new())}));
+                reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),sealed:Cell::new(false)}));
         }
         self.ancestor.as_ref().unwrap().clone()
     }
@@ -27,14 +27,15 @@ impl<'a> Machine<'a> {
         let root=self.common_ancestor();
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{word}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(Vec::new())});
+            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(Vec::new()),sealed:Cell::new(false)});
         self.native_kinds.push((word.to_owned(),kind.clone()));
         kind
     }
     pub(super) fn native_word(b:&Blueprint)->Option<String> {b.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v.bare())}
-    /// The seal marker the seal builtin put among the class's own
-    /// entries: the class takes no member writes and stands as no base.
-    pub(super) fn sealed(b:&Blueprint)->bool {b.shared.borrow().iter().any(|(k,_)|k=="\0sealed")}
+    /// The seal builtin's mark, kept on the blueprint itself where no
+    /// member write of the program's can reach it: the class takes no
+    /// member writes and stands as no base.
+    pub(super) fn sealed(b:&Blueprint)->bool {b.sealed.get()}
     /// The value whose kind a directory should describe: an empty value
     /// of the kind a native kind word names, or the value itself where
     /// it is one of a native kind. Nothing for a blueprint of a class's
@@ -59,7 +60,7 @@ impl<'a> Machine<'a> {
         let title=self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map(|(w,_)|w.to_string()).unwrap_or_default();
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new())});
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new()),sealed:Cell::new(false)});
         self.builder_kind=Some(kind.clone());
         kind
     }
@@ -134,6 +135,10 @@ impl<'a> Machine<'a> {
             let born=self.builtins_here();
             let mut made=(**template).clone();
             made.globe=Some(globe.clone());
+            made.framed_in=match globe.settled() {
+                Value::Dict(pairs)=>pairs.iter().find(|(k,_)|matches!(k,Value::Text(t) if t.as_ref()=="__name__")).and_then(|(_,v)|match v.settled() { Value::Text(named)=>Some(named.clone()), _=>None }),
+                _=>None,
+            };
             made.born=Some(born);
             return Ok(Value::Routine(Rc::new(made)));
         }
@@ -269,7 +274,7 @@ impl<'a> Machine<'a> {
         let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:parents.first().cloned(),parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
             methods:vec![],constants:builder.map(|m|vec![("\0metaclass".to_owned(),Value::Blueprint(m))]).unwrap_or_default(),
-            shared:RefCell::new(entries)});
+            shared:RefCell::new(entries),sealed:Cell::new(false)});
         self.name_slots(&class)?;
         // Every entry whose blueprint wants its name is given it now, the
         // class standing, and before the forebears hear of it.
@@ -398,7 +403,7 @@ impl<'a> Machine<'a> {
         }
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(entries)});
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(entries),sealed:Cell::new(false)});
         self.property_kind=Some(kind.clone());
         kind
     }
@@ -1254,6 +1259,22 @@ impl<'a> Machine<'a> {
         code.written_in.as_ref().and_then(|place| self.loaded_spaces.get(place)).cloned()
             .unwrap_or_else(|| self.detail("main").to_owned())
     }
+    /// The module a routine answers to as a function, as the reference
+    /// answers it of the function's own: the module an explicit write
+    /// left on the routine, the name the namespace a routine framed by
+    /// hand was made in gave itself (nothing where the namespace named
+    /// none), or the module the file it came of was read as.
+    pub(super) fn routine_module(&self, code: &Rc<Routine>) -> Value {
+        let apart = format!("{}\0", self.detail("module"));
+        let kept = self.routine_members.iter().find(|(held, _)| matches!(held, Value::Routine(r) | Value::Bound(r, _) | Value::Method(r, _) if Rc::ptr_eq(r, code)));
+        if let Some((_, members)) = kept {
+            if let Some((_, v)) = members.holds.borrow().iter().find(|(k, _)| **k == apart) { return v.clone(); }
+        }
+        if code.globe.is_some() {
+            return match &code.framed_in { Some(named) => Value::text(named), None => Value::Nil };
+        }
+        Value::text(&self.routine_home(code))
+    }
     /// The row of type parameters a routine was declared with: one
     /// holder per name the declaration wrote, made by the hinting
     /// module's own maker, in the order the names were written. No
@@ -1753,7 +1774,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("name"){return Ok(self.routine_kept(&value,key,Value::text(&code.ident)));}
             if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(self.routine_kept(&value,key,Value::text(&qualified)));}
             if key==self.detail("doc"){return Ok(code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));}
-            if key==self.detail("module"){let place=self.routine_home(&code);return Ok(self.routine_kept(&value,key,Value::text(&place)));}
+            if key==self.detail("module"){let place=self.routine_module(&code);return Ok(self.routine_kept(&value,key,place));}
             if key==self.detail("code"){let ran=self.code_run_by(&value);return Ok(self.code_handle(&ran));}
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
