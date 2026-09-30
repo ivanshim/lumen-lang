@@ -11323,7 +11323,10 @@ impl<'a> Engine<'a> {
 
     fn product_sum_float(value: &Value) -> Option<f64> {
         match value {
-            Value::Real(real) if real.places > 0 => Some(crate::value::as_binary(&real.p, &real.q)),
+            Value::Real(real) if real.places > 0 => {
+                if real.below && real.p.is_zero() && !real.q.is_zero() { Some(-0.0) }
+                else { Some(crate::value::as_binary(&real.p, &real.q)) }
+            },
             Value::Small(n) => Some(*n as f64),
             Value::Huge(n) => n.to_f64().filter(|v| v.is_finite()),
             Value::Flag(b) => Some(if *b { 1.0 } else { 0.0 }),

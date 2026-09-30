@@ -12654,7 +12654,10 @@ impl<'a> Machine<'a> {
             Value::Small(integer) => Some(*integer as f64),
             Value::Flag(flag) => Some(f64::from(u8::from(*flag))),
             Value::Huge(integer) => integer.to_f64().filter(|n| n.is_finite()),
-            Value::Frac(ratio) if ratio.places.is_some() => Some(crate::data::nearest_binary(&ratio.above, &ratio.beneath)),
+            Value::Frac(ratio) if ratio.places.is_some() => {
+                let coordinate = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+                Some(if ratio.under && ratio.above.is_zero() && !ratio.beneath.is_zero() { -0.0 } else { coordinate })
+            },
             _ => None,
         }
     }
