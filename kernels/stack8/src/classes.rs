@@ -283,6 +283,12 @@ impl<'a> Engine<'a> {
         let members = entries.iter().map(|(k, v)| (k.plain(), v.clone())).collect();
         self.forge_class(title.to_string(), parents, members, winner, named)
     }
+    pub(super) fn contains_class(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
+        if Rc::ptr_eq(actual, wanted) || actual.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, wanted)) { return true; }
+        // Native single-parent classes retain their actual ancestry in
+        // the allocation link; user classes also keep the complete C3 line.
+        actual.base.as_ref().is_some_and(|parent| Self::contains_class(parent, wanted))
+    }
     fn public_class(&self, class: Rc<Class>) -> Value {
         if self.is_metaclass_root(&class) { return self.kind_maker_word(); }
         Self::own_kind(&class).and_then(|word| self.spelled_kind(&word)).unwrap_or(Value::Class(class))
@@ -2463,11 +2469,11 @@ impl<'a> Engine<'a> {
             if !subclass {
                 if let Value::Class(held) = value {
                     let maker = Self::maker_beneath(held).unwrap_or_else(|| self.metaclass_root());
-                    return Ok(Rc::ptr_eq(&maker, c) || maker.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, c)));
+                    return Ok(Self::contains_class(&maker, c));
                 }
             }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class_now()),Value::Class(c) if subclass=>Some(c),_=>None};
-            return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));
+            return Ok(kind.map_or(false,|k|Self::contains_class(k,c)));
         }
         if let Value::Adapter(w)=wanted {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {

@@ -17783,11 +17783,11 @@ impl Engine<'_> {
                 if Rc::ptr_eq(class, &root) { return Ok(true); }
                 if let Value::Object(object) = value {
                     let actual = object.class_now();
-                    return Ok(Rc::ptr_eq(&actual, class) || actual.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, class)));
+                    return Ok(Self::contains_class(&actual, class));
                 }
                 if let Value::Class(held) = value {
                     let maker = Self::maker_beneath(held).unwrap_or_else(|| self.metaclass_root());
-                    return Ok(Rc::ptr_eq(&maker, class) || maker.lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, class)));
+                    return Ok(Self::contains_class(&maker, class));
                 }
             } else if class.name == self.class_word("root") { return Ok(true); }
             // A class standing for a builtin kind the definition spells

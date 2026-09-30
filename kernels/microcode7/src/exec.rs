@@ -20346,7 +20346,7 @@ impl Machine<'_> {
                         _=>None,
                     };
                     if let Some(actual)=actual {
-                        return Ok(std::iter::once(&actual).chain(actual.ancestry.iter()).any(|ancestor|Rc::ptr_eq(ancestor,class)));
+                        return Ok(Self::ancestry_includes(&actual,class));
                     }
                 } else if class.name == self.detail("root") { return Ok(true); }
                 // A blueprint standing for a native kind the table

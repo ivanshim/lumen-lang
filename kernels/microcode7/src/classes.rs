@@ -277,6 +277,12 @@ impl<'a> Machine<'a> {
         let keywords=named.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k),v)))).collect();
         self.assemble_class(title.to_string(),ancestors,body,selected,keywords)
     }
+    pub(super) fn ancestry_includes(class:&Rc<Blueprint>,target:&Rc<Blueprint>)->bool {
+        if std::iter::once(class).chain(class.ancestry.iter()).any(|ancestor|Rc::ptr_eq(ancestor,target)){return true;}
+        // Intrinsic exception blueprints carry a single stored parent,
+        // whereas a class built from a body carries a full ancestry order.
+        match &class.under {Some(parent)=>Self::ancestry_includes(parent,target),None=>false}
+    }
     fn visible_blueprint(&self,class:Rc<Blueprint>)->Value {
         if self.builds_classes(&class){return self.kind_builder_word();}
         if let Some(word)=Self::native_word(&class) {
@@ -2525,11 +2531,11 @@ impl<'a> Machine<'a> {
                 if !class_only {
                     if let Value::Blueprint(held)=subject {
                         let builder=Self::builder_over(held).unwrap_or_else(||self.builder_blueprint());
-                        return Ok(std::iter::once(&builder).chain(builder.ancestry.iter()).any(|ancestor|Rc::ptr_eq(ancestor,c)));
+                        return Ok(Self::ancestry_includes(&builder,c));
                     }
                 }
                 let b=match subject{Value::Blueprint(b) if class_only=>Some(b),Value::Thing(t) if !class_only=>Some(&t.blueprint()),_=>None};
-                Ok(b.map_or(false,|b|Rc::ptr_eq(b,c)||b.ancestry.iter().any(|a|Rc::ptr_eq(a,c))))
+                Ok(b.map_or(false,|b|Self::ancestry_includes(b,c)))
             }
             Value::Wrapped(8,names)=>{
                 let Value::Text(word)=&names[0] else{return Err(self.not_a_class(amiss));};
