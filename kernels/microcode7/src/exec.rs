@@ -6817,7 +6817,7 @@ impl<'a> Machine<'a> {
         if !word.contains('.') { return Value::text(self.builtin_module()); }
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
-    pub(super) fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+    pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
         if let Value::Intrinsic(op, word) = value {
             if !Self::names_a_kind(op) {
                 if name == self.detail("qualified") { return Some(Value::text(word)); }
@@ -6886,6 +6886,12 @@ impl<'a> Machine<'a> {
             if self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| w == name) { return Some(Value::Flag(state.try_borrow().is_err())); }
         }
         let names = self.table.strings("ext.stmt.class.special");
+        // Each of the two named singletons is the one value of its
+        // kind, and answers for the very blueprint the kind primitive
+        // names for it.
+        if names.get(35).map_or(false, |s| s == name) && matches!(value.settled(), Value::Refusal(_) | Value::Ellipsis) {
+            return Some(self.kind_named_after(&value.settled()));
+        }
         if let Value::Span(bounds) = value {
             return self.span_bound_named(name).map(|i| bounds[i].clone());
         }
@@ -11415,9 +11421,6 @@ impl<'a> Machine<'a> {
         if let Some(under) = self.underlying_unless(subject, &[15]) { return self.object_members(&under); }
         match subject {
             Value::Attributes(t) => {
-                if matches!(self.namespace_holding(&Value::Thing(t.clone())).as_deref(), Some(name) if name != "builtins") {
-                    return Err(self.core_complaint("core.uniterable", &subject.kind_word()));
-                }
                 Ok(Self::attribute_entries(t).into_iter().map(|(key, _)| match key {
                     Value::Keyed(original, _) => original.as_ref().clone(), plain => plain,
                 }).collect())
@@ -15423,6 +15426,7 @@ impl<'a> Machine<'a> {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    (Value::Attributes(a), Value::Attributes(b)) => Rc::ptr_eq(a, b),
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
                     (Value::Bound(a,here), Value::Bound(b,there)) => Rc::ptr_eq(a,b) && Rc::ptr_eq(here,there),
                     // Every read of a method ties it afresh: two reads are never one value.
@@ -17348,9 +17352,6 @@ impl<'a> Machine<'a> {
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         if let Value::Attributes(owner) = source {
-            if matches!(self.namespace_holding(&Value::Thing(owner.clone())).as_deref(), Some(name) if name != "builtins") {
-                return Err(self.core_complaint("core.uniterable", &source.kind_word()));
-            }
             return Ok(Self::attribute_entries(owner).into_iter().map(|(key, _)| match key {
                 Value::Keyed(value, _) => value.as_ref().clone(), other => other,
             }).collect());
@@ -21019,6 +21020,11 @@ impl Machine<'_> {
                     if op == MembersOf { return Err(self.core_complaint("core.vars", "")); }
                     let word = input[1].bare();
                     if matches!(op, SetMember | DropMember) {
+                        // A singleton's class is as fixed as the singleton
+                        // itself, by builtin as by statement.
+                        if matches!(input[0].settled(), Value::Refusal(_) | Value::Ellipsis) && word == self.detail("kind") {
+                            return Err(self.detail(if op == SetMember { "kind.fixed" } else { "kind.kept" }).to_owned().into());
+                        }
                         let told = self.member_unwritable(&input[0], &word);
                         if told.is_empty() { return Err(self.core_complaint("core.unready", name)); }
                         return Err(told);

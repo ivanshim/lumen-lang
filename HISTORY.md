@@ -2275,3 +2275,23 @@ both additions, and the shared builtin stderr record was remeasured from
 the worktree root. No test or input is weakened. Complete final-build
 runs confirm microcode7 math and str at 82 and 127 where Lambda times out.
 Sentinel unions and weak references to string subclasses remain unfinished.
+
+### 1at. Batch 20r merged as #525; batch 20s: namespaces and singletons
+
+Batch 20s folds two branches, integrated by a GPT-6 Sol worker.
+fix/namespace-protocols (Sol) makes vars return the actual __dict__ value,
+preserving identity and descriptor behavior, and makes dir honor module
+and metaclass protocols with Python comparison ordering.
+fix/singleton-attributes (Kimi K3) gives NotImplemented and Ellipsis their
+real class identities and immutable class behavior. Quoted NotImplemented
+stays text rather than being mistaken for the singleton token.
+
+Each branch adds one builtin test, taking test_builtin from 105 to 107.
+The source conflict retains native kind flags and the singleton guard;
+the shared builtin stderr record was remeasured on both kernels through
+fixwrite using a relative path. No test or input is weakened.
+
+The merged count is 2619 on both kernels, up from 2617. Complete final
+build-machine runs confirm microcode7 math, str and long at 82, 127 and 35
+where Lambda times out. dir(traceback) still lacks a real bytecode offset;
+no offset or type metadata is fabricated to make that test pass.
