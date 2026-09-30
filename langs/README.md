@@ -3549,6 +3549,17 @@ only. The extension labels so far, all from PHP:
   cells are not part of that map; it lets a library find the classes the
   program has declared without teaching the kernel a test runner. With an
   integer depth it instead returns a running frame for the system library.
+- `ext.builtin.frame.module`: a builtin answering the name of the module
+  the routine running a frame was written in, the frame found by walking
+  the running frames an integer depth from the innermost one, the way
+  `ext.builtin.program.namespace` walks them. A library reads the module
+  a call was made from without the caller passing it.
+- `ext.builtin.class.seal`: a builtin sealing the class it is given
+  against change: writing or taking away a member of the class itself is
+  refused, and the class is refused as a base. The class's flags then say
+  so: the bit for an immutable type is set, the bit for a usable base is
+  not, and a class whose things the round-finding collector follows also
+  carries the collector's bit, sealed or not.
 - `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
   and writing a member by its name, the owner given first. The reader
   may be given a third value for an absent member; the writer takes the
@@ -4392,6 +4403,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
+| `ext.builtin.class.seal` | - | - | `__seal_class` | - | - | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
 | `ext.builtin.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
@@ -4509,6 +4521,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.frame.module` | - | - | `__frame_module` | - | - | - | - | - | - | - |
 | `ext.builtin.frozenset` | - | - | `frozenset` | - | - | - | - | - | - | - |
 | `ext.builtin.gc.collect` | - | - | `__gc_collect` | - | - | - | - | - | - | - |
 | `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |

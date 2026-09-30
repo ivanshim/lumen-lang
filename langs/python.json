@@ -623,6 +623,9 @@
   "ext.builtin.class.name": [
     "__name__"
   ],
+  "ext.builtin.class.seal": [
+    "__seal_class"
+  ],
   "ext.builtin.classmethod": [
     "classmethod"
   ],
@@ -958,6 +961,9 @@
   ],
   "ext.builtin.filter": [
     "filter"
+  ],
+  "ext.builtin.frame.module": [
+    "__frame_module"
   ],
   "ext.builtin.format": [
     "format"

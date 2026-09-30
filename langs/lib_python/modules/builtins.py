@@ -170,13 +170,12 @@ setattr(__load_module('builtins'), 'bytearray', bytearray)
 # A unique thing that stands for itself and prints as its name. The
 # kernel has no value of this kind, so the class is written out here: a
 # program reaches it by writing sentinel, and each call makes one more.
-# What this cannot carry is the class itself being sealed against a
-# written attribute, and the module a sentinel says it came from, which
-# in CPython is the module that called for it and here is this one.
+# The module a sentinel says it came from is read off the frame that
+# asked for it, one call up from here, so a sentinel made in a module
+# names that module. Once the class stands complete it is sealed: the
+# kernel then refuses any attribute written on the class itself and any
+# class that would stand on it, and says so in the class's flags.
 class sentinel:
-    def __init_subclass__(cls, **named):
-        raise TypeError("type 'sentinel' is not an acceptable base type")
-
     def __new__(cls, *given, **named):
         shown = None
         for word in named:
@@ -191,7 +190,7 @@ class sentinel:
             raise TypeError("sentinel() argument 'repr' must be str or None, not " + type(shown).__name__)
         made = super().__new__(cls)
         object.__setattr__(made, '__name__', given[0])
-        object.__setattr__(made, '__module__', 'builtins')
+        object.__setattr__(made, '__module__', __frame_module(1))
         object.__setattr__(made, '_shown', shown)
         return made
 
@@ -243,6 +242,8 @@ class sentinel:
     def __deepcopy__(self, memo):
         return self
 
+
+__seal_class(sentinel)
 
 
 # A mapping that is read and never written. It keeps an ordinary
