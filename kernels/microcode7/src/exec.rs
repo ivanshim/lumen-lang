@@ -13550,8 +13550,16 @@ impl<'a> Machine<'a> {
                     let globals = Value::Shared(self.book_about(true));
                     let locals = Value::Shared(self.book_about(false));
                     let fromlist = v[1].clone();
-                    self.apply_held(importer, vec![Value::text(&path), globals, locals, fromlist, Value::Small(0)])
-                        .map_err(|escape| self.suspension_fault(escape))?
+                    // Whatever the program's own __import__ raises is
+                    // carried through as the value it raised, so a
+                    // clause around the import may take it: an escape
+                    // that is not plain words is put by to be raised
+                    // once the call returns.
+                    match self.apply_held(importer, vec![Value::text(&path), globals, locals, fromlist, Value::Small(0)]) {
+                        Ok(got) => got,
+                        Err(Escape::Error(words)) => return Err(words),
+                        Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
+                    }
                 }
             }
             Prim::ImportMember => {
@@ -13570,8 +13578,8 @@ impl<'a> Machine<'a> {
                     // whatever the answer's own reading raises standing.
                     match self.read_class_member(v[0].clone(), &v[2].bare(), false) {
                         Ok(value) => value,
-                        Err(escape) if self.missing_member_escape(&escape) => return Err(self.import_member_fault(&v[1].bare(), &v[2].bare())),
-                        Err(escape) => return Err(self.suspension_fault(escape)),
+                        Err(escape) if self.missing_member_escape(&escape) => return Err(self.import_member_fault_from(&v[0], &v[2].bare())),
+                        Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
                     }
                 }
             }
@@ -18236,6 +18244,27 @@ impl Machine<'_> {
             Some(file) => format!("{told} ({file})"),
             None => told,
         }
+    }
+
+    /// The words for a member a value the program's own __import__
+    /// answered with has not: the name and the module CPython names in
+    /// "cannot import name", taken from the module's own __name__ and
+    /// __file__ the way CPython takes them, with the unknown-location
+    /// wording where the module carries no file of its own.
+    fn import_member_fault_from(&mut self, module: &Value, wanted: &str) -> String {
+        let modname = match self.read_class_member(module.clone(), "__name__", false) {
+            Ok(Value::Text(named)) => named.to_string(),
+            _ => "<unknown module name>".to_owned(),
+        };
+        let told = match self.table.strings("ext.stmt.import.member.missing") {
+            [head, mid, tail] => format!("{head}{wanted}{mid}{modname}{tail}"),
+            _ => format!("ImportError: cannot import name '{wanted}' from '{modname}'"),
+        };
+        let location = match self.read_class_member(module.clone(), "__file__", false) {
+            Ok(Value::Text(file)) => file.to_string(),
+            _ => "unknown location".to_owned(),
+        };
+        format!("{told} ({location})")
     }
 
     /// Where a namespace's own text was read from, for one the run

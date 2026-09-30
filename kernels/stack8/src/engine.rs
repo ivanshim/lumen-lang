@@ -8683,9 +8683,9 @@ impl<'a> Engine<'a> {
                     // without is a missing import, not a missing
                     // attribute: the ImportError the reference names,
                     // whatever the answer's own reading raises standing.
-                    match self.class_get(module, name, false) {
+                    match self.class_get(module.clone(), name, false) {
                         Ok(value) => value,
-                        Err(fault) if self.attribute_fault(&fault) => return Err(self.import_member_fault(path, name).into()),
+                        Err(fault) if self.attribute_fault(&fault) => return Err(self.import_member_fault_from(&module, name).into()),
                         Err(fault) => return Err(fault),
                     }
                 }
@@ -18479,6 +18479,26 @@ impl Engine<'_> {
             Some(file) => format!("{told} ({file})"),
             None => told,
         }
+    }
+
+    /// The words for a member a value the program's own __import__
+    /// answered with has not: the name and the module CPython names in
+    /// "cannot import name", taken from the module's own __name__ and
+    /// __file__ the way CPython takes them, with the unknown-location
+    /// wording where the module carries no file of its own.
+    fn import_member_fault_from(&mut self, module: &Value, name: &str) -> String {
+        let modname = match self.class_get(module.clone(), "__name__", false) {
+            Ok(Value::Text(named)) => named.to_string(),
+            _ => "<unknown module name>".to_string(),
+        };
+        let pieces = &self.lang.import_member_missing;
+        let told = if pieces.len() == 3 { format!("{}{name}{}{modname}{}", pieces[0], pieces[1], pieces[2]) }
+            else { format!("ImportError: cannot import name '{name}' from '{modname}'") };
+        let location = match self.class_get(module.clone(), "__file__", false) {
+            Ok(Value::Text(file)) => file.to_string(),
+            _ => "unknown location".to_string(),
+        };
+        format!("{told} ({location})")
     }
 
     /// Where a module's own text was read from, for a module the run
