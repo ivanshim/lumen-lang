@@ -23,6 +23,7 @@ pub mod code;
 pub mod faint;
 mod core;
 mod complex;
+pub mod tuples;
 
 use lang::Lang;
 use value::Value;
@@ -124,6 +125,7 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 }
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
+    let _tuple_scope = tuples::Scope::enter(lang.builtins.values().any(|b| *b == code::Builtin::Tuple));
     go_inner(lang, source, program_args, request).map_err(|e| {
         if !lang.exceptions.is_empty() {
             if let Some(told) = e.strip_prefix('\0') { return told.to_string(); }

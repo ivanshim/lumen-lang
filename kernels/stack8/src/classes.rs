@@ -179,7 +179,7 @@ impl<'a> Engine<'a> {
                 let entries = members.iter().filter(|(_, value)| !matches!(value, Value::Blank))
                     .map(|(word, value)| (Value::text(word), value.clone())).collect::<Vec<_>>();
                 let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);
-                let mut given = vec![Value::text(&name), Value::Tuple(Rc::new(raw_bases)), namespace];
+                let mut given = vec![Value::text(&name), Value::tuple(raw_bases), namespace];
                 given.extend(keywords.into_iter().map(|(word, value)| Value::Tie(Rc::new((Value::text(&word), value)))));
                 return self.class_apply(factory, given);
             }
@@ -205,7 +205,7 @@ impl<'a> Engine<'a> {
         // a map it may write into, and what it answers is the class.
         if let Some(m) = maker.clone() {
             if let Some(f) = self.class_value(&m, self.class_word("allocate")) {
-                let listed = Value::Tuple(Rc::new(bases.iter().cloned().map(Value::Class).collect()));
+                let listed = Value::tuple(bases.iter().cloned().map(Value::Class).collect());
                 let pairs: Vec<(Value, Value)> = members.iter().filter(|(_, v)| !matches!(v, Value::Blank))
                     .map(|(n, v)| (Value::text(n), v.clone())).collect();
                 let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into())))), true);
@@ -943,7 +943,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 let class = match &subject { Value::Object(o) => Value::Class(o.class_now().clone()), other => self.class_type(vec![other.clone()])? };
-                Value::Tuple(Rc::new(vec![class, Value::Tuple(Rc::new(Vec::new())), self.root_state(&subject)]))
+                Value::tuple(vec![class, Value::tuple(Vec::new()), self.root_state(&subject)])
             }
             13 => Value::Small(match &subject { Value::Object(o) if o.class_now().name != self.class_word("root") => 24, _ => 16 }),
             _ => return Err(self.class_refusal()),
@@ -980,7 +980,7 @@ impl<'a> Engine<'a> {
         let arguments = fields.iter().find(|(key, _)| key == "\0arguments").and_then(|(_, value)| match value { Value::Tuple(items) => Some(items.clone()), _ => None });
         let use_default = arguments.as_ref().is_some_and(|items| items.is_empty() || items.len() == 1 && items[0].plain() == name);
         if use_default {
-            let args = Value::Tuple(Rc::new(vec![Value::text(&qualified)]));
+            let args = Value::tuple(vec![Value::text(&qualified)]);
             for (key, value) in fields.iter_mut() {
                 if key == "\0arguments" || self.lang.exception_args.as_deref() == Some(key) { *value = args.clone(); }
             }
@@ -1234,7 +1234,7 @@ impl<'a> Engine<'a> {
                     let word=word.to_string();
                     let kind=self.kind_class(&word);
                     let root=self.root_class();
-                    let line=Value::Tuple(Rc::new(vec![Value::Class(kind),Value::Class(root)]));
+                    let line=Value::tuple(vec![Value::Class(kind),Value::Class(root)]);
                     return Ok(if listed {Self::adapter(0,vec![line])} else {line});
                 }
                 // Whatever a value of the kind answers to is carried by
@@ -1264,7 +1264,7 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("name") { return Ok(Value::text(&c.name)); }
                 if name==self.class_word("qualified") { return Ok(self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name))); }
-                if name==self.class_word("bases") { return Ok(Value::Tuple(Rc::new(c.direct.iter().cloned().map(Value::Class).collect()))); }
+                if name==self.class_word("bases") { return Ok(Value::tuple(c.direct.iter().cloned().map(Value::Class).collect())); }
                 if name==self.class_word("namespace") {
                     // A class standing for a builtin kind holds no
                     // members of its own; what it names are the ones a
@@ -1277,7 +1277,7 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let mut order=vec![subject.clone()]; order.extend(c.lineage.iter().cloned().map(Value::Class));
-                    let tuple=Value::Tuple(Rc::new(order));
+                    let tuple=Value::tuple(order);
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
                 if self.lang.class_annotations.first().map_or(false,|word|word==name) { return self.class_annotations(c); }
@@ -1452,7 +1452,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
                     if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
-                    return Ok(if values.is_empty(){Value::Null}else{Value::Tuple(Rc::new(values))});
+                    return Ok(if values.is_empty(){Value::Null}else{Value::tuple(values)});
                 }
                 if name==self.class_word("keywords") {
                     let pairs=Self::spare_arguments(f,true);
@@ -1467,7 +1467,7 @@ impl<'a> Engine<'a> {
                     if f.enclosed.is_empty() {return Ok(Value::Null);}
                     let mut named:Vec<(&str,&Value)>=f.enclosed.iter().map(|(at,cell)|(f.idents.get(*at).map_or("",String::as_str),cell)).collect();
                     named.sort_by(|x,y|x.0.cmp(y.0));
-                    return Ok(Value::Tuple(Rc::new(named.into_iter().map(|(_,cell)|Self::adapter(31,vec![cell.clone()])).collect())));
+                    return Ok(Value::tuple(named.into_iter().map(|(_,cell)|Self::adapter(31,vec![cell.clone()])).collect()));
                 }
                 // A routine answers its own call, so reading it back and
                 // calling it does what calling the routine does.
@@ -1490,7 +1490,7 @@ impl<'a> Engine<'a> {
                     }
                     if let Some(field) = self.lang.class_details.get("code.fields").and_then(|v| v.iter().position(|s| s == name)) {
                         let number = |n: usize| Value::Small(n as i64);
-                        let words = |v: &[String]| Value::Tuple(Rc::new(v.iter().map(|s| Value::text(s)).collect()));
+                        let words = |v: &[String]| Value::tuple(v.iter().map(|s| Value::text(s)).collect());
                         let value = match field {
                             0 => Value::text(if f.ident.starts_with("#generator") { "<genexpr>" } else if f.ident == "<program>" { self.lang.trace_fields.get(10).map_or("<module>", String::as_str) } else { &f.ident }),
                             1 => Value::text(&f.qualified),
@@ -1498,7 +1498,7 @@ impl<'a> Engine<'a> {
                             3 => number(f.parameter_rules.as_ref().map_or(0, |v| v.iter().filter(|r| **r == 2).count())),
                             4 => number(f.local_names.len()),
                             5 => words(&f.code_names),
-                            6 => Value::Tuple(Rc::new(f.code_constants.iter().map(|v| if let Value::Routine(r) = v { self.routine_code(r) } else { v.clone() }).collect())),
+                            6 => Value::tuple(f.code_constants.iter().map(|v| if let Value::Routine(r) = v { self.routine_code(r) } else { v.clone() }).collect()),
                             7 => Value::Small(f.code_flags),
                             8 => Value::Text(f.written_in.clone().unwrap_or_else(|| self.root_source.clone())),
                             9 => number(f.declared_on.max(1) as usize),
@@ -1513,7 +1513,7 @@ impl<'a> Engine<'a> {
                         _ => {}
                     }
                     if name==self.class_word("argcount") {return Ok(Value::Small(f.parameter_rules.as_ref().map_or(f.formals.len(),|rules|rules.iter().filter(|r|**r<2).count()) as i64));}
-                    if name==self.class_word("varnames") {return Ok(Value::Tuple(Rc::new(f.local_names.iter().map(|n|Value::text(n)).collect())));}
+                    if name==self.class_word("varnames") {return Ok(Value::tuple(f.local_names.iter().map(|n|Value::text(n)).collect()));}
                 }
             }
             Value::Adapter(w) if w.0==4 || w.0==5 => {
@@ -1593,7 +1593,7 @@ impl<'a> Engine<'a> {
                 items.push(self.class_apply(maker.clone(), vec![Value::text(name)])?);
             }
         }
-        Ok(Value::Tuple(Rc::new(items)))
+        Ok(Value::tuple(items))
     }
     /// The maker of type-parameter names: the hinting module's own
     /// maker, from the module the program already holds where it holds

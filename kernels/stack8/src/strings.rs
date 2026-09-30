@@ -268,7 +268,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     if let Some(Value::Codepoints(codes)) = args.first() {
         if op == Getnewargs {
             if args.len() != 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", args.len() - 1)); }
-            return Ok(Value::Tuple(Rc::new(vec![Value::from_codes(codes.to_vec())])));
+            return Ok(Value::tuple(vec![Value::from_codes(codes.to_vec())]));
         }
         if matches!(op, Isascii | Isdecimal | Isnumeric | Istitle | Isidentifier | Isprintable) {
             let clean: String = codes.iter().map(|n| char::from_u32(*n).unwrap_or('\0')).collect();
@@ -315,7 +315,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     };
     let result = match op {
         Encode => return Err(fault(lang,"encode")),
-        Getnewargs => Value::Tuple(Rc::new(vec![Value::text(s)])),
+        Getnewargs => Value::tuple(vec![Value::text(s)]),
         Length => Value::Small(s.chars().count() as i64),
         Upper | Lower | Swapcase | Casefold | Capitalize | Title => Value::text(&recase(s,op)),
         Isascii => Value::Flag(s.is_ascii()),
@@ -356,7 +356,7 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             let parts=match at {Some(at)=>vec![s[..at].to_string(),sep.to_string(),s[at+sep.len()..].to_string()],
                 None if op==Partition=>vec![s.to_string(),String::new(),String::new()],
                 None=>vec![String::new(),String::new(),s.to_string()]};
-            Value::Tuple(Rc::new(parts.iter().map(|part| Value::text(part)).collect()))
+            Value::tuple(parts.iter().map(|part| Value::text(part)).collect())
         }
         Expandtabs => {
             let size=number(0,8)?.max(0) as usize;

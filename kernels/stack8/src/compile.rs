@@ -9333,7 +9333,7 @@ impl<'a> Compiler<'a> {
                             self.lazy_comprehension(&group, clause)?;
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
-                                if lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.constant(Value::Tuple(Rc::new(Vec::new()))); }
+                                if lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.constant(Value::tuple(Vec::new())); }
                                 else { self.scope_fault(&lang.scope_unready.clone()); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
