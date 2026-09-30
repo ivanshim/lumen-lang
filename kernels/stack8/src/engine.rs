@@ -5214,6 +5214,13 @@ impl<'a> Engine<'a> {
             if let Some(view) = raw { return Ok(Some(Value::View(Rc::new((view.0.clone(), "mapping".to_string()))))); }
         }
         let held = value.contents();
+        if !self.class_word("base").is_empty() && ["base", "bases", "mro", "order"].iter().any(|part| name == self.class_word(part))
+            && matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) {
+            return self.class_get(held, name, false).map(Some).map_err(|fault| match fault {
+                Fault::Note(message) => message,
+                raised => { self.carried = Some(raised); String::new() },
+            });
+        }
         if name == self.class_word("namespace") {
             let kind = match &held {
                 Value::Native(op, spelling) if Self::kind_builtin(op) => Some(spelling.clone()),
@@ -7630,7 +7637,7 @@ impl<'a> Engine<'a> {
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
-                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc == 3 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
+                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc != 1 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
                     let supplied=self.drop_many(argc)?;let mut args=Vec::new();
                     // The property builtin takes its accessors by name; the making of the property sorts them.
                     if *builtin==Builtin::ClassTool(11) && !self.class_word("descriptor.get").is_empty() { let made=self.class_work(11,supplied)?; self.data.push(made); return Ok(()); }
@@ -8810,7 +8817,8 @@ impl<'a> Engine<'a> {
                 // A routine answers for the row of type parameters its
                 // declaration wrote, empty where it wrote none.
                 let routine_typed = matches!(&held, Value::Routine(_)) && name.as_ref() == self.class_word("type_params");
-                let kind_stamp = match &held {
+                let ancestry_named = !self.class_word("base").is_empty() && ["base", "bases", "mro", "order"].iter().any(|part| name.as_ref() == self.class_word(part)) && matches!(&held, Value::Native(op, _) if Self::kind_builtin(op));
+                let kind_stamp = ancestry_named || match &held {
                     Value::Native(op, word) if !Self::kind_builtin(op) => name.as_ref() == self.class_word("module")
                         || name.as_ref() == self.class_word("qualified")
                         || (name.as_ref() == self.class_word("receiver") && word.contains('.')),
@@ -12929,7 +12937,7 @@ impl<'a> Engine<'a> {
         }
         if matches!(operation, "integer_bytes" | "integer_from_bytes") {
             let mut items = Vec::new();
-            if operation == "integer_bytes" { items.push((None, receiver.contents())); }
+            if operation == "integer_bytes" { items.push((None, Self::worth_of(receiver).unwrap_or_else(|| receiver.contents()).contents())); }
             items.extend(args.into_iter().map(|v| (None, v)));
             items.extend(named.into_iter().map(|(n, v)| (Some(n), v)));
             let result = self.builtin_call(Builtin::Bytes(if operation == "integer_bytes" { 14 } else { 15 }), "", items)?;
@@ -16119,6 +16127,12 @@ impl<'a> Engine<'a> {
                 };
             }
             Builtin::SortOf => {
+                if self.fuller_classes() && args.len() != 1 {
+                    return self.class_type(args.clone()).map_err(|fault| match fault {
+                        Fault::Note(message) => message,
+                        raised => { self.carried = Some(raised); String::new() },
+                    });
+                }
                 arity(1)?;
                 if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
                     // A value that stands for a kind is itself of the

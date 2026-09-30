@@ -5161,6 +5161,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.arguments.none` | - | - | `TypeError: ` `() takes no arguments` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.readonly` | - | - | `AttributeError: '` `' object attribute '` `' is read-only` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.base` | - | - | `__base__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.cell.contents` | - | - | `cell_contents` | - | - | - | - | - | - | - |
@@ -5581,3 +5582,14 @@ stop_exception class or tuple of classes for callable iterators.
 
 `ext.builtin.iter.stop_exception` names the corresponding keyword accepted by Python callable iterators.
 `ext.stmt.class.detail.code.fields` names code metadata members (name, qualified name, positional-only and keyword-only counts, local count, names, constants, flags, filename, first line) and the lazy function annotation member. Code values use the same wrapper as traceback frame code.
+
+`ext.stmt.class.detail.base` names the read-only primary layout parent of a
+Python class (`__base__`), selected from its actual direct bases. The root
+class has no such parent. This is separate from the ordered `__bases__`
+sequence and C3 `__mro__`. Native payload layout takes precedence over an
+ordinary namespace-only mixin; unrelated layouts cannot share an instance.
+
+Class layout selection and dynamic type argument validation share the class
+construction functions with class documentation handling. This change does
+not import the parallel class-documentation or held type-metadata work;
+documentation values retain the existing implementation.

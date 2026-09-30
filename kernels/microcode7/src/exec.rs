@@ -5988,7 +5988,7 @@ impl<'a> Machine<'a> {
                     if self.has_class_order() {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
-                            Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
+                            Prim::SortOf if values.len()!=1 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
                             Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
@@ -7473,7 +7473,7 @@ impl<'a> Machine<'a> {
         }
         if name == "integer_from_bytes" || name == "integer_bytes" {
             let mut supplied = arguments;
-            let work = if name == "integer_bytes" { supplied.insert(0, receiver.settled()); 14 } else { 15 };
+            let work = if name == "integer_bytes" { supplied.insert(0, Self::underlying(receiver).unwrap_or_else(||receiver.settled()).settled()); 14 } else { 15 };
             let number = self.builtin_names(Prim::Octets(work), "", &mut supplied, keywords)?
                 .ok_or_else(|| self.octet_error("arguments"))?;
             return match receiver {

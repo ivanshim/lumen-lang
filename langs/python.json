@@ -2629,6 +2629,9 @@
     "' object attribute '",
     "' is read-only"
   ],
+  "ext.stmt.class.detail.base": [
+    "__base__"
+  ],
   "ext.stmt.class.detail.bases": [
     "__bases__"
   ],
