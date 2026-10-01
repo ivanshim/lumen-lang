@@ -791,11 +791,40 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
 
 
 def DocFileSuite(*paths, **options):
-    """CPython reads the named files from disk; there is no file reading
-    here, so say so rather than pretend the examples passed."""
-    raise NotImplementedError(
-        'doctest.DocFileSuite needs to read ' + ', '.join([str(p) for p in paths]) +
-        ' from disk, which this library cannot do')
+    """A unittest suite of the examples found in the named files.
+
+    Each path is read from disk; one that is not absolute is sought
+    beside the module that asks, the way the reference reads its own
+    module-relative paths.
+    """
+    names = __program_namespace()
+    globs = options.get('globs')
+    if globs is None:
+        globs = _copy_dict(names)
+    suite = unittest.TestSuite()
+    optionflags = options.get('optionflags', 0)
+    setUp = options.get('setUp')
+    tearDown = options.get('tearDown')
+    checker = options.get('checker')
+    parser = options.get('parser')
+    if parser is None:
+        parser = DocTestParser()
+    relative = options.get('module_relative', True)
+    import os
+    home = names.get('__file__', '')
+    if home:
+        home = os.path.dirname(home)
+    for path in paths:
+        text_of = str(path)
+        if relative and home and not text_of.startswith('/'):
+            text_of = os.path.join(home, text_of)
+        with open(text_of) as fileobj:
+            text = fileobj.read()
+        test = parser.get_doctest(text, globs, str(path), text_of, 0)
+        if len(test.examples) == 0:
+            continue
+        suite.addTest(DocTestCase(test, optionflags, setUp, tearDown, checker))
+    return suite
 
 
 def DocFileTest(path, **options):
