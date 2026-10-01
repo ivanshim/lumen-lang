@@ -4450,7 +4450,13 @@ impl<'a> Machine<'a> {
         let mut outer = root;
         for (depth, source) in frames.into_iter().enumerate().rev() {
             let projected = Env::make(source.cells.borrow().len(), Some(outer));
-            for address in &program.reaching {
+            // Deferred annotations run from the same defining scopes,
+            // but keep their own capture list and function metadata.
+            // Preserve those cells as well without retaining other locals.
+            let wanted = program.reaching.iter().chain(
+                program.annotator.iter().flat_map(|annotation| annotation.reaching.iter())
+            );
+            for address in wanted {
                 if address.up != depth + 1 { continue; }
                 let cell = if source.capture_slots.borrow().contains(&address.at) {
                     let Value::Shared(cell) = &source.cells.borrow()[address.at] else { unreachable!() };
