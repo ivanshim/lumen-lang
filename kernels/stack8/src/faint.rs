@@ -23,8 +23,7 @@ use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance,
 /// What a weak hold points at: one of the kinds a program may hold weakly.
 #[derive(Debug, Clone)]
 pub enum Hold {
-    // Builtin type words exist for the duration of the interpreter.
-    Immortal(Value),
+    Native(crate::code::Builtin, Rc<str>),
     Object(Weak<Instance>),
     Class(Weak<Class>),
     Generator(Weak<RefCell<Generator>>),
@@ -37,7 +36,7 @@ impl Hold {
     /// The value again, while it is still there.
     pub fn revive(&self) -> Option<Value> {
         Some(match self {
-            Hold::Immortal(value) => value.clone(),
+            Hold::Native(operation, spelling) => Value::Native(*operation, spelling.clone()),
             Hold::Object(w) => Value::Object(w.upgrade()?),
             Hold::Class(w) => Value::Class(w.upgrade()?),
             Hold::Generator(w) => Value::Generator(w.upgrade()?),
@@ -49,7 +48,7 @@ impl Hold {
 
     pub fn gone(&self) -> bool {
         match self {
-            Hold::Immortal(_) => false,
+            Hold::Native(..) => false,
             Hold::Object(w) => w.strong_count() == 0,
             Hold::Class(w) => w.strong_count() == 0,
             Hold::Generator(w) => w.strong_count() == 0,
@@ -228,6 +227,7 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
     match value {
         Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => hold_of(&cell.borrow()),
         Value::Object(o) => Some(Hold::Object(Rc::downgrade(o))),
+        Value::Native(op, word) if op.names_kind() => Some(Hold::Native(*op, word.clone())),
         Value::Class(c) => Some(Hold::Class(Rc::downgrade(c))),
         Value::Generator(g) => Some(Hold::Generator(Rc::downgrade(g))),
         Value::Set(s) => Some(Hold::Set(Rc::downgrade(s))),

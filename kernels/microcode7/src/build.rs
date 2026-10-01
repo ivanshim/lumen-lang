@@ -90,6 +90,7 @@ const MET_ANNOTATED: u8 = 2;
 struct Layer {
     permits_async: bool,
     async_walk_seen: bool,
+    return_value_at: Option<usize>,
     gathering_kind: Option<&'static str>,
     expression_targets: Vec<String>,
     comprehension: bool,
@@ -534,7 +535,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
-    let top = Layer { async_walk_seen: false, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() };
+    let top = Layer { async_walk_seen: false, return_value_at: None, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -545,7 +546,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() });
+        layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() });
     }
     let outer_layers = layers.len();
     if read_in && outer_layers > 1 {
@@ -671,7 +672,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).
             if opening && own_line && within.is_none() {
-                let first = match &stmt { Form::OnLine(_, inner) => inner.as_ref(), other => other };
+                let first = match &stmt { Form::OnLine(_, _, inner) => inner.as_ref(), other => other };
                 if let Form::Const(Value::Text(said)) = first {
                     for name in table.strings("ext.system.module.doc") {
                         let slot = r.global_address(name);
@@ -715,6 +716,8 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
+    let mut body = body;
+    if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
     let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
@@ -1112,6 +1115,9 @@ impl<'a> Builder<'a> {
     }
 
     fn need_word(&mut self, why: &str) -> Res<String> {
+        if self.table.spells("ext.lexical.identifier.reserved", &self.look().lexeme) {
+            return Err(String::from("SyntaxError: invalid syntax"));
+        }
         if self.table.has_any("ext.builtin.exceptions.syntax") && ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.key(label)) {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
@@ -1720,7 +1726,7 @@ impl<'a> Builder<'a> {
         let param_slots = (0..params.len()).collect();
         let permits_async = (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>" | "<genexpr>"))
             && self.layers.last().map_or(false, |scope| scope.permits_async);
-        self.layers.push(Layer { async_walk_seen: false, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
+        self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
                 if !self.table.has_any("ext.builtin.exceptions.syntax") && known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
@@ -1787,8 +1793,15 @@ impl<'a> Builder<'a> {
         let mut literals = vec![doc.as_ref().map_or(Value::Nil, |s| Value::text(s))];
         let mut referenced = Vec::new();
         let mut suspension = false;
+        if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
         inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
-        if scope.permits_async && suspension { flags = (flags & !128) | 512; }
+        if scope.permits_async && suspension {
+            if let Some(at) = scope.return_value_at {
+                self.pos = at;
+                return Err("SyntaxError: 'return' with value in async generator".to_owned());
+            }
+            flags = (flags & !128) | 512;
+        }
         Ok(constant(Value::Routine(Rc::new(Routine { annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
@@ -2508,7 +2521,7 @@ impl<'a> Builder<'a> {
         if self.tells_place && self.look().row > self.before {
             let row = self.look().row - self.before;
             let made = self.plain_or_kind()?;
-            return Ok(Form::OnLine(row, Box::new(made)));
+            return Ok(Form::OnLine(row, 0, Box::new(made)));
         }
         self.plain_or_kind()
     }
@@ -2885,6 +2898,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.return") {
                 self.note_finally_word("return");
+                let return_at = self.pos;
                 self.advance();
                 // A routine giving back a cell answers with the cell of
                 // whatever it names, so a name tied to the answer and
@@ -2899,6 +2913,9 @@ impl<'a> Builder<'a> {
                 } else {
                     vec![if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? }]
                 };
+                if !value.is_empty() && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    self.layers.last_mut().unwrap().return_value_at.get_or_insert(return_at);
+                }
                 return Ok(prim_call(Prim::Yield, value));
             }
             if self.key("stmt.break") {
@@ -3136,9 +3153,10 @@ impl<'a> Builder<'a> {
             }
             self.advance();
             if self.table.flag("ext.stmt.import.value") {
-                writes.push(prim_call(Prim::SpreadModule, vec![prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(Value::Nil), constant(Value::Flag(false))])]));
+                writes.push(prim_call(Prim::SpreadModule, vec![prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(Value::tuple(vec![Value::text("*")]))])]));
             }
         } else {
+            let mut gathered: Vec<(String, String, bool)> = Vec::new();
             loop {
                 let named_at = self.pos;
                 let original = self.module_path(!taking_names)?;
@@ -3175,13 +3193,7 @@ impl<'a> Builder<'a> {
                     let complaint = match original.as_str() { "braces" => "not a chance".to_owned(), name => format!("future feature {name} is not defined") };
                     return Err(format!("SyntaxError: {complaint}"));
                 }
-                let worth = if self.table.flag("ext.stmt.import.value") {
-                    prim_call(Prim::BringModule, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
-                } else { constant(Value::Nil) };
-                self.claim(&local);
-                self.importing = true;
-                writes.push(self.write(&local, worth));
-                self.importing = false;
+                gathered.push((original, local, alias));
                 if !self.on_any("syntax.call.separator") {
                     break;
                 }
@@ -3192,6 +3204,45 @@ impl<'a> Builder<'a> {
                 }
                 if enclosed && self.on_any("syntax.group.close") {
                     break;
+                }
+            }
+            if self.table.flag("ext.stmt.import.value") {
+                if taking_names {
+                    if !gathered.is_empty() {
+                        let module_slot = self.gensym("import");
+                        let fromlist = Value::tuple(gathered.iter().map(|(name, _, _)| Value::text(name)).collect());
+                        writes.push(Form::Write(module_slot.clone(), Box::new(prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(fromlist)]))));
+                        for (name, local, _) in &gathered {
+                            let member = prim_call(Prim::ImportMember, vec![Form::Read(module_slot.clone()), constant(Value::text(&path)), constant(Value::text(name))]);
+                            self.claim(local);
+                            self.importing = true;
+                            writes.push(self.write(local, member));
+                            self.importing = false;
+                        }
+                        writes.push(Form::Forget(module_slot));
+                    }
+                } else {
+                    for (name, local, alias) in &gathered {
+                        let mut worth = prim_call(Prim::BringModule, vec![constant(Value::text(name)), constant(Value::Nil)]);
+                        if *alias && name.contains('.') {
+                            let parts: Vec<&str> = name.split('.').collect();
+                            for at in 1..parts.len() {
+                                let head = parts[..at].join(".");
+                                worth = prim_call(Prim::ImportMember, vec![worth, constant(Value::text(&head)), constant(Value::text(parts[at]))]);
+                            }
+                        }
+                        self.claim(local);
+                        self.importing = true;
+                        writes.push(self.write(local, worth));
+                        self.importing = false;
+                    }
+                }
+            } else {
+                for (_, local, _) in &gathered {
+                    self.claim(local);
+                    self.importing = true;
+                    writes.push(self.write(local, constant(Value::Nil)));
+                    self.importing = false;
                 }
             }
         }
@@ -3449,6 +3500,7 @@ impl<'a> Builder<'a> {
             let name = stored.ident.to_string();
             steps.push(Form::Write(stored, Box::new(part)));
             steps.extend(self.with_target(&name)?);
+            if self.table.has_any("ext.builtin.exceptions.syntax") { steps.push(Form::Forget(self.address_to_write(&name))); }
             if self.on_any("syntax.call.separator") { self.advance(); }
         }
         Ok(steps)
@@ -3489,6 +3541,7 @@ impl<'a> Builder<'a> {
                 let item = prim_call(Prim::At, vec![value, constant(Value::Small(position))]);
                 forms.push(Form::Write(part, Box::new(item)));
                 forms.extend(self.with_target(&part_name)?);
+                if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&part_name))); }
                 position += 1;
                 if !self.on_any("syntax.call.separator") { break; }
                 self.advance();
@@ -6158,7 +6211,7 @@ impl<'a> Builder<'a> {
     }
 
     fn located(&self, bounds: (u32, u32, u32, u32), expression: Form) -> Form {
-        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(bounds, Box::new(expression)) }
+        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(bounds, 0, Box::new(expression)) }
         else { expression }
     }
 
@@ -6985,7 +7038,7 @@ impl<'a> Builder<'a> {
             // call was made from.
             let row = (r.look().row as u32).saturating_sub(r.before);
             let body = r.expr(0)?;
-            items.push(Form::OnLine(row, Box::new(body)));
+            items.push(Form::OnLine(row, 0, Box::new(body)));
             Ok(sequence(items))
         })?;
         let program = match carried.is_empty() {
@@ -7212,7 +7265,11 @@ impl<'a> Builder<'a> {
             let item = self.gensym("part").ident.to_string();
             writes.push(self.write(&item, value));
             writes.push(self.distribute(part, &item)?);
+            if self.table.has_any("ext.builtin.exceptions.syntax") {
+                writes.push(Form::Forget(self.address_to_write(&item)));
+            }
         }
+        if self.table.has_any("ext.builtin.exceptions.syntax") { writes.push(Form::Forget(self.address_to_write(&held))); }
         Ok(sequence(writes))
     }
     fn chained_places(&mut self) -> Res<Option<Form>> {
@@ -7238,6 +7295,7 @@ impl<'a> Builder<'a> {
             forms.push(self.distribute(left..sign, &name)?);
             left = sign + 1;
         }
+        if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&name))); }
         self.pos = resume;
         Ok(Some(sequence(forms)))
     }
@@ -7381,6 +7439,11 @@ impl<'a> Builder<'a> {
     }
 
     fn binding_or_value(&mut self) -> Res<Form> {
+        let forbidden = self.table.spells("ext.lexical.identifier.reserved", &self.look().lexeme);
+        let literal = ["literal.true", "literal.false", "literal.null", "ext.stmt.yield"].iter().any(|tag| self.key(tag));
+        if forbidden && !literal && self.table.spells("stmt.assign", &self.glance(1).lexeme) {
+            return Err(String::from("SyntaxError: invalid syntax"));
+        }
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             if let Some(&equal) = self.divided_at(self.pos, self.tokens.len(), "stmt.assign").first() {
                 let word = self.look();
@@ -8519,7 +8582,8 @@ impl<'a> Builder<'a> {
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
-            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1));
+            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1))
+                && (self.in_class_body() || self.layers.last().is_some_and(|scope| scope.gathering_kind.is_some()));
             if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression {
                 let scope = if self.layers.len() == 1 || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {scope}"));
@@ -8533,6 +8597,7 @@ impl<'a> Builder<'a> {
         }
         if self.key("ext.stmt.yield") {
             let begins = self.pos;
+            let scope_is_async = self.layers.last().map_or(false, |scope| scope.permits_async);
             let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(if table.spells("ext.stmt.yield.from", &self.glance(1).lexeme) { "'yield from' outside function" } else { "'yield' outside function" }.to_owned()) }
                 else { self.layers.last().and_then(|s| s.gathering_kind).map(|kind| format!("'yield' inside {kind}")) };
             self.advance();
@@ -8584,6 +8649,10 @@ impl<'a> Builder<'a> {
                     self.pos = begins;
                     return Err(format!("SyntaxError: {complaint}"));
                 }
+                if from && scope_is_async {
+                    self.pos = begins;
+                    return Err("SyntaxError: 'yield from' inside async function".to_owned());
+                }
             }
             if table.flag("ext.stmt.yield.suspends") {
                 let value = if comma {
@@ -8612,7 +8681,7 @@ impl<'a> Builder<'a> {
             self.advance();
             let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
-                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), type_names: std::cell::RefCell::new(None),
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
@@ -9859,17 +9928,23 @@ impl<'a> Builder<'a> {
     fn ahead_in_item(&self, label: &str) -> Option<usize> {
         let table = self.table;
         let mut nesting = Vec::new();
+        let mut awaiting_body = 0usize;
         let pairs = [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close")];
         for index in self.pos..self.tokens.len() {
             let token = &self.tokens[index];
             if !matches!(token.shape, Shape::Bare | Shape::Sign) { continue; }
             let text = token.lexeme.as_str();
             if nesting.is_empty() {
+                match text {
+                    ":" => awaiting_body = awaiting_body.saturating_sub(1),
+                    _ if table.spells("ext.op.lambda", text) => awaiting_body += 1,
+                    _ => (),
+                }
                 if table.spells(label, text) {
                     let begins = if label == "ext.op.comprehension.for" && index > self.pos && table.spells("ext.op.comprehension.async", &self.tokens[index - 1].lexeme) { index - 1 } else { index };
                     return Some(begins);
                 }
-                if table.spells("syntax.call.separator", text) { return None; }
+                if awaiting_body == 0 && table.spells("syntax.call.separator", text) { return None; }
             }
             if let Some((_, end)) = pairs.iter().find(|(start, _)| table.spells(start, text)) {
                 nesting.push(*end);
@@ -9891,10 +9966,16 @@ impl<'a> Builder<'a> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
+            let mut parameter_lists = 0usize;
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
                 if inner.is_empty() {
-                    if part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
+                    match (part.shape, part.lexeme.as_str()) {
+                        (Shape::Sign, ":") => parameter_lists = parameter_lists.saturating_sub(1),
+                        (Shape::Bare, text) if self.table.spells("ext.op.lambda", text) => parameter_lists += 1,
+                        _ => (),
+                    }
+                    if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
                     if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
                         return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
                     }
@@ -10923,7 +11004,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new(), encountered: Vec::new() });
+            self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new(), encountered: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {
@@ -10934,7 +11015,9 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let mut body = sequence(s);
+            if table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
+            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
@@ -11274,7 +11357,7 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
     let uses = |address: &Address| names.contains(&address.ident.as_ref());
     match form {
         Form::Read(place) | Form::Glance(place) | Form::Share(place) => uses(place),
-        Form::Write(_, value) | Form::OnLine(_, value) | Form::Located(_, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
+        Form::Write(_, value) | Form::OnLine(_, _, value) | Form::Located(_, _, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
         Form::Apply(Callee::Code(target), args) => borrows_enclosing(target, names) || args.iter().any(|arg| borrows_enclosing(arg, names)),
         Form::Apply(_, args) => args.iter().any(|arg| borrows_enclosing(arg, names)),
         Form::Const(Value::Routine(arm)) if arm.frameless => borrows_enclosing(&arm.body, names),
@@ -11307,7 +11390,7 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         Form::Const(Value::Routine(p)) if p.frameless => children.push(&p.body),
         Form::Const(v) => literal(v, constants),
         Form::Read(a) | Form::Take(a) | Form::Glance(a) => { if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); } },
-        Form::Write(_, child) | Form::OnLine(_, child) | Form::Located(_, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
+        Form::Write(_, child) | Form::OnLine(_, _, child) | Form::Located(_, _, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
         Form::Apply(callee, args) => {
             if matches!(callee, Callee::Prim(Prim::Suspend, _)) { *suspension = true; }
             match callee {

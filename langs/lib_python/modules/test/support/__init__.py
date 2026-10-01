@@ -673,6 +673,61 @@ REPO_ROOT = os.path.dirname(STDLIB_DIR)
 # From CPython 3b564385e4c9 Lib/test/support/__init__.py; PSF License.
 import types
 
+# These conditions concern platforms and docstrings, not C internals.
+skip_on_s390x = _identity
+def _check_docstrings():
+    """A function whose docstring checks whether documentation is retained."""
+    pass
+
+HAVE_PY_DOCSTRINGS = _check_docstrings.__doc__ is not None
+requires_docstrings = unittest.skipUnless(HAVE_DOCSTRINGS, "docstrings are required")
+
+def skip_if_unlimited_stack_size(test):
+    return test
+
+# Source: CPython 3b564385e4c9, Lib/test/support/__init__.py; PSF License.
+import annotationlib
+class EqualToForwardRef:
+    """Helper to ease use of annotationlib.ForwardRef in tests.
+
+    This checks only attributes that can be set using the constructor.
+
+    """
+
+    def __init__(
+        self,
+        arg,
+        *,
+        module=None,
+        owner=None,
+        is_class=False,
+    ):
+        self.__forward_arg__ = arg
+        self.__forward_is_class__ = is_class
+        self.__forward_module__ = module
+        self.__owner__ = owner
+
+    def __eq__(self, other):
+        if not isinstance(other, (EqualToForwardRef, annotationlib.ForwardRef)):
+            return NotImplemented
+        return (
+            self.__forward_arg__ == other.__forward_arg__
+            and self.__forward_module__ == other.__forward_module__
+            and self.__forward_is_class__ == other.__forward_is_class__
+            and self.__owner__ == other.__owner__
+        )
+
+    def __repr__(self):
+        extra = []
+        if self.__forward_module__ is not None:
+            extra.append(f", module={self.__forward_module__!r}")
+        if self.__forward_is_class__:
+            extra.append(", is_class=True")
+        if self.__owner__ is not None:
+            extra.append(f", owner={self.__owner__!r}")
+        return f"EqualToForwardRef({self.__forward_arg__!r}{''.join(extra)})"
+
+# Source: CPython Lib/test/support/__init__.py at 3b564385e4c9; PSF License.
 def check__all__(test_case, module, name_of_module=None, extra=(),
                  not_exported=()):
     """Assert that the __all__ variable of 'module' contains all public names.
@@ -719,6 +774,7 @@ def check__all__(test_case, module, name_of_module=None, extra=(),
     elif isinstance(name_of_module, str):
         name_of_module = (name_of_module, )
 
+    import types
     expected = set(extra)
 
     for name in dir(module):
@@ -730,3 +786,71 @@ def check__all__(test_case, module, name_of_module=None, extra=(),
                  not isinstance(obj, types.ModuleType))):
             expected.add(name)
     test_case.assertCountEqual(module.__all__, expected)
+
+# From CPython Lib/test/support at 3b564385e4c9, PSF License.
+import functools
+PGO = False
+PGO_EXTENDED = False
+
+def check_sizeof(test, o, size):
+    try:
+        import _testinternalcapi
+    except ImportError:
+        raise unittest.SkipTest("_testinternalcapi required")
+    result = sys.getsizeof(o)
+    # add GC header size
+    if ((type(o) == type) and (o.__flags__ & _TPFLAGS_HEAPTYPE) or\
+        ((type(o) != type) and (type(o).__flags__ & _TPFLAGS_HAVE_GC))):
+        size += _testinternalcapi.SIZEOF_PYGC_HEAD
+    msg = 'wrong size for %s: got %d, expected %d' \
+            % (type(o), result, size)
+    test.assertEqual(result, size, msg)
+
+def bigaddrspacetest(f):
+    """Decorator for tests that fill the address space."""
+    @functools.wraps(f)
+    def wrapper(self):
+        if max_memuse < MAX_Py_ssize_t:
+            if MAX_Py_ssize_t >= 2**63 - 1 and max_memuse >= 2**31:
+                raise unittest.SkipTest(
+                    "not enough memory: try a 32-bit build instead")
+            else:
+                raise unittest.SkipTest(
+                    "not enough memory: %.1fG minimum needed"
+                    % (MAX_Py_ssize_t / (1024 ** 3)))
+        else:
+            return f(self)
+    return wrapper
+
+def skip_if_pgo_task(test):
+    """Skip decorator for tests not run in (non-extended) PGO task"""
+    ok = not PGO or PGO_EXTENDED
+    msg = "Not run for (non-extended) PGO task"
+    return test if ok else unittest.skip(msg)(test)
+
+def check_immutable_type(testcase, type):
+    regex = r'cannot set .* attribute of immutable type'
+    with testcase.assertRaisesRegex(TypeError, regex):
+        setattr(type, 'custom_attr', 123)
+
+    try:
+        from _testlimitedcapi import type_getflags, Py_TPFLAGS_IMMUTABLETYPE
+    except ImportError:
+        pass
+    else:
+        flags = type_getflags(type)
+        testcase.assertTrue(flags & Py_TPFLAGS_IMMUTABLETYPE)
+
+import contextlib
+
+@contextlib.contextmanager
+def captured_output(stream_name):
+    """Return a context manager used by captured_stdout/stdin/stderr
+    that temporarily replaces the sys stream *stream_name* with a StringIO."""
+    import io
+    orig_stdout = getattr(sys, stream_name)
+    setattr(sys, stream_name, io.StringIO())
+    try:
+        yield getattr(sys, stream_name)
+    finally:
+        setattr(sys, stream_name, orig_stdout)

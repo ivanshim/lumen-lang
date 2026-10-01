@@ -1,2 +1,5 @@
-# Thread identity supplied by the interpreter's threading library.
-from threading import get_ident
+# The single-thread primitives shared with threading. Starting threads remains
+# unavailable; these locks and the current thread identity are implemented there.
+from threading import RLock, Lock, get_ident, TIMEOUT_MAX
+allocate_lock = Lock
+error = RuntimeError

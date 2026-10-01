@@ -322,6 +322,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if lang.import_values {
         machine.module_sources = request.iter().filter(|(kind, ..)| kind == "MODULE").map(|(_, name, source, _)| (name.clone(), source.clone())).collect();
     }
+    machine.module_files = request.iter().filter(|(kind, ..)| kind == "MODULE_FILE").map(|(_, name, file, _)| (name.clone(), file.clone())).collect();
+    machine.module_aliases = request.iter().filter(|(kind, ..)| kind == "MODULE_ALIAS").map(|(_, name, member, _)| (name.clone(), member.clone())).collect();
     for name in &lang.module_names {
         machine.define(name, Value::text("__main__"));
     }
@@ -433,6 +435,10 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         counts.1 = Some(cell);
     }
     value::figures_kept_in(counts.0, counts.1);
+    // The main program's own module stands in the cache of modules
+    // from the very start, so that `sys.modules[__name__]` is the
+    // program's own namespace and not a name gone missing.
+    machine.register_main_module();
     // The room counted against the program is counted from here: what
     // went before was the host reading the program and setting up the
     // machine that runs it, and belongs to the host rather than to the

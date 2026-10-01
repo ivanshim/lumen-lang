@@ -307,6 +307,18 @@ class DocTestFinder:
 
     def find(self, obj, name=None, module=None, globs=None, extraglobs=None):
         names = _namespace_of(obj)
+        if callable(obj) and not isinstance(obj, type):
+            if name is None:
+                name = getattr(obj, "__name__", "<callable>")
+            if globs is None:
+                globs = names
+            globs = _copy_dict(globs)
+            globs[getattr(obj, "__name__", name)] = obj
+            if extraglobs is not None:
+                globs.update(extraglobs)
+            found = []
+            self._add(found, name, getattr(obj, "__doc__", None), globs, name)
+            return found
         if name is None:
             name = _module_name_of(obj)
         if globs is None:

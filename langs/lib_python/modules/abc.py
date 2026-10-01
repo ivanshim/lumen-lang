@@ -87,8 +87,6 @@ class ABCMeta(type):
 
     def register(cls, subclass):
         global _cache_token
-        if issubclass(subclass, cls):
-            return subclass
         claimed = _claims_for(cls)
         if claimed is None:
             claimed = []

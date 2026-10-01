@@ -12,22 +12,9 @@ class OrderedDict(dict):
             self.update(remaining)
 
 
-def namedtuple(typename, field_names, rename=False, defaults=None, module=None):
-    if rename or defaults is not None:
-        raise 'NotImplementedError: namedtuple renaming and defaults are not supported'
-    if type(field_names) == type(''):
-        names = []
-        word = ''
-        for letter in list(field_names + ' '):
-            if letter == ' ' or letter == ',':
-                if word != '':
-                    names.append(word)
-                    word = ''
-            else:
-                word += letter
-    else:
-        names = list(field_names)
-    return __derive_class(typename, _Record, {'_fields': names, '__name__': typename})
+def namedtuple(typename, field_names, *, rename=False, defaults=None, module=None):
+    from _namedtuple import namedtuple as make_record
+    return make_record(typename, field_names, rename=rename, defaults=defaults, module=module)
 
 # Named records bear fields of their own. Tuple indexing, immutability
 # and the remaining tuple methods await the object protocol.
