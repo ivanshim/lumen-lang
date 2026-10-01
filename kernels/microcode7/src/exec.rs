@@ -3129,6 +3129,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn make_iterator(&mut self, source: Value) -> Res {
+        if matches!(source, Value::Iterator(_) | Value::Cursor(_)) { return self.iterated_value(&source).map_err(Escape::Error); }
         if let Value::Generator(_) = source { return Ok(source); }
         let members = self.gathered_members(&source)?;
         Ok(self.walk_over(&source, members))
@@ -13545,7 +13546,7 @@ impl<'a> Machine<'a> {
             // it a member at a time, so what its body said before a later
             // step raised stands said, and a loop broken off leaves the rest.
             Prim::Iterated => match self.begin_set_walk(&v[0]) {
-                None if matches!(v[0], Value::Iterator(_) | Value::Generator(_)) => v[0].clone(),
+                None if matches!(v[0], Value::Iterator(_) | Value::Generator(_) | Value::Cursor(_)) => v[0].clone(),
                 None => Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)),
                 Some(walk) => walk,
             },
@@ -17428,7 +17429,7 @@ impl<'a> Machine<'a> {
             Value::Row(values) | Value::Tuple(values) | Value::Vector(values) => values.to_vec(),
             Value::Mutable(cell, _) => return self.gathered_members(&cell.borrow()),
             Value::Window(..) => return self.gathered_members(&source.settled()),
-            Value::Iterator(_) => return self.core_collect(source),
+            Value::Iterator(_) | Value::Cursor(_) => return self.core_collect(source),
             Value::Set(items) => items.borrow().values(),
             Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
             Value::TextRow(words, _) => words.iter().map(|s| Value::text(s)).collect(),
@@ -20041,6 +20042,7 @@ impl Machine<'_> {
     }
 
     fn next_value(&mut self, iterator: &Value) -> Result<Option<Value>, String> {
+        if let Value::Cursor(queue) = iterator { return Ok(queue.borrow_mut().pop_front()); }
         if let Value::Generator(frame) = iterator {
             // What the body raised is parked while words stand in for it
             // on the way out, so a clause round the walk sees the value
@@ -20346,7 +20348,7 @@ impl Machine<'_> {
     }
 
     fn core_collect(&mut self, value: &Value) -> Result<Vec<Value>, String> {
-        if let Value::Iterator(_) = value {
+        if matches!(value, Value::Iterator(_) | Value::Cursor(_)) {
             let mut all = Vec::new();
             loop { match self.next_value(value)? { Some(item) => all.push(item), None => return Ok(all) } }
         }

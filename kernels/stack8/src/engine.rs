@@ -3761,6 +3761,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn iterator(&mut self, source: Value) -> Flow<Value> {
+        if matches!(source, Value::Cursor(_) | Value::Walk(_)) { return Ok(self.core_iterator(&source)?); }
         if matches!(source, Value::Generator(_)) { return Ok(source); }
         let items = self.comprehension_items(&source)?;
         Ok(self.watched_walk(&source, items))
@@ -8388,7 +8389,7 @@ impl<'a> Engine<'a> {
                 // is walked one member at a time, so a loop that breaks
                 // off leaves the rest, and what a body says before a
                 // later step raises has already been said.
-                if matches!(source, Value::Object(_) | Value::Cursor(_) | Value::Generator(_)) { self.data.push(source); return Ok(()); }
+                if matches!(source, Value::Object(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { self.data.push(source); return Ok(()); }
                 // A map held in a cell is walked under watch, so that a
                 // change of its size under the walk is seen.
                 if self.lang.map_resized.is_some() && Self::map_cell(&source).is_some() {
