@@ -6916,6 +6916,14 @@ impl<'a> Machine<'a> {
             // intrinsic word, so it answers for its name here.
             if let Value::OctetKind { changeable, .. } = value { return Some(Value::text(self.octet_kind_word(*changeable))); }
         }
+        // The same octet kinds answer for their qualified name and home
+        // as well, which the intrinsic kinds hand back in the class reader.
+        if name == self.detail("qualified") {
+            if let Value::OctetKind { changeable, .. } = value { return Some(Value::text(self.octet_kind_word(*changeable))); }
+        }
+        if name == self.detail("module") {
+            if let Value::OctetKind { .. } = value { return Some(Value::text(self.builtin_module())); }
+        }
         if name == self.detail("doc") {
             if let Value::Intrinsic(_, word) = value {
                 if let Some(doc) = Self::builtin_kind_doc(word) { return Some(Value::text(doc)); }
@@ -7605,7 +7613,10 @@ impl<'a> Machine<'a> {
             if let Some(operation) = operation {
                 let mut values = vec![actual]; values.extend(arguments);
                 for (key, value) in keywords {
-                    let slot = match (operation, key.as_str()) { (3, "encoding") => 1, (3, "errors") => 2, _ => return Err(self.octet_error("arguments").into()) };
+                    // bytes.translate keeps the dropped row after the
+                    // table, so its keyword sits one further along than
+                    // the decode pair does.
+                    let slot = match (operation, key.as_str()) { (3, "encoding") => 1, (3, "errors") => 2, (39, "delete") => 2, _ => return Err(self.octet_error("arguments").into()) };
                     if values.len() > slot { return Err(self.octet_error("arguments").into()); }
                     while values.len() < slot { values.push(Value::text("utf-8")); }
                     values.push(value);
