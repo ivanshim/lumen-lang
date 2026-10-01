@@ -2771,6 +2771,15 @@ impl<'a> Engine<'a> {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
                         }
+                        // A thing of the program's own spreads into the
+                        // members its walk hands over: the walk a loop
+                        // would take of it, or the walkable worth a
+                        // subclass of a walkable kind keeps.
+                        Value::Object(_) if self.worth_free_of(&pair.1, &[15]).is_some() || self.special_value(&pair.1, 15).is_some() || self.indexed_walk(&pair.1).is_some() => {
+                            let members = self.core_members(&pair.1);
+                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            items.extend(members?.into_iter().map(|v| (None,v)));
+                        }
                         Value::Array(a) | Value::Tuple(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
                         Value::Set(s) => items.extend(s.borrow().items().into_iter().map(|v| (None, v))),
                         Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
@@ -8330,7 +8339,14 @@ impl<'a> Engine<'a> {
                     // the members its own walk hands over, asked for one
                     // at a time: such a walk may have no end at all, and
                     // the places call for no more than they call for.
-                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some() => {
+                    // A thing whose class hands over no walk of its own
+                    // but which keeps an ordinary walkable worth — a
+                    // tuple or list subclass's own — is taken apart
+                    // into what the worth keeps, the way the walk one
+                    // asked of it with iter() goes.
+                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some()
+                        || Self::worth_of(&source).map_or(false, |worth| matches!(worth.contents(),
+                            Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Map(_) | Value::Set(_) | Value::Counted(_) | Value::Words(..) | Value::Bytes(..))) => {
                         let walk = self.core_iterator(&source)?;
                         self.apart_members(&walk, *count, rest.is_some())?
                     }

@@ -7276,7 +7276,9 @@ impl<'a> Machine<'a> {
     /// How the table spells a value's method, so that a complaint names
     /// the member the way a program writes it.
     fn member_spelling(&self, operation: &str) -> String {
-        self.table.single(&format!("ext.builtin.method.{operation}")).unwrap_or(operation).to_string()
+        // A label the roster does not write is no label at all here:
+        // the method is spelled the way the program spelled it.
+        self.table.loose_strings(&format!("ext.builtin.method.{operation}")).first().map_or(operation, String::as_str).to_string()
     }
 
     /// The starred clauses of a try. Each takes from the raised gatherer
@@ -7675,7 +7677,9 @@ impl<'a> Machine<'a> {
             found.push(word.clone());
         }
         if !keywords.is_empty() && !["sort", "split", "rsplit", "format", "update", "encode"].contains(&name) {
-            let spelling = self.table.single(&format!("ext.builtin.method.{name}")).unwrap_or(name);
+            // A label the roster does not write is no label at all here:
+            // the complaint names the method as the program named it.
+            let spelling = self.table.loose_strings(&format!("ext.builtin.method.{name}")).first().map_or(name, String::as_str);
             return Err(self.builtin_keyword_fault(spelling).into());
         }
 
@@ -8450,6 +8454,16 @@ impl<'a> Machine<'a> {
                         Value::Dict(entries) => positions.extend(entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() })),
                         Value::Text(text) => {
                             for letter in text.chars() { positions.push(Value::text(&letter.to_string())); }
+                        }
+                        // A thing of the program's own spreads into the
+                        // members its walk hands over: the walk a loop
+                        // would take of it, or the walkable worth a
+                        // subclass of a walkable kind keeps.
+                        Value::Thing(_) if self.appointment(&pair.1, 15).is_some() || self.placed_walk(&pair.1).is_some()
+                            || Self::underlying(&pair.1).map_or(false, |worth| matches!(worth.settled(),
+                                Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_) | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::TextRow(..) | Value::Octets { .. })) => {
+                            let walk = self.iterated_value(&pair.1)?;
+                            positions.extend(self.core_collect(&walk)?);
                         }
                         _ => return Err(self.argument_fault("ext.syntax.call.spread.amiss", None).into()),
                     }
@@ -13485,7 +13499,14 @@ impl<'a> Machine<'a> {
                     // the members its own walk hands over, asked for one
                     // at a time: such a walk may have no end at all, and
                     // the places call for no more than they call for.
-                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some() => {
+                    // A thing whose blueprint hands over no walk of its
+                    // own but which keeps an ordinary walkable worth — a
+                    // tuple or list subclass's own — comes apart into
+                    // what the worth keeps, the way the walk one asked
+                    // of it with iter() goes.
+                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some()
+                        || Self::underlying(thing).map_or(false, |worth| matches!(worth.settled(),
+                            Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_) | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::TextRow(..) | Value::Octets { .. })) => {
                         let walk = self.iterated_value(&thing.clone())?;
                         self.apart_members(&walk, wanted, star.is_some())?
                     }
@@ -19992,7 +20013,14 @@ impl Machine<'_> {
                 }
                 match self.placed_walk(source) {
                     Some(places) => Ok(places),
-                    None => Err(self.core_complaint("core.uniterable", &source.kind_word())),
+                    // A thing of a blueprint standing on a walkable kind
+                    // answers a walk with what it keeps, the way the
+                    // kind itself would: a tuple subclass is walked as
+                    // the tuple it keeps.
+                    None => match Self::underlying(source).map(|worth| worth.settled()) {
+                        Some(worth) if matches!(worth, Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_) | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::TextRow(..) | Value::Octets { .. }) => self.iterated_value(&worth),
+                        _ => Err(self.core_complaint("core.uniterable", &source.kind_word())),
+                    },
                 }
             }
             _ => {
