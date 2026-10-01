@@ -225,6 +225,18 @@ impl Value {
                 let step = if length > BigInt::from(1) { Value::of_big(span.step.clone()) } else { Value::Null };
                 Value::tuple(vec![Value::of_big(length), start, step]).core_hash()
             }
+            // A loose member descriptor folds what it is kept as -- the
+            // kind's word and the member's name -- so two readings of the
+            // same member, and of the same member on the same kind, hash
+            // alike, and one may be a key in a map or a member of a set.
+            Value::Adapter(held) => {
+                let mut h = 2870177450012600261u64;
+                for part in held.1.iter() {
+                    h = h.wrapping_add((part.core_hash()? as u64).wrapping_mul(14029467366897019727));
+                    h = h.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                Some(if h == u64::MAX { 1546275796 } else { h as i64 })
+            }
             _ => None,
         }
     }

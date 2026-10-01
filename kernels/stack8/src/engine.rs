@@ -136,6 +136,10 @@ pub struct Engine<'a> {
     held_base: usize,
     memo: HashMap<String, Value>,
     core_ids: HashMap<String, usize>,
+    /// A loose member descriptor, keyed by the kind's word and the member
+    /// name, so that asking twice for `dict.__repr__` answers the very
+    /// descriptor asked the first time.
+    loose_members: RefCell<HashMap<String, Value>>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
     /// What each call still running was given, the innermost last. Kept
@@ -1142,6 +1146,7 @@ impl<'a> Engine<'a> {
             held_base: 0,
             memo: HashMap::new(),
             core_ids: HashMap::new(),
+            loose_members: RefCell::new(HashMap::new()),
             buffer: Vec::new(),
             given: Vec::new(),
             made: 0,
@@ -5201,8 +5206,15 @@ impl<'a> Engine<'a> {
         if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
             return Some(Value::Native(Builtin::Text(crate::strings::TextOp::Maketrans), Rc::from(name)));
         }
-        if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
-        Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
+        // A window's own repr and str are asked of the kind, not of the
+        // window itself, which is read as its contents.
+        let window_repr = matches!(word.as_ref(), "dict_keys" | "dict_values" | "dict_items" | "mappingproxy") && matches!(name, "__repr__" | "__str__");
+        if !window_repr && !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
+        let key = format!("{}:{}", word, name);
+        if let Some(cached) = self.loose_members.borrow().get(&key) { return Some(cached.clone()); }
+        let made = Self::adapter(29, vec![Value::text(&word), Value::text(name)]);
+        self.loose_members.borrow_mut().insert(key, made.clone());
+        Some(made)
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
@@ -7269,6 +7281,11 @@ impl<'a> Engine<'a> {
                 }
             }
             Builtin::Hash if args.len() == 1 => {
+                // A loose member descriptor hashes by what it is kept as,
+                // even where its kind names no hash method of its own.
+                if let Value::Adapter(held) = &args[0] {
+                    return Ok(Some(Value::Small(Rc::as_ptr(held) as usize as i64)));
+                }
                 // A class that says how its things are equal but not how
                 // they hash, or sets the hash method to nothing, has
                 // things that cannot be hashed.
@@ -7284,6 +7301,10 @@ impl<'a> Engine<'a> {
                         Value::Object(object) if self.special_method(&args[0], 2).is_none() => Value::Small(object.mark as i64),
                         Value::Small(_) | Value::Huge(_) => args[0].clone(),
                         Value::Flag(flag) => Value::Small(i64::from(*flag)),
+                        // A loose member descriptor hashes by what it is
+                        // kept as: the cached descriptor itself, so two
+                        // readings of the same member hash alike.
+                        Value::Adapter(held) => Value::Small(Rc::as_ptr(held) as usize as i64),
                         _ => return Err(self.special_fault()),
                     }
                 }
@@ -18043,6 +18064,7 @@ impl Engine<'_> {
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Generator(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Method(a, b) => (Rc::as_ptr(a) as usize ^ Rc::as_ptr(b) as usize) as u64,
                     Value::Native(b, _) => {
                         let mut state = std::collections::hash_map::DefaultHasher::new();
                         std::hash::Hash::hash(&format!("{:?}", b), &mut state);

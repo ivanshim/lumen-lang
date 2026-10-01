@@ -1655,6 +1655,16 @@ impl<'a> Machine<'a> {
                 }
             }
             if let Some(entry)=self.carried_by_kind(&value,key){return Ok(entry);}
+            // A blueprint standing on a native kind reads that kind's own
+            // loose member too, so a subclass's __repr__ is the very
+            // descriptor the kind itself names.
+            if Self::native_word(b).is_none() {
+                if let Some(base) = b.ancestry.iter().find(|base| Self::native_word(base).is_some()) {
+                    if let Some(entry) = self.carried_by_kind(&Value::Blueprint(base.clone()), key) {
+                        return Ok(entry);
+                    }
+                }
+            }
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
             // method is bound to the thing.

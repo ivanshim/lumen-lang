@@ -460,6 +460,10 @@ pub struct Machine<'a> {
     idents: Vec<String>,
     memo: HashMap<String, Value>,
     identities: Vec<(String, u64)>,
+    /// A loose member descriptor, keyed by the kind's word and the member
+    /// name, so asking twice for `dict.__repr__` answers the descriptor
+    /// asked the first time.
+    loose_members: RefCell<HashMap<String, Value>>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
     /// Whether the language can read what a call was handed. Where it
@@ -1442,6 +1446,7 @@ impl<'a> Machine<'a> {
             idents,
             memo: HashMap::new(),
             identities: Vec::new(),
+            loose_members: RefCell::new(HashMap::new()),
             reads_handed: ["ext.builtin.args.all", "ext.builtin.args.count", "ext.builtin.args.at"]
                 .iter()
                 .any(|label| table.single(label).is_some()),
@@ -6995,8 +7000,13 @@ impl<'a> Machine<'a> {
         if let (Value::Text(_), Some(op @ Prim::Textual(crate::text::Work::MAKETRANS))) = (&stand_in, self.table.prims.get(name)) {
             return Some(Value::Intrinsic(*op, Rc::from(name)));
         }
-        if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
-        Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into()))
+        let window_repr = matches!(word.as_str(), "dict_keys" | "dict_values" | "dict_items" | "mappingproxy") && matches!(name, "__repr__" | "__str__");
+        if !window_repr && self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
+        let key = format!("{}:{}", word, name);
+        if let Some(cached) = self.loose_members.borrow().get(&key) { return Some(cached.clone()); }
+        let made = Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into());
+        self.loose_members.borrow_mut().insert(key, made.clone());
+        Some(made)
     }
 
     /// The word the definition gives the module the builtin names live in.
@@ -20816,6 +20826,9 @@ impl Machine<'_> {
                         inner => inner.clone(),
                     },
                     Value::Mutable(cell, _) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
+                    // A window is known by the map it reads, which stays
+                    // put: settled() would hand back a fresh row each ask.
+                    Value::Window(owner, _) => return Ok(Value::Small(Rc::as_ptr(owner) as usize as i64)),
                     other => other.settled(),
                 };
                 let address: u64 = match &held {
@@ -20841,6 +20854,7 @@ impl Machine<'_> {
                     // definition reached that time: two reachings of the
                     // one definition are two routines.
                     Value::Bound(p, env) => (Rc::as_ptr(p) as usize as u64) ^ (Rc::as_ptr(env) as usize as u64).rotate_left(21),
+                    Value::Method(p, receiver) => (Rc::as_ptr(p) as usize as u64) ^ (Rc::as_ptr(receiver) as usize as u64).rotate_left(21),
                     Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Huge(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Frac(p) => Rc::as_ptr(p) as usize as u64,

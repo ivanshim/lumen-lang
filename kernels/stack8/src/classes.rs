@@ -1289,6 +1289,18 @@ impl<'a> Engine<'a> {
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
+                // A class standing on a builtin kind reads that kind's own
+                // loose member too, so a subclass's `__repr__` is the very
+                // descriptor the kind itself names. The class methods the
+                // language binds to the subclass itself are left to their
+                // own handling below.
+                if Self::own_kind(c).is_none() && self.lang.value_methods.get(name).is_none() {
+                    if let Some(base) = c.lineage.iter().find(|base| Self::own_kind(base).is_some()) {
+                        if let Some(member) = self.loose_kind_member(&Value::Class(base.clone()), name) {
+                            return Ok(member);
+                        }
+                    }
+                }
                 // A class standing on a builtin kind reads that kind's
                 // own class method too, bound to the class itself, so
                 // that `dictlike.fromkeys` reaches `dict.fromkeys` and

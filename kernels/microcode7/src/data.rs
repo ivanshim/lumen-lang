@@ -699,6 +699,10 @@ impl Value {
             Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
             Value::Nil => Ok("nothing".to_owned()),
             Value::Ellipsis => Ok("ellipsis".to_owned()),
+            // A loose member descriptor is addressed by the descriptor it
+            // is kept as: two readings of the same member, and of the
+            // same member on the same kind, are the one address.
+            Value::Wrapped(60, parts) => Ok(format!("descriptor:{:p}", Rc::as_ptr(parts))),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
                 // Nothing under the line marks a worth off the scale.
