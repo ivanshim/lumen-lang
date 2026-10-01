@@ -17829,6 +17829,13 @@ impl Engine<'_> {
             Value::ByteKind(mutable, _) => self.byte_call(u8::from(*mutable), &args),
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
+            Value::Method(..) => match self.class_apply(work.clone(), args) {
+                Ok(result) => Ok(result),
+                Err(raised) => {
+                    self.carried = Some(raised);
+                    Err(self.core_fault("core.unready", &work.core_kind()))
+                }
+            },
             Value::Routine(p) => {
                 if let Err(f) = self.invoke(p, args) {
                     self.carried = Some(f);

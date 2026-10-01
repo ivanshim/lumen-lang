@@ -20673,6 +20673,8 @@ impl Machine<'_> {
 
     fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
         match callable {
+            Value::Method(_, _) => self.apply_class_member(callable.clone(), values)
+                .map_err(|escaped| self.suspension_fault(escaped)),
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),

@@ -120,6 +120,10 @@ def updatecache(filename, module_globals=None):
         # These import can fail if the interpreter is shutting down
         return []
 
+    # Read source afresh when filesystem timestamps are unavailable.
+    if not hasattr(os, 'stat'):
+        return _read_without_metadata(filename, module_globals, os, sys, tokenize)
+
     entry = cache.pop(filename, None)
     if _source_unavailable(filename):
         return []
@@ -292,3 +296,35 @@ def _register_code(code, string, name):
                 stack.append(const)
         key = _make_key(code)
         _interactive_cache[key] = entry
+
+
+def _read_without_metadata(filename, module_globals, os, sys, tokenize):
+    if _source_unavailable(filename):
+        return []
+    def read_file(fullname):
+        try:
+            with tokenize.open(fullname) as source:
+                lines = source.readlines()
+        except OSError:
+            return None
+        except (UnicodeDecodeError, SyntaxError):
+            return []
+        if lines and not lines[-1].endswith('\n'):
+            lines[-1] += '\n'
+        return lines
+    lines = read_file(filename)
+    if lines is not None:
+        return lines
+    if lazycache(filename, module_globals):
+        try:
+            data = cache[filename][0]()
+        except (ImportError, OSError):
+            data = None
+        if data is not None:
+            return [line + '\n' for line in data.splitlines()]
+    if not os.path.isabs(filename):
+        for directory in sys.path:
+            lines = read_file(os.path.join(directory, filename))
+            if lines is not None:
+                return lines
+    return []

@@ -1597,6 +1597,11 @@ impl<'a> Machine<'a> {
             if let Some(inherited) = self.from_the_root(key, false) { return Ok(inherited); }
         }
         if let Value::Blueprint(b)=&value {
+            let builtin_origin = Self::native_word(b).is_some()
+                || (b.under.is_none() && b.name == self.detail("root"));
+            if builtin_origin && !key.is_empty() && key == self.detail("module") {
+                return Ok(Value::text(self.builtin_module()));
+            }
             if key == self.detail("flags") {
                 // The seal takes the base-standing bit off and puts the
                 // unchangeable one on.

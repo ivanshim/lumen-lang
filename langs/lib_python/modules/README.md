@@ -1,8 +1,10 @@
 # Python library sources
 
 The enum support uses CPython commit `3b564385e4c9`. `enum.py`, `pydoc.py`,
-`__future__.py`, `pkgutil.py`, `reprlib.py`, `token.py`, `linecache.py`, and `keyword.py`
-retain the upstream source below a PSF provenance comment.
+`__future__.py`, `pkgutil.py`, `reprlib.py`, `token.py`, and `keyword.py`
+retain the upstream source below a PSF provenance comment. `linecache.py`
+retains the upstream implementation with uncached filesystem source reading
+when os.stat is unavailable, without inventing timestamps.
 
 The import execution remains in the kernels. The full CPython bootstrap
 requires `_imp`, frozen modules, native import locks, and runtime installation
@@ -23,7 +25,8 @@ the runtime's text streams after the upstream encoding detection, since
 paths; it supplies no CPython build configuration. `_thread` exposes the
 existing thread identifier, without advertising native threading support.
 
-Member and module discovery in `inspect`, wrapper metadata and single
+Member, module, documentation, and source-comment discovery in `inspect`,
+wrapper metadata and single
 dispatch in `functools`, and the support helpers needed by the enum suite
 reuse upstream Python implementations. Signature, Parameter, and bound
 argument models also retain upstream implementations, using ordered builtin

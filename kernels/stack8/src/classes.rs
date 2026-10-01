@@ -1244,6 +1244,10 @@ impl<'a> Engine<'a> {
                 if let Some(inherited) = self.root_member(name, None) { return Ok(inherited); }
             }
             Value::Class(c) => {
+                if !name.is_empty() && name == self.class_word("module")
+                    && (Self::own_kind(c).is_some() || (c.base.is_none() && c.name == self.class_word("root"))) {
+                    return Ok(Value::text(self.lang.names_module.first().map_or("builtins", String::as_str)));
+                }
                 if let Some(word) = Self::own_kind(c) {
                     if name == self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(&word)])); }
                     if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }

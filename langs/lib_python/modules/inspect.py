@@ -41,42 +41,57 @@ def getmro(cls):
     return cls.__mro__
 
 
-def cleandoc(doc):
-    # Take the indentation a docstring picked up from the block it was
-    # written in back off, the way CPython does: the first line loses
-    # its leading space, and every line after loses the smallest
-    # indentation any of them has.
+def cleandoc(doc, *, dedent=True):
+    """Clean up indentation from docstrings.
+
+    Any whitespace that can be uniformly removed from the second line
+    onwards is removed, unless dedent is false."""
     lines = doc.expandtabs().split('\n')
-    margin = -1
-    for line in lines[1:]:
-        stripped = line.lstrip()
-        if not stripped:
-            continue
-        indent = len(line) - len(stripped)
-        if margin < 0 or indent < margin:
-            margin = indent
-    cleaned = [lines[0].strip()]
-    if margin > 0:
+
+    # Find minimum indentation of any non-blank lines after first line.
+    margin = sys.maxsize
+    if dedent:
         for line in lines[1:]:
-            cleaned.append(line[margin:].rstrip())
+            content = len(line.lstrip(' '))
+            if content:
+                indent = len(line) - content
+                margin = min(margin, indent)
+    # Remove indentation.
+    if lines:
+        lines[0] = lines[0].lstrip(' ')
+    if margin < sys.maxsize:
+        for i in range(1, len(lines)):
+            lines[i] = lines[i][margin:]
+    # Remove any trailing or leading blank lines.
+    while lines and not lines[-1]:
+        lines.pop()
+    while lines and not lines[0]:
+        lines.pop(0)
+    return '\n'.join(lines)
+
+def getdoc(object, *, fallback_to_class_doc=True, inherit_class_doc=True,
+           dedent=True):
+    """Get the documentation string for an object.
+
+    All tabs are expanded to spaces.  To clean up docstrings that are
+    indented to line up with blocks of code, any whitespace than can be
+    uniformly removed from the second line onwards is removed, unless
+    dedent is false."""
+    if fallback_to_class_doc:
+        try:
+            doc = object.__doc__
+        except AttributeError:
+            return None
     else:
-        for line in lines[1:]:
-            cleaned.append(line.rstrip())
-    while cleaned and not cleaned[-1]:
-        cleaned.pop()
-    while cleaned and not cleaned[0]:
-        cleaned.pop(0)
-    return '\n'.join(cleaned)
-
-
-def getdoc(object):
-    if not hasattr(object, '__doc__'):
-        return None
-    doc = object.__doc__
+        doc = _getowndoc(object)
     if doc is None:
+        try:
+            doc = _finddoc(object, search_in_class=inherit_class_doc)
+        except (AttributeError, TypeError):
+            return None
+    if not isinstance(doc, str):
         return None
-    return cleandoc(doc)
-
+    return cleandoc(doc, dedent=dedent)
 
 def stack(context=1):
     # CPython walks the calls in progress and hands back a record for
@@ -495,11 +510,13 @@ import itertools
 from operator import attrgetter
 from keyword import iskeyword
 import functools
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from types import MappingProxyType
 from annotationlib import Format, get_annotations
 _NonUserDefinedCallables = (types.WrapperDescriptorType, types.MethodWrapperType, types.BuiltinFunctionType)
-def formatannotation(annotation, base_module=None):
+def formatannotation(annotation, base_module=None, *, quote_annotation_strings=True):
+    if isinstance(annotation, str) and not quote_annotation_strings:
+        return annotation
     if getattr(annotation, '__module__', None) == 'typing':
         return repr(annotation).replace('typing.', '')
     if isinstance(annotation, types.GenericAlias):
@@ -1761,3 +1778,249 @@ def _descriptor_get(descriptor, obj):
 
 def _signature_fromstr(cls, obj, text, skip_bound_arg=True):
     raise NotImplementedError("native text signatures are not exposed by this runtime")
+
+def _findclass(func):
+    cls = sys.modules.get(func.__module__)
+    if cls is None:
+        return None
+    for name in func.__qualname__.split('.')[:-1]:
+        cls = getattr(cls, name)
+    if not isclass(cls):
+        return None
+    return cls
+
+
+def _finddoc(obj, *, search_in_class=True):
+    if search_in_class and isclass(obj):
+        for base in obj.__mro__:
+            if base is not object:
+                try:
+                    doc = base.__doc__
+                except AttributeError:
+                    continue
+                if doc is not None:
+                    return doc
+        return None
+
+    if ismethod(obj):
+        name = obj.__func__.__name__
+        self = obj.__self__
+        if (isclass(self) and
+            getattr(getattr(self, name, None), '__func__') is obj.__func__):
+            # classmethod
+            cls = self
+        else:
+            cls = self.__class__
+    elif isfunction(obj):
+        name = obj.__name__
+        cls = _findclass(obj)
+        if cls is None or getattr(cls, name) is not obj:
+            return None
+    elif isbuiltin(obj):
+        name = obj.__name__
+        self = obj.__self__
+        if (isclass(self) and
+            self.__qualname__ + '.' + name == obj.__qualname__):
+            # classmethod
+            cls = self
+        else:
+            cls = self.__class__
+    # Should be tested before isdatadescriptor().
+    elif isinstance(obj, property):
+        name = obj.__name__
+        cls = _findclass(obj.fget)
+        if cls is None or getattr(cls, name) is not obj:
+            return None
+    # Should be tested before ismethoddescriptor()
+    elif isinstance(obj, functools.cached_property):
+        name = obj.attrname
+        cls = _findclass(obj.func)
+        if cls is None or getattr(cls, name) is not obj:
+            return None
+    elif ismethoddescriptor(obj) or isdatadescriptor(obj):
+        name = obj.__name__
+        cls = obj.__objclass__
+        if getattr(cls, name) is not obj:
+            return None
+        if ismemberdescriptor(obj):
+            slots = getattr(cls, '__slots__', None)
+            if isinstance(slots, dict) and name in slots:
+                return slots[name]
+    else:
+        return None
+    for base in cls.__mro__:
+        try:
+            doc = getattr(base, name).__doc__
+        except AttributeError:
+            continue
+        if doc is not None:
+            return doc
+    return None
+
+
+def walktree(classes, children, parent):
+    """Recursive helper function for getclasstree()."""
+    results = []
+    classes.sort(key=attrgetter('__module__', '__name__'))
+    for c in classes:
+        results.append((c, c.__bases__))
+        if c in children:
+            results.append(walktree(children[c], children, c))
+    return results
+
+
+def getclasstree(classes, unique=False):
+    """Arrange the given list of classes into a hierarchy of nested lists.
+
+    Where a nested list appears, it contains classes derived from the class
+    whose entry immediately precedes the list.  Each entry is a 2-tuple
+    containing a class and a tuple of its base classes.  If the 'unique'
+    argument is true, exactly one entry appears in the returned structure
+    for each class in the given list.  Otherwise, classes using multiple
+    inheritance and their descendants will appear multiple times."""
+    children = {}
+    roots = []
+    for c in classes:
+        if c.__bases__:
+            for parent in c.__bases__:
+                if parent not in children:
+                    children[parent] = []
+                if c not in children[parent]:
+                    children[parent].append(c)
+                if unique and parent in classes: break
+        elif c not in roots:
+            roots.append(c)
+    for parent in children:
+        if parent not in classes:
+            roots.append(parent)
+    return walktree(roots, children, None)
+
+# ------------------------------------------------ argument list extraction
+Arguments = namedtuple('Arguments', 'args, varargs, varkw')
+
+
+_sentinel = object()
+
+def _getowndoc(obj):
+    """Get the documentation string for an object if it is not
+    inherited from its class."""
+    try:
+        doc = object.__getattribute__(obj, '__doc__')
+        if doc is None:
+            return None
+        if obj is not type:
+            typedoc = type(obj).__doc__
+            if isinstance(typedoc, str) and typedoc == doc:
+                return None
+        return doc
+    except AttributeError:
+        return None
+
+def findsource(object):
+    """Return the entire source file and starting line number for an object.
+
+    The argument may be a module, class, method, function, traceback, frame,
+    or code object.  The source code is returned as a list of all the lines
+    in the file and the line number indexes a line in that list.  An OSError
+    is raised if the source code cannot be retrieved."""
+
+    file = getsourcefile(object)
+    if file:
+        # Invalidate cache if needed.
+        linecache.checkcache(file)
+    else:
+        file = getfile(object)
+        # Allow filenames in form of "<something>" to pass through.
+        # `doctest` monkeypatches `linecache` module to enable
+        # inspection, so let `linecache.getlines` to be called.
+        if (not (file.startswith('<') and file.endswith('>'))) or file.endswith('.fwork'):
+            raise OSError('source code not available')
+
+    module = getmodule(object, file)
+    if module:
+        lines = linecache.getlines(file, module.__dict__)
+        if not lines and file.startswith('<') and hasattr(object, "__code__"):
+            lines = linecache._getlines_from_code(object.__code__)
+    else:
+        lines = linecache.getlines(file)
+    if not lines:
+        raise OSError('could not get source code')
+
+    if ismodule(object):
+        return lines, 0
+
+    if isclass(object):
+        try:
+            lnum = vars(object)['__firstlineno__'] - 1
+        except (TypeError, KeyError):
+            raise OSError('source code not available')
+        if lnum >= len(lines):
+            raise OSError('lineno is out of bounds')
+        return lines, lnum
+
+    if ismethod(object):
+        object = object.__func__
+    if isfunction(object):
+        object = object.__code__
+    if istraceback(object):
+        object = object.tb_frame
+    if isframe(object):
+        object = object.f_code
+    if iscode(object):
+        if not hasattr(object, 'co_firstlineno'):
+            raise OSError('could not find function definition')
+        lnum = object.co_firstlineno - 1
+        if lnum >= len(lines):
+            raise OSError('lineno is out of bounds')
+        return lines, lnum
+    raise OSError('could not find code object')
+
+def getcomments(object):
+    """Get lines of comments immediately preceding an object's source code.
+
+    Returns None when source can't be found.
+    """
+    try:
+        lines, lnum = findsource(object)
+    except (OSError, TypeError):
+        return None
+
+    if ismodule(object):
+        # Look for a comment block at the top of the file.
+        start = 0
+        if lines and lines[0][:2] == '#!': start = 1
+        while start < len(lines) and lines[start].strip() in ('', '#'):
+            start = start + 1
+        if start < len(lines) and lines[start][:1] == '#':
+            comments = []
+            end = start
+            while end < len(lines) and lines[end][:1] == '#':
+                comments.append(lines[end].expandtabs())
+                end = end + 1
+            return ''.join(comments)
+
+    # Look for a preceding block of comments at the same indentation.
+    elif lnum > 0:
+        indent = indentsize(lines[lnum])
+        end = lnum - 1
+        if end >= 0 and lines[end].lstrip()[:1] == '#' and \
+            indentsize(lines[end]) == indent:
+            comments = [lines[end].expandtabs().lstrip()]
+            if end > 0:
+                end = end - 1
+                comment = lines[end].expandtabs().lstrip()
+                while comment[:1] == '#' and indentsize(lines[end]) == indent:
+                    comments[:0] = [comment]
+                    end = end - 1
+                    if end < 0: break
+                    comment = lines[end].expandtabs().lstrip()
+            while comments and comments[0].strip() == '#':
+                comments[:1] = []
+            while comments and comments[-1].strip() == '#':
+                comments[-1:] = []
+            return ''.join(comments)
+
+def indentsize(line):
+    """Return the indent size, in spaces, at the start of a line of text."""
+    expline = line.expandtabs()
+    return len(expline) - len(expline.lstrip())
