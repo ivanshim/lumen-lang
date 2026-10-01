@@ -8809,6 +8809,12 @@ impl<'a> Engine<'a> {
                         } else { self.registry.slot(&name) };
                         self.world.resize(self.registry.idents.len(), Value::Blank);
                         if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone())); }
+                        // Text run in a dictionary of its own is handed
+                        // the names there too, the way the reference's
+                        // wildcard import writes the given globals.
+                        if let Some(reading) = self.reading_in {
+                            self.write_booked(Kept::Text(reading), &name, Some(value.clone()));
+                        }
                         match &self.world[at] {
                             Value::Bond(cell) => *cell.borrow_mut() = value,
                             _ if destination.is_some() => self.world[at] = Value::Bond(Rc::new(RefCell::new(value))),

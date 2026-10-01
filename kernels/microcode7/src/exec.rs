@@ -13791,6 +13791,18 @@ impl<'a> Machine<'a> {
                         let slot = if let Some(index) = self.idents.iter().position(|word| word == &key) { index }
                             else { self.idents.push(key); self.idents.len() - 1 };
                         self.booked_write(slot, &name, Some(worth.clone()));
+                        // A text running in a dictionary of its own is
+                        // handed the names there as well, so a later
+                        // piece of the same text finds them.
+                        if let Some(which) = self.reading_now {
+                            let book = &self.readings[which];
+                            let goes_to = match &book.outer {
+                                Some(outer) if book.declared.iter().any(|word| word == &name) => outer,
+                                _ => &book.near,
+                            };
+                            let goes_to = goes_to.clone();
+                            if let Err(escape) = self.booked_put(&goes_to, &name, Some(worth.clone())) { self.got_away = Some(escape); }
+                        }
                         let saved = {
                             let mut cells = self.outermost.cells.borrow_mut();
                             cells.resize(self.idents.len(), Value::Unset);
