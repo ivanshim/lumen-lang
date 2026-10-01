@@ -37,6 +37,9 @@ class _Raises:
         return True
 
 class TestResult:
+    def __repr__(self):
+        return ('<' + _named_class(self.__class__) + ' run=' + str(self.testsRun) +
+                ' errors=' + str(len(self.errors)) + ' failures=' + str(len(self.failures)) + '>')
     def __init__(self):
         self.testsRun = 0
         self.failures = []
@@ -430,6 +433,9 @@ class TestSuite:
         for test in tests:
             self.addTest(test)
 
+    def __iter__(self):
+        return iter(self.tests)
+
     def _fixture(self, name, result):
         if self.class_ is None or getattr(self.class_, '__unittest_skip__', False):
             return True
@@ -658,6 +664,22 @@ def _ordered(values):
     return result
 
 
+def _named_class(cls):
+    return '%s.%s' % (getattr(cls, '__module__', '__main__'), cls.__name__)
+
+
+class TextTestResult(TestResult):
+    """The result a text runner keeps, answering in the reference's own
+    writing when asked how it stands."""
+
+    def __repr__(self):
+        return ('<' + _named_class(self.__class__) + ' run=' + str(self.testsRun) +
+                ' errors=' + str(len(self.errors)) + ' failures=' + str(len(self.failures)) + '>')
+
+
+TextTestResult.__module__ = 'unittest.runner'
+
+
 class TextTestRunner:
     def __init__(self, stream=None, descriptions=True, verbosity=1, failfast=False, buffer=False, resultclass=None, warnings=None, **kwargs):
         if buffer or warnings is not None or len(kwargs) != 0:
@@ -719,9 +741,8 @@ class TextTestRunner:
 
     def run(self, test):
         self._progress = ""
-        result = TestResult()
-        if self.resultclass is not None:
-            result = self.resultclass()
+        making = self.resultclass if self.resultclass is not None else TextTestResult
+        result = making()
         started = _host_clock()
         self._run(test, result)
         elapsed = _host_clock() - started

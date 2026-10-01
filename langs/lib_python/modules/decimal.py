@@ -10,23 +10,80 @@
 import math
 
 
+ROUND_CEILING = 'ROUND_CEILING'
+ROUND_DOWN = 'ROUND_DOWN'
+ROUND_FLOOR = 'ROUND_FLOOR'
+ROUND_HALF_DOWN = 'ROUND_HALF_DOWN'
+ROUND_HALF_EVEN = 'ROUND_HALF_EVEN'
+ROUND_HALF_UP = 'ROUND_HALF_UP'
+ROUND_UP = 'ROUND_UP'
+ROUND_05UP = 'ROUND_05UP'
+
+
+class DecimalException(ArithmeticError):
+    """The base of everything a decimal working can go wrong by."""
+
+
+class InvalidOperation(DecimalException):
+    """An operation the decimal scheme gives no answer to."""
+
+
+class DivisionByZero(DecimalException, ZeroDivisionError):
+    """A division by a value nothing is left of."""
+
+
+class Overflow(DecimalException):
+    """A result past every number the context's range holds."""
+
+
+class Underflow(DecimalException):
+    """A result under every number the context's range holds."""
+
+
+class Clamped(DecimalException):
+    """An exponent the context's range had to press in."""
+
+
 class Context:
     def __init__(self, prec=28, rounding=None, Emin=None, Emax=None, capitals=1, clamp=0, flags=None, traps=None):
         self.prec = prec
-        self.rounding = rounding if rounding is not None else 'ROUND_HALF_EVEN'
+        self.rounding = rounding if rounding is not None else ROUND_HALF_EVEN
         self.Emin = Emin if Emin is not None else -999999
         self.Emax = Emax if Emax is not None else 999999
         self.capitals = capitals
         self.clamp = clamp
+        self.traps = traps if traps is not None else {InvalidOperation, DivisionByZero, Overflow}
 
     def copy(self):
-        return Context(self.prec, self.rounding, self.Emin, self.Emax, self.capitals, self.clamp)
+        return Context(self.prec, self.rounding, self.Emin, self.Emax, self.capitals, self.clamp, traps=set(self.traps))
 
     def __repr__(self):
         return 'Context(prec=' + repr(self.prec) + ', rounding=' + repr(self.rounding) + ')'
 
 
-_context = Context()
+# The three settings the specification offers ready-made: the one
+# every run starts under, and the two a run may borrow for a while.
+DefaultContext = Context(prec=28, rounding=ROUND_HALF_EVEN,
+                         traps={DivisionByZero, Overflow, InvalidOperation},
+                         Emax=999999, Emin=-999999, capitals=1, clamp=0)
+BasicContext = Context(prec=9, rounding=ROUND_HALF_UP,
+                       traps={DivisionByZero, Overflow, InvalidOperation, Clamped, Underflow},
+                       Emax=999999, Emin=-999999, capitals=1, clamp=0)
+ExtendedContext = Context(prec=9, rounding=ROUND_HALF_EVEN, traps=set(),
+                          Emax=999999, Emin=-999999, capitals=1, clamp=0)
+
+_context = DefaultContext.copy()
+
+
+def _signal(kind, message):
+    # A trapped signal stops the work as the exception of its own kind;
+    # one no trap watches answers as the quiet value nothing equals.
+    if kind in getcontext().traps:
+        raise kind(message)
+    made = Decimal(0)
+    made._nan = True
+    made._inf = False
+    return made
 
 
 def getcontext():
@@ -94,7 +151,7 @@ def _parse(text):
     if upper == 'NAN' or upper.startswith('NAN'):
         return sign, True, False, 0, 0
     if upper.startswith('SNAN'):
-        return sign, True, False, 0, 0
+        return sign, 's', False, 0, 0
     exponent = 0
     if 'E' in upper:
         at = upper.index('E')
@@ -117,15 +174,19 @@ class Decimal:
         if isinstance(value, Decimal):
             self._sign = value._sign
             self._nan = value._nan
+            self._snan = value._snan
             self._inf = value._inf
             self._int = value._int
             self._exp = value._exp
             return
         if isinstance(value, str):
             sign, nan, inf, coefficient, exponent = _parse(value)
-            self._sign, self._nan, self._inf = sign, nan, inf
+            self._snan = nan == 's'
+            self._nan = bool(nan)
+            self._sign, self._inf = sign, inf
             self._int, self._exp = coefficient, exponent
             return
+        self._snan = False
         if isinstance(value, bool):
             value = int(value)
         if isinstance(value, int):
@@ -168,6 +229,7 @@ class Decimal:
         made = Decimal(0)
         made._sign = 1 if sign else 0
         made._nan = False
+        made._snan = False
         made._inf = False
         made._int = coefficient
         made._exp = exponent
@@ -175,6 +237,12 @@ class Decimal:
 
     def is_nan(self):
         return self._nan
+
+    def is_snan(self):
+        return self._nan and self._snan
+
+    def is_qnan(self):
+        return self._nan and not self._snan
 
     def is_infinite(self):
         return self._inf
@@ -191,7 +259,7 @@ class Decimal:
     def as_tuple(self):
         if self._nan:
             digits = tuple(int(c) for c in str(self._int)) if self._int else ()
-            return (self._sign, digits, 'n')
+            return (self._sign, digits, 'N' if self._snan else 'n')
         if self._inf:
             return (self._sign, (), 'F')
         digits = str(self._int)
@@ -199,7 +267,7 @@ class Decimal:
 
     def __str__(self):
         if self._nan:
-            return ('-' if self._sign else '') + 'NaN'
+            return ('-' if self._sign else '') + ('sNaN' if self._snan else 'NaN')
         if self._inf:
             return ('-' if self._sign else '') + 'Infinity'
         digits = str(self._int)
@@ -350,7 +418,10 @@ class Decimal:
         return Decimal._finite(0 if self._sign else 1, self._int, self._exp) if self.is_finite() else _flipped(self)
 
     def __pos__(self):
-        return Decimal(self)
+        # The reference's plus applies the context to what it answers:
+        # a value already within the context's figures is given back
+        # as it stands, and one beyond them is rounded into them.
+        return _context_round(self, getcontext())
 
     def __abs__(self):
         return Decimal._finite(False, self._int, self._exp) if self.is_finite() else _nonneg(self)
@@ -389,7 +460,7 @@ class Decimal:
         other_sign = (not other._sign) if negate_other else other._sign
         if self._inf or other._inf:
             if self._inf and other._inf and self._sign != other_sign:
-                raise 'ValueError: -Infinity + Infinity in Decimal addition'
+                return _signal(InvalidOperation, '-Infinity + Infinity')
             return _infinite(self._sign if self._inf else other_sign)
         exponent = self._exp if self._exp < other._exp else other._exp
         a = self._int * (10 ** (self._exp - exponent))
@@ -419,21 +490,69 @@ class Decimal:
         sign = self._sign != other._sign
         if self._inf or other._inf:
             if (self._inf and other.is_zero()) or (other._inf and self.is_zero()):
-                raise 'ValueError: 0 * Infinity in Decimal multiplication'
+                return _signal(InvalidOperation, '0 * Infinity')
             return _infinite(sign)
         return Decimal._finite(sign, self._int * other._int, self._exp + other._exp)
 
     def __rmul__(self, other):
         return self.__mul__(other)
 
-    def __pow__(self, other):
-        if not isinstance(other, int):
-            raise "TypeError: unsupported operand type(s) for ** or pow(): 'Decimal' and '" + type(other).__name__ + "'"
-        if other < 0:
-            raise 'NotImplementedError: negative Decimal powers are not supported'
+    def __pow__(self, other, modulo=None):
+        if modulo is not None:
+            raise 'NotImplementedError: modular Decimal powers are not supported'
+        if isinstance(other, Decimal):
+            if other._snan or self._snan:
+                return _signal(InvalidOperation, 'a power met a signaling NaN')
+            if other._nan or self._nan:
+                return Decimal(self) if self._nan else Decimal(other)
+            if other._inf:
+                if self._inf or self._int == 0:
+                    # An infinity to a positive power is itself, and a
+                    # zero to one is zero; the other ways round they
+                    # swap, and a negative power of nothing has no
+                    # answer at all.
+                    if other._sign:
+                        return Decimal._finite(False, 0, 0) if self._int == 0 else Decimal._finite(False, 0, 0)
+                    return self if self._inf else Decimal(self)
+                adjusted = len(str(self._int)) + self._exp - 1
+                if adjusted == 0 and self._int == 1:
+                    return _signal(InvalidOperation, 'one to an infinite power')
+                grows = adjusted > 0
+                if grows != other._sign:
+                    return _infinite(False)
+                return Decimal._finite(False, 0, 0)
+            if other._exp >= 0:
+                if other._sign:
+                    raise 'NotImplementedError: negative Decimal powers are not supported'
+                whole = other._int * 10 ** other._exp
+                return self._whole_power(whole)
+            # A fractional power is asked only of a positive base, as
+            # the reference asks it: nothing else has one answer.
+            if self._inf:
+                if other._sign:
+                    return Decimal._finite(False, 0, 0)
+                if self._sign:
+                    return _signal(InvalidOperation, 'a negative base to a fractional power')
+                return self
+            if self._int == 0:
+                if other._sign:
+                    return _signal(InvalidOperation, 'zero to a negative power')
+                return Decimal._finite(False, 0, 0)
+            if self._sign:
+                return _signal(InvalidOperation, 'a negative base to a fractional power')
+            return (other * self.ln()).exp()
+        if isinstance(other, bool):
+            other = int(other)
+        if isinstance(other, int):
+            if other < 0:
+                raise 'NotImplementedError: negative Decimal powers are not supported'
+            return self._whole_power(other)
+        raise "TypeError: unsupported operand type(s) for ** or pow(): 'Decimal' and '" + type(other).__name__ + "'"
+
+    def _whole_power(self, whole):
         result = Decimal(1)
         base = Decimal(self)
-        e = other
+        e = whole
         while e > 0:
             if e & 1:
                 result = result * base
@@ -442,21 +561,118 @@ class Decimal:
                 base = base * base
         return result
 
+    def __truediv__(self, other):
+        return self._divide(other)
+
+    def __rtruediv__(self, other):
+        return _coerced(other)._divide(self)
+
+    def _divide(self, other):
+        other = _coerced(other)
+        if self._nan or other._nan:
+            return _nan_of(self, other)
+        sign = self._sign != other._sign
+        if self._inf:
+            if other._inf:
+                return _signal(InvalidOperation, 'Infinity / Infinity')
+            if other._int == 0:
+                return _signal(DivisionByZero, 'division by zero')
+            return _infinite(sign)
+        if other._inf:
+            return Decimal._finite(sign, 0, 0)
+        if other._int == 0:
+            if self._int == 0:
+                return _signal(InvalidOperation, '0 / 0')
+            return _signal(DivisionByZero, 'division by zero')
+        if self._int == 0:
+            return Decimal._finite(sign, 0, 0)
+        context = getcontext()
+        prec = context.prec
+        A, ea = self._int, self._exp
+        B, eb = other._int, other._exp
+        ideal = ea - eb
+        # An exact answer first: where the divisor, once what the two
+        # share is taken away, is a product of twos and fives alone,
+        # the quotient is a whole number of digits at some place.
+        g = _gcd_int(A, B)
+        a, b = A // g, B // g
+        twos = 0
+        while b % 2 == 0:
+            b //= 2
+            twos += 1
+        fives = 0
+        while b % 5 == 0:
+            b //= 5
+            fives += 1
+        if b == 1:
+            raise_exponent = twos if twos > fives else fives
+            coefficient = a * 10 ** raise_exponent // ((2 ** twos) * (5 ** fives))
+            exponent = ideal - raise_exponent
+            while coefficient % 10 == 0 and exponent < ideal:
+                coefficient //= 10
+                exponent += 1
+            if len(str(coefficient)) <= prec:
+                return Decimal._finite(sign, coefficient, exponent)
+        # Otherwise, or where exactness outgrows the context, the
+        # quotient is taken to one figure beyond the context's count
+        # and rounded into it by the context's own rule.
+        num, den, shift = A, B, 0
+        while num // den < 10 ** prec:
+            num *= 10
+            shift -= 1
+        while num // den >= 10 ** (prec + 1):
+            den *= 10
+            shift += 1
+        whole, rest = divmod(num, den)
+        kept = whole // 10
+        dropped = whole % 10
+        rounding = context.rounding
+        upward = False
+        if rounding == ROUND_HALF_EVEN:
+            upward = dropped > 5 or (dropped == 5 and (rest != 0 or kept % 2 == 1))
+        elif rounding == ROUND_HALF_UP:
+            upward = dropped > 5 or (dropped == 5 and rest != 0) or dropped == 5
+        elif rounding == ROUND_HALF_DOWN:
+            upward = dropped > 5 or (dropped == 5 and rest != 0)
+        elif rounding == ROUND_UP:
+            upward = dropped != 0 or rest != 0
+        elif rounding == ROUND_05UP:
+            upward = (dropped != 0 or rest != 0) and kept % 5 == 0
+        elif rounding == ROUND_CEILING:
+            upward = dropped != 0 or rest != 0
+        elif rounding == ROUND_FLOOR:
+            upward = False
+        else:
+            upward = dropped > 5 or (dropped == 5 and (rest != 0 or kept % 2 == 1))
+        if upward:
+            kept += 1
+        if kept == 10 ** prec:
+            kept //= 10
+            shift += 1
+        return Decimal._finite(sign, kept, shift + ideal + 1)
+
+    def __rpow__(self, other):
+        return _coerced(other).__pow__(self)
+
     def sqrt(self, context=None):
+        context = context if context is not None else getcontext()
+        if self._snan:
+            return _signal(InvalidOperation, 'sqrt of a signaling NaN')
         if self._nan:
             return self
         if self._inf:
             if self._sign:
-                raise 'ValueError: sqrt of a negative value'
+                return _signal(InvalidOperation, 'sqrt of a negative value')
             return self
         if self._sign and self._int != 0:
-            raise 'ValueError: sqrt of a negative value'
+            return _signal(InvalidOperation, 'sqrt of a negative value')
         if self._int == 0:
             return Decimal._finite(self._sign, 0, self._exp // 2)
-        # Rather than the context's own count of figures, enough are
-        # kept that nothing built from this root -- a binary real
-        # included -- ever finds fewer of them correct than it needs.
-        guard = 40
+        # Enough figures are taken that rounding to the context's own
+        # count afterwards cannot disturb them: a span of guarding
+        # digits beyond whatever the context asks for, never fewer than
+        # a binary real would need of a root.
+        guard = 25 if context.prec < 25 else context.prec + 25
         exponent = self._exp
         coefficient = self._int
         if exponent % 2 != 0:
@@ -464,7 +680,107 @@ class Decimal:
             exponent -= 1
         scaled = coefficient * (10 ** (2 * guard))
         root = _isqrt(scaled)
-        return Decimal._finite(False, root, exponent // 2 - guard)
+        made = Decimal._finite(False, root, exponent // 2 - guard)
+        # A root exact at fewer figures keeps no more than it needs:
+        # trailing zeros fall away down to the places the root of the
+        # value would naturally stand at.
+        natural = (exponent // 2 - guard) + len(str(root))
+        while made._int != 0 and made._int % 10 == 0 and made._exp < exponent // 2:
+            made = Decimal._finite(False, made._int // 10, made._exp + 1)
+        del natural
+        return _context_round(made, context)
+
+    def next_plus(self, context=None):
+        context = context if context is not None else getcontext()
+        return self._neighbour(context, 1)
+
+    def next_minus(self, context=None):
+        context = context if context is not None else getcontext()
+        return self._neighbour(context, -1)
+
+    def _neighbour(self, context, step):
+        # The nearest value the context can hold on the one side of
+        # this one: the coefficient is first brought to the context's
+        # own count of figures, then walked a single place of its last
+        # figure in the step's direction.
+        if self._nan or self._inf:
+            return Decimal(self)
+        coefficient, exponent = self._int, self._exp
+        digits = len(str(coefficient))
+        if digits < context.prec:
+            coefficient *= 10 ** (context.prec - digits)
+            exponent -= context.prec - digits
+        signed = -coefficient if self._sign else coefficient
+        signed += step
+        if signed == 0:
+            return Decimal._finite(step < 0, 0, exponent)
+        sign = signed < 0
+        magnitude = -signed if sign else signed
+        digits = len(str(magnitude))
+        if digits > context.prec:
+            magnitude //= 10
+            exponent += 1
+        elif digits < context.prec:
+            magnitude = magnitude * 10 + (9 if step < 0 else 0)
+            exponent -= 1
+        return Decimal._finite(sign, magnitude, exponent)
+
+    def ln(self, context=None):
+        """The natural logarithm, rounded to the context's figures."""
+        context = context if context is not None else getcontext()
+        if self._snan:
+            return _signal(InvalidOperation, 'ln of a signaling NaN')
+        if self._nan:
+            return Decimal(self)
+        if self._inf:
+            return self if not self._sign else _signal(InvalidOperation, 'ln of a negative value')
+        if self._sign or self._int == 0:
+            return _signal(InvalidOperation, 'ln of a non-positive value')
+        working = context.prec + 15
+        scale = 10 ** working
+        coefficient, exponent = self._int, self._exp
+        limit = working + 20
+        # A coefficient of many thousands of digits is brought down to
+        # its leading figures in one division, the size of it reckoned
+        # from its own width first, so that neither a writing of all of
+        # it nor a walk of thousands of places is ever asked for.
+        shifted = 0
+        width = (coefficient.bit_length() * 30103) // 100000
+        if width > limit:
+            shifted = width - limit + 1
+            coefficient //= 10 ** shifted
+        text = str(coefficient)
+        lead = text if len(text) <= limit else text[:limit]
+        lead_places = len(lead) - 1
+        # ln(m * 10^lead_places) = ln(m) + lead_places * ln(10), with m
+        # in [1, 10); the digits past the lead shift the place, their
+        # own share of the answer far beneath the figures kept.
+        places = len(text) - 1 + shifted
+        mantissa_log = _ln_ratio(int(lead), 10 ** lead_places, scale)
+        ten_log = _ln_ratio(10, 1, scale)
+        total = mantissa_log + (places + exponent) * ten_log
+        made = _scaled_to_decimal(total, scale)
+        return _context_round(made, context)
+
+    def exp(self, context=None):
+        """The exponential, rounded to the context's figures."""
+        context = context if context is not None else getcontext()
+        if self._snan:
+            return _signal(InvalidOperation, 'exp of a signaling NaN')
+        if self._nan:
+            return Decimal(self)
+        if self._inf:
+            if self._sign:
+                return Decimal._finite(False, 0, 0)
+            return self
+        working = context.prec + 15
+        scale = 10 ** working
+        value = _exp_scaled(self._signed_int(), 10 ** (-self._exp) if self._exp < 0 else 1, scale)
+        made = _scaled_to_decimal(value, scale)
+        return _context_round(made, context)
+
+    def _signed_int(self):
+        return -self._int if self._sign else self._int
 
     def _cmp(self, other):
         other = Decimal(other) if isinstance(other, float) else _coerced(other)
@@ -580,14 +896,133 @@ def _nonneg(value):
 
 
 def _nan_of(a, b):
+    # A signaling operand stops the working as an invalid operation
+    # wherever a trap watches for it, and quiets into the answer
+    # nothing equals where none does.
+    if getattr(a, '_snan', False) or getattr(b, '_snan', False):
+        return _signal(InvalidOperation, 'an operation met a signaling NaN')
     source = a if a._nan else b
     made = Decimal(0)
     made._sign = source._sign
     made._nan = True
+    made._snan = False
     made._inf = False
     made._int = 0
     made._exp = 0
     return made
+
+
+def _context_round(value, context):
+    # What the context leaves of a value: one already within its count
+    # of figures is given back untouched, and one beyond them is
+    # rounded into them by the context's own rule. Nothing is padded.
+    if value._nan or value._inf:
+        return Decimal(value)
+    coefficient, exponent = value._int, value._exp
+    digits = len(str(coefficient))
+    if digits <= context.prec:
+        return Decimal(value)
+    drop = digits - context.prec
+    kept = coefficient // 10 ** drop
+    rest = coefficient % 10 ** drop
+    rounding = context.rounding
+    upward = False
+    if rounding == ROUND_HALF_EVEN:
+        twice = rest * 2
+        place = 10 ** drop
+        upward = twice > place or (twice == place and kept % 2 == 1)
+    elif rounding == ROUND_HALF_UP:
+        upward = rest * 2 >= 10 ** drop
+    elif rounding == ROUND_HALF_DOWN:
+        upward = rest * 2 > 10 ** drop
+    elif rounding == ROUND_UP:
+        upward = rest != 0
+    elif rounding == ROUND_05UP:
+        upward = rest != 0 and kept % 5 == 0
+    elif rounding == ROUND_CEILING:
+        upward = rest != 0 and not value._sign
+    elif rounding == ROUND_FLOOR:
+        upward = rest != 0 and value._sign
+    if upward:
+        kept += 1
+    if kept == 10 ** context.prec:
+        kept //= 10
+        exponent += 1 + drop
+        return Decimal._finite(value._sign, kept, exponent)
+    return Decimal._finite(value._sign, kept, exponent + drop)
+
+
+def _scaled_to_decimal(scaled, scale):
+    # A fixed-point whole, standing for scaled / scale, as a Decimal.
+    if scaled == 0:
+        return Decimal._finite(False, 0, 0)
+    negative = scaled < 0
+    magnitude = -scaled if negative else scaled
+    exponent = 0
+    while magnitude % 10 == 0 and magnitude != 0:
+        magnitude //= 10
+        exponent += 1
+    places = len(str(scale)) - 1
+    return Decimal._finite(negative, magnitude, exponent - places)
+
+
+def _ln_ratio(numerator, denominator, scale):
+    # ln(numerator / denominator) as a fixed-point whole at the scale,
+    # for a positive ratio in [1, 10). Square roots bring the ratio
+    # near one first -- each root halves the logarithm -- and the odd
+    # series of the inverse hyperbolic tangent, whose terms fall away
+    # fast once there, finds what is left. A ratio of one has no
+    # logarithm to find.
+    if numerator == denominator:
+        return 0
+    held = numerator * scale // denominator
+    roots = 0
+    while held > scale + scale // 5:
+        held = _isqrt(held * scale)
+        roots += 1
+    p = held - scale
+    if p == 0:
+        return 0
+    q = held + scale
+    total = 0
+    at = 1
+    while True:
+        term = p ** at * scale // (q ** at * at)
+        if term == 0 and at > 1:
+            break
+        total += term
+        at += 2
+    return total * 2 ** (roots + 1)
+
+
+def _exp_scaled(numerator, denominator, scale):
+    # exp(numerator / denominator) as a fixed-point whole at the scale,
+    # for a ratio brought small first, halved away and squared back.
+    negative = numerator < 0
+    n = -numerator if negative else numerator
+    halves = 0
+    while n >= denominator:
+        denominator *= 2
+        halves += 1
+    while n * 100 >= denominator:
+        denominator *= 2
+        halves += 1
+    # the Taylor run on the small ratio n / denominator
+    total = scale
+    term = scale
+    at = 1
+    while True:
+        term = term * n // (denominator * at)
+        if term == 0:
+            break
+        total += term
+        at += 1
+    for _ in range(halves):
+        total = total * total // scale
+    if negative:
+        # exp(-x) = scale**2 // exp(x), at the scale
+        total = scale * scale // total
+    return total
 
 
 def _coerced(value):
