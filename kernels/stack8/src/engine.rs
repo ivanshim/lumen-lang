@@ -18580,7 +18580,17 @@ impl Engine<'_> {
         // A directory the program itself put on `sys.path` is looked
         // in, in the order it stands there, ahead of the library: a
         // name found there is read straight off the disk instead.
-        if let Some((owner, _)) = path.rsplit_once('.') { self.import_module(owner)?; }
+        if let Some((owner, _)) = path.rsplit_once('.') {
+            let parent = self.import_module(owner)?;
+            if !self.module_sources.contains_key(path) {
+                if let Value::Object(namespace) = parent {
+                    if !namespace.fields.borrow().iter().any(|(name, _)| name == "__path__") {
+                        let missing = Self::named_fault(&self.lang.import_missing, path);
+                        return Err(format!("{missing}; '{owner}' is not a package").into());
+                    }
+                }
+            }
+        }
         let from_disk = self.sys_path_source(path);
         let source = match &from_disk {
             Some((_, source)) => source.clone(),
@@ -18735,7 +18745,7 @@ impl Engine<'_> {
             }
         }
         let child = format!("{path}.{name}");
-        if self.module_sources.contains_key(&child) { return self.import_module(&child); }
+        if self.module_sources.contains_key(&child) || self.sys_path_source(&child).is_some() || self.library_module_file(&child).is_some() { return self.import_module(&child); }
         Err(self.import_member_fault(path, name).into())
     }
 
@@ -20065,7 +20075,13 @@ impl Engine<'_> {
         values.retain(|(key, _)| !matches!(key, Value::Text(word) if word.as_ref() == path));
         if let Some(module) = self.modules.get(path) { values.push((Value::text(path), module.clone())); }
         let dictionary = Value::Map(Rc::new(values.into()));
-        if let Value::Bond(cell) = place { *cell.borrow_mut() = dictionary; } else { *place = dictionary; }
+        fn overwrite(held: &mut Value, replacement: Value) {
+            match held {
+                Value::Bond(cell) | Value::Collection(cell, _) | Value::Binding(cell) => overwrite(&mut cell.borrow_mut(), replacement),
+                slot => *slot = replacement,
+            }
+        }
+        overwrite(place, dictionary);
     }
 
 }

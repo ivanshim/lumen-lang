@@ -18538,7 +18538,17 @@ impl Machine<'_> {
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
         let parent_name = path.rsplit_once('.').map(|entry| entry.0);
-        if let Some(parent_name) = parent_name { self.load_namespace(parent_name)?; }
+        if let Some(parent_name) = parent_name {
+            let parent_space = self.load_namespace(parent_name)?;
+            let packaged = match parent_space {
+                Value::Thing(space) => space.holds.borrow().iter().any(|entry| entry.0 == "__path__"),
+                _ => false,
+            };
+            if !packaged && !self.library_sources.contains_key(path) {
+                let (head, tail) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
+                return Err(format!("{head}{path}{tail}; '{parent_name}' is not a package"));
+            }
+        }
         let from_disk = self.sys_path_source(path);
         let text = match &from_disk {
             Some((_, text)) => text.clone(),
@@ -18717,7 +18727,10 @@ impl Machine<'_> {
             }
         }
         let full = format!("{path}.{wanted}");
-        if self.library_sources.contains_key(&full) { return self.load_namespace(&full); }
+        let on_search_path = self.sys_path_source(&full).is_some();
+        if on_search_path || self.library_sources.contains_key(&full) || self.library_module_file(&full).is_some() {
+            return self.load_namespace(&full);
+        }
         Err(self.import_member_fault(path, wanted))
     }
 
@@ -21450,7 +21463,17 @@ impl Machine<'_> {
                 if let Some(position) = book.iter().position(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == path)) { book.remove(position); }
                 if let Some(item) = self.imported.get(path) { book.push((Value::text(path), item.clone())); }
                 let replacement = Value::Dict(Rc::new(book.into()));
-                match cell { Value::Shared(link) => *link.borrow_mut() = replacement, slot => *slot = replacement }
+                if let Value::Shared(link) | Value::Mutable(link, _) = cell {
+                    let mut destination = link.clone();
+                    loop {
+                        let next = match &*destination.borrow() {
+                            Value::Shared(inner) | Value::Mutable(inner, _) => Some(inner.clone()),
+                            _ => None,
+                        };
+                        if let Some(next) = next { destination = next; }
+                        else { destination.replace(replacement); break; }
+                    }
+                } else { *cell = replacement; }
             }
         }
     }
