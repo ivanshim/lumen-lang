@@ -58,8 +58,16 @@ def islice(iterable, *bounds):
         at += 1
     return result
 
+# Iterator recipe from CPython's itertools documentation, PSF licence.
 def chain(*iterables):
-    return [item for iterable in iterables for item in iterable]
+    for iterable in iterables:
+        yield from iterable
+
+def _chain_from_iterable(iterables):
+    for iterable in iterables:
+        yield from iterable
+
+chain.from_iterable = _chain_from_iterable
 
 def product(*iterables, repeat=1):
     result = [[]]

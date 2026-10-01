@@ -25,8 +25,7 @@ class _Implementation:
     cache_tag = None
 
 implementation = _Implementation()
-# The cache is refreshed after imports; editing this view does not yet
-# alter the loader's stored namespaces.
+# The module cache also retains namespaces installed by source loaders.
 modules = {}
 _recursion_limit = 1000
 
@@ -370,3 +369,7 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+
+def getdefaultencoding():
+    return 'utf-8'

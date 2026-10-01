@@ -4,6 +4,8 @@ _host_copy_value = __copy_value
 # A backtracking reader over text. Backreferences, inline flags, bytes and
 # locale rules are not carried by this small engine. Unsupported escapes
 # and group forms raise a complaint when compiled.
+A = 256
+ASCII = A
 I = 2
 IGNORECASE = I
 M = 8
@@ -531,7 +533,9 @@ class Pattern:
         self.multiline = (flags & MULTILINE) != 0
         self.dotall = (flags & DOTALL) != 0
         self.verbose = (flags & VERBOSE) != 0
-        text = _strip_verbose(pattern) if self.verbose else pattern
+        self._bytes = isinstance(pattern, (bytes, bytearray))
+        raw = bytes(pattern).decode("latin-1") if self._bytes else pattern
+        text = _strip_verbose(raw) if self.verbose else raw
         reader = _Reader(text)
         self.tree = reader.choice()
         if reader.i != len(text):
@@ -545,12 +549,22 @@ class Pattern:
         # the pattern's own text on every position a search tries.
         shorthand = False
         for mark in ['\\w', '\\W', '\\d', '\\D', '\\s', '\\S', '\\b']:
-            if mark in pattern:
+            if mark in raw:
                 shorthand = True
         self._shorthand = shorthand
 
+    def _text(self, string):
+        if self._bytes:
+            if not isinstance(string, (bytes, bytearray)):
+                raise TypeError('cannot use a bytes pattern on a string-like object')
+            return bytes(string).decode('latin-1')
+        if not isinstance(string, str):
+            raise TypeError('cannot use a string pattern on a bytes-like object')
+        return string
+
     def _check_text(self, string):
-        if not self._shorthand:
+        string = self._text(string)
+        if not self._shorthand or self._bytes or self.flags & ASCII:
             return
         for letter in list(string):
             if ord(letter) > 127:
@@ -566,14 +580,14 @@ class Pattern:
         # tries, without paying for that check again each time.
         if endpos is not None:
             string = string[:endpos]
-        states = _walk(self.tree, string, pos, {}, self._opts)
+        states = _walk(self.tree, self._text(string), pos, {}, self._opts)
         return Match(self, string, pos, states[0]) if len(states) else None
 
     def fullmatch(self, string, pos=0, endpos=None):
         self._check_text(string)
         if endpos is not None:
             string = string[:endpos]
-        for state in _walk(self.tree, string, pos, {}, self._opts):
+        for state in _walk(self.tree, self._text(string), pos, {}, self._opts):
             if state[0] == len(string):
                 return Match(self, string, pos, state)
         return None
@@ -592,7 +606,7 @@ class Pattern:
     def _next(self, string, pos, empty_at):
         self._check_text(string)
         while pos <= len(string):
-            for state in _walk(self.tree, string, pos, {}, self._opts):
+            for state in _walk(self.tree, self._text(string), pos, {}, self._opts):
                 if pos != empty_at or state[0] != pos:
                     return Match(self, string, pos, state)
             pos += 1
@@ -614,9 +628,9 @@ class Pattern:
                 result.append(found.group())
             elif self.groups == 1:
                 value = found.group(1)
-                result.append('' if value is None else value)
+                result.append((b'' if self._bytes else '') if value is None else value)
             else:
-                result.append(found.groups(''))
+                result.append(found.groups(b'' if self._bytes else ''))
             pos = found.end()
             empty_at = pos if found.start() == pos else -1
         return result

@@ -323,6 +323,9 @@ class TestCase:
     def _run_test(self):
         if getattr(self, '__unittest_skip__', False):
             self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
+        method = getattr(self, self._method)
+        if getattr(method, '__unittest_skip__', False):
+            self.skipTest(getattr(method, '__unittest_skip_why__', 'skipped'))
         self.setUp()
         try:
             getattr(self, self._method)()
@@ -423,6 +426,9 @@ class TestSuite:
         if tests is not None:
             self.tests = list(tests)
 
+    def __iter__(self):
+        return iter(self.tests)
+
     def addTest(self, test):
         self.tests = [*self.tests, test]
 
@@ -474,7 +480,7 @@ class TestLoader:
         else:
             if type(module) == type(''):
                 module = _host_load_module(module)
-            names = _host_program_namespace(module)
+            names = vars(module)
             module_name = _class_name(module)
         suite = TestSuite()
         for name in _ordered(list(names)):

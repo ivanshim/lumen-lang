@@ -2,9 +2,7 @@
 #
 # The calendar arithmetic here is the proleptic Gregorian one CPython
 # uses, so a day number, a weekday and the length of a month come out
-# the same. Three things differ and are worth saying plainly. A date is
-# built through __init__ rather than __new__, so a program that reaches
-# for date.__new__ finds nothing to call. The clock the host offers
+# the same. The clock the host offers
 # counts seconds from the epoch and says nothing about the zone the host
 # stands in, so now() and today() answer in UTC and local time is taken
 # to be UTC; a program that needs the real local offset does not get it
@@ -372,11 +370,16 @@ UTC = timezone(timedelta(0), 'UTC')
 
 
 class date:
-    def __init__(self, year, month, day):
+    def __new__(cls, year, month, day):
+        self = object.__new__(cls)
         _checked_date(year, month, day)
         self._year = year
         self._month = month
         self._day = day
+        return self
+
+    def __init__(self, *args, **kwargs):
+        pass
 
     @property
     def year(self):
@@ -591,8 +594,9 @@ class time:
 
 
 class datetime(date):
-    def __init__(self, year, month, day, hour=0, minute=0, second=0,
+    def __new__(cls, year, month, day, hour=0, minute=0, second=0,
                  microsecond=0, tzinfo=None):
+        self = object.__new__(cls)
         _checked_date(year, month, day)
         _checked_time(hour, minute, second, microsecond)
         self._year = year
@@ -603,6 +607,10 @@ class datetime(date):
         self._second = second
         self._microsecond = microsecond
         self._tzinfo = tzinfo
+        return self
+
+    def __init__(self, *args, **kwargs):
+        pass
 
     @property
     def hour(self):

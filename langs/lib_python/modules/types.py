@@ -136,14 +136,41 @@ class method:
 MethodType = method
 
 
-# A place to hang names on, which is all a module is from here.
+# Python-created modules keep one live namespace for attributes and execution.
 class ModuleType:
     def __init__(self, name, doc=None):
-        self.__name__ = name
-        self.__doc__ = doc
+        object.__setattr__(self, '_namespace', dict(__name__=name, __doc__=doc,
+                                                 __package__=None, __loader__=None, __spec__=None))
+
+    @property
+    def __dict__(self):
+        return object.__getattribute__(self, '_namespace')
+
+    def __getattribute__(self, name):
+        book = object.__getattribute__(self, '_namespace')
+        if name in book:
+            return book[name]
+        try:
+            return object.__getattribute__(self, name)
+        except AttributeError:
+            if '__getattr__' in book:
+                return book['__getattr__'](name)
+            raise AttributeError("module %r has no attribute %r" % (book['__name__'], name))
+
+    def __setattr__(self, name, value):
+        if name == '__dict__':
+            raise AttributeError('readonly attribute')
+        book = object.__getattribute__(self, '_namespace')
+        book[name] = value
+
+    def __delattr__(self, name):
+        book = object.__getattribute__(self, '_namespace')
+        if name not in book:
+            raise AttributeError(name)
+        del book[name]
 
     def __repr__(self):
-        return "<module '" + str(getattr(self, '__name__', '?')) + "'>"
+        return "<module '" + str(self.__name__) + "'>"
 
 
 # A reading of a mapping that cannot be written through.

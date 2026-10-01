@@ -32,11 +32,22 @@ def namedtuple(typename, field_names, rename=False, defaults=None, module=None):
 # Named records bear fields of their own. Tuple indexing, immutability
 # and the remaining tuple methods await the object protocol.
 class _Record:
-    def __init__(self, *values):
-        if len(values) != len(self._fields):
-            raise 'TypeError: wrong number of namedtuple fields'
-        for i in range(len(values)):
-            setattr(self, self._fields[i], values[i])
+    def __init__(self, *values, **keywords):
+        if len(values) > len(self._fields):
+            raise TypeError('too many namedtuple arguments')
+        for name in keywords:
+            if name not in self._fields:
+                raise TypeError('unexpected namedtuple field: ' + name)
+        for i, name in enumerate(self._fields):
+            if i < len(values):
+                if name in keywords:
+                    raise TypeError('multiple values for namedtuple field: ' + name)
+                value = values[i]
+            elif name in keywords:
+                value = keywords[name]
+            else:
+                raise TypeError('missing namedtuple field: ' + name)
+            setattr(self, name, value)
 
 class deque:
     def __init__(self, iterable=None, maxlen=None):
