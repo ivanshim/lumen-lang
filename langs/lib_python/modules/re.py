@@ -162,6 +162,11 @@ class _Reader:
             if self.i >= len(self.pattern):
                 raise 'ValueError: unexpected end of pattern'
             marker = self.pattern[self.i]
+            if marker == 'a' and self.pattern[self.i:self.i + 2] == 'a:':
+                self.i += 2
+                node = self.choice()
+                self._close_group()
+                return ['ascii', node]
             if marker == '>':
                 self.i += 1
                 node = self.choice()
@@ -357,13 +362,17 @@ def _word(letter):
         return letter.isalpha() or letter.isdecimal()
     return False
 
-def _accept(node, letter, ignorecase):
+def _accept(node, letter, ignorecase, ascii_only=False):
     kind = node[0]
     if kind == 'lit':
+        if ascii_only and ord(letter) > 127 and ord(node[1]) < 128:
+            return False
         if ignorecase:
             return letter.lower() == node[1].lower()
         return letter == node[1]
     if kind == 'range':
+        if ascii_only and ord(letter) > 127 and ord(node[2]) < 128:
+            return False
         if ignorecase:
             for candidate in [letter, letter.lower(), letter.upper()]:
                 if ord(node[1]) <= ord(candidate) and ord(candidate) <= ord(node[2]):
@@ -381,26 +390,26 @@ def _accept(node, letter, ignorecase):
         return not answer if mark in 'DWS' else answer
     return False
 
-def _set_accept(node, letter, ignorecase):
+def _set_accept(node, letter, ignorecase, ascii_only):
     kind = node[0]
     if kind == 'class':
         answer = False
         for entry in node[2]:
-            if _accept(entry, letter, ignorecase):
+            if _accept(entry, letter, ignorecase, ascii_only):
                 answer = True
         return not answer if node[1] else answer
     if kind == 'negate':
-        return not _set_accept(node[1], letter, ignorecase)
+        return not _set_accept(node[1], letter, ignorecase, ascii_only)
     if kind == 'setop':
         op = node[1]
-        left = _set_accept(node[2], letter, ignorecase)
+        left = _set_accept(node[2], letter, ignorecase, ascii_only)
         if op == '||':
             if left:
                 return True
-            return _set_accept(node[3], letter, ignorecase)
+            return _set_accept(node[3], letter, ignorecase, ascii_only)
         if not left:
             return False
-        right = _set_accept(node[3], letter, ignorecase)
+        right = _set_accept(node[3], letter, ignorecase, ascii_only)
         return right if op == '&&' else not right
     return False
 
@@ -408,10 +417,12 @@ def _walk(node, text, place, captures, opts):
     kind = node[0]
     if kind == 'scoped':
         flags = node[1]
-        new_opts = (opts[0] or flags[0], opts[1] or flags[1], opts[2] or flags[2])
+        new_opts = (opts[0] or flags[0], opts[1] or flags[1], opts[2] or flags[2], len(opts) > 3 and opts[3])
         return _walk(node[2], text, place, captures, new_opts)
     if kind == 'atomic':
         return _walk(node[1], text, place, captures, opts)[:1]
+    if kind == 'ascii':
+        return _walk(node[1], text, place, captures, (opts[0], opts[1], opts[2], True))
     if kind == 'seq':
         states = [[place, captures]]
         for part in node[1]:
@@ -490,9 +501,9 @@ def _walk(node, text, place, captures, opts):
     if kind == 'dot':
         answer = opts[2] or letter != '\n'
     elif kind == 'class' or kind == 'setop' or kind == 'negate':
-        answer = _set_accept(node, letter, opts[0])
+        answer = _set_accept(node, letter, opts[0], len(opts) > 3 and opts[3])
     else:
-        answer = _accept(node, letter, opts[0])
+        answer = _accept(node, letter, opts[0], len(opts) > 3 and opts[3])
     return [[place + 1, captures]] if answer else []
 
 def _repeat(node, text, place, captures, count, opts):
