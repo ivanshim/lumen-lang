@@ -455,6 +455,12 @@ impl MapStore {
         self.pairs[at].1 = value;
     }
 
+    /// The pairs themselves, read only: a blueprint that spells its
+    /// slots as a mapping reads each name off a key.
+    pub fn pairs(&self) -> &[(Value, Value)] {
+        &self.pairs
+    }
+
     /// Add a key already proven absent and already known by its own
     /// address, growing the pairs and the place together so a map
     /// built up key by key never has its place emptied and walked
@@ -695,6 +701,11 @@ impl Value {
             Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
             Value::Nil => Ok("nothing".to_owned()),
             Value::Ellipsis => Ok("ellipsis".to_owned()),
+            // A prim and the two octet kinds are addressed by what makes
+            // them equal: the name a prim is known by, and which of the
+            // pair of octet kinds it is.
+            Value::Intrinsic(_, name) => Ok(format!("prim:{}", name)),
+            Value::OctetKind { changeable, .. } => Ok(format!("octets-kind:{}", changeable)),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
                 // Nothing under the line marks a worth off the scale.

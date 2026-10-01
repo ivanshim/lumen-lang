@@ -838,7 +838,10 @@ impl<'a> Machine<'a> {
         if Rc::ptr_eq(kind, ancestor) { return true; }
         // A kind standing under two stands under the second as well.
         let second = kind.fields.iter().find_map(|(key, held)| match held { Value::Blueprint(other) if key == "\0also-under" => Some(other), _ => None });
+        // A kind drawn with several parents stands under every one of
+        // them, the whole of its gathered line holding each.
         second.map_or(false, |other| Self::fault_descends(other, ancestor))
+            || kind.ancestry.iter().any(|parent| Rc::ptr_eq(parent, ancestor))
             || kind.under.as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
     }
 
@@ -12361,7 +12364,11 @@ impl<'a> Machine<'a> {
             },
             (Prim::NextItem, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
             (Prim::Belongs, [one, Value::Blueprint(class)]) => {
-                Value::Flag(matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)))
+                // A blueprint drawn with several parents goes by each of
+                // their names, the whole of its gathered line holding
+                // every one of them.
+                Value::Flag(matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)
+                    || t.blueprint().ancestry.iter().any(|parent| parent.name == class.name)))
             }
             (Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::Hashed | Prim::Ordered | Prim::Iterator | Prim::NextItem | Prim::Belongs, _) => return Err(self.bad_answer()),
             _ => return Ok(None),
@@ -13823,6 +13830,23 @@ impl<'a> Machine<'a> {
             }
             Prim::ProgramNames => {
                 if v.len() == 1 {
+                    // A module read in hands back the namespace it was
+                    // read into, as a snapshot of pairs whose values are
+                    // read through the shared cells the module keeps them
+                    // in, the way reading the module's own member reads them.
+                    if let Value::Thing(module) = &v[0] {
+                        let blueprint = module.blueprint();
+                        if blueprint.name == "ModuleType" || blueprint.ancestry.iter().any(|parent| parent.name == "ModuleType") || self.namespace_holding(&v[0]).is_some() {
+                            let pairs: Vec<(Value, Value)> = Self::attribute_entries(module).into_iter().filter_map(|(key, held)| match held {
+                                // A cell still waiting to be bound holds nothing
+                                // the namespace could answer with, so the
+                                // name it stands for is left out entirely.
+                                Value::Shared(cell) => match &*cell.borrow() { Value::Unset => None, inner => Some((key, inner.clone())) },
+                                _ => Some((key, held)),
+                            }).collect();
+                            return Ok(Value::Dict(Rc::new(pairs.into())));
+                        }
+                    }
                     let Value::Small(depth) = v[0] else { return Err(String::from("TypeError: an integer is required")); };
                     let mut at = self.active_trace.clone();
                     for _ in 0..depth.max(0) {
@@ -20323,6 +20347,17 @@ impl Machine<'_> {
                 Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &class.name)) }
             },
             Value::Thing(_) => self.ask_special(callable, 17, &values)?.ok_or_else(|| self.core_complaint("core.uncallable", &callable.kind_word())),
+            // A method bound to a thing runs with the thing standing
+            // first among what it is given, as a call of it in the
+            // program hands it over.
+            Value::Method(code, receiver) => {
+                let mut given = values;
+                given.insert(0, Value::Thing(receiver.clone()));
+                match self.invoke(code.clone(), self.outermost.clone(), given) {
+                    Ok(answer) => Ok(answer),
+                    Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &code.ident)) }
+                }
+            }
             other => Err(self.core_complaint("core.uncallable", &other.kind_word())),
         }
     }
@@ -20353,7 +20388,12 @@ impl Machine<'_> {
                         return Ok(Self::native_word(class).is_some() && item.kind_word() == word);
                     }
                 }
-                Ok(matches!(item, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)))
+                // A blueprint drawn with several parents is of each of
+                // them, so the whole gathered line is asked before any
+                // asking by name.
+                Ok(matches!(item, Value::Thing(t) if Rc::ptr_eq(&t.blueprint(), class)
+                    || t.blueprint().ancestry.iter().any(|parent| Rc::ptr_eq(parent, class))
+                    || t.blueprint().goes_by(&class.name, false)))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
             // A byte kind may stand inside a tuple of kinds, so it is
@@ -20374,8 +20414,9 @@ impl Machine<'_> {
                     Value::Wrapped(_, parts) => match &parts[0] { Value::Text(word) => word.clone(), _ => return Err(self.core_complaint("core.isinstance.amiss", "")) },
                     _ => unreachable!(),
                 };
-                // A thing of a blueprint standing on the native kind is of that kind.
-                if let Value::Thing(t) = item { if let Some(kind) = Self::native_beneath(&t.blueprint()) { return Ok(kind == word.as_ref()); } }
+                // A thing of a blueprint standing on the native kind is
+                // of that kind, and one standing on several is of each.
+                if let Value::Thing(t) = item { return Ok(Self::native_among(&t.blueprint(), word.as_ref())); }
                 let Some(op) = self.table.prims.get(word.as_ref()).copied().filter(Self::names_a_kind) else { return Err(self.core_complaint("core.isinstance.amiss", "")) };
                 Ok(self.kind_covers(&op, &word, item))
             }

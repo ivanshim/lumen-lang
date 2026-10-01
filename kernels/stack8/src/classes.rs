@@ -98,6 +98,14 @@ impl<'a> Engine<'a> {
     pub(super) fn kind_beneath(c: &Class) -> Option<String> {
         std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(Self::own_kind)
     }
+
+    /// Whether a class stands on the builtin kind named, through any of
+    /// its line: a class written with several builtin bases stands on
+    /// each of them, and answers to any of them asked after.
+    pub(super) fn kind_among(c: &Class, word: &str) -> bool {
+        std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref))
+            .any(|held| Self::own_kind(held).as_deref() == Some(word))
+    }
     /// Whether the class was sealed against change: a sealed class
     /// refuses writes and removals among its members and cannot stand
     /// as a base. Only the library's own sealing builtin sets the mark,
@@ -270,7 +278,7 @@ impl<'a> Engine<'a> {
         let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
-        let module = self.class_word("main").to_string();
+        let module = self.frame_module_word().unwrap_or_else(|| self.class_word("main").to_string());
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
             members.push((self.class_word("module").to_string(), Value::text(&module)));
         }
@@ -307,7 +315,13 @@ impl<'a> Engine<'a> {
         if self.class_word("descriptor.get").is_empty() { return Ok(()); }
         c.weak_storage.set(Some(self.weak_layout(c)));
         let Some(slots) = Self::own_class_value(c, self.class_word("slots")) else { return Ok(()) };
-        let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), single => vec![single] };
+        let named: Vec<Value> = match slots.contents() {
+            Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(),
+            // A mapping names a slot at each key; what the key holds is
+            // the slot's documentation, which no layout needs.
+            Value::Map(pairs) => pairs.rows().iter().map(|(key, _)| key.clone()).collect(),
+            single => vec![single],
+        };
         if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
             if !named.is_empty() {
                 return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
@@ -2385,8 +2399,9 @@ impl<'a> Engine<'a> {
                     let Some(under)=self.kind_spelled(value) else{return Err(self.unclassed("core.issubclass.subject"));};
                     return Ok(self.kinds_beneath(&under,word));
                 }
-                // A thing of a class standing on the kind is of the kind.
-                if let Value::Object(o)=value{return Ok(Self::kind_beneath(&o.class_now()).as_deref()==Some(word.as_ref()));}
+                // A thing of a class standing on the kind is of the
+                // kind, and a class standing on several is of each.
+                if let Value::Object(o)=value{return Ok(Self::kind_among(&o.class_now(),word));}
                 return Ok(self.kind_holds(&builtin,word,value));
             }}
         }

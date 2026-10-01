@@ -655,6 +655,9 @@ impl<'a> Engine<'a> {
             if let Some((_, Value::Class(other))) = current.fields.iter().find(|(n, _)| n == "\0also-beneath") {
                 if Self::exception_beneath(other, wanted) { return true; }
             }
+            // A class written with several bases is beneath each of
+            // them, the whole of its gathered line holding every one.
+            if current.lineage.iter().any(|b| Rc::ptr_eq(b, wanted)) { return true; }
             class = current.base.as_ref();
         }
         false
@@ -2827,6 +2830,16 @@ impl<'a> Engine<'a> {
             Value::Text(said) => Some(said.to_string()),
             _ => None,
         }
+    }
+
+    /// The module a class being made belongs to: the module the routine
+    /// whose frame stands around the making was written in. The
+    /// program's own frames answer as the program, as they always did.
+    fn frame_module_word(&self) -> Option<String> {
+        let frame = self.trace_frame.as_ref()?;
+        let held = frame.fields.borrow().iter().find(|(key, _)| key == "\0routine")?.1.clone();
+        let Value::Routine(routine) = held else { return None };
+        match self.routine_module(&routine) { Value::Text(word) => Some(word.to_string()), _ => None }
     }
 
     /// The words for a call handed the same keyword twice, which only a
@@ -15431,6 +15444,23 @@ impl<'a> Engine<'a> {
                 answer
             }
             Builtin::ProgramNamespace => {
+                // A module read in answers with the namespace it was
+                // read into, as a snapshot of pairs whose values are
+                // read through the cells the module keeps them in,
+                // the way reading the module's own attribute reads them.
+                if let [one @ Value::Object(module)] = args.as_slice() {
+                    let class = module.class_now();
+                    if class.name == "ModuleType" || class.lineage.iter().any(|base| base.name == "ModuleType") || self.module_holding(one).is_some() {
+                        let entries: Vec<(Value, Value)> = Self::fields_entries(module).into_iter().filter_map(|(key, held)| match held {
+                            // A cell still waiting to be bound holds nothing
+                            // the namespace could answer with, so the
+                            // name it stands for is left out entirely.
+                            Value::Bond(cell) => match &*cell.borrow() { Value::Blank => None, inner => Some((key, inner.clone())) },
+                            _ => Some((key, held)),
+                        }).collect();
+                        return Ok(Value::Map(Rc::new(entries.into())));
+                    }
+                }
                 if let [Value::Small(depth)] = args.as_slice() {
                     let mut current = self.trace_frame.clone().map_or(Value::Null, Value::Object);
                     for _ in 0..(*depth).max(0) {
@@ -17433,6 +17463,11 @@ impl Engine<'_> {
                     _ => Err(self.special_fault()),
                 };
             }
+            // A thing standing on a builtin kind whose class spells no
+            // walk of its own is walked as the worth it stands on is
+            // walked: a subclass of the map kind, for one, walks its
+            // keys however its own reading of a place is spelled.
+            if let Some(worth) = self.worth_free_of(source, &[15]) { return self.core_iterator(&worth); }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
         let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?).into(), 0));
@@ -17747,6 +17782,18 @@ impl Engine<'_> {
                 self.drop_top()
             }
             Value::Object(_) => self.special_call(work, 17, args)?.ok_or_else(|| self.core_fault("core.uncallable", &work.core_kind())),
+            // A method bound to a thing runs with the thing standing
+            // first among what it is given, as a call of it in the
+            // program hands it over.
+            Value::Method(object, method) => {
+                let mut given = vec![Value::Object(object.clone())];
+                given.extend(args);
+                if let Err(f) = self.invoke(method, given) {
+                    self.carried = Some(f);
+                    return Err(self.core_fault("core.unready", &method.ident));
+                }
+                self.drop_top()
+            }
             _ => Err(self.core_fault("core.uncallable", &work.core_kind())),
         }
     }
@@ -17780,11 +17827,16 @@ impl Engine<'_> {
                     });
                 }
             }
-            return Ok(matches!(value, Value::Object(o) if o.class_now().named(&class.name, false)));
+            // A class of several lines is of each of them, so the
+            // whole gathered line is asked before any asking by name.
+            return Ok(matches!(value, Value::Object(o) if Rc::ptr_eq(&o.class_now(), class)
+                || o.class_now().lineage.iter().any(|c| Rc::ptr_eq(c, class))
+                || o.class_now().named(&class.name, false)));
         }
-        // A thing of a class standing on a builtin kind is of that kind.
+        // A thing of a class standing on a builtin kind is of that
+        // kind, and a class standing on several is of each of them.
         if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {
-            if let Some(kind) = Self::kind_beneath(&o.class_now()) { return Ok(kind == word.as_ref()); }
+            return Ok(Self::kind_among(&o.class_now(), word));
         }
         // A builtin kind is asked about by the word that names it,
         // whether the word came as a builtin of its own or as the plain

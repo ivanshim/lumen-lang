@@ -586,6 +586,12 @@ impl KeyedPairs {
         self.rows[at].1 = value;
     }
 
+    /// The rows themselves, for reading only: a class that names its
+    /// slots with a mapping takes each name from a key.
+    pub fn rows(&self) -> &[(Value, Value)] {
+        &self.rows
+    }
+
     /// Add a key already proven absent and already known by its own
     /// text, growing the rows and the lookup together so a map built
     /// one key at a time never has its lookup thrown away and walked
@@ -978,6 +984,13 @@ impl Value {
 
             Value::Null => Ok("nil".into()),
             Value::Ellipsis => Ok("dots".into()),
+            // A builtin word, a kind marker and the two bytes kinds take
+            // an address from what makes them equal: the work beneath
+            // the word and the word both, the sort a marker stands for,
+            // and which of the two bytes kinds it is.
+            Value::Native(work, word) => Ok(format!("native:{work:?}:{word}")),
+            Value::SortOf(sort) => Ok(format!("sortof:{}", sort.tag())),
+            Value::ByteKind(changeable, _) => Ok(format!("bytekind:{changeable}")),
             Value::Array(_) => Err("list"),
             Value::Map(_) => Err("dict"),
             // A set that cannot be changed is addressed by what it

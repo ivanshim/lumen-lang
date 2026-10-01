@@ -51,6 +51,14 @@ impl<'a> Machine<'a> {
     pub(super) fn native_beneath(b:&Blueprint)->Option<String> {
         std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(Self::native_word)
     }
+
+    /// Whether a blueprint stands on the native kind named, through any
+    /// of its line: a blueprint written with several native parents
+    /// stands on each of them, and answers to any asked after.
+    pub(super) fn native_among(b:&Blueprint,word:&str)->bool {
+        std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref))
+            .any(|held|Self::native_word(held).as_deref()==Some(word))
+    }
     /// The blueprint every metaclass is built on: the kind primitive
     /// read as a class. A class built on it makes classes where an
     /// ordinary one makes things.
@@ -271,8 +279,8 @@ impl<'a> Machine<'a> {
         let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).collect();
         natives.dedup();
         if natives.len()>1 {return Err(self.table.single("ext.stmt.class.layout").unwrap_or(self.detail("unready")).to_owned().into());}
-        let module=self.detail("main");
-        if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(module)));}
+        let module=self.creating_module().unwrap_or_else(|| self.detail("main").to_owned());
+        if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(&module)));}
         if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
             if !matches!(candidate.settled(), Value::Text(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", candidate.kind_word()).into()); }
         }
@@ -310,7 +318,12 @@ impl<'a> Machine<'a> {
         if !self.protocol_spelled(){return Ok(());}
         class.weak_slot.set(Some(self.admits_weak(class)));
         let Some(declared)=Self::own_entry(class,self.detail("slots")) else{return Ok(())};
-        let words=match declared.settled(){Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),alone=>vec![alone]};
+        let words=match declared.settled(){
+            Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),
+            // A mapping stands a name at each key; the worth a key
+            // holds is documentation for the slot, nothing a layout reads.
+            Value::Dict(mapping)=>mapping.pairs().iter().map(|(key,_)|key.clone()).collect(),
+            alone=>vec![alone]};
         let native = Self::native_beneath(class);
         if !words.is_empty() && matches!(native.as_deref(), Some("tuple" | "bytes" | "int")) {
             return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{}'", native.unwrap()).into());
@@ -1273,6 +1286,16 @@ impl<'a> Machine<'a> {
     /// The name of the module a routine was written in: the module the
     /// file it came from was read as, or the run's own name where the
     /// routine is the program itself.
+    /// The module a blueprint being drawn up belongs to: the module the
+    /// routine whose activation stands around the drawing was written
+    /// in. The program's own activations answer as the program.
+    fn creating_module(&self) -> Option<String> {
+        let frame = self.active_trace.as_ref()?;
+        let held = frame.holds.borrow().iter().find(|(key, _)| key == "\0environment")?.1.clone();
+        let Value::Bound(code, _) = held else { return None };
+        match self.routine_module(&code) { Value::Text(word) => Some(word.to_string()), _ => None }
+    }
+
     pub(super) fn routine_home(&self, code: &Routine) -> String {
         code.written_in.as_ref().and_then(|place| self.loaded_spaces.get(place)).cloned()
             .unwrap_or_else(|| self.detail("main").to_owned())
@@ -2435,8 +2458,9 @@ impl<'a> Machine<'a> {
                     let Some(under)=self.kind_spelling(subject) else{return Err(self.not_a_class("core.issubclass.subject"));};
                     return Ok(self.kind_under(&under,word));
                 }
-                // A thing of a blueprint standing on the kind is of the kind.
-                if let Value::Thing(t)=subject{return Ok(Self::native_beneath(&t.blueprint()).as_deref()==Some(word.as_ref()));}
+                // A thing of a blueprint standing on the kind is of
+                // the kind, and one standing on several is of each.
+                if let Value::Thing(t)=subject{return Ok(Self::native_among(&t.blueprint(),word));}
                 Ok(self.kind_covers(&op,word,subject))
             },
             _=>{

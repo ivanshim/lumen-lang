@@ -675,6 +675,12 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                 if let Form::Const(Value::Text(said)) = first {
                     for name in table.strings("ext.system.module.doc") {
                         let slot = r.global_address(name);
+                        // The write is one of the module's own bindings,
+                        // recorded as any other write is, so the module
+                        // answers it from outside as it answers the rest.
+                        if !r.named_in_program.iter().any(|word| word == name) {
+                            r.named_in_program.push(name.clone());
+                        }
                         stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
                     }
                 }
