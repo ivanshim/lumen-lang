@@ -97,7 +97,9 @@ def _global_name(value):
         # lives, before anything a caller happened to import.
         module_names = ([module] if module is not None else []) + [m for m in list(sys.modules) if m != module]
         for module_name in module_names:
-            owner = sys.modules[module_name]
+            owner = sys.modules.get(module_name)
+            if owner is None:
+                continue
             if parts[0] not in dir(owner):
                 continue
             candidate = owner
