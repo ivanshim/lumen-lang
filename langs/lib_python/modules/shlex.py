@@ -1,6 +1,4 @@
-# From CPython 3.14, Lib/shlex.py.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Source: CPython Lib/shlex.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """A lexical analyzer class for simple shell-like syntaxes."""
 
 # Module and documentation by Eric S. Raymond, 21 Dec 1998
@@ -320,12 +318,8 @@ def join(split_command):
     return ' '.join(quote(arg) for arg in split_command)
 
 
-def quote(s, *, force=False):
-    """Return a shell-escaped version of the string *s*.
-
-    If *force* is *True*, then *s* is unconditionally quoted,
-    even if it is already safe for a shell without being quoted.
-    """
+def quote(s):
+    """Return a shell-escaped version of the string *s*."""
     if not s:
         return "''"
 
@@ -336,10 +330,8 @@ def quote(s, *, force=False):
     safe_chars = (b'%+,-./0123456789:=@'
                   b'ABCDEFGHIJKLMNOPQRSTUVWXYZ_'
                   b'abcdefghijklmnopqrstuvwxyz')
-    # No quoting is needed if we are not forcing quoting
-    # and `s` is an ASCII string consisting only of `safe_chars`.
-    if (not force
-        and s.isascii() and not s.encode().translate(None, delete=safe_chars)):
+    # No quoting is needed if `s` is an ASCII string consisting only of `safe_chars`
+    if s.isascii() and not s.encode().translate(None, delete=safe_chars):
         return s
 
     # use single quotes, and put single quotes into double quotes

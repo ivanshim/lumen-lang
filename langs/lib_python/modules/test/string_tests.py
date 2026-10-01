@@ -1,6 +1,4 @@
-# From CPython 3.14, Lib/test/string_tests.py.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Source: CPython Lib/test/string_tests.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """
 Common tests shared by test_unicode, test_userstring and test_bytes.
 """

@@ -82,7 +82,6 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.support.testcase", include_str!("test/support/testcase.py"), "test/support/testcase.py"),
     ("test.support.threading_helper", include_str!("test/support/threading_helper.py"), "test/support/threading_helper.py"),
     ("test.support.warnings_helper", include_str!("test/support/warnings_helper.py"), "test/support/warnings_helper.py"),
-    ("test.test_import.data.syntax_warnings", include_str!("test/test_import/data/syntax_warnings.py"), "test/test_import/data/syntax_warnings.py"),
     ("test.test_iter", include_str!("test/test_iter.py"), "test/test_iter.py"),
     ("test.test_math", include_str!("test/test_math.py"), "test/test_math.py"),
     ("test.typinganndata", include_str!("test/typinganndata/__init__.py"), "test/typinganndata/__init__.py"),
