@@ -129,3 +129,10 @@ class Random:
 
     def __reduce__(self):
         raise TypeError("cannot pickle '_random.Random' object")
+
+
+# These two methods are implemented in C by CPython. Native descriptors
+# avoid a Python frame for ordinary draws, retaining the readers above
+# for index conversion, invalid calls and lazily opened streams.
+Random.random = __random('method', 'next', Random.random)
+Random.getrandbits = __random('method', 'bits', Random.getrandbits)

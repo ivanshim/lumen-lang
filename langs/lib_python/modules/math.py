@@ -18,9 +18,10 @@ def sqrt(x):
         if x < 0:
             raise ValueError('expected a nonnegative input, got ' + str(x))
         return __math('sqrt', x)
-    _overflow_guard(x)
+    _check_real(x)
+    x = float(x)
     if x < 0:
-        raise ValueError('expected a nonnegative input, got ' + str(float(x)))
+        raise ValueError('expected a nonnegative input, got ' + str(x))
     return __math('sqrt', x)
 
 def fabs(x):
@@ -54,8 +55,10 @@ def _answers_own(x, name):
 def floor(x):
     if type(x) == type(1.0):
         # A real of the width needs nothing asked around it.
-        if x == inf or x == -inf or x != x:
-            raise 'ValueError: a non-finite value has no integer floor'
+        if x != x:
+            raise ValueError('cannot convert float NaN to integer')
+        if x == inf or x == -inf:
+            raise OverflowError('cannot convert float infinity to integer')
         return __math('floor', x)
     if _answers_own(x, '__floor__'):
         method = x.__floor__
@@ -64,8 +67,10 @@ def floor(x):
         return method()
     _check_real(x)
     x = float(x)
-    if x == inf or x == -inf or x != x:
-        raise 'ValueError: a non-finite value has no integer floor'
+    if x != x:
+        raise ValueError('cannot convert float NaN to integer')
+    if x == inf or x == -inf:
+        raise OverflowError('cannot convert float infinity to integer')
     return __math('floor', x)
 
 def ceil(x):
@@ -123,7 +128,7 @@ def exp(x):
         # A real of the width needs nothing asked around it.
         return __math('exp', x)
     _check_real(x)
-    return __math('exp', x)
+    return __math('exp', float(x))
 
 def _is_integral(x):
     return type(x) == type(1) or type(x) == type(True)
@@ -1000,3 +1005,12 @@ def sumprod(p, q):
     for p_i, q_i in zip(p, q, strict=True):
         total = total + p_i * q_i
     return total
+
+# CPython provides these functions in its C math module. Regular floats
+# use native call entries; protocol conversion and edge complaints retain
+# the complete readers above.
+log = __math('method', 'log', log)
+exp = __math('method', 'exp', exp)
+sqrt = __math('method', 'sqrt', sqrt)
+lgamma = __math('method', 'lgamma', lgamma)
+floor = __math('method', 'floor', floor)

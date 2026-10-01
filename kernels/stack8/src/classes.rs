@@ -560,6 +560,54 @@ impl<'a> Engine<'a> {
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
                 9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
+                // C-only draw methods can read the native stream without
+                // building a Python frame. Other calls use the full reader.
+                63 => {
+                    let bits = w.1[0].plain() == "bits";
+                    let valid = args.len() == if bits { 2 } else { 1 }
+                        && matches!(args.first().map(Value::contents), Some(Value::Object(_)))
+                        && (!bits || matches!(args[1].contents(), Value::Small(n) if n >= 0));
+                    if valid {
+                        match self.class_get(args[0].clone(), "_stream", false) {
+                            Ok(mark @ Value::Small(_)) => {
+                                let mut native = vec![w.1[0].clone(), mark];
+                                if bits { native.push(args[1].clone()); }
+                                return self.class_apply(Value::text("__random"), native);
+                            }
+                            Err(fault) if !self.attribute_fault(&fault) => return Err(fault),
+                            _ => {},
+                        }
+                    }
+                    self.class_apply(w.1[1].clone(), args)
+                }
+                // Ordinary binary64 inputs need no Python conversion frame.
+                // Domain edges and custom numeric protocols keep that frame.
+                64 => {
+                    let operation = w.1[0].plain();
+                    if args.len() == 1 {
+                        let number = args[0].contents();
+                        if operation == "floor" && matches!(number, Value::Small(_) | Value::Huge(_)) {
+                            return Ok(number);
+                        }
+                        let ordinary = match number {
+                            Value::Small(n) => Some(n as f64),
+                            Value::Real(real) if real.floating => Some(crate::value::as_binary(&real.p, &real.q)),
+                            _ => None,
+                        };
+                        if let Some(x) = ordinary {
+                            let domain = match operation.as_str() {
+                                "log" | "lgamma" => x > 0.0,
+                                "sqrt" => x >= 0.0,
+                                "exp" | "floor" => true,
+                                _ => false,
+                            };
+                            if x.is_finite() && domain {
+                                return self.class_apply(Value::text("__math"), vec![w.1[0].clone(),args[0].clone()]);
+                            }
+                        }
+                    }
+                    self.class_apply(w.1[1].clone(),args)
+                }
                 0 => Ok(w.1[0].clone()),
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
@@ -1031,6 +1079,7 @@ impl<'a> Engine<'a> {
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
             return match w.0 {
+                63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 4 => Ok(w.1[0].clone()),
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
@@ -1087,6 +1136,11 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if let Value::Adapter(entry) = &subject {
+            if matches!(entry.0, 63 | 64) && matches!(name, "__name__" | "__qualname__" | "__doc__") {
+                return self.class_get(entry.1[1].clone(), name, plain);
+            }
+        }
         if let Value::Adapter(proxy) = &subject {
             if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
                 let dynamic = match receiver { Value::Object(o) => o.class_now().clone(), Value::Class(c) => c.clone(), _ => return Err(self.class_refusal()) };
@@ -2444,7 +2498,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{

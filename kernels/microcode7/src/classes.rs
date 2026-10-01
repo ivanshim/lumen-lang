@@ -567,6 +567,57 @@ impl<'a> Machine<'a> {
             Value::Wrapped(tag,kept)=>{
                 match tag {
                     9 if kept.is_empty() && values.len() == 2 && matches!(values[0], Value::Blueprint(_)) => Ok(Value::Wrapped(9, Rc::new(values).into())),
+                    // The native drawing descriptor retains its Python
+                    // entry for index protocols, cold instances and refusals.
+                    62=>{
+                        let operation=kept[0].bare();
+                        let needed=if operation=="next" {1} else {2};
+                        let ordinary=values.len()==needed
+                            && matches!(values.first().map(Value::settled),Some(Value::Thing(_)))
+                            && (needed==1 || matches!(values[1].settled(),Value::Small(n) if n>=0));
+                        if ordinary {
+                            let stream=self.read_class_member(values[0].clone(),"_stream",false);
+                            match stream {
+                                Ok(Value::Small(mark))=>{
+                                    let mut request=vec![Value::text(&operation),Value::Small(mark)];
+                                    request.extend(values.into_iter().skip(1));
+                                    return self.apply_class_member(Value::text("__random"),request);
+                                }
+                                Err(error) if !self.missing_member_escape(&error)=>return Err(error),
+                                _=>{},
+                            }
+                        }
+                        self.apply_class_member(kept[1].clone(),values)
+                    }
+                    63=>{
+                        // Exact floats in the operation's regular domain are
+                        // the C module's common case. Other values retain
+                        // all of the library's protocol and error handling.
+                        let operation=kept[0].bare();
+                        if let [integer]=values.as_slice() {
+                            let worth=integer.settled();
+                            if operation=="floor" && matches!(worth,Value::Small(_)|Value::Huge(_)) {return Ok(worth);}
+                        }
+                        let numeric=match values.as_slice() {
+                            [number]=>match number.settled() {
+                                Value::Small(n)=>Some(n as f64),
+                                Value::Frac(r) if r.float_style=>Some(crate::data::nearest_binary(&r.above,&r.beneath)),
+                                _=>None,
+                            }
+                            _=>None,
+                        };
+                        let fast=numeric.is_some_and(|n|n.is_finite() && match operation.as_str() {
+                            "exp"|"floor"=>true,
+                            "sqrt"=>n>=0.0,
+                            "lgamma"|"log"=>n>0.0,
+                            _=>false,
+                        });
+                        if fast {
+                            let mut operands=vec![kept[0].clone()];
+                            operands.extend(values);
+                            self.apply_class_member(Value::text("__math"),operands)
+                        } else {self.apply_class_member(kept[1].clone(),values)}
+                    }
                     0=>Ok(kept[0].clone()),
                     1 if !values.is_empty()=>{
                         let Some(Value::Blueprint(c))=values.first() else{return Err(self.class_unready())};
@@ -935,6 +986,7 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         match &entry {
+            Value::Wrapped(62,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -1418,6 +1470,13 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        match &value {
+            Value::Wrapped(62|63,parts) if matches!(key,"__doc__"|"__qualname__"|"__name__")=>{
+                let original=parts[1].clone();
+                return self.read_class_member(original,key,direct);
+            }
+            _=>{},
+        }
         if let Value::Wrapped(9, binding) = &value {
             if let [Value::Blueprint(defining), instance] = binding.as_slice() {
                 let actual = match instance { Value::Thing(t) => t.blueprint().clone(), Value::Blueprint(b) => b.clone(), _ => return Err(self.class_unready()) };
@@ -2504,7 +2563,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=72))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|62|63|70..=72))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

@@ -78,6 +78,9 @@ pub struct Engine<'a> {
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
     function_members: Vec<(Value, Rc<Instance>)>,
+    function_books: HashMap<usize, usize>,
+    books_indexed: usize,
+    kind_names: RefCell<HashMap<String, Vec<String>>>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
@@ -1133,7 +1136,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), function_books: HashMap::new(), books_indexed: 0, kind_names: RefCell::new(HashMap::new()),
             native_exceptions,
             lang,
             world,
@@ -3044,8 +3047,18 @@ impl<'a> Engine<'a> {
 
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
-    fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, holder) = self.function_members.iter().find(|(value, _)| matches!(value, Value::Routine(code) if Rc::ptr_eq(code, program)))?;
+    fn constructor_book(&mut self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+        // Metadata holders are appended, never removed. Index their code
+        // identities once, while reading the live namespace on each call.
+        while self.books_indexed < self.function_members.len() {
+            let at = self.books_indexed;
+            if let Value::Routine(code) = &self.function_members[at].0 {
+                self.function_books.entry(Rc::as_ptr(code) as usize).or_insert(at);
+            }
+            self.books_indexed += 1;
+        }
+        let at = *self.function_books.get(&(Rc::as_ptr(program) as usize))?;
+        let holder = &self.function_members[at].1;
         let book = holder.fields.borrow().iter().find(|(name, _)| name == "\0 namespace")?.1.clone();
         match book {
             Value::Bond(cell) | Value::Binding(cell) => Some(cell),
@@ -5201,7 +5214,20 @@ impl<'a> Engine<'a> {
         if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
             return Some(Value::Native(Builtin::Text(crate::strings::TextOp::Maketrans), Rc::from(name)));
         }
-        if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
+        // Only the builtin kind's immutable namespace is memoized;
+        // directories of live values continue to be built normally.
+        let cached = self.kind_names.borrow().get(word.as_ref())
+            .map(|names| names.iter().any(|entry| entry == name));
+        let carries = match cached {
+            Some(answer) => answer,
+            None => {
+                let names = self.kind_member_names(&sample);
+                let answer = names.iter().any(|entry| entry == name);
+                self.kind_names.borrow_mut().insert(word.to_string(), names);
+                answer
+            }
+        };
+        if !carries { return None; }
         Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
     }
 
@@ -15624,6 +15650,9 @@ impl<'a> Engine<'a> {
                 let Some(working) = args.first().map(|v| v.display(&sp)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "method" && args.len() == 3 {
+                    return Ok(Self::adapter(64, vec![args[1].clone(), args[2].clone()]));
+                }
                 let wants = match working.as_str() {
                     "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
                     "fma" => 3,
@@ -15637,6 +15666,8 @@ impl<'a> Engine<'a> {
                 // library's own spelling of it, so both come to the
                 // one real of the width.
                 fn lgamma_wide(x: f64) -> f64 {
+                    match x { 1.0 | 2.0 => return 0.0, _ => {} }
+                    if x.abs() < 1e-20 { return -x.abs().ln(); }
                     const G: f64 = 6.02468004077673;
                     const LANCZOS: [f64; 26] = [
                         23531376880.41076, 42919803642.6491, 35711959237.35567, 17921034426.03721,
@@ -15915,6 +15946,9 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 match working.as_str() {
+                    "method" if args.len() == 3 => {
+                        Self::adapter(63, vec![args[1].clone(), args[2].clone()])
+                    }
                     "pid" => {
                         if args.len() != 1 { return Err(self.lang.module_helper_amiss.clone()); }
                         Value::Small(i64::from(std::process::id()))

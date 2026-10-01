@@ -1172,6 +1172,9 @@ only. The extension labels so far, all from PHP:
   what lies past every number. PHP's `sqrt`, `log`, `sin`, `atan2`,
   `hypot`, `fdiv` and the rest of them are written on it, and so are its
   `NAN` and `INF`.
+  The `method` working supplies native call entries for the C-only math
+  functions, retaining their library readers for conversion and edge cases.
+
 - `ext.builtin._random`: a builtin lending the Mersenne Twister stream
   the Python library's `random` draws its chance from, and the system's
   own disorder as raw bytes. The first thing it is given is the name of
@@ -1189,6 +1192,9 @@ only. The extension labels so far, all from PHP:
   has no way of spelling a generator whose words must number their
   period. Python's `_random` module and its `os.urandom` are written on
   it.
+  Its `method` operation binds the C-only draw methods as native
+  descriptors, with the library readers retained for argument protocols.
+
 - `ext.builtin.output.begun`: a builtin answering whether anything has
   gone out of the run yet. What is held back in a piece of output kept
   aside has not gone out. PHP's `headers_sent` and

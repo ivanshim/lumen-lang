@@ -359,6 +359,9 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    world_records: HashMap<usize, usize>,
+    records_seen: usize,
+    native_directories: RefCell<HashMap<String, Vec<String>>>,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
     /// routine was, kept so the pair stays its own, what calls of it now
@@ -1258,7 +1261,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), world_records: HashMap::new(), records_seen: 0, native_directories: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -6796,7 +6799,17 @@ impl<'a> Machine<'a> {
         if let (Value::Text(_), Some(op @ Prim::Textual(crate::text::Work::MAKETRANS))) = (&stand_in, self.table.prims.get(name)) {
             return Some(Value::Intrinsic(*op, Rc::from(name)));
         }
-        if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
+        // The table fixes a builtin type's own member names. A value's
+        // directory is not cached, since it may keep additional names.
+        let present=self.native_directories.borrow().get(&word)
+            .map(|entries|entries.binary_search_by(|entry|entry.as_str().cmp(name)).is_ok());
+        let present=present.unwrap_or_else(||{
+            let directory=self.native_directory(&stand_in);
+            let found=directory.binary_search_by(|entry|entry.as_str().cmp(name)).is_ok();
+            self.native_directories.borrow_mut().insert(word.clone(),directory);
+            found
+        });
+        if !present { return None; }
         Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into()))
     }
 
@@ -8923,11 +8936,19 @@ impl<'a> Machine<'a> {
         Ok(Value::Generator(walk))
     }
 
-    fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
-            Value::Bound(code, _) | Value::Routine(code) => Rc::ptr_eq(code, body),
-            _ => false,
-        })?;
+    fn constructor_world(&mut self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+        // Keep the first holder for each body, as the former walk did.
+        // Only new holders require a visit; namespace writes remain live.
+        for (position, (candidate, _)) in self.routine_members.iter().enumerate().skip(self.records_seen) {
+            let identity = match candidate {
+                Value::Bound(code, _) | Value::Routine(code) => Rc::as_ptr(code) as usize,
+                _ => continue,
+            };
+            self.world_records.entry(identity).or_insert(position);
+        }
+        self.records_seen = self.routine_members.len();
+        let position = self.world_records.get(&(Rc::as_ptr(body) as usize))?;
+        let record = &self.routine_members[*position].1;
         let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
         if let Value::Shared(cell) | Value::Mutable(cell, _) = worth { Some(cell) }
         else if matches!(worth, Value::Dict(_)) { Some(Rc::new(RefCell::new(worth))) }
@@ -14921,6 +14942,9 @@ impl<'a> Machine<'a> {
                 let Some(working) = v.first().map(|x| x.render(w)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "method" && v.len() == 3 {
+                    return Ok(Value::Wrapped(63, Rc::new(vec![v[1].clone(),v[2].clone()]).into()));
+                }
                 let takes = math::worked_takes(&working);
                 if v.len() != takes + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
@@ -15102,6 +15126,7 @@ impl<'a> Machine<'a> {
                 };
                 let whole = |at: usize| -> Result<BigInt, String> { v[at].as_big() };
                 match working.as_str() {
+                    "method" if v.len() == 3 => Value::Wrapped(62, Rc::new(vec![v[1].clone(), v[2].clone()]).into()),
                     "pid" if v.len() == 1 => Value::Small(std::process::id() as i64),
                     "begin" => {
                         if v.len() != 1 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }

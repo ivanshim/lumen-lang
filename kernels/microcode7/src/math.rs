@@ -268,6 +268,10 @@ pub fn whole_part(v: &Value) -> Option<BigInt> {
 /// turns folded away. The numbers and their order are the library's
 /// own, so both spellings come to the one real of the width.
 pub fn log_gamma(x: f64) -> f64 {
+    // The exact unit values and the tiny-argument limit precede Lanczos.
+    if x == 1.0 || x == 2.0 { return 0.0; }
+    let magnitude=x.abs();
+    if magnitude<1e-20 { return -magnitude.ln(); }
     const G: f64 = 6.02468004077673;
     const TOP: [f64; 13] = [23531376880.41076, 42919803642.6491, 35711959237.35567, 17921034426.03721,
         6039542586.352028, 1439720407.3117216, 248874557.86205417, 31426415.585400194,
