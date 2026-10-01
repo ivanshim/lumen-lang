@@ -3110,10 +3110,13 @@ impl<'a> Engine<'a> {
     }
 
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        let Some(book) = self.constructor_book(program) else { return self.invoke_top_body(program, n); };
-        let earlier = self.outer_book.replace(book);
+        let namespace = self.constructor_book(program);
+        let reading = self.reading_in;
+        if program.globe.is_none() && namespace.is_none() { self.reading_in = None; }
+        let earlier = namespace.map(|book| self.outer_book.replace(book));
         let answer = self.invoke_top_body(program, n);
-        self.outer_book = earlier;
+        if let Some(earlier) = earlier { self.outer_book = earlier; }
+        self.reading_in = reading;
         answer
     }
 

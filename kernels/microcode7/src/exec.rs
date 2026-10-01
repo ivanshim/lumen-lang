@@ -4816,11 +4816,14 @@ impl<'a> Machine<'a> {
         };
         let callee = self.env_for(&p, env, args, frame)?;
         let chosen = self.constructor_world(&p);
+        let suspended_reading = self.reading_now;
+        if p.globe.is_none() && chosen.is_none() { self.reading_now = None; }
         let earlier = chosen.map(|book| self.world_book.replace(book));
         let outcome = if p.generator && self.rules.suspends {
             self.named_generator(callable, &p, callee)
         } else { self.drive(p, callee) };
         if let Some(previous) = earlier { self.world_book = previous; }
+        self.reading_now = suspended_reading;
         outcome
     }
 
@@ -9347,10 +9350,15 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        let Some(book) = self.constructor_world(&program) else { return self.invoke_body(program, env, args); };
-        let old = self.world_book.replace(book);
+        let handed = self.constructor_world(&program);
+        let resumed_reading = match (&program.globe, &handed) {
+            (None, None) => self.reading_now.take(),
+            _ => self.reading_now,
+        };
+        let saved_world = handed.map(|book| self.world_book.replace(book));
         let result = self.invoke_body(program, env, args);
-        self.world_book = old;
+        if let Some(prior) = saved_world { self.world_book = prior; }
+        self.reading_now = resumed_reading;
         result
     }
 
@@ -9408,6 +9416,14 @@ impl<'a> Machine<'a> {
     /// Run a program in a frame already built. A tail call replaces the
     /// program and the frame; what the replaced programs caught is still caught.
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        let inherited = self.reading_now;
+        if program.globe.is_none() && self.constructor_world(&program).is_none() { self.reading_now = None; }
+        let answer = self.drive_body(program, frame);
+        self.reading_now = inherited;
+        answer
+    }
+
+    fn drive_body(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
         if program.generator && self.rules.suspends {
             let mut suspension = Suspension::body(&program, frame.clone());
             suspension.source_reading = self.reading_now;
@@ -18918,8 +18934,10 @@ impl Machine<'_> {
         let caller_activation = self.active_trace.take();
         self.written_in = Rc::from(filename);
         self.frames_named.push(built.program.clone());
+        let caller_reading = self.reading_now.take();
         let stopped = self.value_of(&built.program.body, &scope);
         let stopped = self.traced_result(stopped);
+        self.reading_now = caller_reading;
         self.frames_named.pop();
         self.active_trace = caller_activation;
         (self.written_in, self.row) = caller_location;
