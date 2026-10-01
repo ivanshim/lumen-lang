@@ -3,7 +3,26 @@
 use super::*;
 
 impl<'a> Machine<'a> {
-    pub(super) fn detail(&self,key:&str)->&str {self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or("")}
+    pub(super) fn detail(&self, key: &str) -> &str {
+        match key {
+            "allocate" => self.rules.detail_allocate,
+            "descriptor.get" => self.rules.detail_descriptor_get,
+            "doc" => self.rules.detail_doc,
+            "getitem" => self.rules.detail_getitem,
+            "kind" => self.rules.detail_kind,
+            "main" => self.rules.detail_main,
+            "module" => self.rules.detail_module,
+            "mro" => self.rules.detail_mro,
+            "name" => self.rules.detail_name,
+            "namespace" => self.rules.detail_namespace,
+            "order" => self.rules.detail_order,
+            "qualified" => self.rules.detail_qualified,
+            "receiver" => self.rules.detail_receiver,
+            "root" => self.rules.detail_root,
+            "unready" => self.rules.detail_unready,
+            _ => self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or(""),
+        }
+    }
     // Read once when the roster itself was read, since no program still
     // running can change which words a class stands under: every value
     // read asks this, so it is a field on the table rather than a name

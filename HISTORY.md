@@ -2318,3 +2318,18 @@ normal relative-path helper. No Python test or input fixture is weakened.
 The merged count is 2620 on both kernels, up from 2619. Complete final
 build-machine fallbacks retain microcode7 math, str and long at 82, 127
 and 35 where Lambda times out.
+
+### 1av. Batch 20t merged as #527; batch 20u: speed, with nothing else changed
+
+Batch 20u folds three speed branches, written by GPT-6.1 Sol workers and integrated by another: fix/perf-mc7-core
+(microcode7's instruction dispatch and call path), fix/perf-mc7-data (microcode7's dict, set, string and object data
+operations) and fix/perf-s8-lookup (stack8's attribute, method and name lookup). Their rule was speed with behaviour
+exactly unchanged: an independent read-only review accepted all three, and the merged full check shows no count change
+at all — every progress line of the fifty files is identical, 1180 scratch programs agree, and every gate passes.
+
+Measured on the build machine (debug builds): microcode7 runs test_str 2.09× faster (624.9 → 299.3 s), test_math 1.45×
+faster (706.5 → 485.9 s) and a set/string probe 1.89× faster; a stack8 lookup probe runs 1.31× faster. microcode7's
+MathTests and StrTest classes now finish inside AWS Lambda's 870-second limit (725 s and 513 s), so their counts no
+longer need whole-file runs on the build machine.
+
+Merged, the fifty files still count 2620 on both kernels.
