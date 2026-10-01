@@ -17747,6 +17747,11 @@ impl Engine<'_> {
                 self.drop_top()
             }
             Value::Object(_) => self.special_call(work, 17, args)?.ok_or_else(|| self.core_fault("core.uncallable", &work.core_kind())),
+            // A descriptor reached as a value in its own right -- a bound
+            // classmethod, a staticmethod, a loose member of a kind -- is
+            // applied the way the class applies it, so map and filter can
+            // hand it over to be called as a program could call it.
+            Value::Adapter(_) => self.class_apply(work.clone(), args).map_err(|f| f.told(&self.wording())),
             _ => Err(self.core_fault("core.uncallable", &work.core_kind())),
         }
     }
@@ -18016,6 +18021,11 @@ impl Engine<'_> {
                         return Ok(Value::Small(match &*cell.borrow() { Value::Collection(inner, _) => Rc::as_ptr(inner) as usize as i64, _ => Rc::as_ptr(cell) as usize as i64 }));
                     }
                     Value::Collection(cell, _) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
+                    // A view is known by the retained view object it is
+                    // kept in, which stays put however the map it reads
+                    // changes; contents() would hand back a fresh array
+                    // each ask, and the array's pointer is not the view's.
+                    Value::View(view) => return Ok(Value::Small(Rc::as_ptr(view) as usize as i64)),
                     _ => {}
                 }
                 let held = args[0].contents();
@@ -18040,8 +18050,10 @@ impl Engine<'_> {
                     },
                     Value::Huge(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Real(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Complex(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Flag(v) => if *v { 2 } else { 1 },
+                    Value::Ellipsis => 5,
                     Value::Null => 0,
                     _ => return Err(self.core_fault("core.unready", name)),
                 };

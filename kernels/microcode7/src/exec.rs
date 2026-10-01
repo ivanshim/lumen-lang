@@ -20548,7 +20548,11 @@ impl Machine<'_> {
                 Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &class.name)) }
             },
             Value::Thing(_) => self.ask_special(callable, 17, &values)?.ok_or_else(|| self.core_complaint("core.uncallable", &callable.kind_word())),
-            other => Err(self.core_complaint("core.uncallable", &other.kind_word())),
+            // A descriptor reached as a value of its own -- a bound
+            // classmethod, a staticmethod, a loose member of a kind -- is
+            // applied the way a program would call it, so map and filter
+            // can hand it over to be called.
+            other => self.apply_within(other.clone(), values),
         }
     }
 
@@ -20816,6 +20820,7 @@ impl Machine<'_> {
                 };
                 let address: u64 = match &held {
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
+                    Value::Ellipsis => 5,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Vector(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Intrinsic(_, word) => {
@@ -20839,6 +20844,7 @@ impl Machine<'_> {
                     Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Huge(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Frac(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Complex(c) => Rc::as_ptr(c) as usize as u64,
                     _ => return Err(self.core_complaint("core.unready", name)),
                 };
                 let stamp = (input[0].kind_word(), address);
