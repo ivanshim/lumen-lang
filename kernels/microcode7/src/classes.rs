@@ -271,8 +271,8 @@ impl<'a> Machine<'a> {
         let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).collect();
         natives.dedup();
         if natives.len()>1 {return Err(self.table.single("ext.stmt.class.layout").unwrap_or(self.detail("unready")).to_owned().into());}
-        let module=self.detail("main");
-        if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(module)));}
+        let module=self.home_of_written();
+        if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(&module)));}
         if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
             if !matches!(candidate.settled(), Value::Text(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", candidate.kind_word()).into()); }
         }
@@ -1279,6 +1279,22 @@ impl<'a> Machine<'a> {
     pub(super) fn routine_home(&self, code: &Routine) -> String {
         code.written_in.as_ref().and_then(|place| self.loaded_spaces.get(place)).cloned()
             .unwrap_or_else(|| self.detail("main").to_owned())
+    }
+    /// The module a class being made belongs to: the module the text
+    /// now running was read as, named the way its own namespace names
+    /// it, as the reference reads the module of a class out of the
+    /// globals the class was written in.
+    fn home_of_written(&self) -> String {
+        if let Some(path) = self.loaded_spaces.get(&self.written_in).cloned() {
+            if let Some(Value::Thing(space)) = self.imported.get(&path) {
+                let named = space.holds.borrow().iter()
+                    .find(|(key, _)| key == "__name__")
+                    .and_then(|(_, value)| match value.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
+                if let Some(word) = named { return word; }
+            }
+            return path;
+        }
+        self.detail("main").to_owned()
     }
     /// The module a routine answers to as a function, as the reference
     /// answers it of the function's own: the module an explicit write

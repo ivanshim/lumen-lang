@@ -8755,6 +8755,28 @@ impl<'a> Engine<'a> {
                 let module = self.drop_top()?;
                 if let Value::Object(object) = module {
                     let fields = object.fields.borrow().clone();
+                    // A module naming its __all__ is read out by exactly
+                    // those names, the way the reference reads a
+                    // wildcard import; what else it keeps stays its own.
+                    let chosen = fields.iter().find(|(name, _)| name == "__all__").map(|(_, held)| {
+                        let held = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                        self.comprehension_items(&held).unwrap_or_default().iter()
+                            .filter_map(|item| match item { Value::Text(word) => Some(word.to_string()), _ => None })
+                            .collect::<Vec<String>>()
+                    });
+                    let fields: Vec<(String, Value)> = match &chosen {
+                        Some(names) => {
+                            let mut kept = Vec::new();
+                            for name in names {
+                                match fields.iter().find(|(word, _)| word == name) {
+                                    Some((word, held)) => kept.push((word.clone(), held.clone())),
+                                    None => return Err(self.import_member_fault(&object.class.name.clone(), name).into()),
+                                }
+                            }
+                            kept
+                        }
+                        None => fields.into_iter().filter(|(name, _)| !name.starts_with('_')).collect(),
+                    };
                     for (name, held) in fields {
                         if name.starts_with('_') || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
                         let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
@@ -16104,6 +16126,13 @@ impl<'a> Engine<'a> {
             Builtin::CodeOf => {
                 arity(1)?;
                 if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
+                // The reference numbers a byte string of one byte the
+                // way it numbers a text of one letter.
+                if let Value::Bytes(row, ..) = &args[0] {
+                    let row = row.borrow();
+                    if row.len() == 1 { return Ok(Value::Small(row[0] as i64)); }
+                    return Err(format!("ord() expected a character, but string of length {} found", row.len()).into());
+                }
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 match s.chars().next() {
                     Some(c) => Value::Small(c as i64),

@@ -270,7 +270,7 @@ impl<'a> Engine<'a> {
         let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
-        let module = self.class_word("main").to_string();
+        let module = self.defining_home();
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
             members.push((self.class_word("module").to_string(), Value::text(&module)));
         }
@@ -1609,6 +1609,21 @@ impl<'a> Engine<'a> {
     /// The word the definition gives the module the builtin names live in.
     pub(super) fn home_module_word(&self) -> &str {
         self.lang.names_module.first().map_or("builtins", String::as_str)
+    }
+    /// The module a class being made belongs to: the module the text
+    /// now running was read as, named the way its own namespace names
+    /// it, as the reference reads the module of a class out of the
+    /// globals the class was written in.
+    fn defining_home(&self) -> String {
+        if let Some((_, path)) = self.module_slots.get(&self.source) {
+            if let Some(Value::Object(space)) = self.modules.get(path) {
+                if let Some((_, held)) = space.fields.borrow().iter().find(|(name, _)| name == "__name__") {
+                    if let Value::Text(word) = held.contents() { return word.to_string(); }
+                }
+            }
+            return path.clone();
+        }
+        self.class_word("main").to_string()
     }
     /// A builtin kind read by the word that spells it, where that word
     /// names a kind: the value `int`, not the class standing for it.

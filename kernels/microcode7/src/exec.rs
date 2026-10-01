@@ -13757,6 +13757,28 @@ impl<'a> Machine<'a> {
             Prim::SpreadModule => {
                 if let Value::Thing(namespace) = &v[0] {
                     let names = namespace.holds.borrow().clone();
+                    // A module naming its __all__ is read out by exactly
+                    // those names, the way the reference reads a
+                    // wildcard import; what else it keeps stays its own.
+                    let chosen = names.iter().find(|(name, _)| name == "__all__").map(|(_, entry)| {
+                        let entry = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry.clone() };
+                        self.core_collect(&entry).unwrap_or_default().iter()
+                            .filter_map(|item| match item { Value::Text(word) => Some(word.to_string()), _ => None })
+                            .collect::<Vec<String>>()
+                    });
+                    let names: Vec<(String, Value)> = match &chosen {
+                        Some(wanted) => {
+                            let mut kept = Vec::new();
+                            for name in wanted {
+                                match names.iter().find(|(word, _)| word == name) {
+                                    Some((word, entry)) => kept.push((word.clone(), entry.clone())),
+                                    None => { self.namespace_item(&v[0], "", name)?; }
+                                }
+                            }
+                            kept
+                        }
+                        None => names.into_iter().filter(|(name, _)| !name.starts_with('_')).collect(),
+                    };
                     for (name, entry) in names {
                         if name.starts_with('_') || !self.table.name_like(&name) { continue; }
                         let worth = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry };
@@ -16189,6 +16211,13 @@ impl<'a> Machine<'a> {
             Prim::CodeOf => {
                 n(1)?;
                 match &v[0] {
+                    // The reference numbers a byte string of one byte
+                    // the way it numbers a text of one letter.
+                    Value::Octets { cell, .. } => {
+                        let row = cell.borrow();
+                        if row.len() == 1 { return Ok(Value::Small(row[0] as i64)); }
+                        return Err(format!("ord() expected a character, but string of length {} found", row.len()).into());
+                    }
                     Value::Unpaired(numbers) => Value::Small(numbers[0] as i64),
                     Value::Text(s) => match s.chars().next() {
                         Some(c) => Value::Small(c as i64),
