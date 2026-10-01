@@ -661,3 +661,11 @@ def run_yielding_async_fn(async_fn, /, *args, **kwargs):
                 return e.value
     finally:
         coro.close()
+
+
+# From CPython 3b564385e4c9, Lib/test/support/__init__.py; PSF License.
+import os
+TEST_SUPPORT_DIR = os.path.dirname(os.path.abspath(__file__))
+TEST_HOME_DIR = os.path.dirname(TEST_SUPPORT_DIR)
+STDLIB_DIR = os.path.dirname(TEST_HOME_DIR)
+REPO_ROOT = os.path.dirname(STDLIB_DIR)

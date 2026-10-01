@@ -1,5 +1,6 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str)] = &[
+    ("__future__", include_str!("__future__.py")),
     ("_codec_idna", include_str!("_codec_idna.py")),
     ("_codec_names", include_str!("_codec_names.py")),
     ("_decimal", include_str!("_decimal.py")),
@@ -48,6 +49,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("platform", include_str!("platform.py")),
     ("pprint", include_str!("pprint.py")),
     ("pty", include_str!("pty.py")),
+    ("pydoc", include_str!("pydoc.py")),
     ("random", include_str!("random.py")),
     ("re", include_str!("re.py")),
     ("shutil", include_str!("shutil.py")),
