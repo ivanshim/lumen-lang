@@ -13872,7 +13872,22 @@ impl<'a> Machine<'a> {
                 Value::Vector(crate::tuples::Sequence::plain(items))
             }
             Prim::ProgramNames => {
+                // Given a module, answers its own namespace, as a read
+                // of the module's __dict__ would give it; anything else
+                // is the running program's, or a frame up the call chain.
                 if v.len() == 1 {
+                    if let Value::Thing(t) = v[0].settled() {
+                        if self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, &t))) {
+                            let pairs: Vec<(Value, Value)> = t.holds.borrow().iter()
+                                .filter(|(name, held)| !name.starts_with('\0') && !matches!(held, Value::Unset))
+                                .map(|(name, held)| { let mut value = held.clone(); while let Value::Shared(cell) | Value::Mutable(cell, _) = value { let next = cell.borrow().clone(); value = next; } (Value::text(name), value) })
+                                .collect();
+                            return Ok(Value::Dict(Rc::new(pairs.into())));
+                        }
+                    }
+                    if !matches!(v[0].settled(), Value::Small(_)) {
+                        return Err(format!("TypeError: __program_namespace() argument must be a module or an integer, not '{}'", v[0].kind_word()));
+                    }
                     let Value::Small(depth) = v[0] else { return Err(String::from("TypeError: an integer is required")); };
                     let mut at = self.active_trace.clone();
                     for _ in 0..depth.max(0) {

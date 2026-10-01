@@ -15476,6 +15476,20 @@ impl<'a> Engine<'a> {
                 answer
             }
             Builtin::ProgramNamespace => {
+                // Given a module, answers its own namespace, as a read
+                // of the module's __dict__ would give it; anything else
+                // is the running program's, or a frame up the call chain.
+                if let [module] = args.as_slice() {
+                    let subject = module.contents();
+                    if let Value::Object(o) = &subject {
+                        if self.modules.values().any(|held| matches!(held, Value::Object(space) if Rc::ptr_eq(space, o))) {
+                            return Ok(self.root_state(&subject));
+                        }
+                    }
+                    if !matches!(subject, Value::Small(_)) {
+                        return Err(format!("TypeError: __program_namespace() argument must be a module or an integer, not '{}'", subject.core_kind()).into());
+                    }
+                }
                 if let [Value::Small(depth)] = args.as_slice() {
                     let mut current = self.trace_frame.clone().map_or(Value::Null, Value::Object);
                     for _ in 0..(*depth).max(0) {

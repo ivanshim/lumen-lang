@@ -959,7 +959,7 @@ impl<'a> Engine<'a> {
     }
     /// What a thing holds of its own, as a dictionary, or nothing where
     /// it holds nothing.
-    fn root_state(&self, subject: &Value) -> Value {
+    pub(super) fn root_state(&self, subject: &Value) -> Value {
         let Value::Object(o) = subject else { return Value::Null };
         // What a thing holds is read out as the values themselves, not
         // the cells that keep them: a program handed its own __dict__
