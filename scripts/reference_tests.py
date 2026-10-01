@@ -27,6 +27,7 @@ import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
+from suite.python_tests import python_tests
 
 ROOT = Path(__file__).resolve().parent.parent
 BINARY = ROOT / "target" / "release" / "lumen-lang"
@@ -314,7 +315,7 @@ def main():
     results = {k: {} for k in kernels}
     reasons = {k: {"php": Counter(), "python": Counter()} for k in kernels}
     php_files = sorted((ROOT / "tests" / "php").rglob("*.phpt"))
-    py_files = sorted((ROOT / "tests" / "python").glob("*.py"))
+    py_files = python_tests(ROOT)
     for kernel in kernels:
         for f in php_files:
             status, why = run_phpt(f, kernel)

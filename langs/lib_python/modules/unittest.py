@@ -423,6 +423,9 @@ class TestSuite:
         if tests is not None:
             self.tests = list(tests)
 
+    def __iter__(self):
+        return iter(self.tests)
+
     def addTest(self, test):
         self.tests = [*self.tests, test]
 
@@ -494,7 +497,27 @@ class TestLoader:
         return suite
 
     def discover(self, start_dir, pattern='test*.py', top_level_dir=None):
-        raise 'NotImplementedError: test discovery needs filesystem access'
+        import os
+        import re
+        suite = TestSuite()
+        # Reference packages live under the same test namespace as
+        # CPython's Lib/test. Other directories use their relative package.
+        package = os.path.basename(start_dir)
+        if '/tests/python/' in start_dir or '/modules/test/' in start_dir:
+            package = 'test.' + package
+        elif top_level_dir is not None:
+            relative = os.path.relpath(start_dir, top_level_dir)
+            package = relative.replace(os.sep, '.')
+        expression = re.escape(pattern).replace(r'\*', '.*').replace(r'\?', '.')
+        for filename in sorted(os.listdir(start_dir)):
+            if not filename.endswith('.py') or re.fullmatch(expression, filename) is None:
+                continue
+            name = package + '.' + filename[:-3]
+            try:
+                suite.addTest(self.loadTestsFromModule(_host_load_module(name), pattern))
+            except Exception as error:
+                suite.addTest(_DiscoveryFailure(name, str(error)))
+        return suite
 
 
 def main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
@@ -847,3 +870,13 @@ def _word_before(left, right):
 class _TestProgram:
     def __init__(self, result):
         self.result = result
+
+
+class _DiscoveryFailure(TestCase):
+    def __init__(self, name, message):
+        TestCase.__init__(self, 'runTest')
+        self._test_module = name
+        self.message = message
+
+    def runTest(self):
+        raise ImportError(self.message)

@@ -661,3 +661,95 @@ def run_yielding_async_fn(async_fn, /, *args, **kwargs):
                 return e.value
     finally:
         coro.close()
+
+# Source: CPython 3b564385e4c9, Lib/test/support/__init__.py; PSF License.
+import os
+STDLIB_DIR = os.path.dirname(os.path.dirname(__file__))
+
+def load_package_tests(pkg_dir, loader, standard_tests, pattern):
+    """Generic load_tests implementation for simple test packages.
+
+    Most packages can implement load_tests using this function as follows:
+
+       def load_tests(*args):
+           return load_package_tests(os.path.dirname(__file__), *args)
+    """
+    if pattern is None:
+        pattern = "test*"
+    top_dir = STDLIB_DIR
+    package_tests = loader.discover(start_dir=pkg_dir,
+                                    top_level_dir=top_dir,
+                                    pattern=pattern)
+    standard_tests.addTests(package_tests)
+    return standard_tests
+
+
+import functools
+import contextlib
+max_memuse = 0
+PGO = False
+PGO_EXTENDED = False
+
+def bigaddrspacetest(f):
+    """Decorator for tests that fill the address space."""
+    @functools.wraps(f)
+    def wrapper(self):
+        if max_memuse < MAX_Py_ssize_t:
+            if MAX_Py_ssize_t >= 2**63 - 1 and max_memuse >= 2**31:
+                raise unittest.SkipTest(
+                    "not enough memory: try a 32-bit build instead")
+            else:
+                raise unittest.SkipTest(
+                    "not enough memory: %.1fG minimum needed"
+                    % (MAX_Py_ssize_t / (1024 ** 3)))
+        else:
+            return f(self)
+    return wrapper
+
+#=======================================================================
+# unittest integration.
+
+
+def skip_if_pgo_task(test):
+    """Skip decorator for tests not run in (non-extended) PGO task"""
+    ok = not PGO or PGO_EXTENDED
+    msg = "Not run for (non-extended) PGO task"
+    return test if ok else unittest.skip(msg)(test)
+
+
+
+@contextlib.contextmanager
+def set_recursion_limit(limit):
+    """Temporarily change the recursion limit."""
+    original_limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(limit)
+        yield
+    finally:
+        sys.setrecursionlimit(original_limit)
+
+
+def infinite_recursion(max_depth=None):
+    if max_depth is None:
+        # Pick a number large enough to cause problems
+        # but not take too long for code that can handle
+        # very deep recursion.
+        max_depth = 20_000
+    elif max_depth < 3:
+        raise ValueError(f"max_depth must be at least 3, got {max_depth}")
+    depth = get_recursion_depth()
+    depth = max(depth - 1, 1)  # Ignore infinite_recursion() frame.
+    limit = depth + max_depth
+    return set_recursion_limit(limit)
+
+
+# Execution uses a finite, explicitly allocated thread stack.
+skip_if_unlimited_stack_size = _identity
+
+def get_recursion_depth():
+    depth = 0
+    frame = sys._getframe()
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    return max(depth - 1, 1)
