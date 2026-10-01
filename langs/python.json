@@ -2546,6 +2546,25 @@
   "ext.stmt.async.stop": [
     "StopAsyncIteration"
   ],
+  "ext.stmt.async.generator.escaped": [
+    "RuntimeError: async generator raised StopIteration",
+    "RuntimeError: async generator raised StopAsyncIteration"
+  ],
+  "ext.stmt.async.generator.close.ignored": [
+    "RuntimeError: async generator ignored GeneratorExit"
+  ],
+  "ext.stmt.async.generator.fields": [
+    "ag_code",
+    "ag_frame",
+    "ag_running",
+    "ag_await"
+  ],
+  "ext.stmt.async.generator.methods": [
+    "asend",
+    "athrow",
+    "aclose",
+    "__await__"
+  ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
   ],

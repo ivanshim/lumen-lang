@@ -90,6 +90,7 @@ const MET_ANNOTATED: u8 = 2;
 struct Layer {
     permits_async: bool,
     async_walk_seen: bool,
+    return_value_at: Option<usize>,
     gathering_kind: Option<&'static str>,
     expression_targets: Vec<String>,
     comprehension: bool,
@@ -534,7 +535,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
-    let top = Layer { async_walk_seen: false, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() };
+    let top = Layer { async_walk_seen: false, return_value_at: None, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -545,7 +546,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() });
+        layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() });
     }
     let outer_layers = layers.len();
     if read_in && outer_layers > 1 {
@@ -1720,7 +1721,7 @@ impl<'a> Builder<'a> {
         let param_slots = (0..params.len()).collect();
         let permits_async = (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>" | "<genexpr>"))
             && self.layers.last().map_or(false, |scope| scope.permits_async);
-        self.layers.push(Layer { async_walk_seen: false, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
+        self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
                 if !self.table.has_any("ext.builtin.exceptions.syntax") && known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
@@ -1788,7 +1789,13 @@ impl<'a> Builder<'a> {
         let mut referenced = Vec::new();
         let mut suspension = false;
         inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
-        if scope.permits_async && suspension { flags = (flags & !128) | 512; }
+        if scope.permits_async && suspension {
+            if let Some(at) = scope.return_value_at {
+                self.pos = at;
+                return Err("SyntaxError: 'return' with value in async generator".to_owned());
+            }
+            flags = (flags & !128) | 512;
+        }
         Ok(constant(Value::Routine(Rc::new(Routine { annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
@@ -2885,6 +2892,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.return") {
                 self.note_finally_word("return");
+                let return_at = self.pos;
                 self.advance();
                 // A routine giving back a cell answers with the cell of
                 // whatever it names, so a name tied to the answer and
@@ -2899,6 +2907,9 @@ impl<'a> Builder<'a> {
                 } else {
                     vec![if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? }]
                 };
+                if !value.is_empty() && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    self.layers.last_mut().unwrap().return_value_at.get_or_insert(return_at);
+                }
                 return Ok(prim_call(Prim::Yield, value));
             }
             if self.key("stmt.break") {
@@ -8520,7 +8531,8 @@ impl<'a> Builder<'a> {
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
-            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1));
+            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1))
+                && (self.in_class_body() || self.layers.last().is_some_and(|scope| scope.gathering_kind.is_some()));
             if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression {
                 let scope = if self.layers.len() == 1 || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {scope}"));
@@ -8534,6 +8546,7 @@ impl<'a> Builder<'a> {
         }
         if self.key("ext.stmt.yield") {
             let begins = self.pos;
+            let scope_is_async = self.layers.last().map_or(false, |scope| scope.permits_async);
             let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(if table.spells("ext.stmt.yield.from", &self.glance(1).lexeme) { "'yield from' outside function" } else { "'yield' outside function" }.to_owned()) }
                 else { self.layers.last().and_then(|s| s.gathering_kind).map(|kind| format!("'yield' inside {kind}")) };
             self.advance();
@@ -8584,6 +8597,10 @@ impl<'a> Builder<'a> {
                     self.range_end = Some((last.column + last.lexeme.chars().count(), last.row));
                     self.pos = begins;
                     return Err(format!("SyntaxError: {complaint}"));
+                }
+                if from && scope_is_async {
+                    self.pos = begins;
+                    return Err("SyntaxError: 'yield from' inside async function".to_owned());
                 }
             }
             if table.flag("ext.stmt.yield.suspends") {
@@ -10924,7 +10941,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { async_walk_seen: false, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new(), encountered: Vec::new() });
+            self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async: false, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new(), encountered: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {

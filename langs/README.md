@@ -1622,6 +1622,13 @@ only. The extension labels so far, all from PHP:
   method declines an operation, leaving the other operand to answer.
   `ext.stmt.class.special.stop` names the fault which ends a walk, and
   `ext.stmt.async.stop` the fault which ends an asynchronous walk.
+  `ext.stmt.async.generator.methods` names the native async generator methods
+  for sending a value, throwing a fault and closing the suspended body;
+  `ext.stmt.async.generator.fields` names its code, live frame, running
+  state and current await target; `ext.stmt.async.generator.close.ignored`
+  reports a body that yields after `aclose` has thrown its exit fault.
+  `ext.stmt.async.generator.escaped` names the faults raised when a body
+  lets StopIteration or StopAsyncIteration escape, preserving the original cause.
   `ext.stmt.class.special.unready` gives the words for a special operation
   whose meaning the run cannot yet honour. A fault handed to a with
   exit carries an opaque traceback; looking within it stops with these
@@ -5147,6 +5154,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.names.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.close.ignored` | - | - | `RuntimeError: async generator ignored GeneratorExit` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.escaped` | - | - | `RuntimeError: async generator raised StopIteration` `RuntimeError: async generator raised StopAsyncIteration` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.fields` | - | - | `ag_code` `ag_frame` `ag_running` `ag_await` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.methods` | - | - | `asend` `athrow` `aclose` `__await__` | - | - | - | - | - | - | - |
 | `ext.stmt.async.stop` | - | - | `StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unready` | - | - | `NotImplementedError: asynchronous execution is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unrun` | - | - | `NotImplementedError: asynchronous functions cannot be run` | - | - | - | - | - | - | - |
