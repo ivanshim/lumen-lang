@@ -3,16 +3,16 @@
 __all__ = ['heapify', 'heappop', 'heappush', 'heappushpop', 'heapreplace', 'heapify_max', 'heappop_max', 'heappush_max', 'heappushpop_max', 'heapreplace_max']
 
 def heappush(heap, item, /):
+    """Push item onto heap, maintaining the heap invariant."""
     if not isinstance(heap, list):
         raise TypeError("heappush() argument 1 must be list, not " + type(heap).__name__)
-    """Push item onto heap, maintaining the heap invariant."""
     heap.append(item)
     _siftdown(heap, 0, len(heap)-1)
 
 def heappop(heap, /):
+    """Pop the smallest item off the heap, maintaining the heap invariant."""
     if not isinstance(heap, list):
         raise TypeError("heappop() argument 1 must be list, not " + type(heap).__name__)
-    """Pop the smallest item off the heap, maintaining the heap invariant."""
     lastelt = heap.pop()    # raises appropriate IndexError if heap is empty
     if heap:
         returnitem = heap[0]
@@ -22,8 +22,6 @@ def heappop(heap, /):
     return lastelt
 
 def heapreplace(heap, item, /):
-    if not isinstance(heap, list):
-        raise TypeError("heapreplace() argument 1 must be list, not " + type(heap).__name__)
     """Pop and return the current smallest value, and add the new item.
 
     This is more efficient than heappop() followed by heappush(), and can be
@@ -34,24 +32,26 @@ def heapreplace(heap, item, /):
         if item > heap[0]:
             item = heapreplace(heap, item)
     """
+    if not isinstance(heap, list):
+        raise TypeError("heapreplace() argument 1 must be list, not " + type(heap).__name__)
     returnitem = heap[0]    # raises appropriate IndexError if heap is empty
     heap[0] = item
     _siftup(heap, 0)
     return returnitem
 
 def heappushpop(heap, item, /):
+    """Fast version of a heappush followed by a heappop."""
     if not isinstance(heap, list):
         raise TypeError("heappushpop() argument 1 must be list, not " + type(heap).__name__)
-    """Fast version of a heappush followed by a heappop."""
     if heap and heap[0] < item:
         item, heap[0] = heap[0], item
         _siftup(heap, 0)
     return item
 
 def heapify(x, /):
+    """Transform list into a heap, in-place, in O(len(x)) time."""
     if not isinstance(x, list):
         raise TypeError("heapify() argument 1 must be list, not " + type(x).__name__)
-    """Transform list into a heap, in-place, in O(len(x)) time."""
     n = len(x)
     # Transform bottom-up.  The largest index there's any point to looking at
     # is the largest with a child index in-range, so must have 2*i + 1 < n,
@@ -62,9 +62,9 @@ def heapify(x, /):
         _siftup(x, i)
 
 def heappop_max(heap, /):
+    """Maxheap version of a heappop."""
     if not isinstance(heap, list):
         raise TypeError("heappop_max() argument 1 must be list, not " + type(heap).__name__)
-    """Maxheap version of a heappop."""
     lastelt = heap.pop()    # raises appropriate IndexError if heap is empty
     if heap:
         returnitem = heap[0]
@@ -74,34 +74,34 @@ def heappop_max(heap, /):
     return lastelt
 
 def heapreplace_max(heap, item, /):
+    """Maxheap version of a heappop followed by a heappush."""
     if not isinstance(heap, list):
         raise TypeError("heapreplace_max() argument 1 must be list, not " + type(heap).__name__)
-    """Maxheap version of a heappop followed by a heappush."""
     returnitem = heap[0]    # raises appropriate IndexError if heap is empty
     heap[0] = item
     _siftup_max(heap, 0)
     return returnitem
 
 def heappush_max(heap, item, /):
+    """Maxheap version of a heappush."""
     if not isinstance(heap, list):
         raise TypeError("heappush_max() argument 1 must be list, not " + type(heap).__name__)
-    """Maxheap version of a heappush."""
     heap.append(item)
     _siftdown_max(heap, 0, len(heap)-1)
 
 def heappushpop_max(heap, item, /):
+    """Maxheap fast version of a heappush followed by a heappop."""
     if not isinstance(heap, list):
         raise TypeError("heappushpop_max() argument 1 must be list, not " + type(heap).__name__)
-    """Maxheap fast version of a heappush followed by a heappop."""
     if heap and item < heap[0]:
         item, heap[0] = heap[0], item
         _siftup_max(heap, 0)
     return item
 
 def heapify_max(x, /):
+    """Transform list into a maxheap, in-place, in O(len(x)) time."""
     if not isinstance(x, list):
         raise TypeError("heapify_max() argument 1 must be list, not " + type(x).__name__)
-    """Transform list into a maxheap, in-place, in O(len(x)) time."""
     n = len(x)
     for i in reversed(range(n//2)):
         _siftup_max(x, i)
@@ -218,4 +218,3 @@ def _siftup_max(heap, pos):
     # to its final resting place (by sifting its parents down).
     heap[pos] = newitem
     _siftdown_max(heap, startpos, pos)
-
