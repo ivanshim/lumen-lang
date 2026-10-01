@@ -6318,6 +6318,10 @@ impl<'a> Compiler<'a> {
         let built = self.routine(name, formals, least, true, |a| {
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
+            // A method of a definition whose blocks are indented falls
+            // off its end as a function does: with nothing, not with
+            // whatever its last bare statement came to.
+            a.piece().python_fallthrough = true;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
             a.spare_values(&spares, &given)?;
             // What a parameter that names a property was given is
@@ -6632,7 +6636,14 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Missing(*at));
             let past = self.skip();
             self.pos = *from;
-            self.expr(0)?;
+            // A spare's own value is read outside the routine's
+            // parameters: a default naming what a parameter also names
+            // finds the one outside, where the reference reads every
+            // default before the routine it belongs to exists.
+            let around = std::mem::take(&mut self.pieces.last_mut().expect("an open piece").idents);
+            let outcome = self.expr(0);
+            self.pieces.last_mut().expect("an open piece").idents = around;
+            outcome?;
             self.write(&formals[*at]);
             self.land(past);
         }
@@ -9108,6 +9119,16 @@ impl<'a> Compiler<'a> {
                 }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
+                // Spelled with a class and the thing it is for, where
+                // the definition asks for that form, the parent word
+                // answers with the stand-in that reads the forebears of
+                // that class on that thing, members of their own bound
+                // to it.
+                if extra == 2 && self.lang.parent_bind {
+                    self.constant(PARENT_CALLABLE.with(Clone::clone));
+                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), 3);
+                    return self.indexing(from);
+                }
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));

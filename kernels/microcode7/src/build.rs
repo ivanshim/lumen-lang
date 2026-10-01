@@ -6579,7 +6579,14 @@ impl<'a> Builder<'a> {
         let mut first = Vec::new();
         for (at, from) in spares {
             self.pos = from;
-            let value = self.expr(0)?;
+            // A spare's own value is read outside the routine's own
+            // names: a default naming what a parameter also names finds
+            // the one outside, the reference reading every default
+            // before the routine it belongs to exists.
+            let around = std::mem::take(&mut self.layers.last_mut().expect("a layer").idents);
+            let built = self.expr(0);
+            self.layers.last_mut().expect("a layer").idents = around;
+            let value = built?;
             let slot = self.address_to_write(&formals[at]);
             let written = Form::Write(slot.clone(), Box::new(value));
             let test = Form::Missing(slot);
@@ -8748,6 +8755,14 @@ impl<'a> Builder<'a> {
                 }
                 self.need_sign(open, "after the parent word")?;
                 let extra = self.args("syntax.call.close", "syntax.call.separator")?;
+                // Spelled with a class and the thing it is for, where
+                // the definition asks for that form, the parent word
+                // answers with the stand-in that reads that class's
+                // forebears on that thing, their members bound to it.
+                if extra.len() == 2 && table.flag("ext.stmt.class.parent.bind") {
+                    let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
+                    return self.subscript(invoke(parent_word, extra));
+                }
                 let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {

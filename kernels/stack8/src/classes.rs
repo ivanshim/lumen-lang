@@ -1094,6 +1094,15 @@ impl<'a> Engine<'a> {
                             return self.bind_class_value(value, Some(receiver.clone()), dynamic);
                         }
                     }
+                    // The walk coming to the root, the root answers with
+                    // its own members as the plain read of a thing does:
+                    // the maker every ordinary class stands on, its
+                    // beginning among them.
+                    if let Some(root) = self.root_member(name, Some(&dynamic)) {
+                        if name == self.class_word("allocate") { return Ok(root); }
+                        let bound = if name == self.class_word("subclass") { Value::Class(dynamic.clone()) } else { receiver.clone() };
+                        return Ok(Self::adapter(3, vec![root, bound]));
+                    }
                 }
                 return Err(self.missing_member(&subject, name));
             }
