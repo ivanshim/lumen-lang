@@ -531,10 +531,11 @@ impl<'a> Machine<'a> {
     fn protocol_entry(&self,member:&Value,part:&str)->Option<Value> {
         let word=self.detail(part);
         if word.is_empty(){return None;}
-        match member {Value::Thing(t)=>self.inherited_entry(&t.blueprint(),word),_=>None}
+        match member.settled() {Value::Thing(t)=>self.inherited_entry(&t.blueprint(),word),_=>None}
     }
     fn through_descriptor(&mut self,member:&Value,hook:Value,values:Vec<Value>)->Res {
-        let Value::Thing(t)=member else{return Err(self.class_unready())};
+        let member = member.settled();
+        let Value::Thing(t)=&member else{return Err(self.class_unready())};
         let bound=self.member_binding(hook,Some(member.clone()),t.blueprint().clone())?;
         self.apply_class_member(bound,values)
     }
@@ -1046,7 +1047,7 @@ impl<'a> Machine<'a> {
     /// or account as the program wrote them, the namespace handed to it,
     /// or an entry of the namespace it keeps.
     fn routine_holding(&self,value:&Value,key:&str)->Option<Value> {
-        let (_,members)=self.routine_members.iter().find(|(f,_)|f.equals(value))?;
+        let members = &self.routine_members[self.routine_index(value)?].1;
         let holds=members.holds.borrow();
         let annotation_key = format!("\0{key}\0");
         if let Some((_, value)) = holds.iter().find(|(word, _)| *word == annotation_key) { return Some(value.clone()); }
@@ -1060,7 +1061,8 @@ impl<'a> Machine<'a> {
         }
     }
     fn routine_holding_names(&self,value:&Value)->Vec<String> {
-        let Some((_,members))=self.routine_members.iter().find(|(f,_)|f.equals(value)) else{return Vec::new()};
+        let Some(index) = self.routine_index(value) else { return Vec::new(); };
+        let members = &self.routine_members[index].1;
         let holds=members.holds.borrow();
         match holds.iter().find(|(k,_)|k==Self::HANDED) {
             Some((_,book))=>match book.settled() {Value::Dict(entries)=>entries.iter().filter_map(|(k,_)|if let Value::Text(t)=k{Some(t.to_string())}else{None}).collect(),_=>Vec::new()},
@@ -1336,7 +1338,7 @@ impl<'a> Machine<'a> {
     /// none), or the module the file it came of was read as.
     pub(super) fn routine_module(&self, code: &Rc<Routine>) -> Value {
         let apart = format!("{}\0", self.detail("module"));
-        let kept = self.routine_members.iter().find(|(held, _)| matches!(held, Value::Routine(r) | Value::Bound(r, _) | Value::Method(r, _) if Rc::ptr_eq(r, code)));
+        let kept = self.routine_origins.get(&(Rc::as_ptr(code) as usize)).map(|index| &self.routine_members[*index]);
         if let Some((_, members)) = kept {
             if let Some((_, v)) = members.holds.borrow().iter().find(|(k, _)| **k == apart) { return v.clone(); }
         }
@@ -1380,16 +1382,41 @@ impl<'a> Machine<'a> {
         self.routine_members[at].1.holds.borrow_mut().push((apart,fresh.clone()));
         fresh
     }
-    fn routine_storage(&mut self, code: &Value) -> usize {
-        match self.routine_members.iter().position(|(candidate, _)| candidate.equals(code)) {
-            Some(found) => found,
-            None => {
-                let of = self.common_ancestor(); self.made += 1;
-                let holder = Rc::new(Thing {reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
-                self.routine_members.push((code.clone(), holder));
-                self.routine_members.len() - 1
-            }
+    fn routine_token(code: &Value) -> Option<(usize, usize, u8)> {
+        match code {
+            Value::Routine(p) => Some((Rc::as_ptr(p) as usize, 0, 0)),
+            Value::Bound(p, env) => Some((Rc::as_ptr(p) as usize, Rc::as_ptr(env) as usize, 1)),
+            Value::Method(p, thing) => Some((Rc::as_ptr(p) as usize, Rc::as_ptr(thing) as usize, 2)),
+            Value::Shared(cell) | Value::Mutable(cell, _) => Self::routine_token(&cell.borrow()),
+            _ => None,
         }
+    }
+    fn routine_index(&self, code: &Value) -> Option<usize> {
+        if let Some(token) = Self::routine_token(code) {
+            self.routine_indices.get(&token).copied()
+        } else {
+            self.routine_members.iter().position(|(candidate, _)| candidate.equals(code))
+        }
+    }
+    fn routine_storage(&mut self, code: &Value) -> usize {
+        if let Some(index) = self.routine_index(code) { return index; }
+        let of = self.common_ancestor(); self.made += 1;
+        let holder = Rc::new(Thing { reclassified: RefCell::new(None), of, turn: self.made, holds: RefCell::new(vec![("\0routine".to_owned(), Value::Flag(true))]) });
+        let index = self.routine_members.len();
+        self.routine_members.push((code.clone(), holder));
+        if let Some(token) = Self::routine_token(code) {
+            self.routine_indices.insert(token, index);
+        }
+        match code {
+            Value::Routine(p) | Value::Bound(p, _) => {
+                let body = Rc::as_ptr(p) as usize;
+                self.routine_worlds.entry(body).or_insert(index);
+                self.routine_origins.entry(body).or_insert(index);
+            }
+            Value::Method(p, _) => { self.routine_origins.entry(Rc::as_ptr(p) as usize).or_insert(index); }
+            _ => {}
+        }
+        index
     }
     fn member_map(entries:&[(String,Value)])->Value {
         let pairs=entries.iter().filter(|(key,_)|!key.starts_with('\0')).map(|(key,value)|(Value::text(key),value.clone())).collect();

@@ -323,7 +323,7 @@ pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     imported: HashMap<String, Value>,
-    wildcard_names: Vec<(Rc<str>, String, usize)>,
+    wildcard_names: std::collections::BTreeMap<Rc<str>, std::collections::BTreeMap<String, usize>>,
     loaded_spaces: HashMap<Rc<str>, String>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
@@ -361,6 +361,9 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    routine_indices: HashMap<(usize, usize, u8), usize>,
+    routine_worlds: HashMap<usize, usize>,
+    routine_origins: HashMap<usize, usize>,
     loose_entries: RefCell<HashMap<(String, String), Value>>,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
@@ -1252,7 +1255,7 @@ impl<'a> Machine<'a> {
             library_directory: None,
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
-            wildcard_names: Vec::new(),
+            wildcard_names: std::collections::BTreeMap::new(),
             loaded_spaces: HashMap::new(),
             within_spare: false,
             world_book: None,
@@ -1261,7 +1264,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), routine_indices: HashMap::new(), routine_worlds: HashMap::new(), routine_origins: HashMap::new(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -5555,6 +5558,7 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() needs a thing and a method name", name).into());
                     }
                     let subject = values.remove(0);
+                    let subject = match subject.settled() { held @ (Value::Thing(_) | Value::Blueprint(_)) => held, _ => subject };
                     let called = values.remove(0).bare();
                     if let Value::Generator(generator) = subject {
                         let (mut values, named) = self.open_arguments(values)?;
@@ -5628,6 +5632,7 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() needs a class and a method name", name).into());
                     }
                     let subject = values.remove(0);
+                    let subject = match subject.settled() { held @ (Value::Thing(_) | Value::Blueprint(_)) => held, _ => subject };
                     let parent = values.remove(0);
                     let called = values.remove(0).bare();
                     if self.has_class_order(){if let Value::Text(owner)=&parent{return self.next_ancestor_call(subject,owner,&called,values);}}
@@ -6011,6 +6016,11 @@ impl<'a> Machine<'a> {
                     // language names such methods and the class is
                     // written with them, they stand in its place.
                     if self.has_class_order() {
+                        if matches!(op, Prim::Of | Prim::SortOf) {
+                            if let Some(first) = values.first_mut() {
+                                if let held @ (Value::Thing(_) | Value::Blueprint(_)) = first.settled() { *first = held; }
+                            }
+                        }
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
@@ -8975,10 +8985,8 @@ impl<'a> Machine<'a> {
     }
 
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
-            Value::Bound(code, _) | Value::Routine(code) => Rc::ptr_eq(code, body),
-            _ => false,
-        })?;
+        let at = self.routine_worlds.get(&(Rc::as_ptr(body) as usize))?;
+        let record = &self.routine_members[*at].1;
         let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
         if let Value::Shared(cell) | Value::Mutable(cell, _) = worth { Some(cell) }
         else if matches!(worth, Value::Dict(_)) { Some(Rc::new(RefCell::new(worth))) }
@@ -10801,6 +10809,11 @@ impl<'a> Machine<'a> {
             let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.settled());
             if own.is_some() { return own; }
             if let Some((_, body)) = blueprint.methods.iter().find(|(key, _)| key == word) { return Some(Value::Routine(body.clone())); }
+            if index == 8 {
+                let is_float = blueprint.constants.iter().find(|(key, _)| key == "\0native")
+                    .is_some_and(|(_, held)| matches!(held, Value::Text(word) if word.as_ref() == "float"));
+                if is_float { return None; }
+            }
             // Equality given, in the methods or the namespace, without a
             // hash: the things cannot be hashed.
             if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal) || blueprint.shared.borrow().iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
@@ -11176,8 +11189,9 @@ impl<'a> Machine<'a> {
     /// beside them under the hidden name `\0keys`.
     fn attribute_entries(t: &crate::data::Thing) -> Vec<(Value, Value)> {
         let holds = t.holds.borrow();
+        let routine = holds.iter().any(|(name, _)| name == "\0routine");
         let mut entries: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, held)| !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
+            .filter(|(name, held)| !(routine && name.ends_with('\0')) && !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
             .map(|(name, held)| (Value::text(name), held.clone())).collect();
         if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -11190,7 +11204,8 @@ impl<'a> Machine<'a> {
     /// are kept beside them under `\0keys`.
     fn attribute_restore(t: &crate::data::Thing, entries: Vec<(Value, Value)>) {
         let mut holds = t.holds.borrow_mut();
-        holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
+        let routine = holds.iter().any(|(name, _)| name == "\0routine");
+        holds.retain(|(name, _)| (name.starts_with('\0') && name != "\0keys") || (routine && name.ends_with('\0')));
         let mut extra: Vec<(Value, Value)> = Vec::new();
         for (key, held) in entries {
             match key {
@@ -13431,7 +13446,7 @@ impl<'a> Machine<'a> {
                 let words = self.table.single("ext.op.matrix.unready").unwrap_or_default();
                 return Err(words.to_owned());
             }
-            Prim::Dictionary => self.dictionary(v, Vec::new())?,
+            Prim::Dictionary => self.dictionary(v, Vec::new())?.keep(true),
             // A method spelled with its class in front is asked of its
             // first argument, as it would be of a value of that class.
             Prim::ValueMethod if name.contains('.') => {
@@ -13873,10 +13888,7 @@ impl<'a> Machine<'a> {
                             }
                         }
                         if self.table.flag("ext.syntax.names.shadow_builtins") {
-                            match self.wildcard_names.iter_mut().find(|(file, word, _)| file == &self.written_in && word == &name) {
-                                Some((_, _, address)) => *address = slot,
-                                None => self.wildcard_names.push((self.written_in.clone(), name, slot)),
-                            }
+                            self.wildcard_names.entry(self.written_in.clone()).or_default().insert(name, slot);
                         }
                     }
                 }
@@ -18330,7 +18342,7 @@ impl Machine<'_> {
         // Library helpers keep their own native operations even when
         // the calling module has imported a replacement for that word.
         if self.calls.last().is_some_and(|call| call.of_library && !self.stands_for_the_run(&call.named)) { return None; }
-        let (_, _, slot) = self.wildcard_names.iter().rev().find(|(file, name, _)| file == &self.written_in && name == word)?;
+        let slot = self.wildcard_names.get(&self.written_in)?.get(word)?;
         let cells = self.outermost.cells.borrow();
         match cells.get(*slot)? {
             Value::Shared(place) => Some(place.borrow().clone()).filter(|value| !matches!(value, Value::Unset)),
@@ -20830,7 +20842,7 @@ impl Machine<'_> {
                     if !matches!(key, Value::Keyed(..)) && key.hash_number().is_none() && !matches!(key, Value::Nil | Value::Frac(_)) { return Err(self.core_complaint("core.unhashable", &key.kind_word())); }
                     self.store_write(&mut entries, key, item)?;
                 }
-                Ok(Value::Dict(entries))
+                Ok(Value::Dict(entries).keep(true))
             }
             Iterator => {
                 require(1, 2)?;

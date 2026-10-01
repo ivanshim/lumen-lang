@@ -1791,7 +1791,7 @@ impl<'a> Engine<'a> {
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
     fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
-        let (_,members)=self.function_members.iter().find(|(v,_)| v.equals(subject))?;
+        let members = &self.function_members[self.function_position(subject)?].1;
         let fields=members.fields.borrow();
         if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") || self.lang.class_annotations.first().map_or(false, |s| s == name) {
             let own=format!("\0{name}");
@@ -1808,7 +1808,8 @@ impl<'a> Engine<'a> {
     }
     /// The names a routine's own namespace holds, for its directory.
     fn routine_member_names(&self, subject: &Value) -> Vec<String> {
-        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.equals(subject)) else {return Vec::new()};
+        let Some(position) = self.function_position(subject) else { return Vec::new(); };
+        let members = &self.function_members[position].1;
         let fields=members.fields.borrow();
         if let Some((_,book))=fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
             let Value::Map(pairs)=book.contents() else {return Vec::new()};
@@ -1859,13 +1860,30 @@ impl<'a> Engine<'a> {
         self.function_members[at].1.fields.borrow_mut().push((own,fresh.clone()));
         fresh
     }
+    fn function_identity(function: &Value) -> Option<(usize, usize)> {
+        match function {
+            Value::Routine(program) => Some((Rc::as_ptr(program) as usize, 0)),
+            Value::Method(receiver, program) => Some((Rc::as_ptr(program) as usize, Rc::as_ptr(receiver) as usize)),
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Self::function_identity(&cell.borrow()),
+            _ => None,
+        }
+    }
+    fn function_position(&self, function: &Value) -> Option<usize> {
+        match Self::function_identity(function) {
+            Some(address) => self.function_addresses.get(&address).copied(),
+            None => self.function_members.iter().position(|(held, _)| held.equals(function)),
+        }
+    }
     fn function_storage(&mut self, function: &Value) -> usize {
-        if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
+        if let Some(at) = self.function_position(function) { return at; }
         let class = self.root_class();
         self.made += 1;
-        let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
+        let fields = Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(Vec::new()), mark: self.made });
+        let at = self.function_members.len();
         self.function_members.push((function.clone(), fields));
-        self.function_members.len() - 1
+        if let Some(address) = Self::function_identity(function) { self.function_addresses.insert(address, at); }
+        if let Value::Routine(program) = function { self.function_books.entry(Rc::as_ptr(program) as usize).or_insert(at); }
+        at
     }
     fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,v)|(Value::text(n),v.clone())).collect()))}
     /// The annotations a class carries: its own, worked out the first

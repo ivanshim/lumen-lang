@@ -347,6 +347,10 @@ class DocTestFinder:
             if key[:1] == '#' or key == '__test__':
                 continue
             value = names[key]
+            if not isinstance(value, type) and type(value).__name__ not in (
+                    'function', 'builtin_function_or_method', 'method',
+                    'method_descriptor', 'wrapper_descriptor', 'method-wrapper'):
+                continue
             if getattr(value, '__module__', None) != module_name:
                 continue
             label = module_name + '.' + key
