@@ -12520,6 +12520,42 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn math_operand(&mut self, offered: &Value) -> Res<f64> {
+        let item = offered.contents();
+        if let Some(number) = Self::product_sum_float(&item) { return Ok(number); }
+        if matches!(item, Value::Huge(_)) { return Err("OverflowError: int too large to convert to float".into()); }
+        if matches!(item, Value::Object(_)) {
+            let converted = self.builtin(Builtin::AsReal, "float", &mut vec![item.clone()])?;
+            return Self::product_sum_float(&converted).ok_or_else(|| format!("TypeError: must be real number, not {}", item.core_kind()));
+        }
+        Err(format!("TypeError: must be real number, not {}", item.core_kind()))
+    }
+
+    fn random_word(&self, state: &Value, position: &Value) -> Res<Value> {
+        let Value::Array(row) = state.contents() else { return Err("TypeError: random state must be a list".into()); };
+        let Value::Small(mut index) = position.contents() else { return Err("TypeError: random index must be an integer".into()); };
+        if row.len() != 624 || !(0..=624).contains(&index) { return Err("ValueError: invalid random state".into()); }
+        let integer = |value: &Value| match value.contents() {
+            Value::Small(n) if (0..=u32::MAX as i64).contains(&n) => Ok(n as u32),
+            _ => Err("ValueError: invalid random state word".to_owned()),
+        };
+        let (mut result, replacement) = if index == 624 {
+            let mut words = row.iter().map(integer).collect::<Res<Vec<_>>>()?;
+            for i in 0..624 {
+                let joined = (words[i] & 0x80000000) | (words[(i + 1) % 624] & 0x7fffffff);
+                words[i] = words[(i + 397) % 624] ^ (joined >> 1) ^ if joined & 1 != 0 { 0x9908b0df } else { 0 };
+            }
+            index = 0;
+            let first = words[0];
+            (first, Value::array(words.into_iter().map(|word| Value::Small(i64::from(word))).collect()))
+        } else { (integer(&row[index as usize])?, Value::Null) };
+        result ^= result >> 11;
+        result ^= (result << 7) & 0x9d2c5680;
+        result ^= (result << 15) & 0xefc60000;
+        result ^= result >> 18;
+        Ok(Value::tuple(vec![Value::Small(i64::from(result)), Value::Small(index + 1), replacement]))
+    }
+
     fn precise_sum(&mut self, iterable: &Value) -> Res<Value> {
         let walk = match Self::living_source(iterable) {
             Some(source) => Self::core_cursor(source),
@@ -15958,6 +15994,24 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::Math {
+            if let Some(Value::Text(operation)) = args.first().map(Value::contents) {
+                if operation.as_ref() == "mt19937" && self.lang.random_words {
+                    if args.len() != 3 { return Err("TypeError: random word expected state and position".into()); }
+                    return self.random_word(&args[1], &args[2]);
+                }
+                if self.lang.math_floating && matches!(operation.as_ref(), "sqrt" | "exp") {
+                    if args.len() != 2 { return Err("TypeError: unary math operation expected 1 argument".into()); }
+                    let number = self.math_operand(&args[1])?;
+                    if operation.as_ref() == "sqrt" && number < 0.0 {
+                        return Err(format!("ValueError: expected a nonnegative input, got {}", crate::complex::real(number).display(&self.wording())));
+                    }
+                    let result = if operation.as_ref() == "sqrt" { number.sqrt() } else { number.exp() };
+                    if result.is_infinite() && number.is_finite() { return Err("OverflowError: math range error".into()); }
+                    return Ok(crate::complex::real(result));
+                }
+            }
+        }
         if builtin == Builtin::Math && self.lang.math_floating
             && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "fsum") {
             if args.len() != 2 { return Err("TypeError: fsum expected 1 argument".into()); }

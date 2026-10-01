@@ -13,9 +13,6 @@ def _overflow_guard(x):
         float(x)
 
 def sqrt(x):
-    _overflow_guard(x)
-    if x < 0:
-        raise ValueError('expected a nonnegative input, got ' + str(float(x)))
     return __math('sqrt', x)
 
 def fabs(x):
@@ -108,7 +105,6 @@ def pow(x, y):
     return __math('pow', x, y)
 
 def exp(x):
-    _check_real(x)
     return __math('exp', x)
 
 def _is_integral(x):

@@ -48,21 +48,10 @@ class Random:
         self._index = 624
 
     def _word(self):
-        if self._index >= 624:
-            mt = self._mt
-            for i in range(624):
-                y = (mt[i] & 0x80000000) | (mt[(i + 1) % 624] & 0x7fffffff)
-                mt[i] = mt[(i + 397) % 624] ^ (y >> 1)
-                if y & 1:
-                    mt[i] ^= 0x9908b0df
-            self._index = 0
-        y = self._mt[self._index]
-        self._index += 1
-        y ^= y >> 11
-        y ^= (y << 7) & 0x9d2c5680
-        y ^= (y << 15) & 0xefc60000
-        y ^= y >> 18
-        return y & 0xffffffff
+        word, self._index, changed = __math('mt19937', self._mt, self._index)
+        if changed is not None:
+            self._mt = changed
+        return word
 
     def getrandbits(self, k):
         from operator import index

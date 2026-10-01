@@ -3549,6 +3549,9 @@ only. The extension labels so far, all from PHP:
   pieces of a complaint, surrounding the absent module or member name.
   `ext.stmt.import.relative.unready` gives the words for a relative path
   where the run has no package context to resolve it against.
+- `ext.builtin.random.words`: a switch enabling the Python Mersenne Twister
+  state-word primitive through the real-math dispatcher. It twists a complete
+  624-word state and tempers the next word, preserving state round trips.
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
@@ -4739,6 +4742,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
 | `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
 | `ext.builtin.property` | - | - | `property` | - | - | - | - | - | - | - |
+| `ext.builtin.random.words` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
 | `ext.builtin.range.members` | - | - | `start` `stop` `step` | - | - | - | - | - | - | - |

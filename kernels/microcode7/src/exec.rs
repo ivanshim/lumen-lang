@@ -14339,6 +14339,52 @@ impl<'a> Machine<'a> {
         else { self.sum_added(x, y) }
     }
 
+    fn real_math_input(&mut self, input: &Value) -> Result<f64, String> {
+        let term = input.settled();
+        match Self::dot_coordinate(&term) {
+            Some(coordinate) => Ok(coordinate),
+            None if matches!(term, Value::Huge(_)) => Err("OverflowError: int too large to convert to float".to_owned()),
+            None if matches!(term, Value::Thing(_)) => {
+                let result = self.user_operation(Prim::AsReal, &[term.clone()])?
+                    .ok_or_else(|| format!("TypeError: must be real number, not {}", term.kind_word()))?;
+                Self::dot_coordinate(&result).ok_or_else(|| "TypeError: __float__ returned non-float".to_owned())
+            }
+            None => Err(format!("TypeError: must be real number, not {}", term.kind_word())),
+        }
+    }
+
+    fn twister_next(&self, offered: &[Value]) -> Result<Value, String> {
+        if offered.len() != 3 { return Err("TypeError: random word requires state and offset".to_owned()); }
+        let values = match offered[1].settled() { Value::Vector(values) => values, _ => return Err("TypeError: random state must be a list".to_owned()) };
+        let offset = match offered[2].settled() { Value::Small(n) if (0..625).contains(&n) => n as usize, _ => return Err("ValueError: invalid random index".to_owned()) };
+        if values.len() != 624 { return Err("ValueError: invalid random state".to_owned()); }
+        let extract = |item: &Value| -> Result<u32, String> {
+            if let Value::Small(n) = item.settled() { if let Ok(word) = u32::try_from(n) { return Ok(word); } }
+            Err("ValueError: invalid random state word".to_owned())
+        };
+        let mut rebuilt = Value::Nil;
+        let mut slot = offset;
+        let mut output;
+        if slot < 624 { output = extract(&values[slot])?; }
+        else {
+            let mut buffer: Vec<u32> = values.iter().map(extract).collect::<Result<_, _>>()?;
+            for cursor in 0..buffer.len() {
+                let successor = if cursor == 623 { 0 } else { cursor + 1 };
+                let distant = if cursor >= 227 { cursor - 227 } else { cursor + 397 };
+                let bits = (buffer[cursor] & !0x7fffffff) + (buffer[successor] & 0x7fffffff);
+                buffer[cursor] = buffer[distant] ^ (bits / 2) ^ (0x9908b0df_u32.wrapping_mul(bits & 1));
+            }
+            output = buffer[0];
+            slot = 0;
+            rebuilt = Value::Vector(crate::tuples::Sequence::plain(buffer.into_iter().map(|n| Value::Small(n.into())).collect()));
+        }
+        output = output ^ (output >> 11);
+        output = output ^ ((output << 7) & 0x9d2c5680);
+        output = output ^ ((output << 15) & 0xefc60000);
+        output = output ^ (output >> 18);
+        Ok(Value::tuple(vec![Value::Small(output.into()), Value::Small((slot + 1) as i64), rebuilt]))
+    }
+
     fn compensated_total(&mut self, supplied: &Value) -> Result<Value, String> {
         let iterator = if let Some(kind) = Self::live_walk(supplied) { Self::cursor_value(kind) }
             else { self.iterated_value(&supplied.settled())? };
@@ -14536,6 +14582,28 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::Reckon {
+            let task = v.first().map(Value::settled);
+            if let Some(Value::Text(task)) = task {
+                match task.as_ref() {
+                    "mt19937" if self.table.flag("ext.builtin.random.words") => return self.twister_next(v),
+                    "sqrt" | "exp" if self.table.flag("ext.builtin.math.floating") => {
+                        if v.len() != 2 { return Err("TypeError: unary math operation needs one value".to_owned()); }
+                        let input = self.real_math_input(&v[1])?;
+                        let result = if task.as_ref() == "exp" { input.exp() } else {
+                            if input < 0.0 {
+                                let text = crate::data::worth_of_binary(input, self.real_figures()).render(self.wording());
+                                return Err(format!("ValueError: expected a nonnegative input, got {text}"));
+                            }
+                            input.sqrt()
+                        };
+                        if input.is_finite() && result.is_infinite() { return Err("OverflowError: math range error".to_owned()); }
+                        return Ok(crate::data::worth_of_binary(result, self.real_figures()));
+                    }
+                    _ => {}
+                }
+            }
+        }
         if op == Prim::Reckon && self.table.flag("ext.builtin.math.floating")
             && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "fsum") {
             if v.len() != 2 { return Err("TypeError: fsum expected 1 argument".to_owned()); }

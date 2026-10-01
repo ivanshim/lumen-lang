@@ -1037,6 +1037,7 @@
   ],
   "ext.builtin.math.floating": true,
   "ext.builtin.math.sumprod": true,
+  "ext.builtin.random.words": true,
   "ext.system.module.path": ["__path__"],
   "ext.builtin.max": [
     "max"
