@@ -1,5 +1,4 @@
-# Source: CPython Lib/contextvars.py, commit 3b564385e4c9.
-# Licensed under the PSF License; see tests/python/LICENSE.
+# Source: CPython v3.14.8, Lib/contextvars.py; PSF License.
 import _collections_abc
 from _contextvars import Context, ContextVar, Token, copy_context
 

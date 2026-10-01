@@ -1,5 +1,4 @@
-# Source: CPython Lib/_pydecimal.py, commit 3b564385e4c9.
-# Licensed under the PSF License; see tests/python/LICENSE.
+# Source: CPython v3.14.8, Lib/_pydecimal.py; PSF License.
 # Copyright (c) 2004 Python Software Foundation.
 # All rights reserved.
 
@@ -49,16 +48,13 @@ __all__ = [
     'HAVE_THREADS',
 
     # C version: compile time choice that enables the coroutine local context
-    'HAVE_CONTEXTVAR',
-
-    # Highest version of the spec this module complies with
-    'SPEC_VERSION',
+    'HAVE_CONTEXTVAR'
 ]
 
 __xname__ = __name__    # sys.modules lookup (--without-threads)
 __name__ = 'decimal'    # For pickling
-SPEC_VERSION = '1.70'   # Highest version of the spec this complies with
-                        # See https://speleotrove.com/decimal/decarith.html
+__version__ = '1.70'    # Highest version of the spec this complies with
+                        # See http://speleotrove.com/decimal/
 __libmpdec_version__ = "2.4.2" # compatible libmpdec version
 
 import math as _math
@@ -4008,20 +4004,6 @@ class Context(object):
         return nc
     __copy__ = copy
 
-    def __replace__(self, /, **changes):
-        """Returns a copy of self with the specified attributes replaced."""
-        unexpected = changes.keys() - _context_attributes
-        if unexpected:
-            raise TypeError(f'__replace__() got an unexpected keyword '
-                            f'argument {min(unexpected)!r}')
-        nc = self.copy()
-        for name, value in changes.items():
-            if name in ('flags', 'traps') and isinstance(value, list):
-                # As in the constructor, accept a list of signals.
-                value = dict((s, int(s in value)) for s in _signals + value)
-            setattr(nc, name, value)
-        return nc
-
     def _raise_error(self, condition, explanation = None, *args):
         """Handles an error
 
@@ -6424,11 +6406,3 @@ _PyHASH_NAN = sys.hash_info.nan
 # _PyHASH_10INV is the inverse of 10 modulo the prime _PyHASH_MODULUS
 _PyHASH_10INV = pow(10, _PyHASH_MODULUS - 2, _PyHASH_MODULUS)
 del sys
-
-def __getattr__(name):
-    if name == "__version__":
-        from warnings import _deprecated
-
-        _deprecated("__version__", remove=(3, 20))
-        return SPEC_VERSION
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
