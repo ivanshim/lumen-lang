@@ -5214,6 +5214,20 @@ impl<'a> Engine<'a> {
             if let Some(view) = raw { return Ok(Some(Value::View(Rc::new((view.0.clone(), "mapping".to_string()))))); }
         }
         let held = value.contents();
+        if let Value::Native(op, _) = &held {
+            if Self::kind_builtin(op) && ["bases", "mro", "order"].iter().any(|key| name == self.class_word(key)) {
+                let root = Value::Class(self.root_class());
+                let mut parents = Vec::new();
+                if *op == Builtin::Bool { if let Some(integer) = self.spelled_kind("int") { parents.push(integer); } }
+                if parents.is_empty() { parents.push(root.clone()); }
+                if name == self.class_word("bases") { return Ok(Some(Value::tuple(vec![parents[0].clone()]))); }
+                let mut line = vec![held.clone()];
+                if *op == Builtin::Bool { line.extend(parents); }
+                line.push(root);
+                let result = Value::tuple(line);
+                return Ok(Some(if name == self.class_word("order") { Self::adapter(0, vec![result]) } else { result }));
+            }
+        }
         if name == self.class_word("namespace") {
             let kind = match &held {
                 Value::Native(op, spelling) if Self::kind_builtin(op) => Some(spelling.clone()),
@@ -5228,6 +5242,9 @@ impl<'a> Engine<'a> {
                 let map=Value::Map(Rc::new(members.into()));
                 return Ok(Some(Value::View(Rc::new((map,"mapping".to_string())))));
             }
+        }
+        if name == self.class_word("kind") && !name.is_empty() && matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Text(_) | Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Complex(_) | Value::Bytes(..) | Value::Null | Value::Set(_)) {
+            return Ok(Some(self.named_kind(&held)));
         }
         // Each of the two singletons a program can name is the one
         // value of its kind, and answers for the very class the kind
@@ -5579,9 +5596,13 @@ impl<'a> Engine<'a> {
         // `__getitem__` from how far its last place still stands
         // above nought.
         if place == 78 {
-            let Value::Cursor(cell) = receiver else { return Ok(Value::Small(0)); };
+            let Value::Cursor(cell) = receiver.contents() else { return Ok(Value::Small(0)); };
             let indexed_back = { let held = cell.borrow(); match &held.source {
                 CursorSource::Items(items, at) => return Ok(Value::Small(items.len().saturating_sub(*at) as i64)),
+                CursorSource::Living(values, at) => {
+                    let size = match &*values.borrow() { Value::Array(row) => row.len(), _ => 0 };
+                    return Ok(Value::Small(if held.finished { 0 } else { size.saturating_sub(*at) } as i64));
+                }
                 CursorSource::Counted(row, at) => {
                     let left = row.length() - at;
                     return Ok(Value::of_big(if left > BigInt::from(0) { left } else { BigInt::from(0) }));
@@ -7547,7 +7568,7 @@ impl<'a> Engine<'a> {
     fn fields_entries(o: &crate::value::Instance) -> Vec<(Value, Value)> {
         let fields = o.fields.borrow();
         let mut entries: Vec<(Value, Value)> = fields.iter()
-            .filter(|(key, held)| !key.starts_with('\0') && !matches!(held, Value::Blank))
+            .filter(|(key, held)| !key.starts_with(['\0', '#']) && !matches!(held, Value::Blank))
             .map(|(key, held)| (Value::text(key), held.clone())).collect();
         if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -10744,7 +10765,7 @@ impl<'a> Engine<'a> {
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", self.told(a, &sp), self.told(b, &sp)));
         Ok(match op {
-            Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_else(|| "Matrix multiplication cannot run".into())),
+            Action::Matrix => return Err(if self.lang.matrix_unready.is_some() { self.operands_complaint(&self.sign_of(op), a, b) } else { "Matrix multiplication cannot run".into() }),
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
             Action::Or => Value::Flag(self.truth(a) || self.truth(b)),
             // The one no number answers to comes before nothing and

@@ -6651,9 +6651,14 @@ impl<'a> Machine<'a> {
         // `__getitem__` from how far its last place still stands
         // above nought.
         if at == 78 {
-            let Value::Iterator(cell) = receiver else { return Ok(Value::Small(0)); };
+            let Value::Iterator(cell) = receiver.settled() else { return Ok(Value::Small(0)); };
             let placed_back = { let held = cell.borrow(); match &held.kind {
                 IteratorKind::Stored { entries, next } => return Ok(Value::Small(entries.len().saturating_sub(*next) as i64)),
+                IteratorKind::Living(storage, position) => {
+                    if held.done { return Ok(Value::Small(0)); }
+                    let Value::Vector(items) = storage.borrow().clone() else { return Ok(Value::Small(0)); };
+                    return Ok(Value::Small(items.len().saturating_sub(*position) as i64));
+                }
                 IteratorKind::Stepping(walk, at) => {
                     let left = walk.count() - at;
                     return Ok(Value::from_big(if left > BigInt::from(0) { left } else { BigInt::from(0) }));
@@ -6818,6 +6823,22 @@ impl<'a> Machine<'a> {
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if let Value::Intrinsic(primitive, spelling) = value.settled() {
+            if primitive.names_a_kind() && ["bases", "order", "mro"].iter().any(|part| name == self.detail(part)) {
+                let root = Value::Blueprint(self.common_ancestor());
+                let integer = if spelling.as_ref() == "bool" { self.kind_by_word("int") } else { None };
+                let row = if name == self.detail("bases") {
+                    vec![integer.unwrap_or(root)]
+                } else {
+                    let mut lineage = vec![Value::Intrinsic(primitive, spelling)];
+                    lineage.extend(integer);
+                    lineage.push(root);
+                    lineage
+                };
+                let sequence = Value::tuple(row);
+                return Some(if name == self.detail("order") { Value::Wrapped(0, Rc::new(vec![sequence]).into()) } else { sequence });
+            }
+        }
         if let Value::Intrinsic(op, word) = value {
             if !Self::names_a_kind(op) {
                 if name == self.detail("qualified") { return Some(Value::text(word)); }
@@ -6886,6 +6907,9 @@ impl<'a> Machine<'a> {
             if self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| w == name) { return Some(Value::Flag(state.try_borrow().is_err())); }
         }
         let names = self.table.strings("ext.stmt.class.special");
+        if name == self.detail("kind") && !name.is_empty() && matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Text(_) | Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Complex(_) | Value::Octets { .. } | Value::Nil | Value::Set(_)) {
+            return Some(self.kind_named_after(value));
+        }
         // Each of the two named singletons is the one value of its
         // kind, and answers for the very blueprint the kind primitive
         // names for it.
@@ -11112,7 +11136,7 @@ impl<'a> Machine<'a> {
     fn attribute_entries(t: &crate::data::Thing) -> Vec<(Value, Value)> {
         let holds = t.holds.borrow();
         let mut entries: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, held)| !name.starts_with('\0') && !matches!(held, Value::Unset))
+            .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !matches!(held, Value::Unset))
             .map(|(name, held)| (Value::text(name), held.clone())).collect();
         if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -13313,8 +13337,9 @@ impl<'a> Machine<'a> {
                 _ => return Err(self.table.single("ext.op.plus.non_number").unwrap_or("").to_owned()),
             },
             Prim::MatrixProduct => {
-                let words = self.table.single("ext.op.matrix.unready").unwrap_or_default();
-                return Err(words.to_owned());
+                return Err(if self.table.has_any("ext.op.matrix.unready") {
+                    self.operands_refused(&self.sign_named(op), &v[0], &v[1])
+                } else { String::from("Matrix multiplication cannot run") });
             }
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
             // A method spelled with its class in front is asked of its

@@ -1117,6 +1117,11 @@ impl<'a> Engine<'a> {
         self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name))
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        let raw = subject.contents();
+        if name == self.class_word("kind") && !name.is_empty()
+            && matches!(raw, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Text(_) | Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Complex(_) | Value::Bytes(..) | Value::Null | Value::Set(_)) {
+            return Ok(self.named_kind(&raw));
+        }
         if let Value::Object(object) = &subject {
             if let Some(value) = self.frame_member(object, name) { return Ok(value); }
         }
@@ -1211,6 +1216,11 @@ impl<'a> Engine<'a> {
                 }
                 if *op == Builtin::AsReal && name == "__getformat__" {
                     return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
+                }
+                if name == self.class_word("bases") && !name.is_empty() {
+                    let parent = if *op == Builtin::Bool { self.spelled_kind("int").unwrap_or(Value::Class(self.root_class())) }
+                        else { Value::Class(self.root_class()) };
+                    return Ok(Value::tuple(vec![parent]));
                 }
                 if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                 if name==self.class_word("qualified") { return Ok(Value::text(word)); }
@@ -1434,9 +1444,11 @@ impl<'a> Engine<'a> {
                 let annotation_name = self.lang.class_annotations.first().map(String::as_str).unwrap_or("");
                 let annotate_name = self.lang.class_details.get("code.fields").and_then(|v| v.get(10)).map(String::as_str).unwrap_or("");
                 if !annotation_name.is_empty() && name == annotation_name {
-                    let result = match &f.annotation {
-                        Some(a) => self.class_apply(Value::Routine(a.clone()), vec![Value::Small(1)])?,
-                        None => self.keep_collection(Value::Map(Rc::new(Vec::new().into()))),
+                    let evaluator = self.routine_member(&subject, annotate_name)
+                        .or_else(|| f.annotation.clone().map(Value::Routine));
+                    let result = match evaluator {
+                        Some(a) if !matches!(a.contents(), Value::Null) => self.class_apply(a, vec![Value::Small(1)])?,
+                        _ => self.keep_collection(Value::Map(Rc::new(Vec::new().into()))),
                     };
                     let at = self.function_storage(&subject);
                     self.function_members[at].1.fields.borrow_mut().push((format!("\0{name}"), result.clone()));
@@ -1758,7 +1770,7 @@ impl<'a> Engine<'a> {
             let Value::Map(pairs)=book.contents() else {return Vec::new()};
             return pairs.iter().filter_map(|(k,_)| match k {Value::Text(t)=>Some(t.to_string()),_=>None}).collect();
         }
-        fields.iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()).collect()
+        fields.iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()).collect()
     }
     /// A namespace handed to a routine: a dictionary it keeps from then
     /// on, the very one handed over; anything else, or taking it away,
@@ -1811,7 +1823,7 @@ impl<'a> Engine<'a> {
         self.function_members.push((function.clone(), fields));
         self.function_members.len() - 1
     }
-    fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,v)|(Value::text(n),v.clone())).collect()))}
+    fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,v)|(Value::text(n),v.clone())).collect()))}
     /// The annotations a class carries: its own, worked out the first
     /// time they are asked for from the routines its body kept and held
     /// from then on. A class whose body annotated nothing has an empty
@@ -2539,8 +2551,8 @@ impl<'a> Engine<'a> {
                     let names=self.kind_member_names(&sample);
                     return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
                 }
-                let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
-                if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));}}
+                let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
+                if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));}}
                 else {names.extend(self.routine_member_names(&one));}
                 if matches!(&one, Value::Object(_)) && !names.iter().any(|n| n == self.class_word("kind")) {
                     names.extend(self.lang.class_details.get("root.members").into_iter().flatten().cloned());
