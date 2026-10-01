@@ -16,6 +16,8 @@ def _single_argument(args, keywords, name):
 def _require_str(value, name):
     if not isinstance(value, str):
         raise TypeError('expected str, got ' + type(value).__name__)
+    # The C helpers read Unicode storage directly, without subtype hooks.
+    return str.__str__(value)
 
 def _parse_field(text, start):
     # Reads one replacement field beginning just after its '{'. Returns the
@@ -73,7 +75,7 @@ def _parse_field(text, start):
 
 def formatter_parser(*args, **keywords):
     format_string = _single_argument(args, keywords, 'formatter_parser')
-    _require_str(format_string, 'formatter_parser')
+    format_string = _require_str(format_string, 'formatter_parser')
     return _formatter_parser(format_string)
 
 def _formatter_parser(text):
@@ -135,7 +137,7 @@ def _as_index(name):
 
 def formatter_field_name_split(*args, **keywords):
     field_name = _single_argument(args, keywords, 'formatter_field_name_split')
-    _require_str(field_name, 'formatter_field_name_split')
+    field_name = _require_str(field_name, 'formatter_field_name_split')
     n = len(field_name)
     i = 0
     while i < n:
