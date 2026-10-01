@@ -7330,7 +7330,7 @@ impl<'a> Engine<'a> {
                     answer
                 }
                 else if let Some(places) = self.indexed_walk(&args[0]) { places }
-                else { Value::Walk(Rc::new(RefCell::new((self.comprehension_items(&args[0])?, 0)))) }
+                else { self.core_iterator(&args[0])? }
             }
             Builtin::Iter if args.len() == 2 => return Ok(None),
             // A thing with a method for walking backwards is asked for

@@ -12350,7 +12350,7 @@ impl<'a> Machine<'a> {
                 },
                 None => match self.placed_walk(one) {
                     Some(places) => places,
-                    None => Value::Cursor(Rc::new(RefCell::new(self.gathered_members(one)?.into_iter().collect()))),
+                    None => self.iterated_value(one)?,
                 },
             },
             (Prim::Iterator, [_, _]) => return Ok(None),
