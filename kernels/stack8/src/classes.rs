@@ -880,6 +880,9 @@ impl<'a> Engine<'a> {
             if self.lang.finaliser.is_some() && crate::faint::last_word_of(&o.class).is_some() {
                 crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(o)));
             }
+            if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
+                self.things_made.borrow_mut().push(Rc::downgrade(o));
+            }
             if Rc::ptr_eq(&o.class_now(),&c) || o.class_now().lineage.iter().any(|b| Rc::ptr_eq(b,&c)) {
                 let init = self.lang.constructor.as_deref().and_then(|n| self.class_value(&o.class_now(),n));
                 if let Some(f) = init {
@@ -2041,7 +2044,7 @@ impl<'a> Engine<'a> {
                 }
                 let dictionary = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, value)| value.clone());
                 if let Some(dictionary) = dictionary {
-                    let raw = Self::worth_of(&dictionary).unwrap_or(dictionary);
+                    let raw = Self::worth_of(&dictionary).unwrap_or_else(|| dictionary.held(false));
                     match value {
                         Some(value) => { self.value_method(&raw, "update", vec![Value::Map(Rc::new(vec![(Value::text(name), value)].into()))], vec![])?; }
                         None => { self.value_method(&raw, "pop", vec![Value::text(name)], vec![])?; }

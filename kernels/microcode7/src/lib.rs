@@ -478,6 +478,10 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         by_kind = Some(cell);
     }
     data::counts_kept_in(plainly, by_kind);
+    // The main program's own module stands in the cache of modules
+    // from the very start, so that `sys.modules[__name__]` is the
+    // program's own namespace and not a name gone missing.
+    machine.register_main_module();
     // Everything up to here was the reading of the program and the
     // building of the machine to run it, which is the host's own doing.
     // The tally of room starts afresh at this line, so that a program
