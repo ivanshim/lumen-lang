@@ -5,6 +5,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("_decimal", include_str!("_decimal.py")),
     ("_pylong", include_str!("_pylong.py")),
     ("_sre", include_str!("_sre.py")),
+    ("_sre_validation", include_str!("_sre_validation.py")),
     ("_string", include_str!("_string.py")),
     ("_testcapi", include_str!("_testcapi.py")),
     ("_testinternalcapi", include_str!("_testinternalcapi.py")),

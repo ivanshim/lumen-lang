@@ -26,6 +26,8 @@ def unicode_iscased(i):
     return _case_value(i, 4)
 
 def _index(n):
+    if type(n) is int:
+        return n
     from operator import index
     return index(n)
 
@@ -348,14 +350,32 @@ def template(pattern, items):
     return _Template(items)
 
 def compile(pattern, flags, code, groups, groupindex, indexgroup):
-    if not isinstance(code, list) or not isinstance(groupindex, dict) or not isinstance(indexgroup, tuple):
-        raise TypeError('invalid arguments to _sre.compile')
+    if not isinstance(code, list):
+        raise TypeError('compile() argument 3 must be list, not ' + type(code).__name__)
+    if not isinstance(groupindex, dict):
+        raise TypeError('compile() argument 5 must be dict, not ' + type(groupindex).__name__)
+    if not isinstance(indexgroup, tuple):
+        raise TypeError('compile() argument 6 must be tuple, not ' + type(indexgroup).__name__)
+    flags = _index(flags)
+    if not -2147483648 <= flags <= 2147483647:
+        raise OverflowError('Python int too large to convert to C int')
+    groups = _index(groups)
+    if not -9223372036854775808 <= groups <= 9223372036854775807:
+        raise OverflowError('Python int too large to convert to C ssize_t')
     converted = []
     for op in code:
         if not isinstance(op, int):
             raise TypeError('an integer is required')
-        n = int(op)
-        if n < 0 or n > MAXREPEAT:
+        n = op if type(op) is int else int.__index__(op)
+        if n < 0:
+            raise OverflowError("can't convert negative value to unsigned int")
+        if n > 18446744073709551615:
+            raise OverflowError('Python int too large to convert to C unsigned long')
+        if n > MAXREPEAT:
             raise OverflowError('regular expression code size limit exceeded')
         converted.append(n)
+    if pattern is not None:
+        _buffer(pattern)
+    from _sre_validation import validate
+    validate(converted, groups)
     return Pattern(_TOKEN, pattern, flags, converted, groups, groupindex, indexgroup)
