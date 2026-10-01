@@ -1263,7 +1263,10 @@ impl<'a> Machine<'a> {
     /// it holds nothing.
     fn held_as_state(value:&Value)->Value {
         let Value::Thing(t)=value else{return Value::Nil};
-        let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Value::text(k),v.clone())).collect();
+        // The holdings are read out as the values kept, never as the
+        // cells keeping them: a program reading its __dict__ meets what
+        // an attribute read would meet.
+        let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|{let mut inner=v.clone();while let Value::Shared(cell)|Value::Mutable(cell,_)=inner{let next=cell.borrow().clone();inner=next;}(Value::text(k),inner)}).collect();
         if pairs.is_empty(){Value::Nil}else{Value::Dict(Rc::new(pairs.into()))}
     }
     /// One of a routine's own readings that must answer the selfsame
@@ -1598,7 +1601,9 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Intrinsic(Prim::ValueMethod, Rc::from("float.__getformat__")));
                 }
             }
-            if key==self.detail("name"){return Ok(Value::text(&b.name));}
+            // A name written over stands as written; the one the class
+            // was born with otherwise.
+            if key==self.detail("name"){return Ok(Self::own_entry(b,key).unwrap_or_else(||Value::text(&b.name)));}
             if key==self.detail("qualified"){return Ok(self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name)));}
             if key==self.detail("namespace"){
                 if let Some(builder)=Self::builder_over(b) {
@@ -2122,7 +2127,13 @@ impl<'a> Machine<'a> {
                     if let Some(worth) = replacement.as_ref().map(Value::settled) {
                         if !matches!(worth, Value::Text(_)) { return Err(format!("TypeError: can only assign string to {}.__qualname__, not '{}'", b.name, worth.kind_word()).into()); }
                     } else { return Err(self.class_unready()); }
-                } else if ["name","kind","bases","mro","namespace","order"].iter().any(|part|key==self.detail(part)){return Err(self.class_unready());}
+                } else if key == self.detail("name") {
+                    // The reference takes a new name for a class as text
+                    // alone; all else of the class stands as it was.
+                    if let Some(worth) = replacement.as_ref().map(Value::settled) {
+                        if !matches!(worth, Value::Text(_)) { return Err(format!("TypeError: can only assign string to {}.__name__, not '{}'", b.name, worth.kind_word()).into()); }
+                    } else { return Err(self.class_unready()); }
+                } else if ["kind","bases","mro","namespace","order"].iter().any(|part|key==self.detail(part)){return Err(self.class_unready());}
                 if key == self.detail("module") {
                     b.shared.borrow_mut().retain(|entry| entry.0 != "__firstlineno__");
                 }
@@ -2397,6 +2408,10 @@ impl<'a> Machine<'a> {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
         }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
+        // A side that is still a cell is asked about as whatever the
+        // cell is keeping.
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = subject { let inner = cell.borrow().clone(); return self.is_beneath(&inner, choice, class_only); }
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = choice { let inner = cell.borrow().clone(); return self.is_beneath(subject, &inner, class_only); }
         // The byte kinds are values in their own right rather than
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), choice, class_only); }
@@ -2705,7 +2720,14 @@ impl<'a> Machine<'a> {
                 }
                 continue;
             }
-            if let Some(f)=Self::own_entry(b,key){if key!=self.detail("allocate"){args.insert(0,receiver.clone());}return self.apply_class_member(f,args);}
+            if let Some(f)=Self::own_entry(b,key){
+                if key==self.detail("allocate") { return self.apply_class_member(f,args); }
+                // The member answers tied, the way reading it through
+                // the class answers: a class method to the class that
+                // asks, a plain one to what the call stands for.
+                let tied=self.member_binding(f,Some(receiver.clone()),class.clone())?;
+                return self.apply_class_member(tied,args);
+            }
             if self.table.single("ext.stmt.class.constructor") == Some(key) && self.is_fault_kind(b) {
                 if let Value::Thing(t) = &receiver { return self.fault_method(t.clone(), key, &args); }
             }

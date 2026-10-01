@@ -11111,9 +11111,16 @@ impl<'a> Machine<'a> {
     /// beside them under the hidden name `\0keys`.
     fn attribute_entries(t: &crate::data::Thing) -> Vec<(Value, Value)> {
         let holds = t.holds.borrow();
+        // A name read out of a thing's dictionary stands for the value
+        // its cell keeps, the very value reading the attribute itself
+        // would find.
         let mut entries: Vec<(Value, Value)> = holds.iter()
             .filter(|(name, held)| !name.starts_with('\0') && !matches!(held, Value::Unset))
-            .map(|(name, held)| (Value::text(name), held.clone())).collect();
+            .map(|(name, held)| {
+                let mut value = held.clone();
+                while let Value::Shared(cell) | Value::Mutable(cell, _) = value { let next = cell.borrow().clone(); value = next; }
+                (Value::text(name), value)
+            }).collect();
         if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
             entries.extend(extra.iter().cloned());
         }
@@ -18302,7 +18309,10 @@ impl Machine<'_> {
                     }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
-                if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
+                // A name the builder made up for its own working is
+                // spelled nowhere a program can spell it, so it is not a
+                // member the module answers to, however it was bound.
+                if is_module_name || (bound.contains(name.as_str()) && !name.starts_with('#')) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
             }
         }

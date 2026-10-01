@@ -7546,9 +7546,16 @@ impl<'a> Engine<'a> {
     /// beside them under the hidden name `\0keys`.
     fn fields_entries(o: &crate::value::Instance) -> Vec<(Value, Value)> {
         let fields = o.fields.borrow();
+        // A name read out of a thing's dictionary stands for the value
+        // the name's cell keeps, the very value a read of the attribute
+        // itself would find.
         let mut entries: Vec<(Value, Value)> = fields.iter()
             .filter(|(key, held)| !key.starts_with('\0') && !matches!(held, Value::Blank))
-            .map(|(key, held)| (Value::text(key), held.clone())).collect();
+            .map(|(key, held)| {
+                let mut value = held.clone();
+                while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value { let next = cell.borrow().clone(); value = next; }
+                (Value::text(key), value)
+            }).collect();
         if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
             entries.extend(extra.iter().cloned());
         }
@@ -18585,7 +18592,10 @@ impl Engine<'_> {
             // write actually bound at the module's own outermost scope
             // is one the module carries: the rest never left the frame
             // that held them.
-            if local.globals.contains(name) {
+            // The reader's own hidden names stand in the world's slots,
+            // where the module's text finds them; they are not members a
+            // program could ask for, so the module does not carry them.
+            if local.globals.contains(name) && !name.starts_with('#') {
                 fields.push((name.clone(), shared));
             }
         }

@@ -6632,7 +6632,26 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Missing(*at));
             let past = self.skip();
             self.pos = *from;
-            self.expr(0)?;
+            // What a parameter falls back on is read where the routine
+            // is written, never out of the routine's own parameters:
+            // they stand aside while the expression is read, so a name
+            // spelled like one of them still means the one outside.
+            let mut shadowed = Vec::new();
+            {
+                let unit = self.pieces.last_mut().expect("a unit");
+                for (slot, name) in unit.idents.iter().enumerate() {
+                    if formals.contains(name) && !unit.declared[slot] {
+                        unit.declared[slot] = true;
+                        shadowed.push(slot);
+                    }
+                }
+            }
+            let read = self.expr(0);
+            {
+                let unit = self.pieces.last_mut().expect("a unit");
+                for slot in shadowed { unit.declared[slot] = false; }
+            }
+            read?;
             self.write(&formals[*at]);
             self.land(past);
         }

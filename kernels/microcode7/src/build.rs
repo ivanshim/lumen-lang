@@ -6579,7 +6579,25 @@ impl<'a> Builder<'a> {
         let mut first = Vec::new();
         for (at, from) in spares {
             self.pos = from;
-            let value = self.expr(0)?;
+            // What a parameter falls back on belongs to the scope the
+            // routine is written in, so the routine's own parameters
+            // answer to another spelling while it is read: a name
+            // spelled like one of them still reaches outside.
+            let mut renamed = Vec::new();
+            {
+                let layer = self.layers.last_mut().expect("a layer");
+                for (index, name) in layer.idents.iter_mut().enumerate() {
+                    if formals.contains(name) {
+                        renamed.push((index, std::mem::replace(name, format!("\0spare/{index}"))));
+                    }
+                }
+            }
+            let read = self.expr(0);
+            {
+                let layer = self.layers.last_mut().expect("a layer");
+                for (index, name) in renamed { layer.idents[index] = name; }
+            }
+            let value = read?;
             let slot = self.address_to_write(&formals[at]);
             let written = Form::Write(slot.clone(), Box::new(value));
             let test = Form::Missing(slot);
