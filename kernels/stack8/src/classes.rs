@@ -27,9 +27,15 @@ impl<'a> Engine<'a> {
     pub(super) fn kind_class(&mut self, word: &str) -> Rc<Class> {
         if let Some((_, c)) = self.kind_classes.iter().find(|(w, _)| w == word) { return c.clone(); }
         let root = self.root_class();
+        let mut hooks = Vec::new();
+        if matches!(self.lang.builtins.get(word), Some(Builtin::Zip | Builtin::Map | Builtin::Filter)) {
+            for (place, mode) in [(15, 4), (16, 3)] {
+                if let Some(name) = self.lang.class_special.get(place) { hooks.push((name.clone(), Self::adapter(119, vec![Value::Small(mode)]))); }
+            }
+        }
         let c = Rc::new(Class { outline: Some(format!("<class '{word}'>")), name: word.to_string(),
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
+            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(hooks), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
         self.kind_classes.push((word.to_string(), c.clone()));
         c
     }
@@ -667,6 +673,10 @@ impl<'a> Engine<'a> {
                     let given = if self.lang.builtins.get(&word) == Some(&Builtin::Set) { Vec::new() } else { args };
                     self.thing_of_kind(c, &word, given)
                 }
+                119 if args.len() == 1 => {
+                    let Value::Small(mode) = w.1[0] else { return Err(self.class_refusal()); };
+                    self.iterator_recipe_next(mode, &args[0])?.ok_or_else(|| self.core_fault("core.exhausted", "").into())
+                }
                 3 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
                 // A member a builtin kind carries, standing loose: the
                 // first value it is called with is the one it works
@@ -862,6 +872,9 @@ impl<'a> Engine<'a> {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }
                 Some(Builtin::List) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                    initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
+                }
+                Some(Builtin::Filter) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
                 }
                 Some(Builtin::Frozen | Builtin::Tuple) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
@@ -1066,6 +1079,7 @@ impl<'a> Engine<'a> {
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
             return match w.0 {
+                119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 4 => Ok(w.1[0].clone()),
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
@@ -1396,7 +1410,13 @@ impl<'a> Engine<'a> {
                 if !plain { if let Some(f)=self.class_value(&o.class_now(),self.class_word("get")) {
                     return self.class_apply(f,vec![subject.clone(),Value::text(name)]);
                 } }
-                if name==self.class_word("kind") {return Ok(Value::Class(o.class_now().clone()));}
+                if name == self.class_word("kind") {
+                    let actual = o.class_now().clone();
+                    if let Some(overridden) = self.class_value(&actual, name) {
+                        return self.bind_class_value(overridden, Some(subject.clone()), actual);
+                    }
+                    return Ok(Value::Class(actual));
+                }
                 if name==self.class_word("namespace") {
                     if let Some(descriptor)=self.class_value(&o.class_now(),name) {
                         return self.bind_class_value(descriptor,Some(subject.clone()),o.class_now().clone());
@@ -2350,7 +2370,7 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
-            [Value::Adapter(w)] if matches!(w.0,7|31|32)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,7|14|31|32|119)=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){parents.push(self.type_base(b)?);}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}

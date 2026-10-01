@@ -231,14 +231,10 @@ def length_hint(obj, default=0):
     except TypeError:
         pass
 
+    # Native iterator types expose this operation through their bound value.
     try:
-        hint = type(obj).__length_hint__
-    except AttributeError:
-        return default
-
-    try:
-        val = hint(obj)
-    except TypeError:
+        val = obj.__length_hint__()
+    except (AttributeError, TypeError):
         return default
     if val is NotImplemented:
         return default

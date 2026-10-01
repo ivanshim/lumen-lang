@@ -3170,6 +3170,283 @@ impl<'a> Engine<'a> {
 
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
+    fn iterator_state_field(object: &Rc<Instance>, key: &str) -> Res<Value> {
+        object.fields.borrow().iter().find(|(name, _)| name == key).map(|(_, value)| value.clone())
+            .ok_or_else(|| "TypeError: invalid iterator state".into())
+    }
+
+    fn iterator_state_store(object: &Rc<Instance>, key: &str, value: Value) {
+        let mut fields = object.fields.borrow_mut();
+        if let Some((_, old)) = fields.iter_mut().find(|(name, _)| name == key) { *old = value; }
+        else { fields.push((key.into(), value)); }
+    }
+
+    fn tee_state_of(object: &Rc<Instance>) -> Res<Value> {
+        let data = Self::iterator_state_field(object, "data")?;
+        if let Value::Object(holder) = data { Self::iterator_state_field(&holder, "state") } else { Ok(data) }
+    }
+
+    fn iterator_operation(&mut self, args: &[Value]) -> Res<Value> {
+        if let [Value::Text(word)] = args {
+            let mode = match word.as_ref() { "repeat" => 0, "product" => 1, "tee" => 2, "combinations" => 5, "islice" => 6, "zip_longest" => 7, _ => return Err("TypeError: unknown iterator operation".into()) };
+            return Ok(Self::adapter(119, vec![Value::Small(mode)]));
+        }
+        if let [Value::Text(word), source] = args {
+            if word.as_ref() == "tee_data" {
+                return Ok(Self::adapter(118, vec![source.clone(), Value::Walk(Rc::new(RefCell::new((Vec::new(), 0)))),
+                    Value::Bond(Rc::new(RefCell::new(Value::Flag(false)))), Value::Bond(Rc::new(RefCell::new(Value::array(Vec::new())))),
+                    Value::Bond(Rc::new(RefCell::new(Value::Small(0))))]));
+            }
+            if word.as_ref() == "tee_snapshot" {
+                let Value::Adapter(state) = source else { return Err("TypeError: invalid tee data".into()); };
+                let Value::Walk(buffer) = &state.1[1] else { return Err("TypeError: invalid tee buffer".into()); };
+                let saved = buffer.borrow();
+                return Ok(Value::tuple(vec![state.1[0].clone(), Value::array(saved.0.clone()), Value::Small(saved.1 as i64)]));
+            }
+            if word.as_ref() == "tee_restore" {
+                let Value::Tuple(parts) = source.contents() else { return Err("TypeError: invalid tee state".into()); };
+                let Value::Array(entries) = parts[1].contents() else { return Err("TypeError: invalid tee state".into()); };
+                let base = parts[2].as_big()?.to_usize().ok_or("TypeError: invalid tee position")?;
+                return Ok(Self::adapter(118, vec![parts[0].clone(), Value::Walk(Rc::new(RefCell::new((entries.to_vec(), base)))),
+                    Value::Bond(Rc::new(RefCell::new(Value::Flag(false)))), Value::Bond(Rc::new(RefCell::new(Value::array(Vec::new())))),
+                    Value::Bond(Rc::new(RefCell::new(Value::Small(base as i64))))]));
+            }
+            if word.as_ref() == "tee_register" {
+                let Value::Object(object) = source else { return Err("TypeError: invalid tee iterator".into()); };
+                let Value::Adapter(state) = Self::tee_state_of(object)? else { return Err("TypeError: invalid tee data".into()); };
+                let Value::Bond(peers) = &state.1[3] else { return Err("TypeError: invalid tee peers".into()); };
+                let Value::Array(old) = peers.borrow().contents() else { return Err("TypeError: invalid tee peers".into()); };
+                let mut live = old.to_vec();
+                live.push(Value::Faint(Rc::new(crate::faint::Faint { hold: crate::faint::Hold::Object(Rc::downgrade(object)), bearer: std::rc::Weak::new(), told: None })));
+                *peers.borrow_mut() = Value::array(live);
+                return Ok(Value::Null);
+            }
+        }
+        self.product_step(args)
+    }
+
+    pub(super) fn iterator_recipe_next(&mut self, mode: i64, value: &Value) -> Res<Option<Value>> {
+        let Value::Object(object) = value else { return Err("TypeError: invalid iterator receiver".into()); };
+        if mode == 6 { return self.slice_recipe_next(object); }
+        if mode == 7 { return self.zip_recipe_next(object); }
+        if mode == 5 { return self.combination_next(object); }
+        if mode == 4 { return Ok(Some(value.clone())); }
+        if mode == 3 {
+            let underlying = Self::worth_of(value).ok_or("TypeError: invalid native iterator")?;
+            return self.core_step(&underlying);
+        }
+        if mode == 0 {
+            let remaining = Self::iterator_state_field(object, "remaining")?;
+            if !matches!(remaining, Value::Null) {
+                let number = remaining.as_big()?;
+                if number.is_zero() { return Ok(None); }
+                Self::iterator_state_store(object, "remaining", Value::of_big(number - BigInt::from(1)));
+            }
+            return Ok(Some(Self::iterator_state_field(object, "value")?));
+        }
+        if mode == 1 { return self.product_next(object); }
+        if mode != 2 { return Err("TypeError: unknown iterator operation".into()); }
+        let Value::Adapter(state) = Self::tee_state_of(object)? else { return Err("TypeError: invalid tee data".into()); };
+        let [source, Value::Walk(buffer), Value::Bond(running), Value::Bond(peers), Value::Bond(cleared)] = state.1.as_slice() else { return Err("TypeError: invalid tee data".into()); };
+        let position = Self::iterator_state_field(object, "position")?.as_big()?.to_usize().ok_or("TypeError: invalid tee position")?;
+        let cached = {
+            let saved = buffer.borrow();
+            let relative = position.checked_sub(saved.1).filter(|at| *at <= saved.0.len()).ok_or("TypeError: invalid tee position")?;
+            saved.0.get(relative).cloned()
+        };
+        let answer = if let Some(item) = cached { item } else {
+            if self.truth(&running.borrow()) { return Err("RuntimeError: cannot re-enter the tee iterator".into()); }
+            *running.borrow_mut() = Value::Flag(true);
+            let stepped = self.special_step(source);
+            *running.borrow_mut() = Value::Flag(false);
+            let Some(item) = stepped? else { return Ok(None); };
+            buffer.borrow_mut().0.push(item.clone());
+            item
+        };
+        Self::iterator_state_store(object, "position", Value::Small((position + 1) as i64));
+        let mut earliest = position + 1;
+        if let Value::Array(watching) = peers.borrow().contents() {
+            for weak in watching.iter() {
+                if let Value::Faint(weak) = weak {
+                    if let Some(Value::Object(other)) = weak.hold.revive() {
+                        if let Ok(at) = Self::iterator_state_field(&other, "position").and_then(|v| v.as_big()) {
+                            if let Some(at) = at.to_usize() { earliest = earliest.min(at); }
+                        }
+                    }
+                }
+            }
+        }
+        let already = cleared.borrow().as_big()?.to_usize().ok_or("TypeError: invalid tee position")?;
+        let mut saved = buffer.borrow_mut();
+        for at in already..earliest { let relative = at - saved.1; saved.0[relative] = Value::Null; }
+        *cleared.borrow_mut() = Value::Small(earliest as i64);
+        let prefix = earliest - saved.1;
+        if prefix >= 4096 && prefix >= saved.0.len() / 2 {
+            saved.0.drain(..prefix);
+            saved.1 = earliest;
+        }
+        Ok(Some(answer))
+    }
+
+    fn slice_recipe_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+        let source = Self::iterator_state_field(object, "source")?;
+        if matches!(source.contents(), Value::Null) { return Ok(None); }
+        let target = Self::iterator_state_field(object, "target")?.as_big()?;
+        let stop = Self::iterator_state_field(object, "stop")?;
+        let stop = if matches!(stop.contents(), Value::Null) { None } else { Some(stop.as_big()?) };
+        let mut position = Self::iterator_state_field(object, "position")?.as_big()?;
+        let limit = if stop.is_some() { target.clone().min(Self::iterator_state_field(object, "consume")?.as_big()?) } else { target.clone() };
+        while position < limit {
+            if self.special_step(&source)?.is_none() {
+                Self::iterator_state_store(object, "source", Value::Null);
+                return Ok(None);
+            }
+            position += BigInt::from(1);
+            Self::iterator_state_store(object, "position", Value::of_big(position.clone()));
+        }
+        if stop.as_ref().is_some_and(|stop| &target >= stop) {
+            Self::iterator_state_store(object, "source", Value::Null);
+            return Ok(None);
+        }
+        let answer = self.special_step(&source)?;
+        if answer.is_none() { Self::iterator_state_store(object, "source", Value::Null); return Ok(None); }
+        let step = Self::iterator_state_field(object, "step")?.as_big()?;
+        Self::iterator_state_store(object, "position", Value::of_big(position + BigInt::from(1)));
+        Self::iterator_state_store(object, "target", Value::of_big(target + step));
+        Ok(answer)
+    }
+
+    fn zip_recipe_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+        let mut active = Self::iterator_state_field(object, "active")?.as_big()?;
+        if active.is_zero() { return Ok(None); }
+        let storage = Self::iterator_state_field(object, "sources")?;
+        let Value::Array(sources) = storage.contents() else { return Err("TypeError: invalid zip iterator state".into()); };
+        let fill = Self::iterator_state_field(object, "fillvalue")?;
+        let mut row = Vec::with_capacity(sources.len());
+        for (index, source) in sources.iter().enumerate() {
+            if matches!(source.contents(), Value::Null) { row.push(fill.clone()); continue; }
+            match self.special_step(source) {
+                Ok(Some(value)) => row.push(value),
+                Ok(None) => {
+                    let mut changed = match Self::iterator_state_field(object, "sources")?.contents() { Value::Array(values) => values.to_vec(), _ => return Err("TypeError: invalid zip iterator state".into()) };
+                    changed[index] = Value::Null;
+                    let next = Value::array(changed);
+                    if let Some(cell) = Self::holding_cell(&storage) { *cell.borrow_mut() = next; }
+                    else { Self::iterator_state_store(object, "sources", next); }
+                    active -= BigInt::from(1);
+                    Self::iterator_state_store(object, "active", Value::of_big(active.clone()));
+                    if active.is_zero() { return Ok(None); }
+                    row.push(fill.clone());
+                }
+                Err(fault) => { Self::iterator_state_store(object, "active", Value::Small(0)); return Err(fault); }
+            }
+        }
+        Ok(Some(Value::tuple(row)))
+    }
+
+    fn product_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+        let bad = || String::from("TypeError: invalid product state");
+        if self.truth(&Self::iterator_state_field(object, "done")?) { return Ok(None); }
+        let Value::Array(domains) = Self::iterator_state_field(object, "pools")?.contents() else { return Err(bad()); };
+        let Value::Array(numbers) = Self::iterator_state_field(object, "indices")?.contents() else { return Err(bad()); };
+        if numbers.len() != domains.len() { return Err(bad()); }
+        let mut indices = numbers.to_vec();
+        let first = self.truth(&Self::iterator_state_field(object, "first")?);
+        if !first {
+            let mut position = indices.len();
+            let mut advanced = false;
+            while position != 0 {
+                position -= 1;
+                let Value::Tuple(pool) = domains[position].contents() else { return Err(bad()); };
+                let Value::Small(index) = indices[position] else { return Err(bad()); };
+                let index = index.checked_add(1).ok_or_else(bad)?;
+                if usize::try_from(index).ok().map_or(false, |at| at < pool.len()) {
+                    indices[position] = Value::Small(index);
+                    advanced = true;
+                    break;
+                }
+                indices[position] = Value::Small(0);
+            }
+            if !advanced {
+                Self::iterator_state_store(object, "done", Value::Flag(true));
+                return Ok(None);
+            }
+        }
+        let mut answer = Vec::with_capacity(indices.len());
+        for position in 0..indices.len() {
+            let Value::Tuple(pool) = domains[position].contents() else { return Err(bad()); };
+            let Value::Small(index) = indices[position] else { return Err(bad()); };
+            let at = usize::try_from(index).map_err(|_| bad())?;
+            answer.push(pool.get(at).ok_or_else(bad)?.clone());
+        }
+        Self::iterator_state_store(object, "indices", Value::array(indices));
+        if first { Self::iterator_state_store(object, "first", Value::Flag(false)); }
+        Ok(Some(Value::tuple(answer)))
+    }
+
+    fn combination_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+        let invalid = || String::from("TypeError: invalid combinations state");
+        if self.truth(&Self::iterator_state_field(object, "done")?) { return Ok(None); }
+        let Value::Tuple(pool) = Self::iterator_state_field(object, "pool")?.contents() else { return Err(invalid()); };
+        let Value::Array(positions) = Self::iterator_state_field(object, "indices")?.contents() else { return Err(invalid()); };
+        if positions.len() > pool.len() { return Err(invalid()); }
+        let mut indices = Vec::with_capacity(positions.len());
+        for position in positions.iter() {
+            indices.push(position.as_big()?.to_usize().ok_or_else(invalid)?);
+        }
+        if !self.truth(&Self::iterator_state_field(object, "first")?) {
+            let width = indices.len();
+            let mut place = width;
+            while place > 0 && indices[place - 1] == pool.len() - width + place - 1 { place -= 1; }
+            if place == 0 {
+                Self::iterator_state_store(object, "done", Value::Flag(true));
+                return Ok(None);
+            }
+            indices[place - 1] += 1;
+            while place < width { indices[place] = indices[place - 1] + 1; place += 1; }
+        }
+        let mut row = Vec::with_capacity(indices.len());
+        for &index in &indices { row.push(pool.get(index).ok_or_else(invalid)?.clone()); }
+        Self::iterator_state_store(object, "indices", Value::array(indices.into_iter().map(|index| Value::Small(index as i64)).collect()));
+        Self::iterator_state_store(object, "first", Value::Flag(false));
+        Ok(Some(Value::tuple(row)))
+    }
+
+    fn product_step(&self, given: &[Value]) -> Res<Value> {
+        let invalid = || String::from("TypeError: invalid product state");
+        if given.len() != 3 { return Err(invalid()); }
+        let Value::Array(pools) = given[0].contents() else { return Err(invalid()); };
+        let Value::Array(positions) = given[1].contents() else { return Err(invalid()); };
+        let Value::Flag(first) = given[2].contents() else { return Err(invalid()); };
+        if pools.len() != positions.len() { return Err(invalid()); }
+        let mut indices = Vec::with_capacity(positions.len());
+        for position in positions.iter() {
+            let Value::Small(number) = position.contents() else { return Err(invalid()); };
+            indices.push(usize::try_from(number).map_err(|_| invalid())?);
+        }
+        let mut rows = Vec::with_capacity(pools.len());
+        for pool in pools.iter() {
+            let Value::Tuple(items) = pool.contents() else { return Err(invalid()); };
+            if items.is_empty() { return Ok(Value::Null); }
+            rows.push(items);
+        }
+        if !first {
+            let mut carry = true;
+            for at in (0..indices.len()).rev() {
+                indices[at] += 1;
+                if indices[at] < rows[at].len() { carry = false; break; }
+                indices[at] = 0;
+            }
+            if carry { return Ok(Value::Null); }
+        }
+        let mut answer = Vec::with_capacity(rows.len());
+        for (pool, at) in rows.iter().zip(&indices) {
+            answer.push(pool.get(*at).ok_or_else(invalid)?.clone());
+        }
+        let cursor = Value::array(indices.into_iter().map(|at| Value::Small(at as i64)).collect());
+        Ok(Value::tuple(vec![Value::tuple(answer), cursor]))
+    }
+
     fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
         let (_, holder) = self.function_members.iter().find(|(value, _)| matches!(value, Value::Routine(code) if Rc::ptr_eq(code, program)))?;
         let book = holder.fields.borrow().iter().find(|(name, _)| name == "\0 namespace")?.1.clone();
@@ -7788,7 +8065,7 @@ impl<'a> Engine<'a> {
                 if matches!(&args[0], Value::Walk(_)) { return Ok(Some(args[0].clone())); }
                 if let Some(answer) = self.special_call(&args[0], 15, Vec::new())? {
                     if !matches!(answer, Value::Cursor(_) | Value::Generator(_) | Value::Walk(_))
-                        && self.special_method(&answer, 16).is_none() {
+                        && self.special_value(&answer, 16).is_none() {
                         return Err(format!("TypeError: iter() returned non-iterator of type '{}'", answer.core_kind()));
                     }
                     answer
@@ -7835,6 +8112,12 @@ impl<'a> Engine<'a> {
             let next = walk.0.get(walk.1).cloned();
             if next.is_some() { walk.1 += 1; }
             return Ok(next);
+        }
+        if let Some(Value::Adapter(entry)) = self.special_value(value, 16) {
+            if entry.0 == 119 {
+                let Value::Small(mode) = entry.1[0] else { return Err(self.special_fault()); };
+                return self.iterator_recipe_next(mode, value);
+            }
         }
         let method = self.special_method(value, 16).ok_or_else(|| self.special_fault())?;
         match self.invoke(&method, vec![value.clone()]) {
@@ -16469,6 +16752,7 @@ impl<'a> Engine<'a> {
                 self.data.truncate(depth);
                 answer
             }
+            Builtin::ProductStep => self.iterator_operation(args)?,
             Builtin::ProgramNamespace => {
                 if let [Value::Small(depth)] = args.as_slice() {
                     let mut current = self.trace_frame.clone().map_or(Value::Null, Value::Object);
@@ -18476,7 +18760,7 @@ impl Engine<'_> {
                 return match handed {
                     Value::Cursor(_) | Value::Generator(_) => Ok(handed),
                     Value::Walk(_) => Ok(Self::core_cursor(CursorSource::Handed(handed))),
-                    other if self.special_method(&other, 16).is_some() => Ok(Self::core_cursor(CursorSource::Handed(other))),
+                    other if self.special_value(&other, 16).is_some() => Ok(Self::core_cursor(CursorSource::Handed(other))),
                     _ => Err(self.special_fault()),
                 };
             }
@@ -18538,6 +18822,20 @@ impl Engine<'_> {
             if state.finished { return Ok(None); }
             if Self::member_matches(&stop, &answered) { state.finished = true; return Ok(None); }
             return Ok(Some(answered));
+        }
+        let parallel = match &cell.borrow().source {
+            CursorSource::Combined(walks, work, exact) => Some((walks.clone(), work.clone(), *exact)),
+            _ => None,
+        };
+        if let Some((walks, work, exact)) = parallel {
+            {
+                let mut state = cell.borrow_mut();
+                if let Some(pending) = state.pending.take() { return Ok(Some(pending)); }
+                if state.finished { return Ok(None); }
+            }
+            let answer = self.combined_member(&walks, &work, &exact);
+            if matches!(answer, Ok(None)) { cell.borrow_mut().finished = true; }
+            return answer;
         }
         let mut source = {
             let mut state = cell.borrow_mut();
@@ -18639,34 +18937,7 @@ impl Engine<'_> {
                 *count += 1;
                 Ok(Some(numbered))
             }
-            CursorSource::Combined(walks, work, exact) => {
-                if walks.is_empty() { return Ok(None); }
-                let mut row = Vec::new();
-                for (at, inner) in walks.iter().enumerate() {
-                    match self.core_step(inner)? {
-                        Some(value) => row.push(value),
-                        // Where the walks must end together, one ending
-                        // after an earlier one gave a member is too
-                        // short, and one still giving members after the
-                        // first has ended is too long.
-                        None => {
-                            if *exact {
-                                let (short, long) = if work.is_some() { ("map.short", "map.long") } else { ("zip.short", "zip.long") };
-                                if at > 0 { return Err(self.uneven_zip(short, at)); }
-                                for (later, other) in walks.iter().enumerate().skip(1) {
-                                    if self.core_step(other)?.is_some() { return Err(self.uneven_zip(long, later)); }
-                                }
-                            }
-                            return Ok(None);
-                        }
-                    }
-                }
-                let Some(work) = work else { return Ok(Some(Value::tuple(row))) };
-                match self.core_apply(work, row) {
-                    Ok(made) => Ok(Some(made)),
-                    Err(words) => if self.stop_raised() { Ok(None) } else { Err(words) },
-                }
-            }
+            CursorSource::Combined(walks, work, exact) => self.combined_member(walks, work, exact),
             CursorSource::Selected(inner, test) => {
                 while let Some(value) = self.core_step(inner)? {
                     let verdict = if matches!(test, Value::Null) { value.clone() } else {
@@ -18685,6 +18956,35 @@ impl Engine<'_> {
         state.busy = false;
         if matches!(answer, Ok(None)) { state.finished = true; }
         answer
+    }
+
+    fn combined_member(&mut self, walks: &[Value], work: &Option<Value>, exact: &bool) -> Res<Option<Value>> {
+        if walks.is_empty() { return Ok(None); }
+        let mut row = Vec::new();
+        for (at, inner) in walks.iter().enumerate() {
+            match self.core_step(inner)? {
+                Some(value) => row.push(value),
+                // Where the walks must end together, one ending
+                // after an earlier one gave a member is too
+                // short, and one still giving members after the
+                // first has ended is too long.
+                None => {
+                    if *exact {
+                        let (short, long) = if work.is_some() { ("map.short", "map.long") } else { ("zip.short", "zip.long") };
+                        if at > 0 { return Err(self.uneven_zip(short, at)); }
+                        for (later, other) in walks.iter().enumerate().skip(1) {
+                            if self.core_step(other)?.is_some() { return Err(self.uneven_zip(long, later)); }
+                        }
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+        let Some(work) = work else { return Ok(Some(Value::tuple(row))) };
+        match self.core_apply(work, row) {
+            Ok(made) => Ok(Some(made)),
+            Err(words) => if self.stop_raised() { Ok(None) } else { Err(words) },
+        }
     }
 
     fn core_more(&mut self, walk: &Value) -> Res<bool> {

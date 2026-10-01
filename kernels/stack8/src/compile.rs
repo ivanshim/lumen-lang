@@ -2957,6 +2957,7 @@ impl<'a> Compiler<'a> {
             self.act(Action::At, 2);
             self.write(&part);
             self.bind_block_target(&part)?;
+            if !self.lang.syntax_members.is_empty() { self.let_go(&part); }
             if self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { self.take(); }
         }
         Ok(())
@@ -2996,6 +2997,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::At, 2);
                 self.write(&part);
                 self.bind_block_target(&part)?;
+                if !self.lang.syntax_members.is_empty() { self.let_go(&part); }
                 index += 1;
                 if !self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
                 self.take();
@@ -7428,7 +7430,9 @@ impl<'a> Compiler<'a> {
             let item = self.gensym("item");
             self.write(&item);
             self.give_places(a, b, &item)?;
+            if !self.lang.syntax_members.is_empty() { self.let_go(&item); }
         }
+        if !self.lang.syntax_members.is_empty() { self.let_go(&checked); }
         Ok(())
     }
 
@@ -10495,9 +10499,12 @@ impl<'a> Compiler<'a> {
     fn comprehension_ahead(&self) -> Option<usize> {
         if self.lang.comprehension_for.is_empty() { return None; }
         let mut depth = 0usize;
+        let mut lambda_parameters = 0usize;
         for (at, tok) in self.tokens.iter().enumerate().skip(self.pos) {
             if !matches!(tok.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = &tok.lexeme;
+            if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { lambda_parameters += 1; }
+            if depth == 0 && tok.is_lexeme(Shape::Sign, ":") { lambda_parameters = lambda_parameters.saturating_sub(1); }
             if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) {
                 return Some(if at > self.pos && Lang::spells(&self.lang.comprehension_async, &self.tokens[at - 1].lexeme) { at - 1 } else { at });
             }
@@ -10506,7 +10513,7 @@ impl<'a> Compiler<'a> {
             else if opens.into_iter().flatten().any(|b| b.close == *word) {
                 if depth == 0 { return None; }
                 depth -= 1;
-            } else if depth == 0 && self.lang.calling.as_ref().and_then(|b| b.between.as_ref()) == Some(word) {
+            } else if depth == 0 && lambda_parameters == 0 && self.lang.calling.as_ref().and_then(|b| b.between.as_ref()) == Some(word) {
                 return None;
             }
         }
@@ -10535,10 +10542,13 @@ impl<'a> Compiler<'a> {
         if !self.lang.syntax_members.is_empty() {
             let mut depth = 0usize;
             let mut separated = false;
+            let mut parameters = 0usize;
             for token in self.tokens.iter().skip(self.pos) {
                 let word = token.lexeme.as_str();
                 if depth == 0 && token.shape == Shape::Sign && word == pair.close { break; }
-                if depth == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
+                if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
+                if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
+                if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
                 if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
                     return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
                 }

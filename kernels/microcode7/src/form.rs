@@ -362,6 +362,7 @@ pub enum Prim {
     /// its opposite number reads back into the very value again.
     HeapNative,
     ReduceNative,
+    ProductStep,
     RebuildNative,
     CharAtIndex,
     CodeOf,

@@ -775,3 +775,71 @@ def check__all__(test_case, module, name_of_module=None, extra=(),
                  not isinstance(obj, types.ModuleType))):
             expected.add(name)
     test_case.assertCountEqual(module.__all__, expected)
+
+# From CPython Lib/test/support at 3b564385e4c9, PSF License.
+import functools
+PGO = False
+PGO_EXTENDED = False
+
+def check_sizeof(test, o, size):
+    try:
+        import _testinternalcapi
+    except ImportError:
+        raise unittest.SkipTest("_testinternalcapi required")
+    result = sys.getsizeof(o)
+    # add GC header size
+    if ((type(o) == type) and (o.__flags__ & _TPFLAGS_HEAPTYPE) or\
+        ((type(o) != type) and (type(o).__flags__ & _TPFLAGS_HAVE_GC))):
+        size += _testinternalcapi.SIZEOF_PYGC_HEAD
+    msg = 'wrong size for %s: got %d, expected %d' \
+            % (type(o), result, size)
+    test.assertEqual(result, size, msg)
+
+def bigaddrspacetest(f):
+    """Decorator for tests that fill the address space."""
+    @functools.wraps(f)
+    def wrapper(self):
+        if max_memuse < MAX_Py_ssize_t:
+            if MAX_Py_ssize_t >= 2**63 - 1 and max_memuse >= 2**31:
+                raise unittest.SkipTest(
+                    "not enough memory: try a 32-bit build instead")
+            else:
+                raise unittest.SkipTest(
+                    "not enough memory: %.1fG minimum needed"
+                    % (MAX_Py_ssize_t / (1024 ** 3)))
+        else:
+            return f(self)
+    return wrapper
+
+def skip_if_pgo_task(test):
+    """Skip decorator for tests not run in (non-extended) PGO task"""
+    ok = not PGO or PGO_EXTENDED
+    msg = "Not run for (non-extended) PGO task"
+    return test if ok else unittest.skip(msg)(test)
+
+def check_immutable_type(testcase, type):
+    regex = r'cannot set .* attribute of immutable type'
+    with testcase.assertRaisesRegex(TypeError, regex):
+        setattr(type, 'custom_attr', 123)
+
+    try:
+        from _testlimitedcapi import type_getflags, Py_TPFLAGS_IMMUTABLETYPE
+    except ImportError:
+        pass
+    else:
+        flags = type_getflags(type)
+        testcase.assertTrue(flags & Py_TPFLAGS_IMMUTABLETYPE)
+
+import contextlib
+
+@contextlib.contextmanager
+def captured_output(stream_name):
+    """Return a context manager used by captured_stdout/stdin/stderr
+    that temporarily replaces the sys stream *stream_name* with a StringIO."""
+    import io
+    orig_stdout = getattr(sys, stream_name)
+    setattr(sys, stream_name, io.StringIO())
+    try:
+        yield getattr(sys, stream_name)
+    finally:
+        setattr(sys, stream_name, orig_stdout)

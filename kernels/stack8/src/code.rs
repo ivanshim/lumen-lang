@@ -505,6 +505,7 @@ pub enum Builtin {
     MemberSet,
     MemberGet,
     ProgramNamespace,
+    ProductStep,
     FrameModule,
     ClassSeal,
     Bytes(u8),
