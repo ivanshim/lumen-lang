@@ -12,7 +12,7 @@ def setlocale(category, locale=None):
     if category < 0 or category > 6:
         raise 'ValueError: invalid locale category'
     if locale is not None and locale != 'C' and locale != 'POSIX' and locale != '':
-        raise 'NotImplementedError: locale.setlocale supports only C'
+        raise Error('unsupported locale setting')
     return 'C'
 
 def getlocale(category=0):
@@ -24,3 +24,12 @@ def getlocale(category=0):
 
 def localeconv():
     return {'decimal_point': '.', 'thousands_sep': '', 'grouping': [], 'int_curr_symbol': '', 'currency_symbol': '', 'mon_decimal_point': '', 'mon_thousands_sep': '', 'mon_grouping': [], 'positive_sign': '', 'negative_sign': '', 'int_frac_digits': 127, 'frac_digits': 127, 'p_cs_precedes': 127, 'p_sep_by_space': 127, 'n_cs_precedes': 127, 'n_sep_by_space': 127, 'p_sign_posn': 127, 'n_sign_posn': 127}
+
+class Error(Exception):
+    pass
+
+def getencoding():
+    return "ANSI_X3.4-1968"
+
+def getpreferredencoding(do_setlocale=True):
+    return "utf-8" if do_setlocale else getencoding()

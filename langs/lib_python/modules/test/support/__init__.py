@@ -715,3 +715,21 @@ class EqualToForwardRef:
         if self.__owner__ is not None:
             extra.append(f", owner={self.__owner__!r}")
         return f"EqualToForwardRef({self.__forward_arg__!r}{''.join(extra)})"
+
+# Source: CPython 3b564385e4c9, Lib/test/support/__init__.py; PSF License.
+def check_disallow_instantiation(testcase, tp, *args, **kwds):
+    """
+    Check that given type cannot be instantiated using *args and **kwds.
+
+    See bpo-43916: Add Py_TPFLAGS_DISALLOW_INSTANTIATION type flag.
+    """
+    mod = tp.__module__
+    name = tp.__name__
+    if mod != 'builtins':
+        qualname = f"{mod}.{name}"
+    else:
+        qualname = f"{name}"
+    msg = f"cannot create '{re.escape(qualname)}' instances"
+    testcase.assertRaisesRegex(TypeError, msg, tp, *args, **kwds)
+    testcase.assertRaisesRegex(TypeError, msg, tp.__new__, tp, *args, **kwds)
+SHORT_TIMEOUT = 30.0
