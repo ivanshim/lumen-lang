@@ -115,6 +115,7 @@ thread_local! {
 pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
     let places: HashSet<usize> = group.iter().filter_map(place_of).collect();
     let lost = |hold: &Hold| match hold {
+        Hold::Native(..) => false,
         Hold::Object(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Class(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Generator(w) => places.contains(&(w.as_ptr() as usize)),

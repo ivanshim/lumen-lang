@@ -1622,7 +1622,6 @@ impl<'a> Engine<'a> {
         // stood when the run ended: an object a finaliser makes is not
         // swept up in its own turn, so the shutdown cannot grow without
         // end while a finaliser holds on to new allocations.
-        let snapshot: Vec<Rc<Instance>> = self.things_made.borrow().iter().filter_map(|held| held.upgrade()).collect();
         self.things_made.borrow_mut().clear();
         crate::faint::release_all_anchors();
     }
@@ -3277,7 +3276,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(peers) = &state.1[3] else { return Err("TypeError: invalid tee peers".into()); };
                 let Value::Array(old) = peers.borrow().contents() else { return Err("TypeError: invalid tee peers".into()); };
                 let mut live = old.to_vec();
-                live.push(Value::Faint(Rc::new(crate::faint::Faint { hold: crate::faint::Hold::Object(Rc::downgrade(object)), bearer: std::rc::Weak::new(), told: None })));
+                live.push(crate::faint::make(crate::faint::Hold::Object(Rc::downgrade(object)), std::rc::Weak::new(), None));
                 *peers.borrow_mut() = Value::array(live);
                 return Ok(Value::Null);
             }
@@ -3675,7 +3674,7 @@ impl<'a> Engine<'a> {
                     if let Err(fault) = written { outcome = Err(fault); }
                     else { self.data.truncate(base); self.data.push(wrapped); }
                 }
-                body_namespace = Some(Value::Tuple(Rc::new(vec![book, cell])));
+                body_namespace = Some(Value::Tuple(Rc::new(vec![book, cell]).into()));
             }
         }
         if outcome.is_ok() && self.class_body_capture.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, program)) {
@@ -4712,7 +4711,8 @@ impl<'a> Engine<'a> {
                 class
             }
         };
-        let code = self.routine_code(program);
+        // Code metadata is materialized when the frame is inspected.
+        let code = Value::Null;
         self.made += 1;
         Some(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(vec![
             (keys[4].clone(), Value::Small(program.declared_on as i64)),
@@ -4732,6 +4732,14 @@ impl<'a> Engine<'a> {
             return Some(Value::ValueMethod(Rc::new((Value::Object(object.clone()), name.to_string()))));
         }
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
+        if index == 5 {
+            let ready = object.fields.borrow()[1].1.clone();
+            if !matches!(ready, Value::Null) { return Some(ready); }
+            let routine = match &object.fields.borrow()[6].1 { Value::Routine(body) => body.clone(), _ => return None };
+            let code = self.routine_code(&routine);
+            object.fields.borrow_mut()[1].1 = code.clone();
+            return Some(code);
+        }
         if index == 13 {
             return Some(Value::Bond(self.book_here(true)));
         }
@@ -20631,7 +20639,7 @@ impl Engine<'_> {
 
     pub(super) fn class_namespace_read(&mut self, arguments: Vec<Value>) -> Flow<Value> {
         let found = self.dyn_lookup(&arguments[0].contents(), &arguments[1].plain())?;
-        Ok(Value::Tuple(Rc::new(vec![Value::Flag(found.is_some()), found.unwrap_or(Value::Null)])))
+        Ok(Value::Tuple(Rc::new(vec![Value::Flag(found.is_some()), found.unwrap_or(Value::Null)]).into()))
     }
 
     pub(super) fn class_namespace_remove(&mut self, arguments: Vec<Value>) -> Flow<Value> {
@@ -20683,7 +20691,7 @@ impl Engine<'_> {
         });
         let parents = if custom { Vec::new() } else { plain.iter().map(|base| self.type_base(base)).collect::<Flow<Vec<_>>>()? };
         let factory = if custom { requested } else { self.maker_in_force(asked, &parents)?.map(Value::Class) };
-        let bases = Value::Tuple(Rc::new(plain));
+        let bases = Value::Tuple(Rc::new(plain).into());
         let namespace = if let Some(factory) = &factory {
             let word = self.class_word("prepare").to_owned();
             match self.class_get(factory.clone(), &word, false) {
