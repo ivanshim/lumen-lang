@@ -637,6 +637,7 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
+  "ext.builtin.sre": ["__sre_native"],
   "ext.builtin.copy": [
     "__copy_value"
   ],

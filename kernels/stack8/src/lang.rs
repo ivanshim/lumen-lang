@@ -1316,7 +1316,7 @@ w ext.builtin.member.get
 w ext.builtin.member.set
 w ext.builtin.instance
 w ext.builtin.module.load
-w ext.builtin.copy
+w ext.builtin.copy | w ext.builtin.sre
 w ext.syntax.map.resized | w ext.syntax.map.unhashable | b ext.syntax.map.value_keys | w ext.builtin.method.popitem | w ext.builtin.method.fromkeys | w ext.builtin.method.error.popitem
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
@@ -2128,6 +2128,7 @@ impl Lang {
             ("ext.builtin.instance", Builtin::InstanceOf),
             ("ext.builtin.module.load", Builtin::ModuleLoad),
             ("ext.builtin.copy", Builtin::CopyValue),
+            ("ext.builtin.sre", Builtin::Sre),
             ("ext.builtin.class.derive", Builtin::DeriveClass),
             ("ext.builtin.call.outcome", Builtin::CallOutcome),
             ("ext.builtin.clock", Builtin::Clock),

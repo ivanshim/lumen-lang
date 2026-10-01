@@ -150,7 +150,7 @@ ext.builtin.member.get:L \
 ext.builtin.member.set:L \
 ext.builtin.instance:L \
 ext.builtin.module.load:L \
-ext.builtin.copy:L \
+ext.builtin.copy:L ext.builtin.sre:L \
 ext.stmt.with.enter:L ext.stmt.with.leave:L \
 ext.system.module.cache:L \
 ext.builtin.module.helper.amiss:L ext.builtin.member.absent:L ext.builtin.member.unwritable:L \
@@ -228,7 +228,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 296] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 297] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -454,6 +454,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 296] = [
     ("ext.builtin.instance", Prim::Belongs),
     ("ext.builtin.module.load", Prim::LoadModule),
     ("ext.builtin.copy", Prim::CopyWorth),
+    ("ext.builtin.sre", Prim::Regex),
     ("ext.builtin.class.derive", Prim::MakeHeir),
     ("ext.builtin.call.outcome", Prim::CallResult),
     ("ext.builtin.clock", Prim::SinceEpoch),

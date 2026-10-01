@@ -4781,6 +4781,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.source.syntax.place` | - | - | ` (` `, line ` `)` | - | - | - | - | - | - | - |
 | `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
+| `ext.builtin.sre` | - | - | `__sre_native` | - | - | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
@@ -5618,3 +5619,5 @@ metadata or namespace entries; ordinary classes retain their default None doc.
 Rendering accepts genuine str-subclass modules and uses the current short name
 when the module is builtins or non-string. Percent-character complaints instead
 keep the public qualification, without changing the lexical declaration name.
+
+`ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.

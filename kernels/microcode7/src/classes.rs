@@ -997,6 +997,16 @@ impl<'a> Machine<'a> {
         if told.is_empty(){return self.absent_attribute(value,member);}
         told.into()
     }
+    /// Subscription through a descriptor reads its result. It does not
+    /// turn the descriptor stored on the class into a shared field.
+    pub(super) fn reads_descriptor(&self, subject: &Value, key: &str) -> bool {
+        let Value::Thing(instance) = subject else { return false };
+        self.inherited_entry(&instance.blueprint(), key).is_some_and(|entry| {
+            matches!(&entry, Value::Wrapped(6 | 32, _) | Value::Adorned(_))
+                || self.protocol_entry(&entry, "descriptor.get").is_some()
+        })
+    }
+
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         match &entry {
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),

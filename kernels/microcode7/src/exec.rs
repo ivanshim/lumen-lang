@@ -4916,6 +4916,9 @@ impl<'a> Machine<'a> {
             // both.
             Form::ShareField(of, called) => {
                 let thing = self.value_of(of, frame)?;
+                if self.has_class_order() && self.reads_descriptor(&thing, called) {
+                    return self.read_class_member(thing, called, false);
+                }
                 // A namespace is not a field kept under that name but a
                 // view of the thing's own, and is written into as one.
                 if self.has_class_order() && called.as_ref() == self.rules.detail_namespace && matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Thing(_)) {
@@ -14141,7 +14144,8 @@ impl<'a> Machine<'a> {
                 Value::Adorned(Rc::new(member))
             }
             Prim::BringModule => {
-                let path = v[0].bare();
+                let requested = v[0].bare();
+                let path = self.qualified_import(&requested)?;
                 let namespace = self.load_namespace(&path)?;
                 match &v[1] {
                     Value::Text(wanted) => self.namespace_item(&namespace, &path, wanted)?,
@@ -14213,6 +14217,7 @@ impl<'a> Machine<'a> {
                 };
                 Value::Blueprint(Rc::new(heir))
             }
+            Prim::Regex => return crate::sre::invoke(v),
             Prim::CopyWorth => {
                 n(2)?;
                 if let Value::Generator(_) = &v[0] {
@@ -18729,6 +18734,21 @@ impl Machine<'_> {
 
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
+    fn qualified_import(&self, name: &str) -> Result<String, String> {
+        let levels = name.bytes().take_while(|&b| b == b'.').count();
+        if levels == 0 { return Ok(name.to_owned()); }
+        let caller = self.loaded_spaces.get(&self.written_in).ok_or_else(|| self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_owned())?;
+        let package = self.written_in.ends_with("/__init__.py") || self.library_sources.keys().any(|child| child.strip_prefix(caller).is_some_and(|tail| tail.starts_with('.')));
+        let parent = if package { caller.as_str() } else { caller.rsplit_once('.').map_or("", |pair| pair.0) };
+        let mut prefix = parent.to_owned();
+        for _ in 1..levels {
+            prefix = prefix.rsplit_once('.').map(|(above, _)| above.to_owned()).ok_or_else(|| String::from("ImportError: attempted relative import beyond top-level package"))?;
+        }
+        if prefix.is_empty() { return Err(String::from("ImportError: attempted relative import beyond top-level package")); }
+        if name.len() > levels { prefix.push('.'); prefix.push_str(&name[levels..]); }
+        Ok(prefix)
+    }
+
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is

@@ -6973,7 +6973,7 @@ impl<'a> Engine<'a> {
         // did not answer above, that worth; a mapping thing asked for a
         // key it has not may answer through the method the definition
         // names for it.
-        if matches!(op, Action::Same | Action::Unsame) && (matches!(Self::worth_of(a), Some(Value::Text(_))) || matches!(Self::worth_of(b), Some(Value::Text(_)))) { return self.dyadic(op, a, b); }
+        if matches!(op, Action::Same | Action::Unsame) && (Self::worth_of(a).is_some() || Self::worth_of(b).is_some()) { return self.dyadic(op, a, b); }
         let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
         if left.is_some() || right.is_some() {
             if let (Action::At, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
@@ -8873,6 +8873,8 @@ impl<'a> Engine<'a> {
                 Value::Object(object)
             }
             Action::Import(path, member, root) => {
+                let resolved = self.import_path(path)?;
+                let path = resolved.as_str();
                 let module = self.import_module(path)?;
                 if let Some(name) = member {
                     self.import_member(&module, path, name)?
@@ -11120,7 +11122,7 @@ impl<'a> Engine<'a> {
                     (Value::Method(..), Value::Method(..)) => false,
                     (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
-                    (Value::Object(_), Value::Text(_)) | (Value::Text(_), Value::Object(_)) => false,
+                    (Value::Object(_), _) | (_, Value::Object(_)) => false,
                     (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
@@ -15699,6 +15701,7 @@ impl<'a> Engine<'a> {
                     constants: Vec::new(), shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                 }))
             }
+            Builtin::Sre => return crate::sre::call(args),
             Builtin::CopyValue => {
                 arity(2)?;
                 if matches!(args[0], Value::Generator(_)) {
@@ -18820,6 +18823,23 @@ impl Engine<'_> {
 
     /// A module owns cells in the same world, under names no source can
     /// spell. Its routines keep those addresses after the reader returns.
+    fn import_path(&self, written: &str) -> Res<String> {
+        if !written.starts_with('.') { return Ok(written.to_string()); }
+        let Some((_, owner)) = self.module_slots.get(&self.source) else {
+            return Err(self.lang.import_relative_unready.clone());
+        };
+        let is_package = self.source.ends_with("/__init__.py") || self.module_sources.keys().any(|name| name.starts_with(&(owner.clone() + ".")));
+        let mut components: Vec<&str> = owner.split('.').collect();
+        if !is_package { components.pop(); }
+        let levels = written.chars().take_while(|c| *c == '.').count();
+        if components.len() < levels { return Err("ImportError: attempted relative import beyond top-level package".into()); }
+        components.truncate(components.len() - levels + 1);
+        let rest = &written[levels..];
+        let mut path = components.join(".");
+        if !rest.is_empty() { path.push('.'); path.push_str(rest); }
+        Ok(path)
+    }
+
     fn import_module(&mut self, path: &str) -> Flow<Value> {
         if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
         // A name a program's own code took out of `sys.modules` is
