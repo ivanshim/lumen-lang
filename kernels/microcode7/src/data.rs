@@ -1858,6 +1858,9 @@ pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
         0 => (rest, -1074i64),
         _ => (rest | (1u64 << 52), step - 1075),
     };
+    // Return lowest terms directly, including subnormal mantissas.
+    let cancelled = run.trailing_zeros();
+    let (run, halvings) = (run >> cancelled, halvings + cancelled as i64);
     let mut above = BigInt::from(run);
     if under {
         above = -above;
@@ -2173,6 +2176,11 @@ pub(crate) fn decimal_roundtrip(worth: f64) -> String {
 /// the exact remainder choose the last one. No rounded quotient is used.
 fn rounded_binary(above: &BigInt, beneath: &BigInt) -> f64 {
     if above.is_zero() || beneath.is_zero() { return nearest_binary(above, beneath); }
+    let exact_dyadic = above.bits() < 54 && beneath.bits() < 1076
+        && beneath.trailing_zeros().is_some_and(|shift| shift + 1 == beneath.bits());
+    // No quotient or remainder is needed when all bits already fit the
+    // binary format; whole numbers use its integer rounding directly.
+    if exact_dyadic || beneath.is_one() { return nearest_binary(above, beneath); }
     let signed = (above.is_negative() != beneath.is_negative()) as u64 * (1u64 << 63);
     let positive = above.abs();
     let divisor = beneath.abs();

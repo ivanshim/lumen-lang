@@ -42,8 +42,19 @@ pub fn made_number(above: BigInt, beneath: BigInt, places: Option<usize>, under:
         };
     }
     let (above, beneath) = if beneath.is_negative() { (-above, -beneath) } else { (above, beneath) };
-    let g = above.gcd(&beneath);
-    let (above, beneath) = if g.is_one() { (above, beneath) } else { (&above / &g, &beneath / &g) };
+    let (above, beneath) = match beneath.trailing_zeros() {
+        // Powers of two have no odd factors: reduction is an exact shift,
+        // also for negative numerators, and needs no division or GCD.
+        Some(twos) if twos + 1 == beneath.bits() => {
+            let common = twos.min(above.trailing_zeros().unwrap());
+            if common == 0 { (above, beneath) }
+            else { (above >> common, beneath >> common) }
+        }
+        _ => {
+            let g = above.gcd(&beneath);
+            if g.is_one() { (above, beneath) } else { (&above / &g, &beneath / &g) }
+        }
+    };
     if places.is_none() && beneath.is_one() {
         Value::from_big(above)
     } else {
