@@ -19745,6 +19745,15 @@ impl Machine<'_> {
             .map(|answer| answer.settled()).ok_or_else(|| self.bad_answer())
     }
 
+    /// Refuse suspended execution in the native fallback as well as in
+    /// explicit reductions; an iterator backed by stored members is distinct.
+    pub(super) fn reduction_permitted(&self, subject: &Value) -> Result<(), String> {
+        let Value::Generator(handle) = subject else { return Ok(()); };
+        let frame = handle.borrow();
+        if frame.of.is_some() || frame.walked.is_none() {
+            Err("TypeError: cannot pickle 'generator' object".to_owned())
+        } else { Ok(()) }
+    }
     fn reduce_iterator(&mut self, subject: &Value) -> Result<Value, String> {
         let subtype = match subject { Value::Thing(instance) => Some(Value::Blueprint(instance.blueprint().clone())), _ => None };
         let underlying = Self::underlying(subject).map(|held| held.settled());
@@ -19760,7 +19769,7 @@ impl Machine<'_> {
         }
         if let Value::Generator(handle) = subject {
             let frame = handle.borrow();
-            if frame.walked.is_none() || frame.of.is_some() { return Err("TypeError: cannot pickle generator object".to_owned()); }
+            self.reduction_permitted(subject)?;
             let entries = frame.members.as_ref().map(|items| items.as_slice().to_vec()).unwrap_or_default();
             return Ok(tuple(vec![builtin(Prim::Iterator), tuple(vec![Value::Vector(Rc::new(entries))])]));
         }
@@ -20625,7 +20634,10 @@ impl Machine<'_> {
             }
             ReduceNative => {
                 require(1, 2)?;
-                if input.len() < 2 { return Ok(self.native_reduce(&input[0])); }
+                if input.len() < 2 {
+                    self.reduction_permitted(&input[0])?;
+                    return Ok(self.native_reduce(&input[0]));
+                }
                 if !input[1].is_true() { return Ok(Self::underlying(&input[0]).unwrap_or(Value::Nil)); }
                 let Value::Thing(object) = &input[0] else { return Ok(Value::Nil); };
                 let mut entries = Vec::new();

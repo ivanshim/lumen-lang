@@ -17232,6 +17232,17 @@ impl Engine<'_> {
             .map(|value| value.contents())
     }
 
+    // Real generators have suspended execution, not reconstructible iterator
+    // storage. Check the native state before any default reduction fallback.
+    pub(super) fn check_native_reduction(&self, value: &Value) -> Res<()> {
+        if let Value::Generator(cell) = value {
+            let held = cell.borrow();
+            if held.walked.is_none() || held.program.is_some() {
+                return Err("TypeError: cannot pickle 'generator' object".into());
+            }
+        }
+        Ok(())
+    }
     fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
         let subclass = match value { Value::Object(object) => Some(Value::Class(object.class_now().clone())), _ => None };
         let underlying = Self::worth_of(value).map(|worth| worth.contents());
@@ -17247,7 +17258,7 @@ impl Engine<'_> {
         }
         if let Value::Generator(cell) = value {
             let held = cell.borrow();
-            if held.walked.is_none() || held.program.is_some() { return Err("TypeError: cannot pickle generator object".into()); }
+            self.check_native_reduction(value)?;
             let entries = if held.closed { Vec::new() } else { held.items.get(held.pc..).unwrap_or_default().to_vec() };
             return Ok(pack(vec![iter, pack(vec![Value::array(entries)])]));
         }
@@ -18072,7 +18083,10 @@ impl Engine<'_> {
                         Value::Object(instance) => Value::Map(Rc::new(instance.fields.borrow().iter().filter(|(key, _)| !key.starts_with('\0')).map(|(key, item)| (Value::text(key), item.clone())).collect())),
                         _ => Value::Null,
                     }
-                } else { self.native_reduce(&args[0]) }
+                } else {
+                    self.check_native_reduction(&args[0])?;
+                    self.native_reduce(&args[0])
+                }
             }
             Builtin::RebuildNative => { arity(1, 1)?; self.native_rebuild(&args[0])? }
             Builtin::Identity => {

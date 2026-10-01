@@ -1401,6 +1401,7 @@ impl<'a> Machine<'a> {
                         Some(reduction) => return Ok(reduction),
                     }
                 }
+                self.reduction_permitted(&first)?;
                 let kind=self.class_from_type(vec![first.clone()])?;
                 Value::Tuple(Rc::new(vec![kind,Value::Tuple(Rc::new(Vec::new())),Self::held_as_state(&first)]))
             }

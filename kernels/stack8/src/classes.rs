@@ -1070,6 +1070,7 @@ impl<'a> Engine<'a> {
                         return Ok(answer);
                     }
                 }
+                self.check_native_reduction(&subject).map_err(Fault::Note)?;
                 let class = match &subject { Value::Object(o) => Value::Class(o.class_now().clone()), other => self.class_type(vec![other.clone()])? };
                 Value::Tuple(Rc::new(vec![class, Value::Tuple(Rc::new(Vec::new())), self.root_state(&subject)]))
             }
