@@ -139,9 +139,10 @@ class OrderedDict(dict):
         return type(self).__name__ + '(' + repr(list(self.items())) + ')'
 
     def __eq__(self, other):
-        match = dict.__eq__(self, other)
-        if match is NotImplemented or not match:
-            return match
+        if not isinstance(other, dict):
+            return NotImplemented
+        if dict(self) != dict(other):
+            return False
         if isinstance(other, OrderedDict):
             return list(self) == list(other)
         return True
