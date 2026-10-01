@@ -853,8 +853,8 @@ impl<'a> Engine<'a> {
                     }
                     let name = self.lang.constructor.clone().unwrap_or_default();
                     self.value_method(&worth, &name, positional, keywords)?;
-                } else if !args.is_empty() && kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() {
-                    self.root_refuses_arguments(&c,true)?;
+                } else if kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() {
+                    if !self.call_items(args)?.is_empty() { self.root_refuses_arguments(&c,true)?; }
                 }
             }
         }

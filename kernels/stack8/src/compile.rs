@@ -808,6 +808,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn want_name(&mut self, why: &str) -> Res<String> {
+        if Lang::spells(&self.lang.reserved_names, &self.look().lexeme) { return Err("SyntaxError: invalid syntax".into()); }
         if !self.lang.syntax_members.is_empty() && [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|names| Lang::spells(names, &self.look().lexeme)) {
             return Err("SyntaxError: invalid syntax".into());
         }
@@ -7439,6 +7440,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn assignment_expression(&mut self) -> Res<()> {
+        if Lang::spells(&self.lang.reserved_names, &self.look().lexeme) && self.look_ahead(1).shape == Shape::Sign
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+            return Err("SyntaxError: invalid syntax".into());
+        }
         if !self.lang.syntax_members.is_empty() {
             if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
                 let begins = self.look();

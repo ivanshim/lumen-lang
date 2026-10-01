@@ -2546,6 +2546,12 @@ impl<'a> Engine<'a> {
                 self.write_booked(kept, &slot.ident, None);
                 if let Some(fled) = self.carried.take() { return Err(fled); }
             }
+            if !self.lang.module_cache.is_empty() && self.module_slots.contains_key(&self.source) {
+                if let Value::Bond(cell) = &self.world[slot.far] {
+                    *cell.borrow_mut() = Value::Blank;
+                    return Ok(());
+                }
+            }
             self.world[slot.far] = Value::Blank;
         }
         Ok(())
@@ -4965,22 +4971,30 @@ impl<'a> Engine<'a> {
     /// `mapping_equality`; only a map's own keys need the interpreter
     /// to compare them.
     fn maps_equal(&mut self, one: &crate::value::KeyedPairs, other: &crate::value::KeyedPairs) -> Res<bool> {
-        if one.len() != other.len() { return Ok(false); }
-        // Each key of the one is sought among the other's through
-        // `map_locate`, which is the lookup's own place first and a
-        // walk only where the place cannot say — so a map of plain
-        // keys stays the linear comparison it always was, and only a
-        // map with a Thing among its keys pays for the walk.
-        for (key, value) in one.iter() {
-            let (found, _) = self.map_locate(other, Some(other), key)?;
-            let Some(index) = found else { return Ok(false) };
-            let compared = &other[index].1;
-            if !value.same_place(compared) {
-                let answer = self.special_dyad(&Action::Eq, value, compared)?;
-                if !self.special_truth(&answer)? { return Ok(false); }
-            }
+        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
+            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
         }
-        Ok(true)
+        self.reaching += 1;
+        let result = (|| {
+            if one.len() != other.len() { return Ok(false); }
+            // Each key of the one is sought among the other's through
+            // `map_locate`, which is the lookup's own place first and a
+            // walk only where the place cannot say — so a map of plain
+            // keys stays the linear comparison it always was, and only a
+            // map with a Thing among its keys pays for the walk.
+            for (key, value) in one.iter() {
+                let (found, _) = self.map_locate(other, Some(other), key)?;
+                let Some(index) = found else { return Ok(false) };
+                let compared = &other[index].1;
+                if !value.same_place(compared) {
+                    let answer = self.special_dyad(&Action::Eq, value, compared)?;
+                    if !self.special_truth(&answer)? { return Ok(false); }
+                }
+            }
+            Ok(true)
+        })();
+        self.reaching -= 1;
+        result
     }
 
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
@@ -6829,7 +6843,7 @@ impl<'a> Engine<'a> {
         // did not answer above, that worth; a mapping thing asked for a
         // key it has not may answer through the method the definition
         // names for it.
-        if matches!(op, Action::Same | Action::Unsame) && (matches!(Self::worth_of(a), Some(Value::Text(_))) || matches!(Self::worth_of(b), Some(Value::Text(_)))) { return self.dyadic(op, a, b); }
+        if matches!(op, Action::Same | Action::Unsame) && !self.lang.identity_not.is_empty() { return self.dyadic(op, a, b); }
         let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
         if left.is_some() || right.is_some() {
             if let (Action::At, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
@@ -7547,7 +7561,7 @@ impl<'a> Engine<'a> {
     fn fields_entries(o: &crate::value::Instance) -> Vec<(Value, Value)> {
         let fields = o.fields.borrow();
         let mut entries: Vec<(Value, Value)> = fields.iter()
-            .filter(|(key, held)| !key.starts_with('\0') && !matches!(held, Value::Blank))
+            .filter(|(key, held)| !key.starts_with('\0') && !matches!(held.contents(), Value::Blank))
             .map(|(key, held)| (Value::text(key), held.clone())).collect();
         if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -17727,6 +17741,10 @@ impl Engine<'_> {
             Value::ByteKind(mutable, _) => self.byte_call(u8::from(*mutable), &args),
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
+            Value::Method(..) => match self.class_apply(work.clone(), args) {
+                Ok(value) => Ok(value),
+                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            },
             Value::Routine(p) => {
                 if let Err(f) = self.invoke(p, args) {
                     self.carried = Some(f);
@@ -18025,7 +18043,9 @@ impl Engine<'_> {
                     Value::Set(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Map(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Text(a) => a.as_ptr() as usize as u64,
-                    Value::Object(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Object(a) | Value::Fields(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::ValueMethod(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Method(owner, routine) => (Rc::as_ptr(owner) as usize as u64).wrapping_add((Rc::as_ptr(routine) as usize as u64).rotate_left(17)),
                     Value::Class(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Bytes(cell, ..) => Rc::as_ptr(cell) as usize as u64,
                     Value::Slice(bounds) => Rc::as_ptr(bounds) as usize as u64,
@@ -18520,6 +18540,12 @@ impl Engine<'_> {
     /// spell. Its routines keep those addresses after the reader returns.
     fn import_module(&mut self, path: &str) -> Flow<Value> {
         if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
+        if let Some(cached) = self.module_cache_value(path) {
+            if matches!(cached, Value::Null) {
+                return Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules").into());
+            }
+            return Ok(cached);
+        }
         // A name a program's own code took out of `sys.modules` is
         // read in again rather than handed the standing instance: that
         // dictionary is where CPython keeps such a cache, and a program
@@ -18585,7 +18611,7 @@ impl Engine<'_> {
             // write actually bound at the module's own outermost scope
             // is one the module carries: the rest never left the frame
             // that held them.
-            if local.globals.contains(name) {
+            if local.globals.contains(name) && name.chars().next().is_some_and(|letter| self.lang.begins_name(letter)) {
                 fields.push((name.clone(), shared));
             }
         }
@@ -18615,7 +18641,7 @@ impl Engine<'_> {
         let result = self.invoke(&program, Vec::new());
         self.data.truncate(saved_depth);
         self.importing.remove(path);
-        if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(); return Err(fault); }
+        if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(path); return Err(fault); }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 let mut fields = parent.fields.borrow_mut();
@@ -18626,7 +18652,7 @@ impl Engine<'_> {
                 }
             }
         }
-        self.refresh_module_cache();
+        self.refresh_module_cache(path);
         Ok(module)
     }
 
@@ -19980,27 +20006,45 @@ impl Engine<'_> {
     /// one: true wherever that cache has yet to be written at all (an
     /// import too soon for it to hold anything, or a language with no
     /// such name), so an ordinary run is never slowed by looking.
+    fn module_cache_value(&self, path: &str) -> Option<Value> {
+        let [owner, member] = self.lang.module_cache.as_slice() else { return None };
+        let Value::Object(module) = self.modules.get(owner)? else { return None };
+        let fields = module.fields.borrow();
+        let held = &fields.iter().find(|(word, _)| word == member)?.1;
+        let Value::Map(entries) = held.contents() else { return None };
+        entries.iter().find_map(|(key, value)| {
+            matches!(key, Value::Text(word) if word.as_ref() == path).then(|| value.contents())
+        })
+    }
+
     fn module_cache_names(&self, path: &str) -> bool {
         if self.importing.contains(path) { return true; }
         let [owner, member] = self.lang.module_cache.as_slice() else { return true };
         let Some(Value::Object(module)) = self.modules.get(owner) else { return true };
         let Some((_, held)) = module.fields.borrow().iter().find(|(name, _)| name == member).cloned() else { return true };
-        let cache = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
+        let cache = held.contents();
         match cache {
             Value::Map(pairs) => pairs.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
             _ => true,
         }
     }
 
-    fn refresh_module_cache(&self) {
+    fn refresh_module_cache(&self, path: &str) {
         let [owner, member] = self.lang.module_cache.as_slice() else { return };
         let Some(Value::Object(module)) = self.modules.get(owner) else { return };
-        let values = self.modules.iter().map(|(name, value)| (Value::text(name), value.clone())).collect();
-        let map = Value::Map(Rc::new(values));
         let mut fields = module.fields.borrow_mut();
-        if let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) {
-            match place { Value::Bond(cell) => *cell.borrow_mut() = map, _ => *place = map }
-        }
+        let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) else { return };
+        let mut entries = if path == owner {
+            self.modules.iter().map(|(key, value)| (Value::text(key), value.clone())).collect::<Vec<_>>()
+        } else {
+            match place.contents() { Value::Map(row) => row.to_vec(), _ => Vec::new() }
+        };
+        entries.retain(|(key, _)| !matches!(key, Value::Text(word) if word.as_ref() == path));
+        if let Some(value) = self.modules.get(path) { entries.push((Value::text(path), value.clone())); }
+        let map = Value::Map(Rc::new(entries.into()));
+        if let Some(cell) = Self::map_cell(place) { *cell.borrow_mut() = map; }
+        else if let Value::Bond(cell) = place { *cell.borrow_mut() = map; }
+        else { *place = map; }
     }
 }
 #[path = "classes.rs"]

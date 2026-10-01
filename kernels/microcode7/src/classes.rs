@@ -859,7 +859,10 @@ impl<'a> Machine<'a> {
                     let (positional, named) = self.open_arguments(given)?;
                     let key = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
                     self.value_member(&under, &key, positional, named)?;
-                }else if !given.is_empty()&&native.is_none()&&self.inherited_entry(&class,self.detail("allocate")).is_none(){self.root_turns_away(&class,'n')?;}
+                }else if native.is_none()&&self.inherited_entry(&class,self.detail("allocate")).is_none(){
+                    let (positional, keywords) = self.open_arguments(given)?;
+                    if !positional.is_empty() || !keywords.is_empty() { self.root_turns_away(&class,'n')?; }
+                }
             }
         }
         Ok(created)
@@ -2261,7 +2264,7 @@ impl<'a> Machine<'a> {
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         // A method or a data member read off a native kind's own word
         // is of the descriptor kind CPython gives it.
-        if let [Value::Wrapped(7|35|60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(3|7|35|60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind

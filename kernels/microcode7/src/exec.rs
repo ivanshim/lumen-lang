@@ -4647,7 +4647,7 @@ impl<'a> Machine<'a> {
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
-                    Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") && !self.names_in_calls => *cell.borrow_mut() = Value::Unset,
+                    Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") && (!self.names_in_calls || Rc::ptr_eq(f, &self.outermost) && self.loaded_spaces.contains_key(&self.written_in)) => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }
                 Ok(Value::Nil)
@@ -11112,7 +11112,7 @@ impl<'a> Machine<'a> {
     fn attribute_entries(t: &crate::data::Thing) -> Vec<(Value, Value)> {
         let holds = t.holds.borrow();
         let mut entries: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, held)| !name.starts_with('\0') && !matches!(held, Value::Unset))
+            .filter(|(name, held)| !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
             .map(|(name, held)| (Value::text(name), held.clone())).collect();
         if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -12489,6 +12489,16 @@ impl<'a> Machine<'a> {
     /// there. A value that is itself a Thing keeps to `equal_contents`;
     /// only a map's own keys need the interpreter to compare them.
     fn dicts_equal(&mut self, one: &crate::data::MapStore, other: &crate::data::MapStore) -> Result<bool, String> {
+        if self.recursion_ceiling().is_some_and(|limit| self.standing >= limit) {
+            if let Some(text) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{text}")); }
+        }
+        self.standing += 1;
+        let answer = self.dicts_equal_contents(one, other);
+        self.standing -= 1;
+        answer
+    }
+
+    fn dicts_equal_contents(&mut self, one: &crate::data::MapStore, other: &crate::data::MapStore) -> Result<bool, String> {
         if one.len() != other.len() { return Ok(false); }
         // Each key of the one is sought among the other's through
         // `map_locate`, which is the store's own place first and a
@@ -12707,6 +12717,13 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Selfsame | Prim::Unlike) && v.iter().any(|value| matches!(value, Value::Shared(_) | Value::Keyed(..))) {
+            let opened: Vec<_> = v.iter().map(|value| match value {
+                Value::Keyed(item, _) => item.settled(),
+                held => held.settled(),
+            }).collect();
+            return self.prim(op, name, &opened);
+        }
         if matches!(op, Prim::Contains | Prim::Absent) {
             if let [needle, Value::Mutable(cell, _) | Value::Shared(cell)] = v {
                 let current = cell.borrow().clone();
@@ -13738,7 +13755,7 @@ impl<'a> Machine<'a> {
                             Some(Value::Thing(module)) => format!("\0import/{}/{name}", module.of.name),
                             _ => name.clone(),
                         };
-                        let slot = if let Some(index) = self.idents.iter().position(|word| word == &key) { index }
+                        let slot = if let Some(index) = self.idents.iter().rposition(|word| word == &key) { index }
                             else { self.idents.push(key); self.idents.len() - 1 };
                         self.booked_write(slot, &name, Some(worth.clone()));
                         let saved = {
@@ -15431,6 +15448,7 @@ impl<'a> Machine<'a> {
                     (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Attributes(a), Value::Attributes(b)) => Rc::ptr_eq(a, b),
+                    (Value::Attributes(_), Value::Dict(_)) | (Value::Dict(_), Value::Attributes(_)) => false,
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
                     (Value::Bound(a,here), Value::Bound(b,there)) => Rc::ptr_eq(a,b) && Rc::ptr_eq(here,there),
                     // Every read of a method ties it afresh: two reads are never one value.
@@ -18241,6 +18259,12 @@ impl Machine<'_> {
         // a name out of it means the next import to run the module
         // afresh, as a name written under a name used before this run
         // into a directory on `sys.path` needs to.
+        if let Some(found) = self.cached_import(path) {
+            return match found {
+                Value::Nil => Err(format!("ModuleNotFoundError: import of {} halted; None in sys.modules", path).into()),
+                module => Ok(module),
+            };
+        }
         if let Some(value) = self.imported.get(path) {
             if self.import_cache_names(path) { return Ok(value.clone()); }
         }
@@ -18302,7 +18326,7 @@ impl Machine<'_> {
                     }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
-                if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
+                if is_module_name || bound.contains(name.as_str()) && self.table.name_like(name) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
             }
         }
@@ -18341,7 +18365,7 @@ impl Machine<'_> {
         self.importing.remove(path);
         if let Err(stopped) = stopped {
             self.imported.remove(path);
-            self.refresh_import_table();
+            self.refresh_import_table(path);
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
         }
         if let Some((owner, name)) = split {
@@ -18353,7 +18377,7 @@ impl Machine<'_> {
                 } else { holdings.push((name.into(), value.clone())); }
             }
         }
-        self.refresh_import_table();
+        self.refresh_import_table(path);
         Ok(value)
     }
 
@@ -20310,6 +20334,7 @@ impl Machine<'_> {
     fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
         match callable {
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
+            Value::Method(..) => self.apply_class_member(callable.clone(), values).map_err(|escape| self.suspension_fault(escape)),
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),
             Value::Bound(program, frame) => match self.invoke(program.clone(), frame.clone(), values) {
@@ -20584,7 +20609,7 @@ impl Machine<'_> {
                     Value::Shared(cell) => match &*cell.borrow() {
                         Value::Vector(_) | Value::Dict(_) | Value::Set(_) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
                         Value::Mutable(inner, _) => return Ok(Value::Small(Rc::as_ptr(inner) as usize as i64)),
-                        inner => inner.clone(),
+                        inner => inner.settled(),
                     },
                     Value::Mutable(cell, _) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
                     other => other.settled(),
@@ -20601,6 +20626,10 @@ impl Machine<'_> {
                     Value::Set(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Dict(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Thing(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Attributes(owner) => Rc::as_ptr(owner) as usize as u64,
+                    Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
+                    Value::Method(code, instance) => (Rc::as_ptr(code) as usize as u64).rotate_right(9) ^ (Rc::as_ptr(instance) as usize as u64),
+                    Value::Wrapped(_, payload) => Rc::as_ptr(payload) as usize as u64,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Octets { cell, .. } => Rc::as_ptr(cell) as usize as u64,
                     Value::Span(bounds) => Rc::as_ptr(bounds) as usize as u64,
@@ -21107,31 +21136,66 @@ impl Machine<'_> {
     /// one: true wherever that cache has yet to be written at all (an
     /// import too soon for it to hold anything, or a language with no
     /// such name), so an ordinary run is never slowed by looking.
+    fn cached_import(&self, sought: &str) -> Option<Value> {
+        let words = self.table.strings("ext.system.module.cache");
+        if words.len() != 2 { return None; }
+        let namespace = match self.imported.get(&words[0])? {
+            Value::Thing(thing) => thing,
+            _ => return None,
+        };
+        let contents = namespace.holds.borrow();
+        for (member, slot) in contents.iter() {
+            if member != &words[1] { continue; }
+            let read = slot.settled();
+            if let Value::Dict(pairs) = read {
+                for (key, item) in pairs.iter() {
+                    if matches!(key, Value::Text(text) if text.as_ref() == sought) { return Some(item.settled()); }
+                }
+            }
+        }
+        None
+    }
+
     fn import_cache_names(&self, path: &str) -> bool {
         if self.importing.contains(path) { return true; }
         let names = self.table.strings("ext.system.module.cache");
         if names.len() != 2 { return true; }
         let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) else { return true };
         let Some((_, held)) = namespace.holds.borrow().iter().find(|(key, _)| key == &names[1]).cloned() else { return true };
-        let cache = match held { Value::Shared(cell) => cell.borrow().clone(), other => other };
+        let cache = held.settled();
         match cache {
             Value::Dict(entries) => entries.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
             _ => true,
         }
     }
 
-    fn refresh_import_table(&self) {
+    fn refresh_import_table(&self, imported_name: &str) {
         let names = self.table.strings("ext.system.module.cache");
         if names.len() != 2 { return; }
-        if let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) {
-            let dictionary = Value::Dict(Rc::new(self.imported.iter().map(|(key, worth)| (Value::text(key), worth.clone())).collect()));
-            for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
-                if key == &names[1] {
-                    if let Value::Shared(cell) = worth { *cell.borrow_mut() = dictionary; }
-                    else { *worth = dictionary; }
-                    break;
+        let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) else { return };
+        for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
+            if key != &names[1] { continue; }
+            let mut pairs: Vec<_> = match worth.settled() {
+                Value::Dict(items) if imported_name != names[0] => items.to_vec(),
+                _ => self.imported.iter().map(|(word, value)| (Value::text(word), value.clone())).collect(),
+            };
+            pairs.retain(|(word, _)| !matches!(word, Value::Text(text) if text.as_ref() == imported_name));
+            if let Some(value) = self.imported.get(imported_name) { pairs.push((Value::text(imported_name), value.clone())); }
+            let dictionary = Value::Dict(Rc::new(pairs.into()));
+            let slot = worth;
+            {
+                match slot {
+                    Value::Shared(cell) | Value::Mutable(cell, _) => {
+                        let nested = matches!(&*cell.borrow(), Value::Shared(_) | Value::Mutable(..));
+                        if nested {
+                            let inner = cell.borrow().clone();
+                            if let Value::Shared(inner) | Value::Mutable(inner, _) = inner { *inner.borrow_mut() = dictionary; }
+                        } else { *cell.borrow_mut() = dictionary; }
+                    }
+                    _ => { *slot = dictionary; }
                 }
             }
+            break;
         }
     }
 }
