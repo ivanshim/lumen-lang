@@ -196,7 +196,7 @@ fn text_is_bytes(language: &Language) -> bool {
             Err(_) => return false,
         },
     };
-    lumen_stack8::lang::text_is_bytes(&definition)
+    lumen_stack8::lang::Lang::parse(&definition).map_or(false, |lang| lang.text_is_bytes)
 }
 
 /// Whether a kernel gives the extension labels any meaning. The four
