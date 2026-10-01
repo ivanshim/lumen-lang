@@ -10568,6 +10568,9 @@ impl<'a> Engine<'a> {
         match (a, b) {
             (Value::Bond(x) | Value::Binding(x) | Value::Collection(x, _),
              Value::Bond(y) | Value::Binding(y) | Value::Collection(y, _)) => Rc::ptr_eq(x, y),
+            // The very object already standing at the place is no
+            // change to what holds it: writing it back is no write.
+            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
             _ => false,
         }
     }

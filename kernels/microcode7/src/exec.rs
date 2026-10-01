@@ -16622,6 +16622,7 @@ impl<'a> Machine<'a> {
     fn one_cell(a: &Value, b: &Value) -> bool {
         match (a, b) {
             (Value::Shared(x) | Value::Mutable(x, _), Value::Shared(y) | Value::Mutable(y, _)) => Rc::ptr_eq(x, y),
+            (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
             _ => false,
         }
     }
