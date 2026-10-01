@@ -57,6 +57,18 @@ class array:
     def __getitem__(self, index):
         return self.data[index]
 
+    def __setitem__(self, index, value):
+        if type(value) != type(1) and type(value) != type(True):
+            raise 'TypeError: array item must be an integer'
+        if self.typecode == 'B':
+            if value < 0 or value > 255:
+                raise OverflowError('unsigned byte integer is out of range')
+        elif self.typecode == 'i' and (value < -2147483648 or value > 2147483647):
+            raise 'OverflowError: signed integer is greater than maximum'
+        elif self.typecode == 'q' and (value < -9223372036854775808 or value > 9223372036854775807):
+            raise 'OverflowError: signed long long integer is greater than maximum'
+        self.data[index] = int(value)
+
     def tobytes(self):
         if self.typecode == 'B':
             return bytes(self.data)
