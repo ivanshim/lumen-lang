@@ -223,15 +223,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
 pub fn hold_of(value: &Value) -> Option<Hold> {
     match value {
         Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => hold_of(&cell.borrow()),
-        // A thing standing on a kind that admits no weak hold -- a
-        // tuple, a number, text, bytes -- admits none either.
-        Value::Object(o) => {
-            let refused = o.fields.borrow().iter().any(|(n, v)| n == "\0worth" && matches!(v.contents(),
-                Value::Tuple(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_) | Value::Complex(_)
-                | Value::Text(_) | Value::Codepoints(_) | Value::Bytes(..)));
-            if refused { return None; }
-            Some(Hold::Object(Rc::downgrade(o)))
-        }
+        Value::Object(o) => Some(Hold::Object(Rc::downgrade(o))),
         Value::Class(c) => Some(Hold::Class(Rc::downgrade(c))),
         Value::Generator(g) => Some(Hold::Generator(Rc::downgrade(g))),
         Value::Set(s) => Some(Hold::Set(Rc::downgrade(s))),

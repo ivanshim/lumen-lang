@@ -25,6 +25,7 @@ pub mod data;
 pub mod ghost;
 mod core;
 mod complex;
+pub mod tuples;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -299,6 +300,7 @@ fn import_rejoined(text: &str, table: &Table, added: u32) -> Option<String> {
 }
 
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
+    let _tuple_scope = tuples::Scope::enter(table.has_any("ext.builtin.tuple"));
     // A file reader folds a CRLF pair before passing on its contents.
     let file_text = if source.contains("\r\n") && table.has_any("ext.builtin.exceptions.syntax") {
         std::borrow::Cow::Owned(source.replace("\r\n", "\n"))
@@ -384,7 +386,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
             machine.define(n, Value::Small(all.len() as i64));
         }
         if let Some(n) = table.single("ext.system.args.list") {
-            machine.define(n, Value::Vector(std::rc::Rc::new(all)));
+            machine.define(n, Value::Vector(crate::tuples::Sequence::plain(all)));
         }
     }
     // What the request carries, each group a map under the name the
@@ -423,10 +425,10 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
                 let words = table.single(key)?;
                 let mut whole = vec![Value::text(words)];
                 whole.extend(steps.map(Value::text));
-                Some(Value::Vector(std::rc::Rc::new(whole)))
+                Some(Value::Vector(crate::tuples::Sequence::plain(whole)))
             })
             .collect();
-        machine.define(name, Value::Vector(std::rc::Rc::new(said)));
+        machine.define(name, Value::Vector(crate::tuples::Sequence::plain(said)));
     }
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.found_in(place);

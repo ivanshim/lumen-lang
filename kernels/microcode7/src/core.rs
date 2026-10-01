@@ -248,7 +248,7 @@ impl Value {
                 let count = sequence.count();
                 let first = if count == BigInt::from(0) { Self::Nil } else { Self::from_big(sequence.first.clone()) };
                 let stride = if count > BigInt::from(1) { Self::from_big(sequence.stride.clone()) } else { Self::Nil };
-                return Self::Tuple(std::rc::Rc::new(vec![Self::from_big(count), first, stride])).hash_number();
+                return Self::tuple(vec![Self::from_big(count), first, stride]).hash_number();
             }
             Self::Huge(_) | Self::Small(_) | Self::Flag(_) => {
                 let integer = self.as_big().ok()?;

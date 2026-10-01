@@ -8932,7 +8932,7 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.lexeme) && !lang.exceptions.contains(&tok.lexeme) {
             self.take();
-            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), sealed: std::cell::Cell::new(false) };
+            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
@@ -9333,7 +9333,7 @@ impl<'a> Compiler<'a> {
                             self.lazy_comprehension(&group, clause)?;
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
-                                if lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.constant(Value::Tuple(Rc::new(Vec::new()))); }
+                                if lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.constant(Value::tuple(Vec::new())); }
                                 else { self.scope_fault(&lang.scope_unready.clone()); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }

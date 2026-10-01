@@ -2295,3 +2295,26 @@ The merged count is 2619 on both kernels, up from 2617. Complete final
 build-machine runs confirm microcode7 math, str and long at 82, 127 and 35
 where Lambda times out. dir(traceback) still lacks a real bytecode offset;
 no offset or type metadata is fabricated to make that test pass.
+
+### 1au. Batch 20s merged as #526; batch 20t: subclass weakrefs and tuple storage
+
+Batch 20t integrates fix/subclass-weakrefs, implemented and integrated by
+GPT-6.1 Sol workers. Both kernels determine weak-reference eligibility from
+actual builtin-subclass layout and inherited slots, preserving that layout
+when a class namespace changes. The sentinel string-subclass name cycle
+now passes, taking test_builtin from 107 to 108.
+
+The branch's first full check exposed allocator-sensitive tuple identity
+reuse in test_genexps. Independent allocation-pressure probes reproduced
+it. Each kernel now recycles real, empty tuple allocations only after the
+last owner releases all elements. Live tuples and aliases are not cached;
+reported identities come from actual allocations. The bounded pools are
+selected by Python tuple support, leaving other languages' ordinary storage
+unchanged. The corrected final check passes test_genexps on both kernels.
+
+The integration preserves the namespace and singleton changes from 20s.
+The shared builtin stderr record was remeasured on both kernels with the
+normal relative-path helper. No Python test or input fixture is weakened.
+The merged count is 2620 on both kernels, up from 2619. Complete final
+build-machine fallbacks retain microcode7 math, str and long at 82, 127
+and 35 where Lambda times out.
