@@ -627,8 +627,9 @@ pub enum Form {
     Missing(Address),
     /// A statement together with the line of the source it was written
     /// on, so that a complaint can say where it happened.
-    OnLine(u32, Box<Form>),
-    Located((u32, u32, u32, u32), Box<Form>),
+    OnLine(u32, usize, Box<Form>),
+    /// Source extent and native preorder position of the expression within.
+    Located((u32, u32, u32, u32), usize, Box<Form>),
     /// The binding's own cell, made shareable if it is not already, so
     /// another name can be tied to it.
     Share(Address),
@@ -853,5 +854,70 @@ pub struct Routine {
 impl Drop for Routine {
     fn drop(&mut self) {
         crate::ghost::anything_departing();
+    }
+}
+
+impl Form {
+    /// Number the actual compiled tree, independently of source coordinates.
+    /// Frameless arms belong to this tree; functions start a new address space.
+    pub fn number_instructions(&mut self, next: &mut usize) {
+        *next += 1;
+        match self {
+            Self::Located(_, at, inner) | Self::OnLine(_, at, inner) => {
+                *at = *next;
+                inner.number_instructions(next);
+            }
+            Self::Const(Value::Routine(body)) if body.frameless => {
+                Rc::make_mut(body).body.number_instructions(next);
+            }
+            Self::Write(_, inner) | Self::Tie(_, inner)
+            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
+            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
+            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
+            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => inner.number_instructions(next),
+            Self::Apply(callee, args) => {
+                if let Callee::Code(target) = callee { target.number_instructions(next); }
+                for argument in args { argument.number_instructions(next); }
+            }
+            Self::Dyad { a, b, .. } => {
+                for input in [a, b] {
+                    if let Input::Form(form) = input { form.number_instructions(next); }
+                }
+            }
+            Self::Cycle { test, body, step, otherwise, .. } => {
+                test.number_instructions(next);
+                body.number_instructions(next);
+                for child in [step, otherwise].into_iter().flatten() { child.number_instructions(next); }
+            }
+            Self::Attempt { body, clauses, last, otherwise, .. } => {
+                body.number_instructions(next);
+                for clause in clauses {
+                    if let Some(choices) = &mut clause.choices { for choice in choices { choice.number_instructions(next); } }
+                    clause.body.number_instructions(next);
+                }
+                for child in [otherwise, last].into_iter().flatten() { child.number_instructions(next); }
+            }
+            Self::Class { values, .. } => {
+                for value in values { value.number_instructions(next); }
+            }
+            Self::Assert { condition, message } => {
+                condition.number_instructions(next);
+                message.number_instructions(next);
+            }
+            Self::Fits { value, kinds, .. } => {
+                value.number_instructions(next);
+                for kind in kinds { kind.number_instructions(next); }
+            }
+            Self::SharePlace(_, keys) => { for key in keys { key.number_instructions(next); } }
+            Self::ShareWithin(value, keys) => {
+                value.number_instructions(next);
+                for key in keys { key.number_instructions(next); }
+            }
+            Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => {
+                left.number_instructions(next);
+                right.number_instructions(next);
+            }
+            _ => {}
+        }
     }
 }

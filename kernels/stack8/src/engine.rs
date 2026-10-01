@@ -4297,6 +4297,7 @@ impl<'a> Engine<'a> {
             ("\0slots".into(), Value::tuple(locals.to_vec())),
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
+            ("\0instruction".into(), Value::Small(-1)),
         ]) }))
     }
 
@@ -4359,6 +4360,13 @@ impl<'a> Engine<'a> {
         Value::Null
     }
 
+    fn frame_instruction(frame: &Rc<Instance>) -> i64 {
+        frame.fields.borrow().iter().find_map(|(name, value)| match (name.as_str(), value) {
+            ("\0instruction", Value::Small(position)) => Some(*position),
+            _ => None,
+        }).unwrap_or(-1)
+    }
+
     fn record_trace(&mut self, raised: &Value, _program: &Routine) {
         let Value::Object(object) = raised else { return };
         if !self.exception_class(&object.class_now()) || self.lang.trace_fields.len() < 11 { return; }
@@ -4372,7 +4380,7 @@ impl<'a> Engine<'a> {
         if matches!(prior, Value::Null) {
             crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object)));
         }
-        let trace = Value::Trace(Rc::new(crate::value::Traceback { location: self.location, line: self.line, frame, next: prior }));
+        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame, next: prior }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
     }
 
@@ -4470,6 +4478,11 @@ impl<'a> Engine<'a> {
                         pc = self.offer_signal_fault(fault, &mut guards)?;
                         continue;
                     }
+                }
+            }
+            if let Some(active) = &self.trace_frame {
+                if let Some((_, position)) = active.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") {
+                    *position = Value::Small(pc as i64);
                 }
             }
             match &instrs[pc] {
@@ -5359,10 +5372,18 @@ impl<'a> Engine<'a> {
     /// the kind before the method is a way to the kind's own maker and
     /// not a member of a value, so it is left out.
     pub(super) fn kind_member_names(&self, sample: &Value) -> Vec<String> {
-        // A slice keeps its bounds and answers to nothing else the
-        // family mechanism below reckons, its own family standing for
-        // no working a program writes in the plain way.
-        if matches!(sample, Value::Slice(_)) { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
+        let held = sample.contents();
+        if matches!(held, Value::Trace(_)) {
+            let mut names: Vec<_> = self.lang.trace_fields.iter().enumerate().filter(|(i, _)| matches!(i, 1..=3 | 26)).map(|(_, name)| name.clone()).collect();
+            names.sort();
+            return names;
+        }
+        if matches!(held, Value::Slice(_)) {
+            let mut names = vec!["start".to_string(), "step".to_string(), "stop".to_string()];
+            if let Some(word) = self.lang.class_details.get("root.members").and_then(|words| words.get(9)) { names.push(word.clone()); }
+            names.sort();
+            return names;
+        }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         if matches!(family, Kindred::Set(_) | Kindred::Map) { names.extend(self.lang.constructor.iter().cloned()); }
@@ -5384,7 +5405,17 @@ impl<'a> Engine<'a> {
         // A whole number answers besides for the member that writes it
         // into a row of bytes, which belongs to the kind and not to a
         // value of it, so it is reached through the kind's own word.
-        if matches!(family, Kindred::Whole) { names.extend(self.lang.byte_words["ext.builtin.bytes.from_int"].iter().cloned()); }
+        if matches!(family, Kindred::Whole) {
+            names.extend(self.lang.byte_words["ext.builtin.bytes.from_int"].iter().cloned());
+            names.extend(self.lang.byte_words["ext.builtin.bytes.to_int"].iter().map(|word| word.rsplit('.').next().unwrap_or(word).to_string()));
+            names.extend(self.lang.class_details.get("integer.layout").and_then(|parts| parts.get(2)).cloned());
+        }
+        // The machine's numeric conversions are not Python members of
+        // complex, even though its arithmetic machinery can use them.
+        if matches!(family, Kindred::Complex) {
+            names.retain(|word| ![38, 39].iter().any(|at| self.lang.class_special.get(*at) == Some(word)));
+        }
+        if let Some(word) = self.lang.class_details.get("root.members").and_then(|words| words.get(9)) { names.push(word.clone()); }
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
@@ -5505,11 +5536,26 @@ impl<'a> Engine<'a> {
         if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
             return Some(Value::Native(Builtin::Text(crate::strings::TextOp::Maketrans), Rc::from(name)));
         }
+        if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
+            return Some(Self::adapter(30, vec![Value::text(name)]));
+        }
         if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
         Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
     }
 
+    /// Bind only a directory method supplied by the Python root protocol.
+    /// Tracebacks keep their restricted directory even though this method
+    /// itself is inherited and can be called explicitly.
+    pub(super) fn builtin_directory_method(&self, value: &Value, name: &str) -> Option<Value> {
+        let word = self.lang.class_details.get("root.members")?.get(9)?;
+        if name != word { return None; }
+        let held = value.contents();
+        if Self::native_family(&held).is_none() && !matches!(held, Value::Slice(_) | Value::Trace(_)) { return None; }
+        Some(Value::ValueMethod(Rc::new((value.clone(), word.clone()))))
+    }
+
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if let Some(directory) = self.builtin_directory_method(value, name) { return Ok(Some(directory)); }
         // A view of a map's keys, values or pairs keeps a reading of
         // the map itself under this name: a fresh view of its own,
         // read-only, and equal to the map for as long as it stands.
@@ -5822,7 +5868,7 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn native_special(&self, subject: &Value, name: &str) -> bool {
-        self.native_place(subject, name).is_some()
+        self.native_place(subject, name).is_some() || self.builtin_directory_method(subject, name).is_some()
     }
 
     /// The cell a container's name stands for, followed through however
@@ -9384,7 +9430,7 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let field = match &held {
-                    Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18)),
+                    Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18 | 26)),
                     Value::Generator(_) if self.is_async_generator(&held) => self.lang.async_generator_fields.iter().any(|word| word == name.as_ref()),
                     Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=25)),
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
@@ -9493,6 +9539,7 @@ impl<'a> Engine<'a> {
                         Some(1) => Value::Small(trace.line as i64),
                         Some(2) => trace.next.clone(),
                         Some(3) => Value::Object(trace.frame.clone()),
+                        Some(26) => Value::Small(trace.instruction),
                         Some(16) => Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64),
                         Some(17) => trace.location.map_or(Value::Null, |p| Value::Small(p.1 as i64)),
                         Some(18) => trace.location.map_or(Value::Null, |p| Value::Small(p.3 as i64)),
@@ -10081,7 +10128,7 @@ impl<'a> Engine<'a> {
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
                     if Rc::ptr_eq(&prior.frame, frame) {
-                        let trace = Value::Trace(Rc::new(crate::value::Traceback { location: self.location, line: self.line, frame: frame.clone(), next: Value::Trace(prior) }));
+                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame: frame.clone(), next: Value::Trace(prior) }));
                         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
                 }
@@ -13517,6 +13564,10 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if self.builtin_directory_method(receiver, operation).is_some() {
+            if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            return Ok(self.default_directory(receiver));
+        }
         if operation == "code_replace" {
             let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
             let Some(Value::Routine(original)) = handle.1.first() else { return Err(self.special_fault()) };

@@ -942,6 +942,7 @@ impl<'a> Engine<'a> {
     /// it works upon first.
     fn root_work(&mut self, name: &str, args: Vec<Value>) -> Flow<Value> {
         let place = self.lang.class_details.get("root.members").and_then(|names| names.iter().position(|n| n==name)).unwrap_or(usize::MAX);
+        if place == 9 && args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone().into()); }
         let declined = || Value::Declined(Rc::from(self.lang.special_declined.first().map(String::as_str).unwrap_or("NotImplemented")));
         let Some(subject) = args.first().cloned() else { return Err(self.class_refusal()); };
         let other = args.get(1).cloned();
@@ -971,15 +972,7 @@ impl<'a> Engine<'a> {
                 }
                 other => Value::text(&self.special_text(other,true).map_err(Fault::Note)?),
             },
-            9 => {
-                let mut names: Vec<String> = Vec::new();
-                if let Value::Object(o) = &subject {
-                    names.extend(o.fields.borrow().iter().filter(|(n,_)| !n.starts_with('\0')).map(|(n,_)| n.clone()));
-                    for c in std::iter::once(&o.class_now()).chain(o.class_now().lineage.iter()) { names.extend(c.shared.borrow().iter().map(|(n,_)| n.clone())); }
-                }
-                names.sort(); names.dedup();
-                Value::array(names.iter().map(|n| Value::text(n)).collect())
-            }
+            9 => self.default_directory(&subject),
             10 => self.root_state(&subject),
             11 | 12 => {
                 if place == 12 {
@@ -998,7 +991,7 @@ impl<'a> Engine<'a> {
     /// it holds nothing.
     fn root_state(&self, subject: &Value) -> Value {
         let Value::Object(o) = subject else { return Value::Null };
-        let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with('\0') && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
+        let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
         if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) }
     }
     pub(super) fn qualified_class(&self, class: &Class) -> String {
@@ -1200,11 +1193,15 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if matches!(&subject, Value::Trace(_)) {
+            if let Some(method) = self.builtin_directory_method(&subject, name) { return Ok(method); }
+        }
         if let Value::Trace(trace) = &subject {
             return match self.lang.trace_fields.iter().position(|key| key == name) {
                 Some(1) => Ok(Value::Small(trace.line as i64)),
                 Some(2) => Ok(trace.next.clone()),
                 Some(3) => Ok(Value::Object(trace.frame.clone())),
+                Some(26) => Ok(Value::Small(trace.instruction)),
                 Some(16) => Ok(Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64)),
                 Some(17) => Ok(trace.location.map_or(Value::Null, |p| Value::Small(p.1 as i64))),
                 Some(18) => Ok(trace.location.map_or(Value::Null, |p| Value::Small(p.3 as i64))),
@@ -1434,6 +1431,10 @@ impl<'a> Engine<'a> {
                 }
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class_now().clone());}
+                if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
+                    let root = Self::adapter(30, vec![Value::text(name)]);
+                    return Ok(Self::adapter(3, vec![root, subject.clone()]));
+                }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 // The worth a thing keeps answers for the methods of its kind.
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|matches!(v.contents(),Value::Set(_))) {
@@ -2632,64 +2633,7 @@ impl<'a> Engine<'a> {
                         return Ok(Value::array(ordered));
                     }
                 }
-                // A routine lists the members it can honestly answer
-                // for, alongside any it was given of its own.
-                if let Value::Routine(_)|Value::Method(..)=&one {
-                    let mut names:Vec<String>=vec![];
-                    for part in ["name","qualified","doc","module","defaults","call"] {
-                        let word=self.class_word(part);
-                        if !word.is_empty() { names.push(word.to_string()); }
-                    }
-                    let routine=match &one {Value::Method(_,f)=>Value::Routine(f.clone()),other=>other.clone()};
-                    names.extend(self.routine_member_names(&routine));
-                    names.sort();names.dedup();
-                    return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
-                }
-                if matches!(&one, Value::Adapter(parts) if parts.0 == 32) {
-                    let mut names = Vec::new();
-                    names.extend(self.lang.async_generator_methods.iter().skip(3).cloned());
-                    names.extend([15, 16].iter().filter_map(|index| self.lang.class_special.get(*index).cloned()));
-                    for words in [&self.lang.yield_send, &self.lang.yield_throw, &self.lang.yield_close] {
-                        names.extend(words.iter().cloned());
-                    }
-                    names.sort(); names.dedup();
-                    return Ok(Value::array(names.iter().map(|name| Value::text(name)).collect()));
-                }
-                // A walk over a routine's own body lists the walking
-                // pair it answers to (through the family below) and the
-                // few names a language gives it for stepping it by hand.
-                if let Value::Generator(_)=&one {
-                    let mut names=self.kind_member_names(&one);
-                    if self.is_async_generator(&one) {
-                        names.extend(self.lang.async_generator_methods.iter().take(3).cloned());
-                        names.extend(self.lang.async_generator_fields.iter().cloned());
-                        names.sort(); names.dedup();
-                        return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
-                    }
-                    for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
-                        if let Some(w)=words.first() { names.push(w.clone()); }
-                    }
-                    for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()) {
-                        if !word.is_empty() { names.push(word); }
-                    }
-                    names.sort();names.dedup();
-                    return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
-                }
-                // A builtin kind, named as the kind itself or held as a
-                // value of one, answers the members a value of that kind
-                // has: the methods of the kind and the special names its
-                // family answers to.
-                if let Some(sample)=self.dir_sample(&one) {
-                    let names=self.kind_member_names(&sample);
-                    return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
-                }
-                let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
-                if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));}}
-                else {names.extend(self.routine_member_names(&one));}
-                if matches!(&one, Value::Object(_)) && !names.iter().any(|n| n == self.class_word("kind")) {
-                    names.extend(self.lang.class_details.get("root.members").into_iter().flatten().cloned());
-                }
-                names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
+                Ok(self.default_directory(&one))
             }
             8=>Err(self.arity_told(&self.class_tool_word(8),1,args.len())),
             // A property is a thing of the property class, where the
@@ -2699,6 +2643,74 @@ impl<'a> Engine<'a> {
             _=>Err(self.class_refusal()),
         }
     }
+    /// The default directory is shared by the builtin and the root
+    /// method. Custom directory answers are handled before this path.
+    pub(super) fn default_directory(&self, one: &Value) -> Value {
+        // A routine lists the members it can honestly answer
+        // for, alongside any it was given of its own.
+        if let Value::Routine(_)|Value::Method(..)=one {
+            let mut names:Vec<String>=vec![];
+            for part in ["name","qualified","doc","module","defaults","call"] {
+                let word=self.class_word(part);
+                if !word.is_empty() { names.push(word.to_string()); }
+            }
+            let routine=match one {Value::Method(_,f)=>Value::Routine(f.clone()),other=>other.clone()};
+            names.extend(self.routine_member_names(&routine));
+            names.sort();names.dedup();
+            return Value::array(names.iter().map(|n|Value::text(n)).collect());
+        }
+                if matches!(one, Value::Adapter(parts) if parts.0 == 32) {
+                    let mut names = Vec::new();
+                    names.extend(self.lang.async_generator_methods.iter().skip(3).cloned());
+                    names.extend([15, 16].iter().filter_map(|index| self.lang.class_special.get(*index).cloned()));
+                    for words in [&self.lang.yield_send, &self.lang.yield_throw, &self.lang.yield_close] {
+                        names.extend(words.iter().cloned());
+                    }
+                    names.sort(); names.dedup();
+                    return Value::array(names.iter().map(|name| Value::text(name)).collect());
+                }
+        // A walk over a routine's own body lists the walking
+        // pair it answers to (through the family below) and the
+        // few names a language gives it for stepping it by hand.
+        if let Value::Generator(_)=one {
+            let mut names=self.kind_member_names(one);
+                    if self.is_async_generator(one) {
+                        names.extend(self.lang.async_generator_methods.iter().take(3).cloned());
+                        names.extend(self.lang.async_generator_fields.iter().cloned());
+                        names.sort(); names.dedup();
+                        return Value::array(names.iter().map(|n|Value::text(n)).collect());
+                    }
+            for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
+                if let Some(w)=words.first() { names.push(w.clone()); }
+            }
+            for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()) {
+                if !word.is_empty() { names.push(word); }
+            }
+            names.sort();names.dedup();
+            return Value::array(names.iter().map(|n|Value::text(n)).collect());
+        }
+        // A builtin kind, named as the kind itself or held as a
+        // value of one, answers the members a value of that kind
+        // has: the methods of the kind and the special names its
+        // family answers to.
+        if let Some(sample)=self.dir_sample(one) {
+            let names=self.kind_member_names(&sample);
+            return Value::array(names.iter().map(|n|Value::text(n)).collect());
+        }
+        let mut names=vec![];let class=match one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
+        if let Some(c)=class {
+            for b in std::iter::once(c).chain(c.lineage.iter()) {
+                names.extend(b.shared.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));
+                if let Some(sample) = Self::own_kind(b).and_then(|word| self.kind_sample(&word)) { names.extend(self.kind_member_names(&sample)); }
+            }
+        }
+        else {names.extend(self.routine_member_names(one));}
+        if matches!(one, Value::Object(_)) && !names.iter().any(|n| n == self.class_word("kind")) {
+            names.extend(self.lang.class_details.get("root.members").into_iter().flatten().cloned());
+        }
+        names.sort();names.dedup();Value::array(names.iter().map(|n|Value::text(n)).collect())
+    }
+
     /// The value whose kind a directory should describe: an empty value
     /// of the kind a builtin kind word names, or the value itself where
     /// it is one of a builtin kind. Nothing for a class or a thing of
