@@ -610,11 +610,17 @@ impl<'a> Engine<'a> {
         c.methods.iter().find(|(n,_)| n == name).map(|(_,p)| Value::Routine(p.clone()))
             .or_else(|| c.constants.iter().find(|(n,_)| n == name).map(|(_,v)| v.clone()))
     }
+    pub(super) fn kind_owns_protocol(&self, kind: &str, name: &str) -> bool {
+        self.lang.class_details.get("native.protocols").is_some_and(|entries| {
+            entries.chunks_exact(2).any(|entry| entry[0] == kind && entry[1].split_whitespace().any(|word| word == name))
+        })
+    }
     pub(super) fn class_value(&self, c: &Class, name: &str) -> Option<Value> {
         std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(|base| {
             Self::own_class_value(base, name).or_else(|| {
                 if !self.lang.fuller_classes { return None; }
                 let word = Self::own_kind(base)?;
+                if !self.kind_owns_protocol(&word, name) { return None; }
                 let sample = self.kind_sample(&word)?;
                 if self.lang.class_special.get(8).is_some_and(|hash| hash == name)
                     && self.lang.class_special.get(2).is_some_and(|eq| self.native_special(&sample, eq))
@@ -630,7 +636,17 @@ impl<'a> Engine<'a> {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A method bound to a value of a builtin kind, reached as a
             // value in its own right and then called.
-            Value::ValueMethod(bound) => Ok(self.value_method(&bound.0,&bound.1,args,Vec::new())?),
+            Value::ValueMethod(bound) => {
+                if self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()) {
+                    let mut positional = Vec::new(); let mut named = Vec::new();
+                    for (key, value) in self.call_items(args)? {
+                        match key { Some(key) => named.push((key, value)), None => positional.push(value) }
+                    }
+                    let answer = self.value_method(&bound.0, &bound.1, positional, named);
+                    if let Some(fault) = self.carried.take() { return Err(fault); }
+                    Ok(answer?)
+                } else { Ok(self.value_method(&bound.0, &bound.1, args, Vec::new())?) }
+            },
             Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A thing called stands on its own call member, which may be
             // a thing again: each such step is counted with the calls
@@ -754,7 +770,7 @@ impl<'a> Engine<'a> {
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
                         .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
                     let found = if of_own_kind && self.native_special(&receiver, &member) {
-                        Some(Value::ValueMethod(Rc::new((receiver.clone(), member.clone()))))
+                        Some(Value::ValueMethod(Rc::new((subject.clone(), member.clone()))))
                     } else if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
                     match found {
                         Some(bound) => self.class_apply(bound,args),

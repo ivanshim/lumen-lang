@@ -623,11 +623,16 @@ impl<'a> Machine<'a> {
         stored.or_else(||b.methods.iter().find(|(n,_)|n==key).map(|(_,p)|Value::Routine(p.clone())))
             .or_else(||b.constants.iter().find(|(n,_)|n==key).map(|(_,v)|v.clone()))
     }
+    pub(super) fn native_declares_protocol(&self, spelling: &str, key: &str) -> bool {
+        self.table.strings("ext.stmt.class.detail.native.protocols").chunks_exact(2)
+            .any(|pair| pair[0] == spelling && pair[1].split_whitespace().any(|entry| entry == key))
+    }
     pub(super) fn inherited_entry(&self,b:&Blueprint,key:&str)->Option<Value> {
         std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(|parent| {
             Self::own_entry(parent, key).or_else(|| {
                 if !self.table.has_class_order { return None; }
                 let spelling = Self::native_word(parent)?;
+                if !self.native_declares_protocol(&spelling, key) { return None; }
                 let sample = self.kind_stand_in(&spelling)?;
                 let protocols = self.table.strings("ext.stmt.class.special");
                 if protocols.get(8).is_some_and(|hash| hash == key)
@@ -645,7 +650,16 @@ impl<'a> Machine<'a> {
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),
             // A method tied to a value of a native kind, reached as a
             // value of its own and then called.
-            Value::Member(receiver,operation)=>self.value_member(&receiver,&operation,values,Vec::new()),
+            Value::Member(receiver,operation)=>{
+                if self.table.strings("ext.stmt.class.detail.native.protocols").is_empty() {
+                    self.value_member(&receiver,&operation,values,Vec::new())
+                } else {
+                    let (positional, named) = self.open_arguments(values)?;
+                    let answer = self.value_member(&receiver, &operation, positional, named);
+                    if let Some(escape) = self.got_away.take() { return Err(escape); }
+                    answer
+                }
+            },
             Value::Method(code,thing)=>{values.insert(0,Value::Thing(thing));self.invoke(code,self.outermost.clone(),values)},
             // A thing called stands on its own call member, which may
             // be a thing again. Reaching through one makes no frame, so
@@ -772,7 +786,7 @@ impl<'a> Machine<'a> {
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
                             .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
                         let found=if of_own_kind && self.native_member(&receiver, &entry) {
-                            Some(Value::Member(Rc::new(receiver.clone()), entry.clone()))
+                            Some(Value::Member(Rc::new(subject.clone()), entry.clone()))
                         } else if of_own_kind{self.attribute(&receiver,&entry)}else{None};
                         match found {
                             Some(bound)=>self.apply_class_member(bound,values),

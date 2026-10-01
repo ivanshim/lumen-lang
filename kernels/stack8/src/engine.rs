@@ -3818,8 +3818,9 @@ impl<'a> Engine<'a> {
             for current in std::iter::once(actual.as_ref()).chain(actual.lineage.iter().map(Rc::as_ref)) {
                 if let Some((_, Value::Routine(routine))) = current.shared.borrow().iter().find(|(n, _)| named(n)) { return Some(routine.clone()); }
                 if let Some((_, routine)) = current.methods.iter().find(|(n, _)| named(n)) { return Some(routine.clone()); }
-                if Self::own_kind(current).and_then(|word| self.kind_sample(&word))
-                    .map_or(false, |sample| names.iter().any(|name| self.native_special(&sample, name))) { return None; }
+                if let Some(word) = Self::own_kind(current) {
+                    if self.kind_sample(&word).is_some_and(|sample| names.iter().any(|name| self.kind_owns_protocol(&word, name) && self.native_special(&sample, name))) { return None; }
+                }
             }
             return None;
         }
@@ -5004,9 +5005,11 @@ impl<'a> Engine<'a> {
                 // Native slots participate here in C3 order. The ordinary
                 // native dispatch below executes them on the retained worth;
                 // a later mixin cannot override a slot already found.
-                if let Some(sample) = Self::own_kind(current).and_then(|word| self.kind_sample(&word)) {
-                    if self.native_special(&sample, named) { return None; }
-                    if place == 8 && self.lang.class_special.get(2).is_some_and(|eq| self.native_special(&sample, eq)) { return Some(Value::Null); }
+                if let Some(word) = Self::own_kind(current).filter(|word| self.kind_owns_protocol(word, named)) {
+                    if let Some(sample) = self.kind_sample(&word) {
+                        if self.native_special(&sample, named) { return None; }
+                        if place == 8 { return Some(Value::Null); }
+                    }
                 }
                 if place == 8 && self.lang.class_special.get(2).is_some_and(|eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.borrow().iter().any(|(n, _)| n == eq)) { return Some(Value::Null); }
             }
@@ -5033,7 +5036,8 @@ impl<'a> Engine<'a> {
     /// of the kind and the members of a value of it never part ways.
     pub(super) fn kind_special_names(&self, word: &str) -> Vec<String> {
         let Some(sample) = self.kind_sample(word) else { return Vec::new() };
-        self.lang.class_special.iter().filter(|name| self.native_special(&sample, name)).cloned().collect()
+        self.lang.class_special.iter().filter(|name| self.native_special(&sample, name)
+            && (self.lang.class_details.get("native.protocols").is_none_or(|names| names.is_empty()) || self.kind_owns_protocol(word, name))).cloned().collect()
     }
 
     /// An empty value of the builtin kind that word names, standing for
@@ -5530,7 +5534,17 @@ impl<'a> Engine<'a> {
     /// comparing, the signs, the length, the walk, the place written
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' too.
+    // The existing native hash identity rule, shared by builtin dispatch
+    // and a native descriptor called with the original receiver.
+    fn native_hash_identity(subject: &Value) -> Option<Value> {
+        let (Value::Object(object), Some(worth)) = (subject, Self::worth_of(subject)) else { return None; };
+        matches!(&worth, Value::Real(real) if real.no_number()).then_some(Value::Small(object.mark as i64))
+    }
+
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        let original = receiver;
+        let underlying = Self::worth_of(original).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
+        let receiver = underlying.as_ref().unwrap_or(original);
         if place == usize::MAX - 1 {
             if !named.is_empty() || args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
             let destination = Self::holding_cell(receiver);
@@ -5572,7 +5586,8 @@ impl<'a> Engine<'a> {
             _ => 0,
         };
         if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
-        if place == 79 || place == 81 { return self.pickle_reduction(&receiver.contents()); }
+        if place == 79 || place == 81 { return self.pickle_reduction(original); }
+        if place == 8 { if let Some(hash) = Self::native_hash_identity(original) { return Ok(hash); } }
         if place == 80 { return self.pickle_position(&receiver.contents(), &args[0]); }
         let family = Self::native_family(receiver).ok_or_else(|| self.special_fault())?;
         if family == Kindred::Complex {
@@ -5650,6 +5665,9 @@ impl<'a> Engine<'a> {
                     }
                 },
             };
+            if spec.is_empty() && matches!(original, Value::Object(_)) {
+                return self.special_text(original, false).map(|text| Value::text(&text));
+            }
             return Ok(Value::text(&writer.field(&receiver.contents(), &spec, "")?));
         }
         // A whole and a remainder taken at once, either way round.
@@ -7082,10 +7100,8 @@ impl<'a> Engine<'a> {
             // A thing over a real that is not a number hashes as itself,
             // the way CPython's own hash of a NaN does, and not as the
             // worth that stood in for it here.
-            if op == Builtin::Hash && args.len() == 1 && matches!(&args[0], Value::Object(_)) {
-                if let (Value::Object(object), Some(worth)) = (&args[0], Self::worth_of(&args[0])) {
-                    if matches!(&worth, Value::Real(r) if r.no_number()) { return Ok(Some(Value::Small(object.mark as i64))); }
-                }
+            if op == Builtin::Hash && args.len() == 1 {
+                if let Some(hash) = Self::native_hash_identity(&args[0]) { return Ok(Some(hash)); }
             }
             let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
             let answer = self.builtin(op, &word, &mut settled)?;
@@ -13007,7 +13023,8 @@ impl<'a> Engine<'a> {
         // kind. Each hands its work to the builtin or the sign that
         // already does it, so that the answer and the refusal are the
         // ones the plain form gives.
-        if let Some(place) = self.native_place(receiver, operation) {
+        let underlying = Self::worth_of(receiver).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
+        if let Some(place) = self.native_place(underlying.as_ref().unwrap_or(receiver), operation) {
             return self.native_member_call(receiver, operation, place, args, named);
         }
         let contents = receiver.contents();
@@ -17215,6 +17232,9 @@ impl Engine<'_> {
     }
 
     fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
+        let subclass = match value { Value::Object(object) => Some(Value::Class(object.class_now().clone())), _ => None };
+        let underlying = Self::worth_of(value).map(|worth| worth.contents());
+        let value = underlying.as_ref().unwrap_or(value);
         let pack = |parts: Vec<Value>| Value::Tuple(Rc::new(parts));
         let native = |op: Builtin| {
             let word = self.lang.builtins.iter().find(|(_, candidate)| **candidate == op).map(|(word, _)| word.clone()).unwrap_or_default();
@@ -17287,14 +17307,14 @@ impl Engine<'_> {
                     (iter, vec![work.clone(), Value::Null], Some(pack(vec![option, types.as_ref().unwrap().clone()])))
                 }
             },
-            CursorSource::Numbered(walk, n) => (native(Builtin::Enumerate), vec![walk.clone(), Value::of_big(n.clone())], None),
+            CursorSource::Numbered(walk, n) => (subclass.clone().unwrap_or_else(|| native(Builtin::Enumerate)), vec![walk.clone(), Value::of_big(n.clone())], None),
             CursorSource::Combined(walks, work, exact) => {
                 let mut inputs = Vec::new();
                 if let Some(work) = work { inputs.push(work.clone()); }
                 inputs.extend(walks.iter().cloned());
-                (native(if work.is_some() { Builtin::Map } else { Builtin::Zip }), inputs, if *exact { Some(Value::Flag(true)) } else { None })
+                (subclass.clone().unwrap_or_else(|| native(if work.is_some() { Builtin::Map } else { Builtin::Zip })), inputs, if *exact { Some(Value::Flag(true)) } else { None })
             }
-            CursorSource::Selected(walk, test) => (native(Builtin::Filter), vec![test.clone(), walk.clone()], None),
+            CursorSource::Selected(walk, test) => (subclass.clone().unwrap_or_else(|| native(Builtin::Filter)), vec![test.clone(), walk.clone()], None),
             CursorSource::Handed(thing) => (iter, vec![thing.clone()], None),
             CursorSource::Viewed(..) => {
                 let temporary = Value::Cursor(Rc::new(RefCell::new(saved)));

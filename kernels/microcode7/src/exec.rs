@@ -3188,8 +3188,9 @@ impl<'a> Machine<'a> {
                     Some(_)=>return None,
                     None=>{}
                 }
-                if Self::native_word(blueprint).and_then(|word| self.kind_stand_in(&word))
-                    .map_or(false, |sample| names.iter().any(|name| self.native_member(&sample, name))) { return None; }
+                if let Some(spelling) = Self::native_word(blueprint) {
+                    if self.kind_stand_in(&spelling).is_some_and(|sample| names.iter().any(|name| self.native_declares_protocol(&spelling, name) && self.native_member(&sample, name))) { return None; }
+                }
             }
             return None;
         }
@@ -6321,7 +6322,7 @@ impl<'a> Machine<'a> {
             gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
         }
         for name in self.table.strings("ext.stmt.class.special") {
-            if self.native_member(&sample, name) { gathered.push(name.clone()); }
+            if self.native_member(&sample, name) && (self.table.strings("ext.stmt.class.detail.native.protocols").is_empty() || self.native_declares_protocol(word, name)) { gathered.push(name.clone()); }
         }
         gathered
     }
@@ -6584,7 +6585,17 @@ impl<'a> Machine<'a> {
     /// comparing, the signs, the extent, the walk, the place written
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' own.
+    // Reuse the native identity hash with the receiver retained by a
+    // descriptor, as well as when the primitive unwraps an instance.
+    fn native_receiver_hash(subject: &Value) -> Option<Value> {
+        let (Value::Thing(instance), Some(Value::Frac(number))) = (subject, Self::underlying(subject)) else { return None; };
+        (number.above.is_zero() && number.beneath.is_zero()).then_some(Value::Small(instance.turn as i64))
+    }
+
     fn native_member_run(&mut self, receiver: &Value, name: &str, at: usize, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        let original = receiver;
+        let underlying = Self::underlying(original).filter(|_| !self.table.strings("ext.stmt.class.detail.native.protocols").is_empty());
+        let receiver = underlying.as_ref().unwrap_or(original);
         if at == usize::MAX - 1 {
             if !keywords.is_empty() || arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
             let holder = Self::native_cell(receiver);
@@ -6629,10 +6640,11 @@ impl<'a> Machine<'a> {
         };
         if !keywords.is_empty() || arguments.len() != wanted { return Err(self.method_fault("arguments").into()); }
         match at {
-            79 | 81 => return self.reduce_iterator(&receiver.settled()).map_err(Escape::from),
+            79 | 81 => return self.reduce_iterator(original).map_err(Escape::from),
             80 => return self.restore_iterator(&receiver.settled(), &arguments[0]).map_err(Escape::from),
             _ => {}
         }
+        if at == 8 { if let Some(hash) = Self::native_receiver_hash(original) { return Ok(hash); } }
         let mark = Self::native_mark(receiver).ok_or_else(|| self.bad_answer())?;
         match (mark, at) {
             ('c', 74) => return Ok(receiver.settled()),
@@ -6708,6 +6720,9 @@ impl<'a> Machine<'a> {
                     }
                 },
             };
+            if spec.is_empty() && matches!(original, Value::Thing(_)) {
+                return self.object_words(original, false).map(|text| Value::text(&text)).map_err(Escape::from);
+            }
             return Ok(Value::text(&layout.present(&receiver.settled(), &spec, "")?));
         }
         // A whole and a remainder answered together, either way about.
@@ -7524,7 +7539,8 @@ impl<'a> Machine<'a> {
         // kind. Each hands its work to the primitive that already does
         // it, so that the answer and the refusal are the ones the plain
         // form gives.
-        if let Some(at) = self.native_place(receiver, name) {
+        let underlying = Self::underlying(receiver).filter(|_| !self.table.strings("ext.stmt.class.detail.native.protocols").is_empty());
+        if let Some(at) = self.native_place(underlying.as_ref().unwrap_or(receiver), name) {
             return self.native_member_run(receiver, name, at, arguments, keywords);
         }
         if let Value::Thing(thing) = receiver.settled() {
@@ -10755,9 +10771,11 @@ impl<'a> Machine<'a> {
                 // The primitive slot is an entry at this C3 position.
                 // Its existing native dispatch uses the retained underlying
                 // value, before any entry of a later mixin can be considered.
-                if let Some(sample) = Self::native_word(blueprint).and_then(|spelling| self.kind_stand_in(&spelling)) {
-                    if self.native_member(&sample, word) { return None; }
-                    if index == 8 && names.get(2).is_some_and(|eq| self.native_member(&sample, eq)) { return Some(Value::Nil); }
+                if let Some(spelling) = Self::native_word(blueprint).filter(|spelling| self.native_declares_protocol(spelling, word)) {
+                    if let Some(sample) = self.kind_stand_in(&spelling) {
+                        if self.native_member(&sample, word) { return None; }
+                        if index == 8 { return Some(Value::Nil); }
+                    }
                 }
                 if index==8&&names.get(2).is_some_and(|equal|blueprint.methods.iter().any(|(key,_)|key==equal)||blueprint.shared.borrow().iter().any(|(key,_)|key==equal)){return Some(Value::Nil);}
             }
@@ -11835,9 +11853,7 @@ impl<'a> Machine<'a> {
                 // itself, the way CPython's own hash of a NaN does, and
                 // not as the worth that stood in for it here.
                 if operation == Prim::Hashed && operands.len() == 1 {
-                    if let (Value::Thing(t), Some(Value::Frac(r))) = (&operands[0], Self::underlying(&operands[0])) {
-                        if r.above.is_zero() && r.beneath.is_zero() { return Ok(Some(Value::Small(t.turn as i64))); }
-                    }
+                    if let Some(hash) = Self::native_receiver_hash(&operands[0]) { return Ok(Some(hash)); }
                 }
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
                 let outcome = self.prim(operation, &word, &settled);
@@ -19729,6 +19745,9 @@ impl Machine<'_> {
     }
 
     fn reduce_iterator(&mut self, subject: &Value) -> Result<Value, String> {
+        let subtype = match subject { Value::Thing(instance) => Some(Value::Blueprint(instance.blueprint().clone())), _ => None };
+        let underlying = Self::underlying(subject).map(|held| held.settled());
+        let subject = underlying.as_ref().unwrap_or(subject);
         fn tuple(values: Vec<Value>) -> Value { Value::Tuple(Rc::new(values)) }
         let builtin = |op: Prim| {
             let label = self.table.prims.iter().find(|(_, candidate)| **candidate == op).map(|(name, _)| name.clone()).unwrap_or_default();
@@ -19818,16 +19837,16 @@ impl Machine<'_> {
                 }
             },
             IteratorKind::Count(source, offset) => {
-                constructor = builtin(Prim::Numbered);
+                constructor = subtype.clone().unwrap_or_else(|| builtin(Prim::Numbered));
                 vec![source.clone(), Value::from_big(offset.clone())]
             }
             IteratorKind::Select(source, predicate) => {
-                constructor = builtin(Prim::Filtered);
+                constructor = subtype.clone().unwrap_or_else(|| builtin(Prim::Filtered));
                 vec![predicate.clone(), source.clone()]
             }
             IteratorKind::Parallel { inputs, mapper, exact } => {
                 let mut operands = inputs.clone();
-                constructor = builtin(if mapper.is_some() { Prim::Mapped } else { Prim::Zipped });
+                constructor = subtype.clone().unwrap_or_else(|| builtin(if mapper.is_some() { Prim::Mapped } else { Prim::Zipped }));
                 if let Some(function) = mapper { operands.insert(0, function.clone()); }
                 if *exact { state = Some(Value::Flag(true)); }
                 operands
