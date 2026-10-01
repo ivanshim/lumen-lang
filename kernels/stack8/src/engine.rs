@@ -3116,17 +3116,7 @@ impl<'a> Engine<'a> {
             }
             return Ok(Some(Self::iterator_state_field(object, "value")?));
         }
-        if mode == 1 {
-            if self.truth(&Self::iterator_state_field(object, "done")?) { return Ok(None); }
-            let state = self.product_step(&[Self::iterator_state_field(object, "pools")?, Self::iterator_state_field(object, "indices")?, Self::iterator_state_field(object, "first")?])?;
-            if let Value::Tuple(row) = state {
-                Self::iterator_state_store(object, "indices", row[1].clone());
-                Self::iterator_state_store(object, "first", Value::Flag(false));
-                return Ok(Some(row[0].clone()));
-            }
-            Self::iterator_state_store(object, "done", Value::Flag(true));
-            return Ok(None);
-        }
+        if mode == 1 { return self.product_next(object); }
         if mode != 2 { return Err("TypeError: unknown iterator operation".into()); }
         let Value::Adapter(state) = Self::tee_state_of(object)? else { return Err("TypeError: invalid tee data".into()); };
         let [source, Value::Walk(buffer), Value::Bond(running), Value::Bond(peers), Value::Bond(cleared)] = state.1.as_slice() else { return Err("TypeError: invalid tee data".into()); };
@@ -3168,6 +3158,46 @@ impl<'a> Engine<'a> {
             saved.1 = earliest;
         }
         Ok(Some(answer))
+    }
+
+    fn product_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+        let bad = || String::from("TypeError: invalid product state");
+        if self.truth(&Self::iterator_state_field(object, "done")?) { return Ok(None); }
+        let Value::Array(domains) = Self::iterator_state_field(object, "pools")?.contents() else { return Err(bad()); };
+        let Value::Array(numbers) = Self::iterator_state_field(object, "indices")?.contents() else { return Err(bad()); };
+        if numbers.len() != domains.len() { return Err(bad()); }
+        let mut indices = numbers.to_vec();
+        let first = self.truth(&Self::iterator_state_field(object, "first")?);
+        if !first {
+            let mut position = indices.len();
+            let mut advanced = false;
+            while position != 0 {
+                position -= 1;
+                let Value::Tuple(pool) = domains[position].contents() else { return Err(bad()); };
+                let Value::Small(index) = indices[position] else { return Err(bad()); };
+                let index = index.checked_add(1).ok_or_else(bad)?;
+                if usize::try_from(index).ok().map_or(false, |at| at < pool.len()) {
+                    indices[position] = Value::Small(index);
+                    advanced = true;
+                    break;
+                }
+                indices[position] = Value::Small(0);
+            }
+            if !advanced {
+                Self::iterator_state_store(object, "done", Value::Flag(true));
+                return Ok(None);
+            }
+        }
+        let mut answer = Vec::with_capacity(indices.len());
+        for position in 0..indices.len() {
+            let Value::Tuple(pool) = domains[position].contents() else { return Err(bad()); };
+            let Value::Small(index) = indices[position] else { return Err(bad()); };
+            let at = usize::try_from(index).map_err(|_| bad())?;
+            answer.push(pool.get(at).ok_or_else(bad)?.clone());
+        }
+        Self::iterator_state_store(object, "indices", Value::array(indices));
+        if first { Self::iterator_state_store(object, "first", Value::Flag(false)); }
+        Ok(Some(Value::tuple(answer)))
     }
 
     fn combination_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {

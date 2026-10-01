@@ -8121,18 +8121,7 @@ impl<'a> Machine<'a> {
                 }
                 return Self::recipe_member(thing, "value").map(Some);
             }
-            1 => {
-                if self.stands_true(&Self::recipe_member(thing, "done")?) { return Ok(None); }
-                let inputs = [Self::recipe_member(thing, "pools")?, Self::recipe_member(thing, "indices")?, Self::recipe_member(thing, "first")?];
-                match self.cartesian_step(&inputs)? {
-                    Value::Tuple(pair) => {
-                        Self::recipe_replace(thing, "first", Value::Flag(false));
-                        Self::recipe_replace(thing, "indices", pair[1].clone());
-                        return Ok(Some(pair[0].clone()));
-                    }
-                    _ => { Self::recipe_replace(thing, "done", Value::Flag(true)); return Ok(None); }
-                }
-            }
+            1 => return self.recipe_product(thing),
             2 => (),
             _ => return Err("TypeError: unknown iterator operation".to_owned()),
         }
@@ -8177,6 +8166,40 @@ impl<'a> Machine<'a> {
         { let mut entries = queue.borrow_mut(); for _ in released..floor { entries.pop_front(); } }
         *first.borrow_mut() = Value::Small(floor as i64);
         Ok(Some(item))
+    }
+
+    fn recipe_product(&mut self, owner: &Rc<Thing>) -> Result<Option<Value>, String> {
+        if self.stands_true(&Self::recipe_member(owner, "done")?) { return Ok(None); }
+        let pools = match Self::recipe_member(owner, "pools")?.settled() {
+            Value::Vector(values) => values,
+            _ => return Err("TypeError: invalid product pools".to_owned()),
+        };
+        let mut places = match Self::recipe_member(owner, "indices")?.settled() {
+            Value::Vector(values) => values.to_vec(),
+            _ => return Err("TypeError: invalid product indices".to_owned()),
+        };
+        if places.len() != pools.len() { return Err("TypeError: product indices do not match pools".to_owned()); }
+        let initial = self.stands_true(&Self::recipe_member(owner, "first")?);
+        if !initial {
+            let mut carried = true;
+            for slot in (0..places.len()).rev() {
+                let size = match pools[slot].settled() { Value::Tuple(values) => values.len(), _ => return Err("TypeError: invalid product domain".to_owned()) };
+                let Value::Small(old) = places[slot] else { return Err("TypeError: invalid product index".to_owned()); };
+                let next = old.checked_add(1).ok_or_else(|| "TypeError: invalid product index".to_owned())?;
+                if next >= 0 && (next as usize) < size { places[slot] = Value::Small(next); carried = false; break; }
+                places[slot] = Value::Small(0);
+            }
+            if carried { Self::recipe_replace(owner, "done", Value::Flag(true)); return Ok(None); }
+        }
+        let mut row = Vec::with_capacity(places.len());
+        for (domain, index) in pools.iter().zip(&places) {
+            let Value::Tuple(values) = domain.settled() else { return Err("TypeError: invalid product domain".to_owned()); };
+            let Value::Small(index) = index else { return Err("TypeError: invalid product index".to_owned()); };
+            row.push(values.get(*index as usize).cloned().ok_or_else(|| "TypeError: product index outside pool".to_owned())?);
+        }
+        Self::recipe_replace(owner, "indices", Value::Vector(crate::tuples::Sequence::plain(places)));
+        if initial { Self::recipe_replace(owner, "first", Value::Flag(false)); }
+        Ok(Some(Value::tuple(row)))
     }
 
     fn recipe_combinations(&mut self, owner: &Rc<Thing>) -> Result<Option<Value>, String> {
