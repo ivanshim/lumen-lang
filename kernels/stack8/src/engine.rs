@@ -9089,7 +9089,20 @@ impl<'a> Engine<'a> {
             // takes it both stand for, so a write through either is a
             // write both see.
             Action::BondField(name) => {
-                match self.drop_top()? {
+                let owner = self.drop_top()?;
+                if !self.lang.class_special.is_empty() && matches!(owner, Value::Object(_)) {
+                    // Index mutation reads the attribute, including a descriptor,
+                    // before reaching the mutable collection it returned.
+                    let reached = self.class_get(owner.clone(), name, false)?;
+                    match reached {
+                        Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => {
+                            self.data.push(Value::Bond(cell));
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+                match owner {
                     // A class named outright keeps its own values where
                     // a thing keeps its properties, so a place within one
                     // is reached through the cell the class holds, which

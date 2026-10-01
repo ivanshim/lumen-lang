@@ -155,7 +155,10 @@ class ModuleType:
         except AttributeError:
             if '__getattr__' in book:
                 return book['__getattr__'](name)
-            raise AttributeError("module %r has no attribute %r" % (book['__name__'], name))
+            title = book.get('__name__')
+            if isinstance(title, str):
+                raise AttributeError("module %r has no attribute %r" % (title, name))
+            raise AttributeError("module has no attribute %r" % name)
 
     def __setattr__(self, name, value):
         if name == '__dict__':
@@ -170,7 +173,8 @@ class ModuleType:
         del book[name]
 
     def __repr__(self):
-        return "<module '" + str(self.__name__) + "'>"
+        book = object.__getattribute__(self, '_namespace')
+        return "<module %r>" % book.get('__name__', '?')
 
 
 # A reading of a mapping that cannot be written through.

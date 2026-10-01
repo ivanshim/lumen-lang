@@ -4821,8 +4821,15 @@ impl<'a> Machine<'a> {
             // both.
             Form::ShareField(of, called) => {
                 let thing = self.value_of(of, frame)?;
-                // A namespace is not a field kept under that name but a
-                // view of the thing's own, and is written into as one.
+                if self.has_class_order() && matches!(thing, Value::Thing(_)) {
+                    // A property can supply the dictionary or list whose item
+                    // is being changed; its storage is the mutation target.
+                    let attribute = self.read_class_member(thing.clone(), called, false)?;
+                    if let Value::Mutable(storage, _) | Value::Shared(storage) = attribute {
+                        return Ok(Value::Shared(storage));
+                    }
+                }
+                // Routine namespaces expose their own writable attribute view.
                 if self.has_class_order() && called.as_ref() == self.rules.detail_namespace && matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Thing(_)) {
                     return self.read_class_member(thing, called, false);
                 }

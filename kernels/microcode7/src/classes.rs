@@ -706,6 +706,11 @@ impl<'a> Machine<'a> {
                         // the entry as before.
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
                             .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
+                        let empty_layout = values.len() == 1 && matches!(values[0].settled(), Value::Text(spec) if spec.is_empty());
+                        let textual_number = matches!(self.table.prims.get(&word), Some(Prim::AsInt | Prim::AsReal | Prim::AsText));
+                        if of_own_kind && empty_layout && textual_number && self.rules.specials.get(72).is_some_and(|label| label == &entry) {
+                            return self.native_working(Prim::AsText, "str", vec![subject]);
+                        }
                         let found=if of_own_kind{self.attribute(&receiver,&entry)}else{None};
                         match found {
                             Some(bound)=>self.apply_class_member(bound,values),
@@ -908,7 +913,13 @@ impl<'a> Machine<'a> {
             Value::Blueprint(kind) => format!("type object '{}' has no attribute '{key}'", self.full_class_name(kind)),
             Value::Thing(thing) if thing.blueprint().name == "ModuleType" => {
                 let held = thing.holds.borrow();
-                let label = held.iter().find(|(name, _)| name == "__name__").and_then(|(_, item)| match item.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
+                let book = held.iter().find(|(name, _)| name == "_namespace").map(|(_, item)| item.settled());
+                let title = if let Some(Value::Dict(entries)) = &book {
+                    entries.iter().find_map(|(name, item)| matches!(name, Value::Text(word) if word.as_ref() == "__name__").then_some(item))
+                } else {
+                    held.iter().find(|(name, _)| name == "__name__").map(|(_, item)| item)
+                };
+                let label = title.and_then(|item| match item.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
                 label.map_or_else(|| format!("module has no attribute '{key}'"), |label| format!("module '{label}' has no attribute '{key}'"))
             }
             Value::Thing(thing) => format!("'{}' object has no attribute '{key}'", self.full_class_name(&thing.blueprint())),
@@ -2001,7 +2012,9 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        let mut replacement = replacement.map(|worth| worth.keep(true));
+        let mut replacement = replacement.map(|worth| {
+            if matches!(worth, Value::Dict(_)) { worth.keep(true) } else { worth }
+        });
         if let Value::Thing(t) = &subject {
             if self.is_fault_kind(&t.blueprint()) {
                 for (label, description) in [("ext.builtin.exceptions.cause", "cause"), ("ext.builtin.exceptions.context", "context")] {

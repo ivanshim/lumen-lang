@@ -8004,7 +8004,9 @@ impl<'a> Compiler<'a> {
                 // to the footing below that restores `self.waiting` and
                 // any hush/mute marks, rather than returning out of the
                 // whole statement with those left disturbed.
-                if names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
+                // Python mutates the returned collection; an item store
+                // never assigns a descriptor's result back to its owner.
+                if !self.lang.class_special.is_empty() || names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
                     Ok(())
                 } else {
                     // What it stood on is written back into, read again

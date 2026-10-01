@@ -675,6 +675,11 @@ impl<'a> Engine<'a> {
                     // still reaches the member as before.
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
                         .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
+                    if of_own_kind && self.lang.class_special.get(72).is_some_and(|label| label == &member)
+                        && args.len() == 1 && matches!(args[0].contents(), Value::Text(text) if text.is_empty())
+                        && matches!(self.lang.builtins.get(&word), Some(Builtin::ToInt | Builtin::AsReal | Builtin::ToText)) {
+                        return self.builtin_call(Builtin::ToText, "str", vec![(None, subject)]).map_err(Fault::Note);
+                    }
                     let found = if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
                     match found {
                         Some(bound) => self.class_apply(bound,args),
@@ -974,7 +979,12 @@ impl<'a> Engine<'a> {
             Value::Class(class) => format!("type object '{}' has no attribute '{name}'", self.qualified_class(class)),
             Value::Object(instance) if instance.class_now().name == "ModuleType" => {
                 let fields = instance.fields.borrow();
-                let label = fields.iter().find(|(key, _)| key == "__name__").and_then(|(_, value)| match value.contents() { Value::Text(word) => Some(word.to_string()), _ => None });
+                let namespace = fields.iter().find(|(key, _)| key == "_namespace").map(|(_, value)| value.contents());
+                let named = match &namespace {
+                    Some(Value::Map(entries)) => entries.iter().find(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == "__name__")).map(|(_, value)| value),
+                    _ => fields.iter().find(|(key, _)| key == "__name__").map(|(_, value)| value),
+                };
+                let label = named.and_then(|value| match value.contents() { Value::Text(word) => Some(word.to_string()), _ => None });
                 label.map_or_else(|| format!("module has no attribute '{name}'"), |label| format!("module '{label}' has no attribute '{name}'"))
             }
             Value::Object(instance) => format!("'{}' object has no attribute '{name}'", self.qualified_class(&instance.class_now())),
