@@ -171,6 +171,7 @@ impl Value {
                 let letters = cell.borrow().iter().copied().map(char::from).collect::<String>();
                 return Self::text(&letters).hash_number();
             }
+            Self::Intrinsic(_, name) => return Self::text(name).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {

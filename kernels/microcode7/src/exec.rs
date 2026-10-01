@@ -7022,6 +7022,9 @@ impl<'a> Machine<'a> {
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if name == self.rules.detail_kind && name.len() > 0 {
+            return self.prim(Prim::SortOf, "type", &[value.settled()]).ok();
+        }
         if let Value::Intrinsic(op, word) = value {
             if !Self::names_a_kind(op) {
                 if name == self.rules.detail_qualified { return Some(Value::text(word)); }
@@ -7050,6 +7053,13 @@ impl<'a> Machine<'a> {
             .any(|part| self.table.spells(&format!("ext.stmt.yield.{part}"), name)) {
             return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
         }
+        if let Value::Window(owner, 'm') = value {
+            if let Some(method) = self.value_method_named(name) {
+                if matches!(method.as_str(), "copy" | "items" | "values" | "keys" | "get") {
+                    return Some(Value::Member(owner.clone(), method));
+                }
+            }
+        }
         if name == self.table.single("ext.stmt.class.detail.namespace").unwrap_or("") {
             let actual=value.settled();
             let named=match &actual {
@@ -7057,13 +7067,9 @@ impl<'a> Machine<'a> {
                 other => self.kind_spelling(other),
             };
             if let Some(word)=named {
-                let mut methods=self.kind_member_names(&word);
-                methods.push(name.to_owned());
-                let entries:Vec<(Value,Value)>=methods.into_iter().map(|member| {
-                    let detail=format!("<attribute '{member}' of '{word}' objects>");
-                    (Value::text(&member),Value::text(&detail))
-                }).collect();
-                return Some(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))),'m'));
+                let blueprint = self.native_kind(&word);
+                let contents = self.read_class_member(Value::Blueprint(blueprint), name, true).ok()?;
+                return Some(Value::Window(Rc::new(contents), 'm'));
             }
         }
         if let Some(answer) = self.integer_attribute(value, name) { return Some(answer); }
@@ -7556,6 +7562,12 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if let Value::Window(owner, 'm') = receiver {
+            match name {
+                "copy" | "items" | "values" | "keys" | "get" => return self.value_member(owner, name, arguments, keywords),
+                _ => {}
+            }
+        }
         if name == "code_replace" {
             let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready()) };
             let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err(self.class_unready()) };
@@ -10939,6 +10951,12 @@ impl<'a> Machine<'a> {
     fn appointment(&self, subject: &Value, index: usize) -> Option<Value> {
         let names = self.rules.specials;
         let word = names.get(index)?;
+        match subject {
+            Value::Blueprint(plan) => {
+                return Self::builder_over(plan).and_then(|builder| self.inherited_entry(&builder, word));
+            }
+            _ => {}
+        }
         let Value::Thing(thing) = subject else { return None };
         let kind = thing.blueprint();
         for blueprint in std::iter::once(kind.as_ref()).chain(kind.ancestry.iter().map(Rc::as_ref)) {
@@ -11064,6 +11082,7 @@ impl<'a> Machine<'a> {
         while let Some(value) = pending.pop() {
             match value {
                 Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => return true,
+                Value::Blueprint(plan) if Self::builder_over(&plan).is_some() => return true,
                 Value::Shared(cell) | Value::Mutable(cell, _) => {
                     if passed.insert(Rc::as_ptr(&cell) as usize) {
                         pending.push(cell.borrow().clone());
@@ -11844,7 +11863,10 @@ impl<'a> Machine<'a> {
     }
 
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
-        if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3, _))]) = (operation, operands) {
+        if let (Prim::At, [Value::Window(owner, 'm'), key]) = (operation, operands) {
+            return self.prim(operation, "", &[owner.as_ref().clone(), key.clone()]).map(Some);
+        }
+        if let (Prim::Hashed, [method @ (Value::Method(..) | Value::Wrapped(3, _) | Value::Intrinsic(..))]) = (operation, operands) {
             return Ok(method.hash_number().map(Value::Small));
         }
         if self.rules.specials.is_empty() { return Ok(None); }
@@ -12535,6 +12557,7 @@ impl<'a> Machine<'a> {
                     Value::Thing(t) if self.appointed(one, 2).is_none() => Value::Small(t.turn as i64),
                     Value::Small(_) | Value::Huge(_) => one.clone(),
                     Value::Flag(b) => Value::Small(*b as i64),
+                    Value::Blueprint(_) => Value::Small(one.hash_number().ok_or_else(|| self.bad_answer())?),
                     _ => return Err(self.bad_answer()),
                 },
             },
@@ -12590,7 +12613,7 @@ impl<'a> Machine<'a> {
             (Prim::Iterator, [_, _]) => return Ok(None),
             // A thing with a method for walking backwards answers the
             // reversed builtin with that walk.
-            (Prim::Backwards, [one @ Value::Thing(_)]) => match self.ask_special(one, 42, &[])? {
+            (Prim::Backwards, [one @ (Value::Thing(_) | Value::Blueprint(_))]) => match self.ask_special(one, 42, &[])? {
                 Some(walk @ Value::Thing(_)) => walk,
                 Some(walk) => self.iterated_value(&walk)?,
                 None => return Ok(None),
@@ -12949,6 +12972,11 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::At {
+            if let [Value::Window(dictionary, 'm'), index] = v {
+                return self.prim(op, name, &[dictionary.as_ref().clone(), index.clone()]);
+            }
+        }
         if matches!(op, Prim::Contains | Prim::Absent) {
             if let [needle, Value::Mutable(cell, _) | Value::Shared(cell)] = v {
                 let current = cell.borrow().clone();
@@ -13977,7 +14005,19 @@ impl<'a> Machine<'a> {
                 Value::Adorned(Rc::new(member))
             }
             Prim::BringModule => {
-                let path = v[0].bare();
+                let mut path = v[0].bare();
+                if path.starts_with('.') {
+                    let enclosing = self.loaded_spaces.get(&self.written_in).ok_or("ImportError: attempted relative import with no known parent package")?;
+                    let mut parts: Vec<&str> = enclosing.split('.').collect();
+                    if !self.written_in.ends_with("/__init__.py") { parts.pop(); }
+                    let dots = path.bytes().take_while(|byte| *byte == b'.').count();
+                    if dots > parts.len() { return Err("ImportError: attempted relative import beyond top-level package".into()); }
+                    parts.truncate(parts.len() + 1 - dots);
+                    if parts.is_empty() { return Err("ImportError: attempted relative import with no known parent package".into()); }
+                    let remainder = &path[dots..];
+                    let prefix = parts.join(".");
+                    path = if remainder.len() == 0 { prefix } else { prefix + "." + remainder };
+                }
                 let namespace = self.load_namespace(&path)?;
                 match &v[1] {
                     Value::Text(wanted) => self.namespace_item(&namespace, &path, wanted)?,
@@ -14179,8 +14219,9 @@ impl<'a> Machine<'a> {
                 if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(..) | Value::OctetKind { .. }) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
                 // A native kind's word has a maker and a name, where a class may stand on it.
                 if let Value::Intrinsic(_, kind) = &v[0] {
-                    let lined = word == self.rules.detail_mro || word == self.rules.detail_order;
-                    if kind.as_ref() == "type" || self.table.spells("ext.stmt.class.builtin", kind) && (lined || word == self.rules.detail_allocate || word == self.rules.detail_name || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
+                    let lined = word == self.rules.detail_mro || word == self.rules.detail_order || word == self.detail("bases");
+                    let inherited = self.table.strings("ext.stmt.class.detail.root.members").iter().any(|member| member == &word);
+                    if kind.as_ref() == "type" || self.table.spells("ext.stmt.class.builtin", kind) && (lined || inherited || word == self.rules.detail_allocate || word == self.rules.detail_name || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
                 }
                 // A native kind the reference keeps a docstring for
                 // answers to the member that reads it, whether or not
@@ -14667,7 +14708,12 @@ impl<'a> Machine<'a> {
                     Value::Thing(t) => self.admits_weak(&t.blueprint()),
                     _ => true,
                 };
-                let Some(ghost) = (if allowed { crate::ghost::ghost_of(&v[0]) } else { None }) else {
+                let ghost = match v[0].settled() {
+                    native @ Value::Intrinsic(working, _) if Self::names_a_kind(&working) => Some(crate::ghost::Ghost::Permanent(native)),
+                    _ if allowed => crate::ghost::ghost_of(&v[0]),
+                    _ => None,
+                };
+                let Some(ghost) = ghost else {
                     let refusal = self.table.strings("ext.builtin.weak.refused");
                     let kind = v[0].settled().kind_word();
                     let (head, tail) = (refusal.first().map_or("", String::as_str), refusal.get(1).map_or("", String::as_str));
@@ -18524,6 +18570,21 @@ impl Machine<'_> {
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+        let cache_labels = self.table.strings("ext.system.module.cache");
+        if cache_labels.len() == 2 {
+            if let Some(Value::Thing(system)) = self.imported.get(&cache_labels[0]) {
+                let held = system.holds.borrow().iter().find(|entry| entry.0 == cache_labels[1]).map(|entry| entry.1.settled());
+                if let Some(Value::Dict(cache)) = held {
+                    for (label, value) in cache.iter() {
+                        if !matches!(label, Value::Text(word) if word.as_ref() == path) { continue; }
+                        let value = value.settled();
+                        return if matches!(value, Value::Nil) {
+                            Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules"))
+                        } else { Ok(value) };
+                    }
+                }
+            }
+        }
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is
         // where CPython keeps such a cache, and a program that empties
@@ -18640,6 +18701,20 @@ impl Machine<'_> {
                     if let Value::Shared(link) = &holdings[at].1 { *link.borrow_mut() = value.clone(); }
                     else { holdings[at].1 = value.clone(); }
                 } else { holdings.push((name.into(), value.clone())); }
+            }
+        }
+        let cache_owner = self.table.strings("ext.system.module.cache").first().cloned();
+        if cache_owner.as_deref() == Some(path) {
+            let main_name = self.detail("main").to_owned();
+            if main_name.len() > 0 && self.imported.get(&main_name).is_none() {
+                let dictionary = Value::Mutable(self.world_kept(), true);
+                let blueprint = Blueprint { name: main_name.clone(), presentation: Some(format!("<module '{main_name}'>")), under: None,
+                    parents: Vec::new(), ancestry: Vec::new(), answers: Vec::new(), reaches: Vec::new(), fields: Vec::new(),
+                    shared: RefCell::new(Vec::new()), constants: Vec::new(), methods: Vec::new(), weak_slot: Cell::new(None), sealed: Cell::new(false) };
+                self.made += 1;
+                let instance = Thing { of: Rc::new(blueprint), reclassified: RefCell::new(None), turn: self.made,
+                    holds: RefCell::new(vec![(String::from("\0dictionary"), dictionary)]) };
+                self.imported.insert(main_name, Value::Thing(Rc::new(instance)));
             }
         }
         self.refresh_import_table();
@@ -20719,7 +20794,8 @@ impl Machine<'_> {
                 let job = if op == Prim::SetMember { 4 } else { 5 };
                 return self.work_on_class(job, input).map_err(|fault| self.suspension_fault(fault));
             }
-            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..))) {
+            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..))
+                || matches!(op, Prim::GetMember | Prim::HasAttribute | Prim::MembersOf) && matches!(v, Value::Intrinsic(work, _) if work.names_a_kind())) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
                 if let Some(job) = job {
                     let outcome = self.work_on_class(job, input);
@@ -21421,7 +21497,13 @@ impl Machine<'_> {
         let names = self.table.strings("ext.system.module.cache");
         if names.len() != 2 { return; }
         if let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) {
-            let dictionary = Value::Dict(Rc::new(self.imported.iter().map(|(key, worth)| (Value::text(key), worth.clone())).collect()));
+            let previous = namespace.holds.borrow().iter().find(|entry| entry.0 == names[1]).map(|entry| entry.1.settled());
+            let mut records = if let Some(Value::Dict(entries)) = previous { entries.to_vec() } else { vec![] };
+            for (label, space) in self.imported.iter() {
+                let present = records.iter().any(|entry| matches!(&entry.0, Value::Text(key) if key.as_ref() == label));
+                if !present { records.push((Value::text(label), space.clone())); }
+            }
+            let dictionary = Value::Dict(Rc::new(records.into()));
             for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
                 if key == &names[1] {
                     if let Value::Shared(cell) = worth { *cell.borrow_mut() = dictionary; }

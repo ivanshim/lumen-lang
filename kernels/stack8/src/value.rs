@@ -1028,6 +1028,7 @@ impl Value {
             Value::Text(s) => Ok(format!("s{}", s)),
             Value::Bytes(bytes, false, _) => Ok(format!("bytes:{:?}", bytes.borrow())),
             Value::Bytes(_, true, _) => Err("bytearray"),
+            Value::Native(_, spelling) => Ok(format!("builtin:{spelling}")),
             Value::Class(kind) => Ok(format!("class:{:p}", Rc::as_ptr(kind))),
             Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
             Value::Adapter(w) if matches!(w.0, 1 | 2 | 14 | 19 | 29 | 30 | 40..=42) => {

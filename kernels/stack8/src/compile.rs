@@ -5989,8 +5989,16 @@ impl<'a> Compiler<'a> {
             for (key, place) in initial {
                 if !key.starts_with('\0') { self.mirror_member(&key, &place)?; }
             }
-        } else if self.class_body_names_locals(self.pos, inline) {
-            self.class_book();
+        } else {
+            if self.class_body_names_locals(self.pos, inline) { self.class_book(); }
+            if let Some(word) = lang.class_details.get("module").and_then(|names| names.first()) {
+                self.read("__name__");
+                let slot = self.gensym("module_of_class");
+                self.write(&slot);
+                self.gathering().shared.push((word.clone(), slot.clone()));
+                self.gathering().order.push(word.clone());
+                self.mirror_member(word, &slot)?;
+            }
         }
         let mut opening = true;
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {

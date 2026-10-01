@@ -1038,7 +1038,7 @@ impl<'a> Engine<'a> {
                 16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
-                20..=27 | 29 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                20..=27 | 29 | 30 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match subject { Some(Value::Object(o)) => Ok(self.property_reading(&o, &w.1[0].plain())), _ => Ok(value) },
                 _ => Ok(value),
             };
@@ -1174,12 +1174,9 @@ impl<'a> Engine<'a> {
                 other=>self.kind_spelled(other),
             };
             if let Some(word)=builtin {
-                let mut listed=self.kind_special_names(&word);
-                listed.push(name.to_string());
-                let pairs:Vec<(Value,Value)>=listed.into_iter().map(|entry| {
-                    (Value::text(&entry),Value::text(&format!("<attribute '{entry}' of '{word}' objects>")))
-                }).collect();
-                return Ok(Value::View(Rc::new((Value::Map(Rc::new(pairs.into())),"mapping".to_string()))));
+                let native = self.kind_class(&word);
+                let dictionary = self.class_get(Value::Class(native), name, true)?;
+                return Ok(Value::View(Rc::new((dictionary, "mapping".to_string()))));
             }
         }
         // A routine, a wrapped routine and a slot each read as a member
@@ -1225,26 +1222,26 @@ impl<'a> Engine<'a> {
                     if let Some(doc) = Self::builtin_kind_doc(word) { return Ok(Value::text(doc)); }
                 }
                 if name==self.class_word("namespace") {
-                    let mut names=self.kind_special_names(word);
-                    names.push(name.to_string());
-                    let rows=names.into_iter().map(|key| (Value::text(&key),Value::text(&format!("<attribute '{key}' of '{word}' objects>")))).collect();
-                    let book=Value::Map(Rc::new(rows));
+                    let kind = self.kind_class(word);
+                    let book = self.class_get(Value::Class(kind), name, true)?;
                     return Ok(Value::View(Rc::new((book,"mapping".to_string()))));
                 }
                 // The kind read as a class stands on the root and on
                 // nothing else, so that is the whole of its line.
+                if name == self.class_word("bases") { return Ok(Value::tuple(vec![Value::Class(self.root_class())])); }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let listed=name==self.class_word("order");
                     let word=word.to_string();
                     let kind=self.kind_class(&word);
                     let root=self.root_class();
-                    let line=Value::tuple(vec![Value::Class(kind),Value::Class(root)]);
+                    let line=Value::tuple(vec![self.public_kind(kind),Value::Class(root)]);
                     return Ok(if listed {Self::adapter(0,vec![line])} else {line});
                 }
                 // Whatever a value of the kind answers to is carried by
                 // the kind itself, standing loose: the value it works
                 // upon is the first it is called with.
                 if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
+                if let Some(inherited) = self.root_member(name, None) { return Ok(inherited); }
             }
             Value::Class(c) => {
                 if let Some(word) = Self::own_kind(c) {
@@ -1269,7 +1266,7 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("name") { return Ok(Value::text(&c.name)); }
                 if name==self.class_word("qualified") { return Ok(self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name))); }
-                if name==self.class_word("bases") { return Ok(Value::tuple(c.direct.iter().cloned().map(Value::Class).collect())); }
+                if name==self.class_word("bases") { return Ok(Value::tuple(c.direct.iter().cloned().map(|base| self.public_kind(base)).collect())); }
                 if name==self.class_word("namespace") {
                     if let Some(maker)=Self::maker_beneath(c) {
                         if let Some(descriptor)=self.class_value(&maker,name).filter(|entry| self.takes_writes(entry)) {
@@ -1292,7 +1289,7 @@ impl<'a> Engine<'a> {
                     return Ok(Self::namespace(&c.shared.borrow()));
                 }
                 if name==self.class_word("mro") || name==self.class_word("order") {
-                    let mut order=vec![subject.clone()]; order.extend(c.lineage.iter().cloned().map(Value::Class));
+                    let mut order=vec![self.public_kind(c.clone())]; order.extend(c.lineage.iter().cloned().map(|base| self.public_kind(base)));
                     let tuple=Value::tuple(order);
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
@@ -1603,6 +1600,9 @@ impl<'a> Engine<'a> {
     /// names a kind: the value `int`, not the class standing for it.
     pub(super) fn spelled_kind(&self, word: &str) -> Option<Value> {
         self.lang.builtins.get(word).copied().filter(|op| Self::kind_builtin(op)).map(|op| Value::Native(op, Rc::from(word)))
+    }
+    fn public_kind(&self, class: Rc<Class>) -> Value {
+        Self::own_kind(&class).and_then(|word| self.spelled_kind(&word)).unwrap_or(Value::Class(class))
     }
     /// The row of type parameters a routine was declared with: for each
     /// name written between the brackets, a holder made by the hinting
@@ -2002,6 +2002,11 @@ impl<'a> Engine<'a> {
                 }
                 let dictionary = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, value)| value.clone());
                 if let Some(dictionary) = dictionary {
+                    if matches!(dictionary, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))
+                        && matches!(dictionary.contents(), Value::Map(_)) {
+                        if !Self::book_write(&dictionary, name, value) { return Err(absent); }
+                        return Ok(Value::Null);
+                    }
                     let raw = Self::worth_of(&dictionary).unwrap_or(dictionary);
                     match value {
                         Some(value) => { self.value_method(&raw, "update", vec![Value::Map(Rc::new(vec![(Value::text(name), value)].into()))], vec![])?; }
@@ -2017,6 +2022,17 @@ impl<'a> Engine<'a> {
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
+                if !plain {
+                    if let Some(maker) = Self::maker_beneath(c) {
+                        let hook = self.class_word(if value.is_some() { "set" } else { "remove" });
+                        if let Some(method) = self.class_value(&maker, hook) {
+                            let bound = self.bind_class_value(method, Some(subject.clone()), maker)?;
+                            let mut args = vec![Value::text(name)];
+                            if let Some(held) = value { args.push(held); }
+                            return self.class_apply(bound, args);
+                        }
+                    }
+                }
                 if Self::class_sealed(c) {
                     return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
                 }

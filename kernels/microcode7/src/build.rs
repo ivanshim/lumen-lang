@@ -4805,9 +4805,14 @@ impl<'a> Builder<'a> {
                 setup.push(Form::Write(address.clone(), Box::new(source_module)));
                 if let Some(write) = self.mirror_member(name, &address) { setup.push(write); }
             }
-        } else if self.class_body_names_locals(self.pos, on_one_line) {
-            let made = self.class_book();
-            setup.push(made);
+        } else {
+            if self.class_body_names_locals(self.pos, on_one_line) { setup.push(self.class_book()); }
+            if let Some(module_key) = table.single("ext.stmt.class.detail.module") {
+                let module = self.read("__name__");
+                self.member_ranked(module_key);
+                self.parts().attributes.push(module_key.to_string());
+                self.parts().held.push(module);
+            }
         }
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
         // What the class says about itself is text standing alone at the

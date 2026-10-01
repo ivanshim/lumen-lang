@@ -154,6 +154,7 @@ impl Value {
                 let text: String = bytes.borrow().iter().map(|byte| char::from(*byte)).collect();
                 Value::text(&text).core_hash()
             }
+            Value::Native(_, word) => Value::text(word).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Adapter(w) if matches!(w.0, 1 | 2 | 14 | 19 | 29 | 30 | 40..=42) => {

@@ -23,6 +23,8 @@ use crate::form::Routine;
 /// What a weak hold is on.
 #[derive(Clone)]
 pub enum Ghost {
+    // A builtin kind has no reclamation event within a run.
+    Permanent(Value),
     Thing(Weak<Thing>),
     Blueprint(Weak<Blueprint>),
     Walk(Weak<RefCell<Suspension>>),
@@ -36,6 +38,7 @@ impl Ghost {
     /// The thing itself, for as long as it is still about.
     pub fn revive(&self) -> Option<Value> {
         match self {
+            Ghost::Permanent(word) => Some(word.clone()),
             Ghost::Thing(w) => w.upgrade().map(Value::Thing),
             Ghost::Blueprint(w) => w.upgrade().map(Value::Blueprint),
             Ghost::Walk(w) => w.upgrade().map(Value::Generator),

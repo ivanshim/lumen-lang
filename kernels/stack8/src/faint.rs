@@ -23,6 +23,8 @@ use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance,
 /// What a weak hold points at: one of the kinds a program may hold weakly.
 #[derive(Debug, Clone)]
 pub enum Hold {
+    // Builtin type words exist for the duration of the interpreter.
+    Immortal(Value),
     Object(Weak<Instance>),
     Class(Weak<Class>),
     Generator(Weak<RefCell<Generator>>),
@@ -35,6 +37,7 @@ impl Hold {
     /// The value again, while it is still there.
     pub fn revive(&self) -> Option<Value> {
         Some(match self {
+            Hold::Immortal(value) => value.clone(),
             Hold::Object(w) => Value::Object(w.upgrade()?),
             Hold::Class(w) => Value::Class(w.upgrade()?),
             Hold::Generator(w) => Value::Generator(w.upgrade()?),
@@ -46,6 +49,7 @@ impl Hold {
 
     pub fn gone(&self) -> bool {
         match self {
+            Hold::Immortal(_) => false,
             Hold::Object(w) => w.strong_count() == 0,
             Hold::Class(w) => w.strong_count() == 0,
             Hold::Generator(w) => w.strong_count() == 0,
