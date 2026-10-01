@@ -60,3 +60,27 @@ class SupportsAbs(_NumericProtocol):
 
 class SupportsRound(_NumericProtocol):
     _required_method = '__round__'
+
+
+# Resolve the runtime annotations available on ordinary functions and classes.
+def get_type_hints(obj, globalns=None, localns=None, include_extras=False, *, format=1):
+    if getattr(obj, '__no_type_check__', False):
+        return {}
+    if format not in (1, 2, 3, 4):
+        raise ValueError(str(format) + ' is not a valid Format')
+    if format == 4:
+        raise ValueError('The STRING format is not supported by get_type_hints()')
+    from annotationlib import get_annotations
+    hints = get_annotations(obj)
+    if globalns is None:
+        globalns = getattr(obj, '__globals__', {})
+    if localns is None:
+        localns = globalns
+    resolved = {}
+    for name, value in hints.items():
+        if isinstance(value, str):
+            value = eval(value, globalns, localns)
+        if value is None:
+            value = type(None)
+        resolved[name] = value
+    return resolved
