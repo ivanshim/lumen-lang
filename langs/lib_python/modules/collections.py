@@ -1,6 +1,11 @@
 # The small containers below keep their contents in ordinary arrays and
 # maps. Where the object protocol is wanting, no silent stand-in is used.
 class OrderedDict(dict):
+    def __repr__(self):
+        if not self:
+            return 'OrderedDict()'
+        return 'OrderedDict(' + repr(list(self.items())) + ')'
+
     def move_to_end(self, key, last=True):
         value = self.pop(key)
         if last:

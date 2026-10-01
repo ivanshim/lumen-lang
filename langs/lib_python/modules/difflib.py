@@ -1,6 +1,4 @@
-# From CPython 3.14, Lib/difflib.py, adapted: the matching blocks
-# list is built by a comprehension rather than map(Match._make, ...),
-# since map cannot call a bound classmethod here.
+# From CPython 3.14, Lib/difflib.py.
 # Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
 # The PSF license is kept in tests/python/LICENSE.
 """
@@ -492,7 +490,7 @@ class SequenceMatcher:
             non_adjacent.append((i1, j1, k1))
 
         non_adjacent.append( (la, lb, 0) )
-        self.matching_blocks = [Match._make(x) for x in non_adjacent]
+        self.matching_blocks = list(map(Match._make, non_adjacent))
         return self.matching_blocks
 
     def get_opcodes(self):
