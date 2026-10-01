@@ -3402,6 +3402,22 @@ impl<'a> Engine<'a> {
                 if matches!(ran, Ok(Passage::Suspended)) {
                     return self.gave_way(suspended, at, depth, active, Phase::Body);
                 }
+                // The body ran to its end with its guard still up: a
+                // signal still pending is taken up now, exactly as
+                // though the body's last statement had raised it, so
+                // the guard's own arms and leaving see it. Nothing of
+                // the kind stands on a call's way back, so one raised
+                // inside an entering method is deferred to the body's
+                // own edge, as the entering method means it to be.
+                let ran = match ran {
+                    Ok(Passage::Along(mark)) if mark == plan.body.1 && self.lang.signals_between_statements => {
+                        match self.deliver_signals() {
+                            Ok(()) => Ok(Passage::Along(mark)),
+                            Err(fault) => Err(fault),
+                        }
+                    }
+                    other => other,
+                };
                 let ending = match ran {
                     Err(Fault::Note(words)) => match self.carried.take() {
                         Some(fled) => Err(fled),
@@ -4281,6 +4297,16 @@ impl<'a> Engine<'a> {
                 if let Some(over) = self.out_of_room() {
                     return Err(over);
                 }
+                // A cycle whose body holds no statement of its own — a
+                // comprehension's walk, say — meets no statement's
+                // edge, so a signal left pending is looked for here,
+                // as seldom as the clock is.
+                if self.lang.signals_between_statements && SIGNALS_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                    if let Err(fault) = self.deliver_signals() {
+                        pc = self.offer_signal_fault(fault, &mut guards)?;
+                        continue;
+                    }
+                }
             }
             match &instrs[pc] {
                 Instr::Const(Value::Routine(program)) if self.lang.closes_over && (!program.enclosing.is_empty() || program.annotation.is_some()) => {
@@ -4568,21 +4594,7 @@ impl<'a> Engine<'a> {
                     // just reached had raised it itself.
                     if self.lang.signals_between_statements {
                         if let Err(fault) = self.deliver_signals() {
-                            let fault = match fault {
-                                Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
-                                    Some(made) => Fault::Thrown(made),
-                                    None => Fault::Note(told),
-                                },
-                                other => other,
-                            };
-                            let Fault::Thrown(raised) = fault else { return Err(fault) };
-                            let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
-                            self.under = None;
-                            self.entering = None;
-                            self.hushed.set(quiet);
-                            self.data.truncate(depth);
-                            self.data.push(raised);
-                            pc = catch;
+                            pc = self.offer_signal_fault(fault, &mut guards)?;
                             continue;
                         }
                     }
@@ -12670,6 +12682,28 @@ impl<'a> Engine<'a> {
         };
         self.data.truncate(floor);
         answered
+    }
+
+    /// A fault that taking a signal up produced, offered to the
+    /// innermost guard exactly as a raised value is offered: the guard
+    /// takes it and running goes on from the guard's catch; where no
+    /// guard watches, the fault leaves the run altogether.
+    fn offer_signal_fault(&mut self, fault: Fault, guards: &mut Vec<(usize, usize, usize)>) -> Flow<usize> {
+        let fault = match fault {
+            Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
+                Some(made) => Fault::Thrown(made),
+                None => Fault::Note(told),
+            },
+            other => other,
+        };
+        let Fault::Thrown(raised) = fault else { return Err(fault) };
+        let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+        self.under = None;
+        self.entering = None;
+        self.hushed.set(quiet);
+        self.data.truncate(depth);
+        self.data.push(raised);
+        Ok(catch)
     }
 
     /// The signals left pending, taken up now that one statement is

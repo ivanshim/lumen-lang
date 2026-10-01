@@ -3931,6 +3931,11 @@ impl<'a> Machine<'a> {
                 Owed::Test(cycle) => {
                     if let Some(over) = self.past_its_time() { return Err(over); }
                     if let Some(over) = self.past_its_room() { return Err(over); }
+                    // A pass of a sleeping walk's cycle is as fair a
+                    // place to take up a signal left waiting.
+                    if self.watches_signals {
+                        self.signals_due_now()?;
+                    }
                     let Form::Cycle { test, .. } = cycle.as_ref() else { unreachable!() };
                     state.owed.push(Owed::Decide(cycle.clone()));
                     state.owed.push(Owed::Find(*test.clone()));
@@ -5014,6 +5019,20 @@ impl<'a> Machine<'a> {
                     },
                     result => result,
                 };
+                // The body ran to its end with its ward still up: a
+                // signal still waiting is taken up now, exactly as
+                // though the body's last statement had raised it, so
+                // the body's own clauses and leaving meet it. Nothing
+                // is taken up on a call's way back, so one left by an
+                // entering method is deferred to the body's own edge,
+                // as the entering method means it to be.
+                let body_result = match body_result {
+                    Ok(value) if self.watches_signals => match self.signals_due_now() {
+                        Ok(()) => Ok(value),
+                        Err(escape) => Err(escape),
+                    },
+                    other => other,
+                };
                 let body_result = self.traced_result(body_result);
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
@@ -5260,6 +5279,11 @@ impl<'a> Machine<'a> {
                     }
                     if let Some(over) = self.past_its_room() {
                         return Err(over);
+                    }
+                    // And a fair place to take up a signal left waiting,
+                    // for the same reason.
+                    if self.watches_signals {
+                        self.signals_due_now()?;
                     }
                     // The test is worked out where it is looked at and
                     // nowhere else: a test that changes something as it
