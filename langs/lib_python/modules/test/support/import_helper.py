@@ -11,12 +11,28 @@ def import_module(name, deprecated=False, required_on=None):
                 raise
         raise unittest.SkipTest(str(msg))
 
-# This run keeps no module cache to isolate and carries no accelerator
-# modules to block, so a fresh import is the import an import statement
-# makes. As the reference does, None is handed back for a module that
-# cannot be imported at all.
+# Save and restore the requested part of the import cache, with None blocking
+# optional modules just as it does for an ordinary import.
 def import_fresh_module(name, fresh=(), blocked=(), deprecated=False, usefrozen=False):
+    import sys
+    missing = object()
+    requested = (name, *fresh, *blocked)
+    saved = {key: sys.modules.get(key, missing) for key in requested}
+    for key in requested:
+        if key in sys.modules:
+            del sys.modules[key]
+    for key in blocked:
+        sys.modules[key] = None
     try:
-        return __load_module(name)
+        module = __load_module(name)
+        for key in fresh:
+            __load_module(key)
+        return module
     except ImportError:
         return None
+    finally:
+        for key in requested:
+            if key in sys.modules:
+                del sys.modules[key]
+            if saved[key] is not missing:
+                sys.modules[key] = saved[key]

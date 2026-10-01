@@ -1,8 +1,11 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str)] = &[
+    ("_bisect", include_str!("_bisect.py")),
     ("_codec_idna", include_str!("_codec_idna.py")),
     ("_codec_names", include_str!("_codec_names.py")),
     ("_decimal", include_str!("_decimal.py")),
+    ("_heapq", include_str!("_heapq.py")),
+    ("_namedtuple", include_str!("_namedtuple.py")),
     ("_pylong", include_str!("_pylong.py")),
     ("_string", include_str!("_string.py")),
     ("_testcapi", include_str!("_testcapi.py")),
@@ -20,6 +23,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("collections", include_str!("collections.py")),
     ("contextlib", include_str!("contextlib.py")),
     ("copy", include_str!("copy.py")),
+    ("copyreg", include_str!("copyreg.py")),
     ("ctypes", include_str!("ctypes.py")),
     ("dataclasses", include_str!("dataclasses.py")),
     ("datetime", include_str!("datetime.py")),
@@ -36,6 +40,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("io", include_str!("io.py")),
     ("itertools", include_str!("itertools.py")),
     ("json", include_str!("json.py")),
+    ("keyword", include_str!("keyword.py")),
     ("locale", include_str!("locale.py")),
     ("marshal", include_str!("marshal.py")),
     ("math", include_str!("math.py")),

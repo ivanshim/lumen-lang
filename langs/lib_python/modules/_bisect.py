@@ -1,4 +1,5 @@
 # Source: CPython Lib/bisect.py at 3b564385e4c9; PSF License.
+# Python implementation of the accelerator interface.
 """Bisection algorithms."""
 
 
@@ -108,12 +109,6 @@ def bisect_left(a, x, lo=0, hi=None, *, key=None):
     return lo
 
 
-# Overwrite above definitions with a fast C implementation
-try:
-    from _bisect import *
-except ImportError:
-    pass
 
-# Create aliases
 bisect = bisect_right
 insort = insort_right

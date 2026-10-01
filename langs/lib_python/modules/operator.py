@@ -96,7 +96,7 @@ class _ItemGetter:
     def take(self, value):
         if len(self.names) == 1:
             return value[self.names[0]]
-        return [value[name] for name in self.names]
+        return tuple(value[name] for name in self.names)
 
 def itemgetter(*items):
     if len(items) == 0:
@@ -122,7 +122,7 @@ class _AttrGetter:
             result.append(getattr(held, word))
         if len(result) == 1:
             return result[0]
-        return result
+        return tuple(result)
 
 def attrgetter(*names):
     if len(names) == 0:
