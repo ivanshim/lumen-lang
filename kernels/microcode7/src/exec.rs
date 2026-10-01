@@ -3086,7 +3086,7 @@ impl<'a> Machine<'a> {
         // own value, or the value a closed-over one keeps, is this
         // read's alone to move out.
         if let Value::Shared(cell) = &f.cells.borrow()[slot.at] {
-            if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) {
+            if self.names_in_calls && (slot.ident.starts_with('#') || !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/"))) {
                 return Ok(Value::Shared(cell.clone()));
             }
             if !self.rules.closes_over { return Ok(cell.borrow().clone()); }
@@ -3105,7 +3105,7 @@ impl<'a> Machine<'a> {
         }
         let mut v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = &v {
-            if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
+            if self.names_in_calls && (slot.ident.starts_with('#') || !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/"))) { return Ok(v); }
             let held = cell.borrow().clone();
             if !self.rules.closes_over { return Ok(held); }
             v = held;
@@ -3172,7 +3172,7 @@ impl<'a> Machine<'a> {
         if self.names_in_calls {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
-            if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
+            if !slot.ident.starts_with('#') && Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
                 if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
             }
             if Rc::ptr_eq(destination, &self.outermost) { self.booked_write(slot.at, &slot.ident, Some(stored.clone())); }

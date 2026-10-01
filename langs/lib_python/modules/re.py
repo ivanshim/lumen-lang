@@ -22,6 +22,7 @@ class _Reader:
         self.i = 0
         self.groups = 0
         self.names = {}
+        self.shorthand = False
 
     def choice(self):
         arms = [self.sequence()]
@@ -101,8 +102,11 @@ class _Reader:
         mark = self.pattern[self.i]
         self.i += 1
         if mark in 'dDwWsS':
+            self.shorthand = True
             return ['kind', mark]
         if mark == 'b':
+            if not inside:
+                self.shorthand = True
             return ['lit', '\b'] if inside else ['boundary']
         if mark == 'A':
             return ['lit', 'A'] if inside else ['start_abs']
@@ -619,14 +623,9 @@ class Pattern:
                                        ''.join(chr(n) for n in range(128)
                                                if not _atom_matches(end, chr(n), self._opts)
                                                and (self.dotall or n != 10)))
-        # Whether the text a match runs against must be checked for
-        # non-ASCII letters, computed once here rather than rescanning
-        # the pattern's own text on every position a search tries.
-        shorthand = False
-        for mark in ['\\w', '\\W', '\\d', '\\D', '\\s', '\\S', '\\b']:
-            if mark in source:
-                shorthand = True
-        self._shorthand = shorthand
+        # The reader distinguishes shorthand classes and word boundaries
+        # from escaped literals and a backspace inside a character class.
+        self._shorthand = reader.shorthand
 
     def _check_text(self, string):
         if self._bytes != isinstance(string, (bytes, bytearray)):

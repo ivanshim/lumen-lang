@@ -2415,7 +2415,7 @@ impl<'a> Engine<'a> {
             && matches!(&self.world[slot.far], Value::Bond(shared) if matches!(&*shared.borrow(), Value::Blank));
         if let (Value::Bond(shared), false) = (&self.world[slot.far], empty_cell) {
             return Ok(match () {
-                _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
+                _ if self.lang.bind_names && (slot.ident.starts_with('#') || !self.registry.idents[slot.far].starts_with("\0module:")) => Value::Bond(shared.clone()),
                 _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
                 _ => shared.borrow().clone(),
             });
@@ -2654,7 +2654,7 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
             }
-            if slot.near.is_empty() && self.registry.idents[slot.far].starts_with("\0module:") {
+            if slot.near.is_empty() && !slot.ident.starts_with('#') && self.registry.idents[slot.far].starts_with("\0module:") {
                 if let Value::Bond(cell) = &self.world[slot.far] { *cell.borrow_mut() = value; return Ok(()); }
             }
             self.put_cell(slot, frame, value);
