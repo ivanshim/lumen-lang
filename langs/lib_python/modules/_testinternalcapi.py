@@ -2,6 +2,8 @@
 # objects. Only the probes this runtime can answer truthfully stand
 # here; the rest refuse at the bottom of the file.
 
+import signal as _signal
+
 def has_inline_values(obj):
     # The kernel tracks the compact layout until dictionary replacement,
     # deletion, or growth beyond its available attribute places.
@@ -9,15 +11,27 @@ def has_inline_values(obj):
 
 
 class SelfInterruptingContextManager:
-    # CPython's own leaves an interrupt pending as it enters, so the
-    # KeyboardInterrupt lands on the first statement of the body and a
-    # test can see that __exit__ ran all the same. Nothing here can make
-    # a signal arrive between two statements. Raising the
-    # KeyboardInterrupt from __enter__ instead would skip __exit__
-    # altogether and leave the test reading as passed, so the thing
-    # refuses to be made at all and says what is missing.
+    # The reference's own is written in C, where no evaluation check
+    # stands between its words: it leaves an interrupt pending as it
+    # enters, so the KeyboardInterrupt lands on the first statement of
+    # the body and the leaving method runs all the same. The same is
+    # arranged here by shape: the raise is the entering method's last
+    # statement, so no statement's edge stands between the pending note
+    # and the frame's end, and the interrupt is taken up as the body
+    # begins.
     def __init__(self):
-        raise 'NotImplementedError: SelfInterruptingContextManager needs an interrupt delivered between two statements of the body, which this runtime cannot arrange'
+        self._within = False
+
+    def __enter__(self):
+        self._within = True
+        _signal.raise_signal(_signal.SIGINT)
+
+    def __exit__(self, *args):
+        self._within = False
+        return False
+
+    def within(self):
+        return self._within
 
 
 def __getattr__(name):

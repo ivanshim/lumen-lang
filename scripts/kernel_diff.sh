@@ -1,7 +1,7 @@
 #!/bin/bash
-# Differential test: every example must print the same thing on every kernel.
-# The check lives in test.sh now: a program runs on stream35 first and every
-# other kernel must print what it printed, so one pass over the examples does
-# both jobs. This runs that pass over every language.
+# Differential test: selected kernels must exit 0 and print the same output.
+# Python runs on stack8 and microcode7 because reference kernels ignore ext.*
+# arithmetic labels. Other languages use all six kernels against stream35.
+# test.sh owns this rule; run its pass over every language.
 cd "$(dirname "$0")/.." || exit 1
 exec ./test.sh --lang all "$@"

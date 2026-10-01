@@ -28,6 +28,8 @@ pub enum Answer {
     Said(String),
     Whole(Value),
     Missing(String),
+    /// A known character-format type label, including a valid empty label.
+    CharacterType(String),
     BadMethod(String),
 }
 pub type Ask<'a> = dyn FnMut(&Value, char, bool) -> Result<Answer> + 'a;
@@ -640,6 +642,11 @@ impl Writer<'_> {
                     _ => match asked(value, code, true)? {
                         Answer::Whole(whole) => self.character(&whole, of_bytes)
                             .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
+                        Answer::CharacterType(name) => {
+                            let required = if of_bytes { "an integer in range(256) or a single byte" }
+                                else { "an integer or a unicode character" };
+                            return Err(self.fault("ext.op.rem.format.character", &[&location, required, &name]));
+                        },
                         Answer::Missing(name) | Answer::BadMethod(name) => {
                             let required = if of_bytes { "an integer in range(256) or a single byte" }
                                 else { "an integer or a unicode character" };

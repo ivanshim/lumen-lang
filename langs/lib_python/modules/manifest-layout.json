@@ -1,0 +1,9 @@
+{
+  "files": {
+    "collections": "collections/__init__.py",
+    "unittest": "unittest/__init__.py"
+  },
+  "aliases": {
+    "os.path": "path"
+  }
+}

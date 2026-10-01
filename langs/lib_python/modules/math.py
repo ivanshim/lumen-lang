@@ -919,16 +919,12 @@ def frexp(x):
     x = float(x)
     if x == 0 or not isfinite(x):
         return (__math('fdiv', x, 1.0), 0)
-    sign = -1 if x < 0 else 1
-    value = fabs(x)
-    exponent = 0
-    while value >= 1:
-        value = __math('fdiv', value, 2.0)
-        exponent += 1
-    while value < 0.5:
-        value *= 2.0
-        exponent -= 1
-    return (sign * value, exponent)
+    # A binary float's denominator is a power of two. Its exact ratio
+    # gives the exponent without scaling once per power, which matters
+    # when summation repeatedly decomposes values with large exponents.
+    numerator, denominator = x.as_integer_ratio()
+    exponent = abs(numerator).bit_length() - denominator.bit_length() + 1
+    return (__math('ldexp', x, -exponent), exponent)
 
 def ldexp(x, i):
     if type(i) != type(1) and type(i) != type(True):
@@ -974,8 +970,5 @@ def issubnormal(x):
     _check_real(x)
     return __math('issubnormal', x) != 0.0
 
-def sumprod(p, q):
-    total = 0
-    for p_i, q_i in zip(p, q, strict=True):
-        total = total + p_i * q_i
-    return total
+def sumprod(p, q, /):
+    return __math('sumprod', p, q)

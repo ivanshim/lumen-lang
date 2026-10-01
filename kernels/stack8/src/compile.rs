@@ -33,7 +33,7 @@ use crate::lang::{Lang, Brackets, Blocks, Complaint};
 use crate::arith;
 use crate::lex::{Shape, Token};
 use crate::value::{Reach, Value, MAKER_MEMBER};
-use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt, Taking};
+use crate::code::{Operand, Builtin, Action, ImportStyle, Routine, Cell, Instr, Plan, Attempt, Taking};
 
 thread_local! {
     static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
@@ -212,6 +212,7 @@ struct Piece {
     /// Whether an expression statement stored into the result slot; a
     /// function without one needs neither the slot nor its prologue.
     result_touched: bool,
+    return_value_at: Option<usize>,
     generator: bool,
     /// Which line the last marker in this unit named, so that a run of
     /// statements on one line marks it once.
@@ -547,7 +548,8 @@ fn compile_pass(
         cycles: Vec::new(),
         escapes: Vec::new(),
         result_touched: false,
-            generator: false,
+        return_value_at: None,
+        generator: false,
         line: 0,
         instrs: Vec::new(),
     };
@@ -808,6 +810,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn want_name(&mut self, why: &str) -> Res<String> {
+        if Lang::spells(&self.lang.reserved_names, &self.look().lexeme) { return Err("SyntaxError: invalid syntax".into()); }
         if !self.lang.syntax_members.is_empty() && [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|names| Lang::spells(names, &self.look().lexeme)) {
             return Err("SyntaxError: invalid syntax".into());
         }
@@ -1610,6 +1613,7 @@ impl<'a> Compiler<'a> {
             cycles: Vec::new(),
             escapes: Vec::new(),
             result_touched: false,
+            return_value_at: None,
             generator: false,
             line: 0,
             instrs: Vec::new(),
@@ -1659,6 +1663,12 @@ impl<'a> Compiler<'a> {
             self.patch_jump(at, end);
         }
         let unit = self.pieces.pop().expect("the unit");
+        if unit.asynchronous && unit.instrs.iter().any(|word| matches!(word, Instr::Act(Action::Suspend, _))) {
+            if let Some(at) = unit.return_value_at {
+                self.pos = at;
+                return Err("SyntaxError: 'return' with value in async generator".into());
+            }
+        }
         if self.discovering {
             let names = unit.idents.iter().filter(|n| !unit.nonlocals.contains(n) && !unit.globals.iter().any(|(g, _)| g == *n)).cloned().collect();
             self.plans.insert(source, BindingPlan { names, globals: unit.globals.clone(), nonlocals: unit.nonlocals.clone(), class_nonlocals: unit.class_nonlocals.clone() });
@@ -1993,6 +2003,17 @@ impl<'a> Compiler<'a> {
         if let Some(issue) = self.python_type_scope_problem() { return Err(issue); }
         let began = self.pos;
         self.note_syntax_warnings(began);
+        // A language whose run takes signals up between statements gives
+        // every statement a mark of its own, even one standing on the
+        // same line as the statement before it: the mark is where the
+        // run looks. The library's own statements go unmarked, as they
+        // do for a complaint's line, and the statement reader marks none
+        // of this one's again.
+        if self.lang.signals_between_statements && self.look().row as u32 > self.before {
+            let row = self.look().row as u32 - self.before;
+            self.piece().line = row;
+            self.put(Instr::Line(row));
+        }
         self.stmt_read()?;
         self.stmt_closed(began)
     }
@@ -2936,6 +2957,7 @@ impl<'a> Compiler<'a> {
             self.act(Action::At, 2);
             self.write(&part);
             self.bind_block_target(&part)?;
+            if !self.lang.syntax_members.is_empty() { self.let_go(&part); }
             if self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { self.take(); }
         }
         Ok(())
@@ -2975,6 +2997,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::At, 2);
                 self.write(&part);
                 self.bind_block_target(&part)?;
+                if !self.lang.syntax_members.is_empty() { self.let_go(&part); }
                 index += 1;
                 if !self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
                 self.take();
@@ -3330,10 +3353,11 @@ impl<'a> Compiler<'a> {
             if !lang.syntax_members.is_empty() && (!self.piece().outermost || self.in_class_body()) { return Err("SyntaxError: import * only allowed at module level".into()); }
             self.take();
             if lang.import_values {
-                self.act(Action::Import(module.clone(), None, false), 0);
+                self.act(Action::Import(module.clone(), ImportStyle::Star), 0);
                 self.act(Action::ImportAll, 1);
             }
         } else {
+            let mut collected: Vec<(String, String, bool)> = Vec::new();
             loop {
                 let feature_at = self.pos;
                 let original = self.import_name(!from)?;
@@ -3367,13 +3391,7 @@ impl<'a> Compiler<'a> {
                     self.pos = feature_at;
                     return Err(if original == "braces" { "SyntaxError: not a chance".into() } else { format!("SyntaxError: future feature {original} is not defined") });
                 }
-                if lang.import_values {
-                    self.act(Action::Import(if from { module.clone() } else { original.clone() }, from.then_some(original), !from && !aliased), 0);
-                } else { self.constant(Value::Null); }
-                self.claim(&bound);
-                self.importing = true;
-                self.write(&bound);
-                self.importing = false;
+                collected.push((original.clone(), bound.clone(), aliased));
                 let comma = lang.calling.as_ref().and_then(|g| g.between.as_ref());
                 if !comma.map_or(false, |mark| self.at_symbol(mark)) {
                     break;
@@ -3384,6 +3402,50 @@ impl<'a> Compiler<'a> {
                 }
                 if group.map_or(false, |g| self.at_symbol(&g.close)) {
                     break;
+                }
+            }
+            if lang.import_values {
+                if from {
+                    if !collected.is_empty() {
+                        let names: Vec<String> = collected.iter().map(|(name, _, _)| name.clone()).collect();
+                        self.act(Action::Import(module.clone(), ImportStyle::Names(names)), 0);
+                        for (member, bound, _) in &collected {
+                            self.act(Action::ImportFrom(module.clone(), member.clone()), 0);
+                            self.claim(bound);
+                            self.importing = true;
+                            self.write(bound);
+                            self.importing = false;
+                        }
+                        self.discard();
+                    }
+                } else {
+                    for (original, bound, aliased) in &collected {
+                        self.act(Action::Import(original.clone(), ImportStyle::Plain), 0);
+                        let parts: Vec<&str> = original.split('.').collect();
+                        if *aliased && parts.len() > 1 {
+                            for at in 1..parts.len() {
+                                let head = parts[..at].join(".");
+                                self.act(Action::ImportFrom(head, parts[at].to_string()), 0);
+                            }
+                        }
+                        self.claim(bound);
+                        self.importing = true;
+                        self.write(bound);
+                        self.importing = false;
+                        if *aliased && parts.len() > 1 {
+                            for _ in 0..parts.len() - 1 {
+                                self.discard();
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (_, bound, _) in &collected {
+                    self.constant(Value::Null);
+                    self.claim(bound);
+                    self.importing = true;
+                    self.write(bound);
+                    self.importing = false;
                 }
             }
         }
@@ -4814,7 +4876,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn return_stmt(&mut self) -> Res<()> {
+        let return_at = self.pos;
         self.take();
+        let has_value = !(self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_closes));
+        if has_value && !self.lang.syntax_members.is_empty() {
+            self.piece().return_value_at.get_or_insert(return_at);
+        }
         // A routine that gives back a cell answers with the cell of
         // whatever it names, so a name fastened to the answer and the
         // one inside the routine stand for the one cell. Where what it
@@ -7365,7 +7432,9 @@ impl<'a> Compiler<'a> {
             let item = self.gensym("item");
             self.write(&item);
             self.give_places(a, b, &item)?;
+            if !self.lang.syntax_members.is_empty() { self.let_go(&item); }
         }
+        if !self.lang.syntax_members.is_empty() { self.let_go(&checked); }
         Ok(())
     }
 
@@ -7441,6 +7510,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn assignment_expression(&mut self) -> Res<()> {
+        if Lang::spells(&self.lang.reserved_names, &self.look().lexeme)
+            && ![&self.lang.true_words, &self.lang.false_words, &self.lang.null_words, &self.lang.yield_words].iter().any(|words| Lang::spells(words, &self.look().lexeme))
+            && self.look_ahead(1).shape == Shape::Sign
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+            return Err("SyntaxError: invalid syntax".into());
+        }
         if !self.lang.syntax_members.is_empty() {
             if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
                 let begins = self.look();
@@ -8822,7 +8897,8 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
-            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
+            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1))
+                && (self.in_class_body() || self.piece().comprehension_kind.is_some());
             if self.forbids_await || !self.piece().asynchronous || class_expression {
                 let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {phrase}"));
@@ -8912,6 +8988,10 @@ impl<'a> Compiler<'a> {
                     self.pos = yield_at;
                     return Err(format!("SyntaxError: {message}"));
                 }
+                if delegated && self.piece().asynchronous {
+                    self.pos = yield_at;
+                    return Err("SyntaxError: 'yield from' inside async function".into());
+                }
             }
             if lang.yield_suspends {
                 // The elements joined into one array as they were read;
@@ -8934,7 +9014,7 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.lexeme) && !lang.exceptions.contains(&tok.lexeme) {
             self.take();
-            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) };
+            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
@@ -10288,6 +10368,8 @@ impl<'a> Compiler<'a> {
                     self.discard();
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
                     self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                } else if native.is_none() && call.is_none() && lang.member_amiss.is_some() {
+                    self.act(Action::Grab(Rc::from(named.as_str())), 1);
                 } else if native.is_none() && lang.member_amiss.is_some() {
                     // The receiver's kind answers to no such name, and a
                     // definition wording that complaint has no pipe to
@@ -10419,9 +10501,12 @@ impl<'a> Compiler<'a> {
     fn comprehension_ahead(&self) -> Option<usize> {
         if self.lang.comprehension_for.is_empty() { return None; }
         let mut depth = 0usize;
+        let mut lambda_parameters = 0usize;
         for (at, tok) in self.tokens.iter().enumerate().skip(self.pos) {
             if !matches!(tok.shape, Shape::Instr | Shape::Sign) { continue; }
             let word = &tok.lexeme;
+            if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { lambda_parameters += 1; }
+            if depth == 0 && tok.is_lexeme(Shape::Sign, ":") { lambda_parameters = lambda_parameters.saturating_sub(1); }
             if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) {
                 return Some(if at > self.pos && Lang::spells(&self.lang.comprehension_async, &self.tokens[at - 1].lexeme) { at - 1 } else { at });
             }
@@ -10430,7 +10515,7 @@ impl<'a> Compiler<'a> {
             else if opens.into_iter().flatten().any(|b| b.close == *word) {
                 if depth == 0 { return None; }
                 depth -= 1;
-            } else if depth == 0 && self.lang.calling.as_ref().and_then(|b| b.between.as_ref()) == Some(word) {
+            } else if depth == 0 && lambda_parameters == 0 && self.lang.calling.as_ref().and_then(|b| b.between.as_ref()) == Some(word) {
                 return None;
             }
         }
@@ -10459,10 +10544,13 @@ impl<'a> Compiler<'a> {
         if !self.lang.syntax_members.is_empty() {
             let mut depth = 0usize;
             let mut separated = false;
+            let mut parameters = 0usize;
             for token in self.tokens.iter().skip(self.pos) {
                 let word = token.lexeme.as_str();
                 if depth == 0 && token.shape == Shape::Sign && word == pair.close { break; }
-                if depth == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
+                if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
+                if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
+                if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
                 if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
                     return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
                 }
