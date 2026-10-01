@@ -117,6 +117,10 @@ def _lay_out(cls_name, names, annotations, defaults, init, repr, eq, frozen,
     return __derive_class(cls_name, _Record, members)
 
 def _process_class(cls, init, repr, eq, frozen):
+    if frozen:
+        raise 'NotImplementedError: these dataclass options are not supported'
+    if len(cls.__bases__) and cls.__bases__[0].__name__ != 'object':
+        raise 'NotImplementedError: dataclass inheritance is not supported'
     annotations = dict(getattr(cls, '__annotations__', {}))
     names = list(annotations)
     defaults = []
