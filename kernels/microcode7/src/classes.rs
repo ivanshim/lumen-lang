@@ -1408,7 +1408,7 @@ impl<'a> Machine<'a> {
         }
     }
     fn member_map(entries:&[(String,Value)])->Value {
-        let pairs=entries.iter().filter(|(key,_)|!key.starts_with('\0')).map(|(key,value)|(Value::text(key),value.clone())).collect();
+        let pairs=entries.iter().filter(|(key,_)|!key.starts_with('#')&&!key.starts_with('\0')).map(|(key,value)|(Value::text(key),value.clone())).collect();
         Value::Dict(Rc::new(pairs))
     }
     /// A blueprint's annotations: its own, worked out from the routines
@@ -1589,6 +1589,12 @@ impl<'a> Machine<'a> {
             }
             if Self::names_a_kind(op) {
                 if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
+                if !key.is_empty() && key == self.detail("bases") {
+                    let ancestor = if word.as_ref() == "bool" { self.kind_by_word("int") }
+                        else { None };
+                    let parent = ancestor.unwrap_or_else(|| Value::Blueprint(self.common_ancestor()));
+                    return Ok(Value::tuple(vec![parent]));
+                }
                 if key==self.detail("module") { return Ok(Value::text(self.builtin_module())); }
                 if key==self.detail("qualified") { return Ok(Value::text(word)); }
                 if key=="__getformat__" && word.as_ref()=="float" {
@@ -1836,8 +1842,11 @@ impl<'a> Machine<'a> {
                 else { room.outer.clone().unwrap_or_else(|| self.outermost.clone()) };
             let annotations = self.table.strings("ext.stmt.class.annotations");
             if annotations.first().map_or(false, |word| word == key) {
-                let contents = if let Some(a) = &code.annotator {
-                    self.apply_class_member(Value::Bound(a.clone(), annotation_room.clone()), vec![Value::Small(1)])?
+                let label = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
+                let written = self.routine_holding(&value, &label);
+                let source = written.or_else(|| code.annotator.clone().map(|a| Value::Bound(a, annotation_room.clone())));
+                let contents = if let Some(evaluator) = source.filter(|a| !matches!(a.settled(), Value::Nil)) {
+                    self.apply_class_member(evaluator, vec![Value::Small(1)])?
                 } else { self.collection_cell(Value::Dict(Rc::new(Vec::new().into()))) };
                 let index = self.routine_storage(&value);
                 self.routine_members[index].1.holds.borrow_mut().push((format!("\0{key}\0"), contents.clone()));

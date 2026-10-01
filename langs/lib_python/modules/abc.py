@@ -13,6 +13,10 @@
 # kind and the classes claimed for it. Classes are told apart by which
 # one they are rather than by name, so the claims are kept as pairs.
 _claimed = []
+_cache_token = 0
+
+def get_cache_token():
+    return _cache_token
 
 # The questions under way, so that a kind whose claims lead back to it
 # does not send the same question round for ever.
@@ -82,6 +86,7 @@ class ABCMeta(type):
         return super().__call__(*args, **kwargs)
 
     def register(cls, subclass):
+        global _cache_token
         claimed = _claims_for(cls)
         if claimed is None:
             claimed = []
@@ -90,6 +95,7 @@ class ABCMeta(type):
             if already is subclass:
                 return subclass
         claimed.append(subclass)
+        _cache_token += 1
         return subclass
 
     def __instancecheck__(cls, instance):
