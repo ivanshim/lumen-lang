@@ -8167,7 +8167,10 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        { let mut entries = queue.borrow_mut(); for _ in base..floor { entries.pop_front(); } }
+        // Fetching from the source can let another reader consume cached
+        // entries. Release from its current base after that callback.
+        let released = first.borrow().as_big()?.to_usize().ok_or_else(|| "TypeError: invalid tee offset".to_owned())?;
+        { let mut entries = queue.borrow_mut(); for _ in released..floor { entries.pop_front(); } }
         *first.borrow_mut() = Value::Small(floor as i64);
         Ok(Some(item))
     }
