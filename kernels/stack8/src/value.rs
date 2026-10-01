@@ -1183,7 +1183,7 @@ impl Value {
             (Value::Codepoints(a), Value::Codepoints(b)) => a == b,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
-            (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) | (Value::Declined(_), Value::Declined(_)) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
             (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),

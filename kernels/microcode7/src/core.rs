@@ -171,6 +171,11 @@ impl Value {
                 let letters = cell.borrow().iter().copied().map(char::from).collect::<String>();
                 return Self::text(&letters).hash_number();
             }
+            Self::Intrinsic(_, spelling) => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                spelling.hash(&mut hasher);
+                hasher.finish() as i64
+            }
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
