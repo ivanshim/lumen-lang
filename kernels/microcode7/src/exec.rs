@@ -20601,6 +20601,14 @@ impl Machine<'_> {
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),
+            Value::Wrapped(kind,kept) if matches!(kind,62|63)
+                || *kind==3 && matches!(kept.first(),Some(Value::Wrapped(62,_))) => {
+                let result=self.apply_class_member(callable.clone(),values);
+                result.map_err(|escape|{
+                    self.got_away=Some(escape);
+                    self.core_complaint("core.unready",&callable.kind_word())
+                })
+            }
             Value::Bound(program, frame) => match self.invoke(program.clone(), frame.clone(), values) {
                 Ok(answer) => Ok(answer),
                 Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &program.ident)) }

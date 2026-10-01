@@ -602,9 +602,9 @@ impl<'a> Engine<'a> {
                         };
                         if let Some((nonnegative, positive)) = signs {
                             let domain = match operation.as_str() {
-                                "log" | "lgamma" => positive,
+                                "log" | "lgamma" | "log2" => positive,
                                 "sqrt" => nonnegative,
-                                "exp" | "floor" => true,
+                                "exp" | "floor" | "fabs" => true,
                                 _ => false,
                             };
                             if domain {

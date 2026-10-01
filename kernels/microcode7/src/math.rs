@@ -341,6 +341,7 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
         "log1p" => one.ln_1p(),
         "log10" => one.log10(),
         "log2" => one.log2(),
+        "fabs" => one.abs(),
         "sin" => one.sin(),
         "cos" => one.cos(),
         "tan" => one.tan(),

@@ -15776,6 +15776,7 @@ impl<'a> Engine<'a> {
                     "log" => x.ln(),
                     "log10" => x.log10(),
                     "log2" => x.log2(),
+                    "fabs" => x.abs(),
                     "log1p" => x.ln_1p(),
                     "sin" => x.sin(),
                     "cos" => x.cos(),
@@ -18077,6 +18078,16 @@ impl Engine<'_> {
             Value::ByteKind(mutable, _) => self.byte_call(u8::from(*mutable), &args),
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
+            Value::Adapter(entry) if matches!(entry.0,63|64)
+                || entry.0==3 && matches!(entry.1.first(),Some(Value::Adapter(draw)) if draw.0==63) => {
+                match self.class_apply(work.clone(),args) {
+                    Ok(value)=>Ok(value),
+                    Err(fault)=>{
+                        self.carried=Some(fault);
+                        Err(self.core_fault("core.unready",&work.core_kind()))
+                    }
+                }
+            }
             Value::Routine(p) => {
                 if let Err(f) = self.invoke(p, args) {
                     self.carried = Some(f);

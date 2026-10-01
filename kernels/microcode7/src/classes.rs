@@ -612,9 +612,9 @@ impl<'a> Machine<'a> {
                             _=>None,
                         };
                         let fast=regular.is_some_and(|(positive,zero)|match operation.as_str() {
-                            "exp"|"floor"=>true,
+                            "exp"|"floor"|"fabs"=>true,
                             "sqrt"=>positive || zero,
-                            "lgamma"|"log"=>positive,
+                            "lgamma"|"log"|"log2"=>positive,
                             _=>false,
                         });
                         if fast {
