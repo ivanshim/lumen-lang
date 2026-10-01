@@ -2688,7 +2688,10 @@ impl<'a> Machine<'a> {
         };
         self.idents = built.globals;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
-        frame.cells.borrow_mut().resize(built.program.idents.len().max(held.len()), Value::Unset);
+        let wanted = built.program.idents.len().max(held.len());
+        if !Rc::ptr_eq(frame, &self.outermost) || frame.cells.borrow().len() < wanted {
+            frame.cells.borrow_mut().resize(wanted, Value::Unset);
+        }
         let answer = self.value_of(&built.program.body, frame)?;
         Ok(match answer {
             Value::Nil | Value::Unset => Value::Small(1),
@@ -11190,6 +11193,7 @@ impl<'a> Machine<'a> {
         holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
         let mut extra: Vec<(Value, Value)> = Vec::new();
         for (key, held) in entries {
+            let key = if let Value::Keyed(value, _) = key { value.as_ref().clone() } else { key };
             match key {
                 Value::Text(text) => holds.push((text.to_string(), held)),
                 other => extra.push((other, held)),
@@ -12276,7 +12280,17 @@ impl<'a> Machine<'a> {
                 let wanted = self.hash_key(key)?;
                 let mut found = None;
                 for (stored, value) in Self::attribute_entries(t) {
-                    if self.keys_agree(&stored, &wanted)? { found = Some(value); break; }
+                    if self.keys_agree(&stored, &wanted)? {
+                        // Reading a namespace must not lend its binding cell
+                        // to a dictionary that can consume its own entries.
+                        let mut detached = value;
+                        while let Value::Shared(cell) = &detached {
+                            let inner = cell.borrow().clone();
+                            detached = inner;
+                        }
+                        found = Some(detached);
+                        break;
+                    }
                 }
                 found.ok_or_else(|| self.bad_answer())?
             }
@@ -19637,7 +19651,10 @@ impl<'a> Machine<'a> {
         }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
-        mine.cells.borrow_mut().resize(built.program.idents.len().max(names.len()), Value::Unset);
+        let needed = built.program.idents.len().max(names.len());
+        if !Rc::ptr_eq(&mine, &self.outermost) || mine.cells.borrow().len() < needed {
+            mine.cells.borrow_mut().resize(needed, Value::Unset);
+        }
         let (was_in, was_on) = (self.written_in.clone(), self.row);
         self.written_in = Rc::from(file.as_str());
         self.frames_named.push(built.program.clone());
