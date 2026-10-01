@@ -7,7 +7,7 @@ class Error(Exception):
 
 
 def _atomic(value):
-    return value is None or value is NotImplemented or value is Ellipsis or type(value) in (bool, int, float, complex, str, bytes, range, type) or type(value) in (type(_atomic), type(iter))
+    return isinstance(value, type) or value is None or value is NotImplemented or value is Ellipsis or type(value) in (bool, int, float, complex, str, bytes, range, type) or type(value) in (type(_atomic), type(iter))
 
 
 def _reconstruct(value, reduction, memo=None):

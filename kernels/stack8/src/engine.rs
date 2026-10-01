@@ -2407,7 +2407,9 @@ impl<'a> Engine<'a> {
             return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
         }
         if let Some(kept) = self.book_of(slot.far) {
-            if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) { return found; }
+            if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) {
+                return found.map(|v| match v.contents() { target @ (Value::Object(_) | Value::Class(_)) => target, _ => v });
+            }
         }
         // A module's cell that holds nothing -- a name never bound, or
         // one deleted -- is no value to read in a language whose unbound
@@ -2507,6 +2509,17 @@ impl<'a> Engine<'a> {
             let shared = Rc::new(RefCell::new(if self.lang.closes_over { Value::Blank } else { Value::Null }));
             frame[s] = Value::Bond(shared.clone());
             return Ok(shared);
+        }
+        if let Some(book) = self.book_of(slot.far) {
+            if let Some(found) = self.read_booked(book, slot.far, &slot.ident) {
+                let held = found?;
+                let shared = match held {
+                    Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
+                    value => Rc::new(RefCell::new(value)),
+                };
+                self.write_booked(book, &slot.ident, Some(Value::Bond(shared.clone())));
+                return Ok(shared);
+            }
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
             return Ok(shared.clone());
@@ -3822,11 +3835,12 @@ impl<'a> Engine<'a> {
     fn named_method(&self, value: &Value, names: &[String]) -> Option<Rc<Routine>> {
         let Value::Object(object) = value else { return None };
         let named = |name: &String| names.iter().any(|word| word == name);
-        let mut class = Some(&object.class_now());
-        while let Some(current) = class {
-            if let Some((_, Value::Routine(routine))) = current.shared.borrow().iter().find(|(name, _)| named(name)) { return Some(routine.clone()); }
+        let root = object.class_now();
+        for current in std::iter::once(&root).chain(root.lineage.iter()) {
+            if let Some((_, held)) = current.shared.borrow().iter().find(|(name, _)| named(name)) {
+                if let Value::Routine(routine) = held.contents() { return Some(routine); }
+            }
             if let Some((_, routine)) = current.methods.iter().find(|(name, _)| named(name)) { return Some(routine.clone()); }
-            class = current.base.as_ref();
         }
         None
     }
@@ -4995,14 +5009,13 @@ impl<'a> Engine<'a> {
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
         let Value::Object(object) = value else { return None };
         let named = self.lang.class_special.get(place)?;
-        let mut class = Some(&object.class_now());
-        while let Some(current) = class {
-            if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) { return Some(value.clone()); }
+        let origin = object.class_now();
+        for current in std::iter::once(&origin).chain(origin.lineage.iter()) {
+            if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) { return Some(value.contents()); }
             if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
             // A class saying how its things are equal, in its methods or
             // its namespace, and nothing of their hash, has unhashable things.
             if place == 8 && self.lang.class_special.get(2).map_or(false, |eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.borrow().iter().any(|(n, _)| n == eq)) { return Some(Value::Null); }
-            class = current.base.as_ref();
         }
         None
     }
@@ -6558,7 +6571,7 @@ impl<'a> Engine<'a> {
         // that ask after the view itself, `type` and `isinstance`
         // among them, ever see it.
         if matches!(a, Value::Collection(..) | Value::Bond(_)) || matches!(b, Value::Collection(..) | Value::Bond(_)) {
-            let opened = |v: &Value| if matches!(v, Value::Collection(..) | Value::Bond(_)) { v.contents() } else { v.clone() };
+            let opened = |v: &Value| if matches!(v, Value::Collection(..) | Value::Bond(_)) { Self::view_in(v).unwrap_or_else(|| v.contents()) } else { v.clone() };
             return self.special_dyad(op, &opened(a), &opened(b));
         }
         if matches!(op, Action::Contains | Action::Lacks) {
@@ -14649,6 +14662,14 @@ impl<'a> Engine<'a> {
         } else { put_key(pairs, key, value); }
     }
 
+    fn view_in(value: &Value) -> Option<Value> {
+        match value {
+            Value::View(_) => Some(value.clone()),
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Self::view_in(&cell.borrow()),
+            _ => None,
+        }
+    }
+
     fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if matches!(builtin, Builtin::Append | Builtin::Replace) {
             if let Some(original @ Value::Collection(..)) = args.last().cloned() {
@@ -14668,7 +14689,9 @@ impl<'a> Engine<'a> {
                 // pairs answers to as a set does, needs the view whole
                 // to tell that apart from a view of its values, which
                 // answers to no set working at all.
-                if matches!(builtin, Builtin::SortOf | Builtin::SetDisjoint) && matches!(value, Value::View(_)) { continue; }
+                if matches!(builtin, Builtin::SortOf | Builtin::SetDisjoint | Builtin::InstanceOf) {
+                    if let Some(view) = Self::view_in(value) { *value = view; continue; }
+                }
                 *value = value.contents();
             }
         }
@@ -17903,7 +17926,9 @@ impl Engine<'_> {
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
-                if b == Builtin::InstanceOf && matches!(value, Value::View(_)) { continue; }
+                if b == Builtin::InstanceOf {
+                    if let Some(view) = Self::view_in(value) { *value = view; continue; }
+                }
                 if b == Builtin::Repr && matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))
                     && matches!(value.contents(), Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) { continue; }
                 *value = value.contents();
@@ -20035,7 +20060,7 @@ impl Engine<'_> {
         let Some(Value::Object(module)) = self.modules.get(owner) else { return true };
         let Some((_, held)) = module.fields.borrow().iter().find(|(name, _)| name == member).cloned() else { return true };
         let cache = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
-        match cache {
+        match cache.contents() {
             Value::Map(pairs) => pairs.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
             _ => true,
         }

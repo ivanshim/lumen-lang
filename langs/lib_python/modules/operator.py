@@ -160,13 +160,13 @@ def _bits(a, b, operation):
     return result
 
 def and_(a, b):
-    return _bits(a, b, 'and')
+    return a & b
 
 def or_(a, b):
-    return _bits(a, b, 'or')
+    return a | b
 
 def xor(a, b):
-    return _bits(a, b, 'xor')
+    return a ^ b
 
 def invert(a):
     return -index(a) - 1

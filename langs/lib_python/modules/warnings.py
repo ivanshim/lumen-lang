@@ -81,7 +81,7 @@ def _location(stacklevel):
     if stacklevel < 1:
         stacklevel = 1
     if stacklevel >= len(calls):
-        raise NotImplementedError('warning stack level lies outside the known calls')
+        return ['sys', 1]
     frame = calls[stacklevel]
     return [frame['file'], frame['line']]
 

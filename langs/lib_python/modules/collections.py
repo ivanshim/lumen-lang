@@ -28,7 +28,7 @@ __all__ = [
     'namedtuple',
 ]
 
-import collections.abc as _collections_abc
+import _collections_abc
 import sys as _sys
 
 _sys.modules['collections.abc'] = _collections_abc

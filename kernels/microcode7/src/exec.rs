@@ -2901,7 +2901,9 @@ impl<'a> Machine<'a> {
     fn take(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) {
-            if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
+            if let Some(found) = self.booked_read(slot.at, &slot.ident) {
+                return found.map(|v| match v.settled() { object @ (Value::Thing(_) | Value::Blueprint(_)) => object, _ => v });
+            }
         }
         // A cell handed out for names shared across calls is read
         // through exactly as `fetch` reads it, since some other
@@ -2924,7 +2926,9 @@ impl<'a> Machine<'a> {
     fn fetch(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) {
-            if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
+            if let Some(found) = self.booked_read(slot.at, &slot.ident) {
+                return found.map(|v| match v.settled() { object @ (Value::Thing(_) | Value::Blueprint(_)) => object, _ => v });
+            }
         }
         let mut v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = &v {
@@ -2941,7 +2945,7 @@ impl<'a> Machine<'a> {
             return Ok(v);
         }
         if let Some(g) = slot.fallback {
-            if let Some(found) = self.booked_read(g, &slot.ident) { return found; }
+            if let Some(found) = self.booked_read(g, &slot.ident) { return found.map(|v| match v.settled() { native @ (Value::Blueprint(_) | Value::Thing(_)) => native, _ => v }); }
             let v = self.outermost.cells.borrow()[g].clone();
             if !matches!(v, Value::Unset) {
                 return Ok(v);
@@ -3028,18 +3032,27 @@ impl<'a> Machine<'a> {
 
     /// The shared cell a name stands for, made from what it holds when
     /// it does not stand for one yet.
-    fn shared_cell(&self, slot: &Address, frame: &Rc<Env>) -> Rc<RefCell<Value>> {
-        let f = ascend(frame, slot.up);
-        let held = f.cells.borrow()[slot.at].clone();
-        if let Value::Shared(cell) = held {
-            return cell;
+    fn shared_cell(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Rc<RefCell<Value>>, String> {
+        let home = ascend(frame, slot.up).clone();
+        let mut held = home.cells.borrow()[slot.at].clone();
+        let booked = if Rc::ptr_eq(&home, &self.outermost) {
+            self.booked_read(slot.at, &slot.ident).map(|answer| (slot.at, answer))
+        } else if matches!(held, Value::Unset) {
+            slot.fallback.and_then(|at| self.booked_read(at, &slot.ident).map(|answer| (at, answer)))
+        } else { None };
+        if let Some((at, answer)) = booked {
+            held = answer?;
+            let cell = match held {
+                Value::Shared(cell) | Value::Mutable(cell, _) => cell,
+                value => Rc::new(RefCell::new(value)),
+            };
+            self.booked_write(at, &slot.ident, Some(Value::Shared(cell.clone())));
+            return Ok(cell);
         }
-        let cell = Rc::new(RefCell::new(match held {
-            Value::Unset => Value::Nil,
-            other => other,
-        }));
-        f.cells.borrow_mut()[slot.at] = Value::Shared(cell.clone());
-        cell
+        if let Value::Shared(cell) = held { return Ok(cell); }
+        let cell = Rc::new(RefCell::new(match held { Value::Unset => Value::Nil, other => other }));
+        home.cells.borrow_mut()[slot.at] = Value::Shared(cell.clone());
+        Ok(cell)
     }
 
     /// The frame and index an array lives in, for writing it in place.
@@ -3181,17 +3194,19 @@ impl<'a> Machine<'a> {
     fn named_within(&self, subject: &Value, names: &[String]) -> Option<(Rc<Routine>, Rc<Env>)> {
         let Value::Thing(thing) = subject else { return None };
         let named = |key: &String| names.iter().any(|word| word == key);
-        let mut blueprint = &thing.blueprint();
-        loop {
-            let found = blueprint.shared.borrow().iter().find(|(key, _)| named(key)).map(|(_, value)| value.clone())
+        let origin = thing.blueprint();
+        let lineage = std::iter::once(&origin).chain(origin.ancestry.iter());
+        for blueprint in lineage {
+            let found = blueprint.shared.borrow().iter().find(|(key, _)| named(key)).map(|(_, value)| value.settled())
                 .or_else(|| blueprint.methods.iter().find(|(key, _)| named(key)).map(|(_, body)| Value::Routine(body.clone())));
             match found {
                 Some(Value::Bound(body, frame)) => return Some((body, frame)),
                 Some(Value::Routine(body)) => return Some((body, self.outermost.clone())),
                 Some(_) => return None,
-                None => blueprint = blueprint.under.as_ref()?,
+                None => {}
             }
         }
+        None
     }
 
     /// A walk let go of: another sleeping body is ended the way a walk
@@ -4435,7 +4450,7 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
+            Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame)?)),
             Form::Tie(slot, source) => {
                 let cell = self.value_of(source, frame)?;
                 let f = ascend(frame, slot.up);
@@ -10591,7 +10606,11 @@ impl<'a> Machine<'a> {
         let mut entries = store.to_vec();
         let mut stopped = None;
         if let Some(source) = arguments.first() {
-            match source.settled() {
+            let offered = source.settled();
+            let direct = if matches!(offered, Value::Thing(_)) && self.appointment(&offered, 15).is_none() {
+                Self::underlying(&offered).map(|value| value.settled()).unwrap_or(offered)
+            } else { offered };
+            match direct {
                 Value::Dict(d) => {
                     let cell = Self::dict_cell(source);
                     let initial = cell.as_ref().map(Self::dict_extent);
@@ -10610,7 +10629,13 @@ impl<'a> Machine<'a> {
                     }
                 }
                 other => {
-                    let mapped = self.attribute(&other, "keys");
+                    let mapped = if matches!(other, Value::Thing(_)) {
+                        match self.read_class_member(other.clone(), "keys", false) {
+                            Ok(method) => Some(method),
+                            Err(escaped) if self.missing_member_escape(&escaped) => None,
+                            Err(escaped) => return Err(self.suspension_fault(escaped)),
+                        }
+                    } else { self.attribute(&other, "keys") };
                     let result = (|| -> Result<(), String> {
                         let source = match mapped.as_ref() {
                             Some(method) => {
@@ -10632,7 +10657,7 @@ impl<'a> Machine<'a> {
                         loop {
                             let Some(item) = self.next_value(&cursor)? else { break };
                             let (key, value) = if mapped.is_some() {
-                                let value = self.ask_special(&other, 11, &[item.clone()])?.ok_or_else(|| self.bad_answer())?;
+                                let value = self.prim(Prim::At, "", &[other.clone(), item.clone()])?;
                                 (item, value)
                             } else {
                                 let fields = self.dict_merge_row(&item, position)?;
@@ -10765,16 +10790,16 @@ impl<'a> Machine<'a> {
         let names = self.table.strings("ext.stmt.class.special");
         let word = names.get(index)?;
         let Value::Thing(thing) = subject else { return None };
-        let mut blueprint = &thing.blueprint();
-        loop {
-            let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.clone());
+        let origin = thing.blueprint();
+        for blueprint in std::iter::once(&origin).chain(origin.ancestry.iter()) {
+            let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.settled());
             if own.is_some() { return own; }
             if let Some((_, body)) = blueprint.methods.iter().find(|(key, _)| key == word) { return Some(Value::Routine(body.clone())); }
             // Equality given, in the methods or the namespace, without a
             // hash: the things cannot be hashed.
             if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal) || blueprint.shared.borrow().iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
-            blueprint = blueprint.under.as_ref()?;
         }
+        None
     }
 
     fn appointed(&self, subject: &Value, index: usize) -> Option<Rc<Routine>> {
@@ -12545,7 +12570,10 @@ impl<'a> Machine<'a> {
     }
 
     fn dictionary(&mut self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
-        let positional: Vec<Value> = positional.iter().map(collection_read).collect();
+        let positional: Vec<Value> = positional.iter().map(|held| match held {
+            Value::Window(owner, 'm') => owner.settled(),
+            _ => held.settled(),
+        }).collect();
         if positional.len() > 1 {
             return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or("A map takes at most one source").to_string());
         }
@@ -12553,14 +12581,33 @@ impl<'a> Machine<'a> {
         let source_pairs = match positional.first() {
             None => Vec::new(),
             Some(Value::Dict(entries)) => entries.to_vec(),
+            Some(value @ Value::Thing(_)) if self.appointment(value, 15).is_none() && matches!(Self::underlying(value).map(|under| under.settled()), Some(Value::Dict(_))) => {
+                let Some(Value::Dict(entries)) = Self::underlying(value).map(|under| under.settled()) else { unreachable!() };
+                entries.to_vec()
+            }
             Some(value) => {
-                let mut pairs = Vec::new();
-                for item in self.gathered_members(value)? {
-                    let members = self.gathered_members(&item)?;
-                    if members.len() != 2 {
-                        return Err(self.table.single("ext.builtin.map.pair.amiss").unwrap_or("A map item needs two values").to_string());
+                let reader = if matches!(value, Value::Thing(_)) {
+                    match self.read_class_member(value.clone(), "keys", false) {
+                        Ok(method) => Some(method),
+                        Err(escaped) if self.missing_member_escape(&escaped) => None,
+                        Err(escaped) => return Err(self.suspension_fault(escaped)),
                     }
-                    pairs.push((members[0].clone(), members[1].clone()));
+                } else { None };
+                let mut pairs = Vec::new();
+                if let Some(reader) = reader {
+                    let keys = self.apply_class_member(reader, Vec::new()).map_err(|escaped| self.suspension_fault(escaped))?;
+                    for key in self.gathered_members(&keys)? {
+                        let item = self.prim(Prim::At, "", &[value.clone(), key.clone()])?;
+                        pairs.push((key, item));
+                    }
+                } else {
+                    for item in self.gathered_members(value)? {
+                        let members = self.gathered_members(&item)?;
+                        if members.len() != 2 {
+                            return Err(self.table.single("ext.builtin.map.pair.amiss").unwrap_or("A map item needs two values").to_string());
+                        }
+                        pairs.push((members[0].clone(), members[1].clone()));
+                    }
                 }
                 pairs
             }
@@ -12918,7 +12965,7 @@ impl<'a> Machine<'a> {
                 // backwards, or handed on after a compound write.
                 self.prim_values(op, name, v)?
             } else {
-                let unwrapped: Vec<Value> = v.iter().map(collection_read).collect();
+                let unwrapped: Vec<Value> = v.iter().map(|value| Self::window_inside(value).unwrap_or_else(|| collection_read(value))).collect();
                 self.prim_values(op, name, &unwrapped)?
             };
             return Ok(self.collection_cell(result));
@@ -12926,7 +12973,21 @@ impl<'a> Machine<'a> {
         self.prim_values(op, name, v)
     }
 
+    fn window_inside(value: &Value) -> Option<Value> {
+        if matches!(value, Value::Window(..)) { return Some(value.clone()); }
+        let content = match value {
+            Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().clone(),
+            _ => return None,
+        };
+        Self::window_inside(&content)
+    }
+
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14)) && v.iter().any(|value| matches!(value, Value::Shared(..) | Value::Mutable(..)) && Self::window_inside(value).is_some()) {
+            let exposed: Vec<_> = v.iter().map(|value| Self::window_inside(value).unwrap_or_else(|| value.clone())).collect();
+            return self.prim_values(op, name, &exposed);
+        }
+
         if self.reads_manners() && matches!(op, Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
             return self.text_operation(op, name, v);
         }
@@ -13019,6 +13080,9 @@ impl<'a> Machine<'a> {
         // equal of. The reading of the map itself answers `==` as the
         // map does: every key with its very value.
         if matches!(op, Prim::Eq | Prim::Ne) && v.iter().any(|value| matches!(value, Value::Window(..))) {
+            if v.iter().any(|value| matches!(value, Value::Thing(_))) {
+                if let Some(answer) = self.user_operation(op, v)? { return Ok(answer); }
+            }
             if let [a, b] = v {
                 let is_mapping = matches!(a, Value::Window(_, 'm')) || matches!(b, Value::Window(_, 'm'));
                 if is_mapping {
@@ -20443,7 +20507,9 @@ impl Machine<'_> {
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
-                if op == Prim::Belongs && matches!(item, Value::Window(..)) { continue; }
+                if op == Prim::Belongs {
+                    if let Some(window) = Self::window_inside(item) { *item = window; continue; }
+                }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
                 *item = item.settled();
@@ -21155,7 +21221,7 @@ impl Machine<'_> {
         let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) else { return true };
         let Some((_, held)) = namespace.holds.borrow().iter().find(|(key, _)| key == &names[1]).cloned() else { return true };
         let cache = match held { Value::Shared(cell) => cell.borrow().clone(), other => other };
-        match cache {
+        match cache.settled() {
             Value::Dict(entries) => entries.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
             _ => true,
         }

@@ -672,7 +672,8 @@ impl<'a> Machine<'a> {
                         // The value comes in as the cell that holds
                         // it, so a member that writes writes into the
                         // very one the caller named.
-                        let subject=values.remove(0).keep(false);
+                        let held = values.remove(0);
+                        let subject = if matches!(held.settled(), Value::Thing(_)) { held.settled() } else { held.keep(false) };
                         // A thing of a class standing on the very kind
                         // this word names answers as its worth would,
                         // since the loose entry is the kind's own and

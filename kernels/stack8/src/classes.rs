@@ -660,7 +660,8 @@ impl<'a> Engine<'a> {
                             Err(self.class_refusal())
                         };
                     }
-                    let subject = args.remove(0);
+                    let supplied = args.remove(0);
+                    let subject = match supplied.contents() { thing @ Value::Object(_) => thing, _ => supplied };
                     // A thing of a class standing on the very kind this
                     // word names answers as its worth would, since the
                     // loose member is the kind's own and not the
