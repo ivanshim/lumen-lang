@@ -1096,6 +1096,11 @@ impl<'a> Engine<'a> {
                         if let Some(value) = Self::own_class_value(class, name) {
                             return self.bind_class_value(value, Some(receiver.clone()), dynamic);
                         }
+                        if Self::own_kind(class).is_some() {
+                            if let Some(descriptor) = self.loose_kind_member(&Value::Class(class.clone()), name) {
+                                return Ok(Self::adapter(3, vec![descriptor, receiver.clone()]));
+                            }
+                        }
                     }
                     // The walk coming to the root, the root answers with
                     // its own members as the plain read of a thing does:
@@ -2618,7 +2623,7 @@ impl<'a> Engine<'a> {
             if let Some(word)=Self::own_kind(c) {
                 if name==self.class_word("allocate"){return self.class_apply(Self::adapter(14,vec![Value::text(&word)]),args);}
                 if self.lang.constructor.as_deref()==Some(name){
-                    if let Some(worth) = Self::worth_of(&subject).filter(|held| matches!(held.contents(), Value::Set(_) | Value::Array(_))) {
+                    if let Some(worth) = Self::worth_of(&subject).filter(|held| matches!(held.contents(), Value::Set(_) | Value::Array(_) | Value::Map(_))) {
                         let mut given = Vec::new(); let mut named = Vec::new();
                         for (key, value) in self.call_items(args)? { match key { Some(key) => named.push((key, value)), None => given.push(value) } }
                         return Ok(self.value_method(&worth, name, given, named)?);

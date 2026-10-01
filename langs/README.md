@@ -1182,7 +1182,9 @@ only. The extension labels so far, all from PHP:
   `next` draws a real of the width's 53 bits; `bits` draws a run of
   whole bits as long as asked; `state` answers with the 624 kept words
   and the place among them; `restore` lays them back; `bytes` answers
-  with so many bytes of the system's own disorder. One label covers them
+  with so many bytes of the system's own disorder; `pid` supplies the
+  current process identifier for clock-based fallback seeding. One
+  label covers them
   all because the one stream kept is the kernel's own, and a definition
   has no way of spelling a generator whose words must number their
   period. Python's `_random` module and its `os.urandom` are written on

@@ -294,7 +294,7 @@ pub fn log_gamma(x: f64) -> f64 {
     };
     let size = x.abs();
     let mut out = ratio(size).ln() - G;
-    out += (size - 0.5) * ((size + G - 0.5).ln() - 1.0);
+    out = (size - 0.5).mul_add((size + G - 0.5).ln() - 1.0, out);
     if x < 0.0 {
         let folded = size % 2.0;
         let circle = std::f64::consts::PI;

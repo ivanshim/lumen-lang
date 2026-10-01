@@ -15666,7 +15666,7 @@ impl<'a> Engine<'a> {
                     };
                     let absx = if x < 0.0 { -x } else { x };
                     let mut r = summed(absx).ln() - G;
-                    r = r + (absx - 0.5) * ((absx + G - 0.5).ln() - 1.0);
+                    r = (absx - 0.5).mul_add((absx + G - 0.5).ln() - 1.0, r);
                     if x < 0.0 {
                         // sin(pi*x) with whole and half turns folded
                         // away, exactly as the library folds them.
@@ -15901,7 +15901,7 @@ impl<'a> Engine<'a> {
                 fn read_disorder(want: usize) -> Result<Vec<u8>, String> {
                     use std::io::Read;
                     let mut held = Vec::new();
-                    held.try_reserve_exact(want).map_err(|_| "MemoryError".to_string())?;
+                    held.try_reserve_exact(want).map_err(|_| "MemoryError: ".to_string())?;
                     held.resize(want, 0);
                     std::fs::File::open("/dev/urandom")
                         .and_then(|mut source| source.read_exact(&mut held))
@@ -15915,6 +15915,10 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 match working.as_str() {
+                    "pid" => {
+                        if args.len() != 1 { return Err(self.lang.module_helper_amiss.clone()); }
+                        Value::Small(i64::from(std::process::id()))
+                    }
                     "begin" => {
                         if args.len() != 1 { return Err(self.lang.module_helper_amiss.clone()); }
                         let under = LENT.with(|held| { let mut held = held.borrow_mut(); held.push(Stream::planted(19650218)); held.len() - 1 });
@@ -15980,14 +15984,15 @@ impl<'a> Engine<'a> {
                             Value::Small(drawn as i64)
                         } else {
                             let words = ((count - 1) / 32 + 1) as usize;
-                            if words > isize::MAX as usize / 4 { return Err("MemoryError".into()); }
+                            if words > isize::MAX as usize / 4 { return Err("MemoryError: ".into()); }
                             // The top word holds only the bits past the
                             // whole words beneath it, and its excess is
                             // dropped before it is laid in place.
                             let top = (count - 1) % 32 + 1;
                             let drawn = LENT.with(|held| match held.borrow_mut().get_mut(under) {
                                 Some(stream) => {
-                                    let mut limbs: Vec<u32> = Vec::with_capacity(words);
+                                    let mut limbs: Vec<u32> = Vec::new();
+                                    limbs.try_reserve_exact(words).map_err(|_| "MemoryError: ".to_string())?;
                                     for at in 0..words {
                                         let mut word = stream.word();
                                         if at == words - 1 { word >>= 32 - top; }
@@ -16050,6 +16055,12 @@ impl<'a> Engine<'a> {
                         let Some(want) = whole_arg(1).and_then(|n| n.to_usize()) else {
                             return Err(self.lang.module_helper_amiss.clone());
                         };
+                        // Account for CPython's variable-object header,
+                        // cached hash, and terminating zero in a bytes value.
+                        let overhead = 4 * std::mem::size_of::<usize>() + 1;
+                        if want > isize::MAX as usize - overhead {
+                            return Err("OverflowError: byte string is too large".into());
+                        }
                         match read_disorder(want) {
                             Ok(bytes) => self.byte_make(bytes, false),
                             Err(fault) => return Err(fault),

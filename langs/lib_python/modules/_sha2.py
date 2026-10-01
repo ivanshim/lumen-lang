@@ -65,6 +65,8 @@ class _Sha2:
         raise NotImplementedError
 
     def update(self, data):
+        if isinstance(data, str):
+            raise TypeError('Strings must be encoded before hashing')
         if not isinstance(data, (bytes, bytearray)):
             raise TypeError("object supporting the buffer API required")
         self._carried += bytes(data)
@@ -72,7 +74,7 @@ class _Sha2:
         while len(self._carried) >= self.block_size:
             self._press(self._carried[:self.block_size])
             self._carried = self._carried[self.block_size:]
-        return self
+        return None
 
     def digest(self):
         # The padding is worked over a copy, so a digest asked for twice
@@ -80,7 +82,7 @@ class _Sha2:
         working = list(self._state)
         carried = self._carried
         tail_wide = 16 if self.block_size == 128 else 8
-        padding = b'\x80' + b'\x00' * ((self.block_size - 1 - tail_wide - len(carried)) % self.block_size)
+        padding = b'\x80' + b'\x00' * ((self.block_size - 1 - tail_wide - len(carried)) & (self.block_size - 1))
         bits = self._length * 8
         tail = bits.to_bytes(tail_wide, 'big')
         whole = carried + padding + tail
@@ -109,7 +111,7 @@ class sha512(_Sha2):
     _wide = 8
     _state = list(_ROOTS_512)
 
-    def __init__(self, data=b''):
+    def __init__(self, data=b'', *, usedforsecurity=True):
         self._state = list(_ROOTS_512)
         self._carried = b''
         self._length = 0
@@ -141,7 +143,7 @@ class sha384(sha512):
     digest_size = 48
     _state = list(_ROOTS_384)
 
-    def __init__(self, data=b''):
+    def __init__(self, data=b'', *, usedforsecurity=True):
         self._state = list(_ROOTS_384)
         self._carried = b''
         self._length = 0
@@ -155,7 +157,7 @@ class sha256(_Sha2):
     _wide = 4
     _state = list(_ROOTS_256)
 
-    def __init__(self, data=b''):
+    def __init__(self, data=b'', *, usedforsecurity=True):
         self._state = list(_ROOTS_256)
         self._carried = b''
         self._length = 0
@@ -187,7 +189,7 @@ class sha224(sha256):
     digest_size = 28
     _state = list(_ROOTS_224)
 
-    def __init__(self, data=b''):
+    def __init__(self, data=b'', *, usedforsecurity=True):
         self._state = list(_ROOTS_224)
         self._carried = b''
         self._length = 0

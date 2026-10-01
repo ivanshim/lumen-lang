@@ -15078,7 +15078,9 @@ impl<'a> Machine<'a> {
                 // The system's own disorder, read from where it is kept.
                 fn disorder(want: usize) -> Result<Vec<u8>, String> {
                     use std::io::Read;
-                    let mut numbers = vec![0u8; want];
+                    let mut numbers = Vec::new();
+                    numbers.try_reserve(want).map_err(|_| String::from("MemoryError: "))?;
+                    numbers.resize(want, 0u8);
                     std::fs::File::open("/dev/urandom")
                         .and_then(|mut source| source.read_exact(&mut numbers))
                         .map_err(|_| "OSError: the source of disorder did not answer".to_string())?;
@@ -15100,6 +15102,7 @@ impl<'a> Machine<'a> {
                 };
                 let whole = |at: usize| -> Result<BigInt, String> { v[at].as_big() };
                 match working.as_str() {
+                    "pid" if v.len() == 1 => Value::Small(std::process::id() as i64),
                     "begin" => {
                         if v.len() != 1 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
                         let mut fresh = ([0u32; KEPT], 0usize);
@@ -15167,13 +15170,14 @@ impl<'a> Machine<'a> {
                             Value::Small(word as i64)
                         } else {
                             let words = ((count - 1) / 32 + 1) as usize;
-                            if words > isize::MAX as usize / 4 { return Err("MemoryError".to_string()); }
+                            if words > isize::MAX as usize / 4 { return Err("MemoryError: ".to_string()); }
                             // The highest word carries only the bits left
                             // over above the whole words below it.
                             let leftover = (count - 1) % 32 + 1;
-                            let limbs = DRAWN_ON.with(|streams| {
+                            let limbs = DRAWN_ON.with(|streams| -> Result<Vec<u32>, String> {
                                 let (mt, spot) = &mut streams.borrow_mut()[which];
-                                let mut limbs: Vec<u32> = Vec::with_capacity(words);
+                                let mut limbs = Vec::new();
+                                limbs.try_reserve(words).map_err(|_| String::from("MemoryError: "))?;
                                 let mut laid = 0usize;
                                 while laid < words {
                                     let mut word = draw(mt, spot);
@@ -15181,8 +15185,8 @@ impl<'a> Machine<'a> {
                                     limbs.push(word);
                                     laid += 1;
                                 }
-                                limbs
-                            });
+                                Ok(limbs)
+                            })?;
                             Value::Huge(Rc::new(BigInt::from(num_bigint::BigUint::new(limbs))))
                         }
                     }
@@ -15230,6 +15234,10 @@ impl<'a> Machine<'a> {
                     "bytes" => {
                         if v.len() != 2 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
                         let want = whole(1)?.to_usize().ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?;
+                        let header_bytes = std::mem::size_of::<isize>() * 4 + 1;
+                        if want.checked_add(header_bytes).map_or(true, |total| total > isize::MAX as usize) {
+                            return Err(String::from("OverflowError: byte string is too large"));
+                        }
                         self.octets(disorder(want)?, false)
                     }
                     _ => return Err(format!("{}(): there is no working called '{}'", name, working)),

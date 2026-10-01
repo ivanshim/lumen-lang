@@ -54,20 +54,17 @@ def _answers_own(x, name):
 def floor(x):
     if type(x) == type(1.0):
         # A real of the width needs nothing asked around it.
-        if isinf(x) or isnan(x):
+        if x == inf or x == -inf or x != x:
             raise 'ValueError: a non-finite value has no integer floor'
         return __math('floor', x)
     if _answers_own(x, '__floor__'):
         method = x.__floor__
         if method is None:
             raise TypeError("'NoneType' object is not callable")
-        answer = method()
-        if type(answer) != type(1) and type(answer) != type(True):
-            raise 'TypeError: __floor__ returned non-Integral (type ' + type(answer).__name__ + ')'
-        return answer
+        return method()
     _check_real(x)
     x = float(x)
-    if isinf(x) or isnan(x):
+    if x == inf or x == -inf or x != x:
         raise 'ValueError: a non-finite value has no integer floor'
     return __math('floor', x)
 
@@ -170,13 +167,13 @@ def _log_value(x, working, per_bit):
     # asked for its real; only where the real overflows the width is
     # its index asked for instead, the way a real itself is asked for
     # only where the whole number already answers to more than one.
-    if _is_integral(x):
-        return _log_int(int(x), working, per_bit)
     if type(x) == type(1.0):
         # A real of the width needs nothing asked around it.
         if x <= 0:
             raise ValueError('expected a positive input, got ' + str(x))
         return __math(working, x)
+    if _is_integral(x):
+        return _log_int(int(x), working, per_bit)
     if hasattr(x, '__float__'):
         try:
             real = float(x)
@@ -686,13 +683,15 @@ def gamma(x):
     return __math('fdiv', r, 1.0)
 
 def lgamma(x):
-    if type(x) != type(1.0):
+    if type(x) == type(1):
+        x = float(x)
+    elif type(x) != type(1.0):
         _check_real(x)
         _overflow_guard(x)
         x = float(x)
-    if isnan(x):
+    if x != x:
         return x
-    if isinf(x):
+    if x == inf or x == -inf:
         return inf
     if x <= 2.0 and x == int(x):
         if x <= 0:
@@ -705,7 +704,7 @@ def lgamma(x):
     # the working 'lgamma'), worked at the width with the very numbers
     # the two spellings here carry, so both come to the one real.
     r = __math('lgamma', x)
-    if isinf(r):
+    if r == inf or r == -inf:
         raise 'OverflowError: math range error'
     return r
 

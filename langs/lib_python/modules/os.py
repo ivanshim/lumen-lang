@@ -29,8 +29,7 @@ def chdir(path):
         raise OSError(20, 'Not a directory', path)
 
 def getpid():
-    # Stub: no real process identity is promised.
-    return 1
+    return __random('pid')
 
 def urandom(size):
     # The system's own disorder, lent by the kernel (ext.builtin._random)
@@ -38,10 +37,10 @@ def urandom(size):
     # reference asks for it; one outside what a place's count can hold is
     # refused before the kernel is asked, as the reference refuses it.
     if type(size) is not int:
-        take = getattr(type(size), '__index__', None)
-        if take is None:
+        if getattr(type(size), '__index__', None) is None:
             raise TypeError("'{}' object cannot be interpreted as an integer".format(type(size).__name__))
-        size = take(size)
+        from operator import index
+        size = index(size)
     if size > 9223372036854775807 or size < -9223372036854775808:
         raise OverflowError('Python int too large to convert to C ssize_t')
     if size < 0:
@@ -157,3 +156,16 @@ class _Path:
         return self.abspath(path)
 
 path = _Path()
+
+class terminal_size(tuple):
+    # A width and a height, as a tuple of the two.
+    def __new__(cls, size):
+        return tuple.__new__(cls, size)
+
+    @property
+    def columns(self):
+        return self[0]
+
+    @property
+    def lines(self):
+        return self[1]

@@ -1427,6 +1427,13 @@ impl<'a> Machine<'a> {
                         if let Some(entry) = Self::own_entry(base, key) {
                             return self.member_binding(entry, Some(instance.clone()), actual.clone());
                         }
+                        // Native slots are descriptors on their defining kind;
+                        // bind that descriptor before considering the root.
+                        if Self::native_word(base).is_some() {
+                            if let Some(slot) = self.carried_by_kind(&Value::Blueprint(base.clone()), key) {
+                                return Ok(Self::wrap(3, vec![slot, instance.clone()]));
+                            }
+                        }
                         // A member a native forebear carries without
                         // keeping an entry of its own, `__hash__` or
                         // `__eq__` among them, is answered off the worth
@@ -2688,7 +2695,7 @@ impl<'a> Machine<'a> {
                 if key==self.detail("allocate"){return self.apply_class_member(Self::wrap(14,vec![Value::text(&word)]),args);}
                 if self.table.single("ext.stmt.class.constructor")==Some(key){
                     return match Self::underlying(&receiver) {
-                        Some(under) if matches!(under.settled(), Value::Set(_) | Value::Vector(_)) => {
+                        Some(under) if matches!(under.settled(), Value::Set(_) | Value::Vector(_) | Value::Dict(_)) => {
                             let (positional, named) = self.open_arguments(args)?;
                             self.value_member(&under, key, positional, named)
                         }

@@ -65,7 +65,7 @@ class Random:
             # asks it (issue 31478).
             number = int.__abs__(a)
         else:
-            number = hash(a) % (1 << 64)
+            number = hash(a) & ((1 << 64) - 1)
         __random('seed', self._lent(), number)
         return None
 
@@ -79,13 +79,10 @@ class Random:
     def getrandbits(self, k, /):
         """getrandbits(k) -> x.  Generates an int with k random bits."""
         if type(k) is not int:
-            # The reference's argument conversion goes by __index__ and
-            # refuses everything that does not offer one.
-            take = getattr(type(k), '__index__', None)
-            if take is None:
-                raise TypeError(f"'{type(k).__name__}' object cannot be "
-                                f"interpreted as an integer")
-            k = take(k)
+            if getattr(type(k), '__index__', None) is None:
+                raise TypeError("'{}' object cannot be interpreted as an integer".format(type(k).__name__))
+            from operator import index
+            k = index(k)
         if k < 0:
             raise ValueError('Cannot convert negative int to unsigned '
                              '64-bit integer')
