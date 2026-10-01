@@ -280,7 +280,7 @@ def _strip_verbose(pattern):
     return result
 
 def _word(letter):
-    return letter != '' and letter in _WORD_LETTERS
+    return letter != '' and (letter.isalnum() or letter == '_')
 
 def _accept(node, letter, ignorecase):
     kind = node[0]
@@ -298,11 +298,11 @@ def _accept(node, letter, ignorecase):
     if kind == 'kind':
         mark = node[1]
         if mark in 'dD':
-            answer = letter in _DIGITS
+            answer = letter.isdigit()
         elif mark in 'wW':
             answer = _word(letter)
         else:
-            answer = letter in ' \t\n\r\v\f'
+            answer = letter.isspace()
         return not answer if mark in 'DWS' else answer
     return False
 
@@ -550,11 +550,7 @@ class Pattern:
         self._shorthand = shorthand
 
     def _check_text(self, string):
-        if not self._shorthand:
-            return
-        for letter in list(string):
-            if ord(letter) > 127:
-                raise 'NotImplementedError: Unicode shorthand classes are not supported'
+        return
 
     def match(self, string, pos=0, endpos=None):
         self._check_text(string)

@@ -1,8 +1,8 @@
 # From CPython 3.14, Lib/dataclasses.py, written out in Python: the part
 # pprint needs -- field options, __repr__/__init__/__eq__ generation,
 # is_dataclass, fields and make_dataclass -- carried here with the record
-# base this library already uses. Generated __repr__ is the base record's
-# own, so a class that defines __repr__ itself is left with its own.
+# base this library already uses. Options this run does not honour are
+# refused outright, and a field is validated the way CPython validates it.
 class _Missing:
     pass
 
@@ -116,6 +116,25 @@ def _lay_out(cls_name, names, annotations, defaults, init, repr, eq, frozen,
         members[word] = value
     return __derive_class(cls_name, _Record, members)
 
+def _spec_of(value):
+    return value if isinstance(value, field) else field(default=value)
+
+def _collect(names, annotations, read):
+    # Read each named field's specification, refusing a field with no
+    # default that follows one with a default, as the reference does.
+    defaults = []
+    seen = False
+    for name in names:
+        spec = _spec_of(read(name))
+        supplied = spec.default is not MISSING or spec.default_factory is not MISSING
+        if not supplied and seen:
+            raise "TypeError: non-default argument '" + name + "' follows default argument"
+        seen = seen or supplied
+        spec.name = name
+        spec.type = annotations.get(name)
+        defaults.append(spec)
+    return defaults
+
 def _process_class(cls, init, repr, eq, frozen):
     if frozen:
         raise 'NotImplementedError: these dataclass options are not supported'
@@ -123,13 +142,7 @@ def _process_class(cls, init, repr, eq, frozen):
         raise 'NotImplementedError: dataclass inheritance is not supported'
     annotations = dict(getattr(cls, '__annotations__', {}))
     names = list(annotations)
-    defaults = []
-    for name in names:
-        value = getattr(cls, name, MISSING)
-        spec = value if isinstance(value, field) else field(default=value)
-        spec.name = name
-        spec.type = annotations.get(name)
-        defaults.append(spec)
+    defaults = _collect(names, annotations, lambda name: getattr(cls, name, MISSING))
     carried = []
     for word in __class_methods(cls):
         carried.append((word, getattr(cls, word)))
@@ -139,6 +152,10 @@ def _process_class(cls, init, repr, eq, frozen):
 def dataclass(cls=None, *, init=True, repr=True, eq=True, order=False,
               unsafe_hash=False, frozen=False, match_args=True, kw_only=False,
               slots=False):
+    # The options this run honours are init, repr and eq. The rest are
+    # refused when asked for, rather than silently ignored.
+    if not init or not eq or order or unsafe_hash or not match_args or kw_only or slots:
+        raise 'NotImplementedError: these dataclass options are not supported'
     def wrap(cls):
         return _process_class(cls, init, repr, eq, frozen)
     if cls is None:
@@ -160,20 +177,27 @@ def make_dataclass(cls_name, fields, *, bases=(), namespace=None, init=True,
                    repr=True, eq=True, order=False, unsafe_hash=False,
                    frozen=False, match_args=True, kw_only=False, slots=False,
                    module=None, qualname=None, doc=None):
+    if bases or namespace is not None:
+        raise 'NotImplementedError: these dataclass options are not supported'
+    if frozen or not init or not eq or order or unsafe_hash or not match_args or kw_only or slots:
+        raise 'NotImplementedError: these dataclass options are not supported'
     names = []
     annotations = {}
-    defaults = []
+    read = {}
     for item in fields:
         if isinstance(item, str):
             name, spec = item, field()
         elif len(item) == 2:
-            name, spec = item[0], field(default=item[1])
+            # A name and its type; no default is given.
+            name, spec = item[0], field()
+            annotations[name] = item[1]
         else:
             name, spec = item[0], (item[2] if isinstance(item[2], field) else field(default=item[2]))
+            if len(item) == 3 and item[1] is not None:
+                annotations[name] = item[1]
         names.append(name)
-        annotations[name] = None
-        spec.name = name
-        defaults.append(spec)
+        read[name] = spec
+    defaults = _collect(names, annotations, lambda name: read[name])
     return _lay_out(cls_name, names, annotations, defaults, init, repr, eq,
                     frozen, [])
 
