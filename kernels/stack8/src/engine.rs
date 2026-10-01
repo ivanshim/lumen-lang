@@ -17918,8 +17918,17 @@ impl Engine<'_> {
             if let Value::Class(actual) = value {
                 return Ok(Self::maker_beneath(actual).map_or(false, |m| Rc::ptr_eq(&m, class) || m.lineage.iter().any(|base| Rc::ptr_eq(base, class))));
             }
-            return Ok(matches!(value, Value::Object(instance) if Rc::ptr_eq(&instance.class_now(), class)
-                || instance.class_now().lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, class))));
+            if let Value::Object(instance) = value {
+                let actual = instance.class_now();
+                for entry in std::iter::once(&actual).chain(actual.lineage.iter()) {
+                    let mut parent = Some(entry.as_ref());
+                    while let Some(ancestor) = parent {
+                        if std::ptr::eq(ancestor, class.as_ref()) { return Ok(true); }
+                        parent = ancestor.base.as_deref();
+                    }
+                }
+            }
+            return Ok(false);
         }
         // A thing of a class standing on a builtin kind is of that kind.
         if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {
