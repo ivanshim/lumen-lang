@@ -1,3 +1,8 @@
+# Distribution methods on Random are copied unchanged from CPython Lib/random.py
+# at commit 3b564385e4c9, under the PSF License (tests/python/LICENSE).
+from math import log as _log, exp as _exp, sqrt as _sqrt, cos as _cos, sin as _sin, tau as TWOPI
+NV_MAGICCONST = 4 * _exp(-0.5) / _sqrt(2.0)
+
 # A repeatable linear congruential generator, not the reference's stream.
 _state = 1
 
@@ -89,16 +94,20 @@ def uniform(a, b):
     return a + (b - a) * random()
 
 def expovariate(lambd=1.0):
-    import math
-    # One minus the next draw, so the logarithm never sees zero.
-    return -math.log(1.0 - random()) / lambd
+    return -_log(1.0 - random()) / lambd
+
+def normalvariate(mu=0.0, sigma=1.0):
+    while True:
+        u1 = random()
+        u2 = 1.0 - random()
+        z = NV_MAGICCONST * (u1 - 0.5) / u2
+        if z * z / 4.0 <= -_log(u2):
+            return mu + z * sigma
 
 def lognormvariate(mu, sigma):
-    import math
-    return math.exp(gauss(mu, sigma))
+    return _exp(normalvariate(mu, sigma))
 
 def triangular(low=0.0, high=1.0, mode=None):
-    import math
     u = random()
     try:
         c = 0.5 if mode is None else (mode - low) / (high - low)
@@ -108,7 +117,7 @@ def triangular(low=0.0, high=1.0, mode=None):
         u = 1.0 - u
         c = 1.0 - c
         low, high = high, low
-    return low + (high - low) * math.sqrt(u * c)
+    return low + (high - low) * _sqrt(u * c)
 
 
 _gauss_next = None
@@ -147,14 +156,11 @@ class Random:
         self.seed(seed)
 
     def seed(self, value=None):
-        if isinstance(value, str):
-            # The reference folds a text's own writing into the number
-            # it seeds with; the fold here is this library's own, and
-            # stands only for that text, as that one does.
-            mixed = 1469598103934665603
-            for piece in value.encode('utf-8'):
-                mixed = ((mixed ^ piece) * 1099511628211) & 0xffffffffffffffff
-            value = mixed
+        self.gauss_next = None
+        if isinstance(value, (str, bytes, bytearray)):
+            from _random_seed import digest
+            data = value.encode('utf-8') if isinstance(value, str) else bytes(value)
+            value = int.from_bytes(data + digest(data), 'big')
         if value is None:
             try:
                 import os
@@ -245,30 +251,98 @@ class Random:
         return (high * 67108864.0 + low) * (1.0 / 9007199254740992.0)
 
     def gauss(self, mu=0.0, sigma=1.0):
-        import math
-        z = getattr(self, 'gauss_next', None)
+        """Gaussian distribution.
+
+        mu is the mean, and sigma is the standard deviation.  This is
+        slightly faster than the normalvariate() function.
+
+        Not thread-safe without a lock around calls.
+
+        """
+        # When x and y are two variables from [0, 1), uniformly
+        # distributed, then
+        #
+        #    cos(2*pi*x)*sqrt(-2*log(1-y))
+        #    sin(2*pi*x)*sqrt(-2*log(1-y))
+        #
+        # are two *independent* variables with normal distribution
+        # (mu = 0, sigma = 1).
+        # (Lambert Meertens)
+        # (corrected version; bug discovered by Mike Miller, fixed by LM)
+
+        # Multithreading note: When two threads call this function
+        # simultaneously, it is possible that they will receive the
+        # same return value.  The window is very small though.  To
+        # avoid this, you have to use a lock around all calls.  (I
+        # didn't want to slow this down in the serial case by using a
+        # lock here.)
+
+        random = self.random
+        z = self.gauss_next
+        self.gauss_next = None
         if z is None:
-            angle = self.random() * math.tau
-            radius = math.sqrt(-2.0 * math.log(1.0 - self.random()))
-            z = math.cos(angle) * radius
-            self.gauss_next = math.sin(angle) * radius
-        else:
-            self.gauss_next = None
+            x2pi = random() * TWOPI
+            g2rad = _sqrt(-2.0 * _log(1.0 - random()))
+            z = _cos(x2pi) * g2rad
+            self.gauss_next = _sin(x2pi) * g2rad
+
         return mu + z * sigma
 
     def uniform(self, a, b):
+        """Get a random number in the range [a, b) or [a, b] depending on rounding.
+
+        The mean (expected value) and variance of the random variable are:
+
+            E[X] = (a + b) / 2
+            Var[X] = (b - a) ** 2 / 12
+
+        """
         return a + (b - a) * self.random()
 
     def expovariate(self, lambd=1.0):
-        import math
-        return -math.log(1.0 - self.random()) / lambd
+        """Exponential distribution.
+
+        lambd is 1.0 divided by the desired mean.  It should be
+        nonzero.  (The parameter would be called "lambda", but that is
+        a reserved word in Python.)  Returned values range from 0 to
+        positive infinity if lambd is positive, and from negative
+        infinity to 0 if lambd is negative.
+
+        The mean (expected value) and variance of the random variable are:
+
+            E[X] = 1 / lambd
+            Var[X] = 1 / lambd ** 2
+
+        """
+        # we use 1-random() instead of random() to preclude the
+        # possibility of taking the log of zero.
+
+        return -_log(1.0 - self.random()) / lambd
 
     def lognormvariate(self, mu, sigma):
-        import math
-        return math.exp(self.gauss(mu, sigma))
+        """Log normal distribution.
+
+        If you take the natural logarithm of this distribution, you'll get a
+        normal distribution with mean mu and standard deviation sigma.
+        mu can have any value, and sigma must be greater than zero.
+
+        """
+        return _exp(self.normalvariate(mu, sigma))
 
     def triangular(self, low=0.0, high=1.0, mode=None):
-        import math
+        """Triangular distribution.
+
+        Continuous distribution bounded by given lower and upper limits,
+        and having a given mode value in-between.
+
+        http://en.wikipedia.org/wiki/Triangular_distribution
+
+        The mean (expected value) and variance of the random variable are:
+
+            E[X] = (low + high + mode) / 3
+            Var[X] = (low**2 + high**2 + mode**2 - low*high - low*mode - high*mode) / 18
+
+        """
         u = self.random()
         try:
             c = 0.5 if mode is None else (mode - low) / (high - low)
@@ -278,4 +352,25 @@ class Random:
             u = 1.0 - u
             c = 1.0 - c
             low, high = high, low
-        return low + (high - low) * math.sqrt(u * c)
+        return low + (high - low) * _sqrt(u * c)
+
+    def normalvariate(self, mu=0.0, sigma=1.0):
+        """Normal distribution.
+
+        mu is the mean, and sigma is the standard deviation.
+
+        """
+        # Uses Kinderman and Monahan method. Reference: Kinderman,
+        # A.J. and Monahan, J.F., "Computer generation of random
+        # variables using the ratio of uniform deviates", ACM Trans
+        # Math Software, 3, (1977), pp257-260.
+
+        random = self.random
+        while True:
+            u1 = random()
+            u2 = 1.0 - random()
+            z = NV_MAGICCONST * (u1 - 0.5) / u2
+            zz = z * z / 4.0
+            if zz <= -_log(u2):
+                break
+        return mu + z * sigma

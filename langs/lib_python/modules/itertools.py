@@ -67,7 +67,15 @@ def islice(iterable, *bounds):
     return result
 
 def chain(*iterables):
-    return [item for iterable in iterables for item in iterable]
+    for iterable in iterables:
+        yield from iterable
+
+def _chain_from_iterable(iterables):
+    for iterable in iterables:
+        yield from iterable
+
+chain.from_iterable = _chain_from_iterable
+
 
 def product(*iterables, repeat=1):
     result = [[]]
@@ -162,15 +170,9 @@ def starmap(function, iterable):
     return [function(*args) for args in _finite(iterable)]
 
 def compress(data, selectors):
-    data = _finite(data)
-    if isinstance(selectors, _Count):
-        # A counted selector keeps or drops each place by the number
-        # standing there, and walks on as many places as the data had.
-        start, step = selectors.start, selectors.step
-        selectors.start = start + len(data) * step
-        return [data[i] for i in range(len(data)) if start + i * step]
-    selectors = _finite(selectors)
-    return [data[i] for i in range(len(data) if len(data) < len(selectors) else len(selectors)) if selectors[i]]
+    # Pair the streams lazily; zip stops as soon as either is exhausted.
+    return (datum for datum, selected in zip(data, selectors) if selected)
+
 
 def filterfalse(predicate, iterable):
     if predicate is None:
