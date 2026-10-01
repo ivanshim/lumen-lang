@@ -25,20 +25,8 @@ def sqrt(x):
     return __math('sqrt', x)
 
 def fabs(x):
-    if type(x) == type(1.0):
-        # A real of the width needs nothing asked around it.
-        if x == 0:
-            return __math('fdiv', 0.0, 1.0)
-        if x < 0:
-            return __math('fdiv', -x, 1.0)
-        return __math('fdiv', x, 1.0)
     _check_real(x)
-    x = float(x)
-    if x == 0:
-        return __math('fdiv', 0.0, 1.0)
-    if x < 0:
-        return __math('fdiv', -x, 1.0)
-    return __math('fdiv', x, 1.0)
+    return __math('fabs', float(x))
 
 def _check_real(x):
     if type(x) == type(1) or type(x) == type(1.0) or type(x) == type(True):
