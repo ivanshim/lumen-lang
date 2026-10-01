@@ -12544,8 +12544,8 @@ impl<'a> Machine<'a> {
         match other { Value::Shared(cell) => return self.equal_contents(one, &cell.borrow()), _ => {} }
         // A thing's dictionary is the mapping of its shown entries, so
         // it is weighed as that mapping with the entries in any order.
-        if let Value::Attributes(held) = one { return self.equal_contents(&held.entries_shown(), other); }
-        if let Value::Attributes(held) = other { return self.equal_contents(one, &held.entries_shown()); }
+        if let Value::Attributes(held) = one { return self.equal_contents(&Value::Dict(Rc::new(Self::attribute_entries(held).into())), other); }
+        if let Value::Attributes(held) = other { return self.equal_contents(one, &Value::Dict(Rc::new(Self::attribute_entries(held).into()))); }
         // Within a container a value is equal to itself before anything
         // is asked of it, and a flag stands for its number.
         let held_alike = |x: &Value, y: &Value| x.one_place(y) || self.equal_contents(x, y);
