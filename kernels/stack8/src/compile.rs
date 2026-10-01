@@ -7956,10 +7956,25 @@ impl<'a> Compiler<'a> {
                     self.value_written(keep)?;
                     self.write(&value);
                 }
+                let retained_owner = if !self.lang.class_special.is_empty() {
+                    match base.last() {
+                        Some(Instr::Act(Action::Grab(member), 1)) => Some((self.gensym("owner"), member.clone())),
+                        _ => None,
+                    }
+                } else { None };
                 self.put(Instr::Hush(true));
                 let at = self.mark();
-                for w in relocated(base.clone(), at as i64 - from as i64) {
-                    self.put(w);
+                if let Some((slot, member)) = &retained_owner {
+                    for instruction in relocated(base[..base.len() - 1].to_vec(), at as i64 - from as i64) {
+                        self.put(instruction);
+                    }
+                    self.write(slot);
+                    self.read(slot);
+                    self.act(Action::Grab(member.clone()), 1);
+                } else {
+                    for instruction in relocated(base.clone(), at as i64 - from as i64) {
+                        self.put(instruction);
+                    }
                 }
                 self.put(Instr::Hush(false));
                 self.write(&inner[0]);
@@ -8004,12 +8019,8 @@ impl<'a> Compiler<'a> {
                 // to the footing below that restores `self.waiting` and
                 // any hush/mute marks, rather than returning out of the
                 // whole statement with those left disturbed.
-                if !self.lang.class_special.is_empty() && matches!(base.last(), Some(Instr::Act(Action::Grab(_), 1))) {
-                    let Some(Instr::Act(Action::Grab(member), 1)) = base.last() else { unreachable!() };
-                    let owner_at = self.mark();
-                    for instruction in relocated(base[..base.len() - 1].to_vec(), owner_at as i64 - from as i64) {
-                        self.put(instruction);
-                    }
+                if let Some((slot, member)) = &retained_owner {
+                    self.read(slot);
                     self.read(&made);
                     self.read(&inner[0]);
                     self.act(Action::RestoreMember(member.clone()), 3);
