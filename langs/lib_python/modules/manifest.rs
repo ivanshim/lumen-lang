@@ -32,6 +32,8 @@ pub static MODULES: &[(&str, &str)] = &[
     ("difflib", include_str!("difflib.py")),
     ("dis", include_str!("dis.py")),
     ("doctest", include_str!("doctest.py")),
+    ("encodings", include_str!("encodings/__init__.py")),
+    ("encodings.aliases", include_str!("encodings/aliases.py")),
     ("enum", include_str!("enum.py")),
     ("errno", include_str!("errno.py")),
     ("fractions", include_str!("fractions.py")),

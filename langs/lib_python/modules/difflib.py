@@ -1,7 +1,6 @@
-# From CPython 3.15, Lib/difflib.py, with the one lazy import the
-# source spells made ordinary; nothing else is changed.
+# From CPython commit 3b564385e4c9, Lib/difflib.py.
 # Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Used under the PSF license in tests/python/LICENSE.
 """
 Module difflib -- helpers for computing deltas between objects.
 
@@ -37,7 +36,7 @@ __all__ = ['get_close_matches', 'ndiff', 'restore', 'SequenceMatcher',
 from heapq import nlargest as _nlargest
 from collections import namedtuple as _namedtuple
 from types import GenericAlias
-from _colorize import can_colorize, get_theme
+lazy from _colorize import can_colorize, get_theme
 
 Match = _namedtuple('Match', 'a b size')
 

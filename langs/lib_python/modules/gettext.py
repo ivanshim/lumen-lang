@@ -1,9 +1,6 @@
-# From CPython 3.15, Lib/gettext.py, with the two frozendict
-# constants of the plural-form reader held as ordinary dicts (the
-# immutable kind is not built here) and the pair target of its
-# comprehension parenthesised; nothing else is changed.
+# From CPython commit 3b564385e4c9, Lib/gettext.py.
 # Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Used under the PSF license in tests/python/LICENSE.
 """Internationalization and localization support.
 
 This module provides internationalization (I18N) and localization (L10N)
@@ -117,9 +114,9 @@ _binary_ops = (
     ('+', '-'),
     ('*', '/', '%'),
 )
-_binary_ops = {op: i for (i, ops) in enumerate(_binary_ops, 1)
-               for op in ops}
-_c2py_ops = {'||': 'or', '&&': 'and', '/': '//'}
+_binary_ops = frozendict({op: i for i, ops in enumerate(_binary_ops, 1)
+                          for op in ops})
+_c2py_ops = frozendict({'||': 'or', '&&': 'and', '/': '//'})
 
 
 def _parse(tokens, priority=-1):

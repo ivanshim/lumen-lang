@@ -10490,8 +10490,13 @@ impl<'a> Compiler<'a> {
                 let word = token.lexeme.as_str();
                 if depth == 0 && token.shape == Shape::Sign && word == pair.close { break; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
-                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") {
+                    if separated {
+                        return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                    }
+                    // Only the result expression precedes this first clause.
+                    // Later commas may belong to an unpacking loop target.
+                    break;
                 }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }

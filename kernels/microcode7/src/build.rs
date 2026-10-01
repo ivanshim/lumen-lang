@@ -9885,8 +9885,13 @@ impl<'a> Builder<'a> {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
                 if inner.is_empty() {
                     if part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
-                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                        // The comma check belongs to the expression being
+                        // collected, ending at the first comprehension loop.
+                        if comma_before_for {
+                            return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                        }
+                        break;
                     }
                 }
                 if part.shape == Shape::Sign {

@@ -817,6 +817,9 @@ impl<'a> Engine<'a> {
             let mut initial = args.clone();
             match self.lang.builtins.get(word) {
                 Some(Builtin::Set) => initial.clear(),
+                // A mapping is allocated empty; its initializer consumes
+                // the arguments, including an initializer supplied by a subclass.
+                Some(Builtin::Dict) if self.lang.constructor.as_deref().and_then(|key| self.class_value(&c, key)).is_some() => initial.clear(),
                 Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }

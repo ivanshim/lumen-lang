@@ -1,8 +1,6 @@
-# From CPython 3.15, Lib/argparse.py, with the nine lazy imports the
-# source spells made ordinary (the lazy form is not spelled here yet);
-# nothing else is changed.
+# From CPython commit 3b564385e4c9, Lib/argparse.py.
 # Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Used under the PSF license in tests/python/LICENSE.
 # Author: Steven J. Bethard <steven.bethard@gmail.com>.
 # New maintainer as of 29 August 2019:  Raymond Hettinger <raymond.hettinger@gmail.com>
 
@@ -94,15 +92,15 @@ __all__ = [
 import os as _os
 import sys as _sys
 
-import _colorize
-import copy
-import difflib
-import re as _re
-import shutil
-import textwrap
-import warnings
-from gettext import gettext as _
-from gettext import ngettext
+lazy import _colorize
+lazy import copy
+lazy import difflib
+lazy import re as _re
+lazy import shutil
+lazy import textwrap
+lazy import warnings
+lazy from gettext import gettext as _
+lazy from gettext import ngettext
 
 SUPPRESS = '==SUPPRESS=='
 
