@@ -679,6 +679,12 @@ impl Value {
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
+            Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+                let mut address = format!("native/{tag}");
+                for item in items.iter() { address.push_str(&format!("/{:?}", item.hash_address()?)); }
+                Ok(address)
+            }
+            Value::Wrapped(4..=7, items) => Ok(format!("wrapper/{:p}", Rc::as_ptr(items))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
             Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
 
@@ -1078,6 +1084,8 @@ impl Value {
             // A routine bound to a value is the one bound method where it
             // binds the one routine to the very same value.
             (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
+            (Value::Wrapped(k,x), Value::Wrapped(l,y)) if k == l && matches!(k, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) =>
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
             // the same code bound in another frame is another closure,

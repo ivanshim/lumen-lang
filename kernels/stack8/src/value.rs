@@ -1030,6 +1030,11 @@ impl Value {
             Value::Bytes(_, true, _) => Err("bytearray"),
             Value::Class(kind) => Ok(format!("class:{:p}", Rc::as_ptr(kind))),
             Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
+            Value::Adapter(w) if matches!(w.0, 1 | 2 | 14 | 19 | 29 | 30 | 40..=42) => {
+                let keys = w.1.iter().map(Value::member_key).collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("native:{}:{keys:?}", w.0))
+            }
+            Value::Adapter(w) if matches!(w.0, 4..=7) => Ok(format!("wrapper:{:p}", Rc::as_ptr(w))),
             Value::Method(owner, code) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
 
             Value::Null => Ok("nil".into()),
@@ -1257,6 +1262,8 @@ impl Value {
                 }
                 _ => Rc::ptr_eq(a, b),
             },
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == b.0 && matches!(a.0, 1 | 2 | 14 | 19 | 29 | 30 | 40..=42) =>
+                a.1.len() == b.1.len() && a.1.iter().zip(&b.1).all(|(x, y)| x.equals(y)),
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
         }

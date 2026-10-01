@@ -5418,7 +5418,9 @@ impl<'a> Machine<'a> {
                     // never lands among the class's own at all.
                     if plan.has_book {
                         if let Some(book) = given.next() {
-                            if let Value::Dict(pairs) = book.settled() {
+                            let contents = Self::underlying(&book).unwrap_or_else(|| book.clone()).settled();
+                            entries.push(("\0prepared".into(), book));
+                            if let Value::Dict(pairs) = contents {
                                 for (key, value) in pairs.iter() {
                                     if matches!(key, Value::Text(_)) {
                                         let named = key.bare();
@@ -6187,6 +6189,9 @@ impl<'a> Machine<'a> {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
+                            Prim::Of if values.len() == 2 && values[1].bare() == self.detail("allocate") && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) => {
+                                return self.read_class_member(values[0].settled(), &values[1].bare(), false);
+                            },
                             Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
@@ -8261,6 +8266,11 @@ impl<'a> Machine<'a> {
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
+        }
+        if self.has_class_order() && op == Prim::SortOf && positional.len() == 3 {
+            let mut supplied = positional.clone();
+            supplied.extend(keywords.into_iter().map(|(key, value)| Value::Couple(Rc::new((Value::text(&key), value)))));
+            return self.class_from_type(supplied).map(Some);
         }
         // Compile alone takes its arguments by name; the readers of text
         // and the handing out of names take theirs in order only.
@@ -10930,16 +10940,16 @@ impl<'a> Machine<'a> {
         let names = self.rules.specials;
         let word = names.get(index)?;
         let Value::Thing(thing) = subject else { return None };
-        let mut blueprint = &thing.blueprint();
-        loop {
+        let kind = thing.blueprint();
+        for blueprint in std::iter::once(kind.as_ref()).chain(kind.ancestry.iter().map(Rc::as_ref)) {
             let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.clone());
             if own.is_some() { return own; }
             if let Some((_, body)) = blueprint.methods.iter().find(|(key, _)| key == word) { return Some(Value::Routine(body.clone())); }
             // Equality given, in the methods or the namespace, without a
             // hash: the things cannot be hashed.
             if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal) || blueprint.shared.borrow().iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
-            blueprint = blueprint.under.as_ref()?;
         }
+        None
     }
 
     fn appointed(&self, subject: &Value, index: usize) -> Option<Rc<Routine>> {
@@ -10971,6 +10981,17 @@ impl<'a> Machine<'a> {
     }
 
     fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
+        if let Value::Blueprint(class) = subject {
+            let factory = Self::builder_over(class);
+            if let Some(factory) = factory {
+                let entry = self.rules.specials.get(index).and_then(|word| self.inherited_entry(&factory, word));
+                if let Some(entry) = entry {
+                    let call = self.member_binding(entry, Some(subject.clone()), factory).and_then(|bound| self.apply_class_member(bound, tail.to_vec()));
+                    return call.map(Some).map_err(|escape| self.suspension_fault(escape));
+                }
+            }
+            return Ok(None);
+        }
         if index == 3 && self.appointment(subject, index).is_none() {
             return match self.ask_special(subject, 2, tail)? {
                 None => Ok(None),
@@ -11134,6 +11155,14 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if matches!(subject, Value::Blueprint(_)) {
+            let mut text = self.ask_special(subject, usize::from(quoted), &[])?;
+            if text.is_none() && !quoted { text = self.ask_special(subject, 1, &[])?; }
+            if let Some(text) = text {
+                if let Value::Text(word) = text.settled() { return Ok(word.to_string()); }
+                return Err(format!("TypeError: {} returned non-string (type {})", if quoted { "__repr__" } else { "__str__" }, text.kind_word()));
+            }
+        }
         let celled = match subject {
             Value::Mutable(place, represented) => Some((place.clone(), *represented)),
             Value::Shared(place) => Some((place.clone(), false)),
@@ -11951,6 +11980,13 @@ impl<'a> Machine<'a> {
                     Err(Escape::Error(words)) => Err(words),
                     Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
                 };
+            }
+        }
+        if let (Prim::At, [target @ Value::Thing(_), index]) = (operation, operands) {
+            if self.appointment(target, 11).is_none() {
+                if let Some(worth) = Self::underlying(target) {
+                    return self.prim(Prim::At, "", &[worth.settled(), index.clone()]).map(Some);
+                }
             }
         }
         // A thing sought among a set's members is sought as a key is,
@@ -13683,6 +13719,13 @@ impl<'a> Machine<'a> {
                     }
                     walk @ Value::Iterator(_) => self.apart_members(&walk.clone(), wanted, star.is_some())?,
                     Value::Set(set) => set.borrow().values(),
+                    Value::Blueprint(class) => {
+                        let Some(yielded) = self.blueprint_walk(class)? else {
+                            return Err(self.apart_words("ext.stmt.unpack.unwalkable", &[v[0].kind_word()]).unwrap_or_default());
+                        };
+                        let walk = self.iterated_value(&yielded)?;
+                        self.apart_members(&walk, wanted, star.is_some())?
+                    }
                     // A thing of the program's own is taken apart into
                     // the members its own walk hands over, asked for one
                     // at a time: such a walk may have no end at all, and
@@ -14114,6 +14157,9 @@ impl<'a> Machine<'a> {
             }
             Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
             Prim::HasMember => {
+                if self.has_class_order() && v.len() == 2 && v[1].bare() == self.detail("allocate") && matches!(v[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
+                    return Ok(Value::Flag(true));
+                }
                 n(2)?;
                 if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
@@ -17566,6 +17612,17 @@ impl<'a> Machine<'a> {
     /// What walking a blueprint yields, through the program it holds for
     /// that, or nothing where it holds none.
     fn blueprint_walk(&mut self, kind: &Rc<Blueprint>) -> Result<Option<Value>, String> {
+        if let Some(builder) = Self::builder_over(kind) {
+            let entry = self.rules.specials.get(15).and_then(|word| self.inherited_entry(&builder, word));
+            if let Some(entry) = entry {
+                let callable = self.member_binding(entry, Some(Value::Blueprint(kind.clone())), builder);
+                let result = callable.and_then(|method| self.apply_class_member(method, vec![]));
+                return match result {
+                    Ok(iterator) => Ok(Some(iterator)), Err(Escape::Error(message)) => Err(message),
+                    Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
+                };
+            }
+        }
         let Some(handing) = self.table.single("ext.stmt.class.walked").and_then(|word| self.inherited_entry(kind, word)) else { return Ok(None) };
         self.apply_within(handing, vec![Value::Blueprint(kind.clone())]).map(Some)
     }
@@ -20578,6 +20635,10 @@ impl Machine<'_> {
                         return Ok(Self::native_word(class).is_some() && item.kind_word() == word);
                     }
                 }
+                if let Value::Blueprint(instance) = item {
+                    let metaclass = Self::builder_over(instance);
+                    return Ok(metaclass.is_some_and(|b| std::iter::once(&b).chain(b.ancestry.iter()).any(|parent| Rc::ptr_eq(parent, class))));
+                }
                 Ok(matches!(item, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
@@ -20632,6 +20693,10 @@ impl Machine<'_> {
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
                 *item = item.settled();
             }
+        }
+        if self.has_class_order() && op == Prim::SortOf && input.len() == 3 {
+            for (word, value) in keywords { input.push(Value::Couple(Rc::new((Value::text(&word), value)))); }
+            return self.class_from_type(input).map_err(|escape| self.suspension_fault(escape));
         }
         if keywords.is_empty() {
             if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }

@@ -173,6 +173,12 @@ impl Value {
             }
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
+            Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+                let mut total = i64::from(*tag);
+                for entry in contents.iter() { total = total.wrapping_mul(1_000_003) ^ entry.hash_number()?; }
+                total
+            }
+            Self::Wrapped(4..=7, contents) => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
             Self::Method(program, receiver) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by

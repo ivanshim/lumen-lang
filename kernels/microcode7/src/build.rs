@@ -4785,7 +4785,27 @@ impl<'a> Builder<'a> {
         // a write through either as the body's first statement finds
         // somewhere of its own already standing, not made as part of
         // the write.
-        if self.class_body_names_locals(self.pos, on_one_line) {
+        if table.has_any("ext.stmt.class.detail.prepare") && (parent.is_some() || !other_parents.is_empty()
+            || handed_words.iter().any(|(key, _)| key == "\0metaclass" || key == "\0header")) {
+            let mut bases = Vec::new();
+            bases.extend(parent.iter().cloned().map(Form::Read));
+            bases.extend(other_parents.iter().cloned().map(Form::Read));
+            let factory = handed_words.iter().find(|(key, _)| key == "\0metaclass").map(|(_, value)| value.clone()).unwrap_or_else(|| constant(Value::Nil));
+            let options: Vec<Form> = handed_words.iter().filter_map(|(key, read)| {
+                key.strip_prefix("\0handed:").map(|word| prim_call(Prim::MakeTuple, vec![constant(Value::text(word)), read.clone()]))
+            }).collect();
+            let header = handed_words.iter().find(|(key, _)| key == "\0header").map(|(_, form)| form.clone()).unwrap_or_else(|| constant(Value::Nil));
+            let prepared = prim_call(Prim::ClassWork(13), vec![constant(Value::text(&class_title)), prim_call(Prim::MakeTuple, bases), factory, prim_call(Prim::MakeTuple, options), header]);
+            let place = self.gensym("prepared_body");
+            self.parts().book = Some(place.clone());
+            setup.push(Form::Write(place, Box::new(prepared)));
+            if let Some(name) = table.single("ext.stmt.class.detail.module") {
+                let source_module = self.read("__name__");
+                let address = self.gensym("module_name");
+                setup.push(Form::Write(address.clone(), Box::new(source_module)));
+                if let Some(write) = self.mirror_member(name, &address) { setup.push(write); }
+            }
+        } else if self.class_body_names_locals(self.pos, on_one_line) {
             let made = self.class_book();
             setup.push(made);
         }
@@ -4799,6 +4819,14 @@ impl<'a> Builder<'a> {
             self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
             self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
+        }
+        if self.parts().book.is_some() {
+            let initial: Vec<_> = { let parts = self.parts(); parts.attributes.iter().cloned().zip(parts.held.clone()).collect() };
+            for (key, value) in initial {
+                let slot = self.gensym("initial_member");
+                setup.push(Form::Write(slot.clone(), Box::new(value)));
+                if let Some(write) = self.mirror_member(&key, &slot) { setup.push(write); }
+            }
         }
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {

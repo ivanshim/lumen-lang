@@ -5961,7 +5961,35 @@ impl<'a> Compiler<'a> {
         // a write through either as the body's first statement finds
         // somewhere of its own already standing, not made as part of
         // the write.
-        if self.class_body_names_locals(self.pos, inline) {
+        if lang.class_details.get("prepare").map_or(false, |names| !names.is_empty())
+            && (base.is_some() || !further.is_empty() || self.gathering().shared.iter().any(|(key, _)| key == MAKER_MEMBER || key == "\0header")) {
+            self.constant(Value::text(&original_name));
+            let ancestors: Vec<String> = base.iter().chain(further.iter()).cloned().collect();
+            for place in &ancestors { self.read(place); }
+            self.act(Action::MakeTuple, ancestors.len());
+            let asked = self.gathering().shared.iter().find(|(key, _)| key == MAKER_MEMBER).map(|(_, place)| place.clone());
+            if let Some(place) = asked { self.read(&place); } else { self.constant(Value::Null); }
+            let keywords: Vec<_> = self.gathering().shared.iter().filter_map(|(key, place)| key.strip_prefix("\0keyword:").map(|word| (word.to_string(), place.clone()))).collect();
+            for (word, place) in &keywords {
+                self.constant(Value::text(word)); self.read(place); self.act(Action::MakeTuple, 2);
+            }
+            self.act(Action::MakeTuple, keywords.len());
+            let expanded = self.gathering().shared.iter().find(|(key, _)| key == "\0header").map(|(_, place)| place.clone());
+            if let Some(place) = expanded { self.read(&place); } else { self.constant(Value::Null); }
+            self.act(Action::Builtin(Builtin::ClassTool(13), Rc::from("")), 5);
+            let book = self.gensym("prepared");
+            self.write(&book);
+            self.gathering().book = Some(book.clone());
+            if let Some(module_word) = lang.class_details.get("module").and_then(|words| words.first()) {
+                self.read("__name__");
+                let module_place = self.gensym("class_module"); self.write(&module_place);
+                self.mirror_member(module_word, &module_place)?;
+            }
+            let initial = self.gathering().shared.clone();
+            for (key, place) in initial {
+                if !key.starts_with('\0') { self.mirror_member(&key, &place)?; }
+            }
+        } else if self.class_body_names_locals(self.pos, inline) {
             self.class_book();
         }
         let mut opening = true;

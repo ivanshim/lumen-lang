@@ -162,6 +162,7 @@ impl<'a> Engine<'a> {
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: c, fields: RefCell::new(vec![("\0worth".to_string(), kept)]), mark: self.made })))
     }
     pub(super) fn form_class(&mut self, name: String, mut bases: Vec<Rc<Class>>, mut members: Vec<(String, Value)>) -> Flow<Value> {
+        let prepared = members.iter().position(|(key, _)| key == "\0prepared").map(|i| members.remove(i).1);
         if let Some(at) = members.iter().position(|(word, _)| word == "\0header") {
             let (_, header) = members.remove(at);
             let Value::Tuple(arguments) = header else { return Err(self.class_refusal()); };
@@ -178,7 +179,7 @@ impl<'a> Engine<'a> {
             if let Some(factory) = maker.filter(|v| !matches!(v, Value::Native(Builtin::SortOf, _))) {
                 let entries = members.iter().filter(|(_, value)| !matches!(value, Value::Blank))
                     .map(|(word, value)| (Value::text(word), value.clone())).collect::<Vec<_>>();
-                let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);
+                let namespace = prepared.unwrap_or_else(|| Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true));
                 let mut given = vec![Value::text(&name), Value::tuple(raw_bases), namespace];
                 given.extend(keywords.into_iter().map(|(word, value)| Value::Tie(Rc::new((Value::text(&word), value)))));
                 return self.class_apply(factory, given);
@@ -187,6 +188,7 @@ impl<'a> Engine<'a> {
             for value in raw_bases { bases.push(self.type_base(&value)?); }
             members.extend(keywords.into_iter().map(|(word, value)| (format!("\0keyword:{word}"), value)));
         }
+        let declared_bases = bases.clone();
         if bases.is_empty() { bases.push(self.root_class()); }
         // The keywords the header carried are no members: they go by
         // name to the forebear's subclass hook.
@@ -205,10 +207,10 @@ impl<'a> Engine<'a> {
         // a map it may write into, and what it answers is the class.
         if let Some(m) = maker.clone() {
             if let Some(f) = self.class_value(&m, self.class_word("allocate")) {
-                let listed = Value::tuple(bases.iter().cloned().map(Value::Class).collect());
+                let listed = Value::tuple(declared_bases.iter().cloned().map(Value::Class).collect());
                 let pairs: Vec<(Value, Value)> = members.iter().filter(|(_, v)| !matches!(v, Value::Blank))
                     .map(|(n, v)| (Value::text(n), v.clone())).collect();
-                let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into())))), true);
+                let namespace = prepared.unwrap_or_else(|| Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into())))), true));
                 let mut given = vec![Value::Class(m.clone()), Value::text(&name), listed.clone(), namespace.clone()];
                 given.extend(carried.iter().cloned());
                 let made = self.class_apply(f, given)?;
@@ -239,7 +241,8 @@ impl<'a> Engine<'a> {
         let (Value::Tuple(listed) | Value::Array(listed)) = plain[2].contents() else { return Err(self.class_refusal()) };
         for b in listed.iter() { parents.push(self.type_base(b)?); }
         if parents.is_empty() { parents.push(self.root_class()); }
-        let Value::Map(entries) = plain[3].contents() else { return Err(self.class_refusal()) };
+        let namespace = Self::worth_of(&plain[3]).unwrap_or_else(|| plain[3].clone()).contents();
+        let Value::Map(entries) = namespace else { return Err(self.class_refusal()) };
         let members = entries.iter().map(|(k, v)| (k.plain(), v.clone())).collect();
         self.forge_class(title, parents, members, by, named)
     }
@@ -297,7 +300,7 @@ impl<'a> Engine<'a> {
             else{let mut given=vec![Value::Class(c.clone())];given.extend(carried);self.class_apply(hook, given)?;}
         }
         // Keywords with no hook to receive them are refused.
-        else if !carried.is_empty() { return Err(self.class_refusal()); }
+        else if !carried.is_empty() { return Err(format!("TypeError: {}.__init_subclass__() takes no keyword arguments", c.name).into()); }
         Ok(Value::Class(c))
     }
     /// The slots a class names become members of it, each a descriptor
@@ -817,6 +820,7 @@ impl<'a> Engine<'a> {
             let mut initial = args.clone();
             match self.lang.builtins.get(word) {
                 Some(Builtin::Set) => initial.clear(),
+                Some(Builtin::Dict) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => initial.clear(),
                 Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }
@@ -1034,7 +1038,7 @@ impl<'a> Engine<'a> {
                 16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
-                20..=27 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                20..=27 | 29 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match subject { Some(Value::Object(o)) => Ok(self.property_reading(&o, &w.1[0].plain())), _ => Ok(value) },
                 _ => Ok(value),
             };
@@ -1244,6 +1248,7 @@ impl<'a> Engine<'a> {
             }
             Value::Class(c) => {
                 if let Some(word) = Self::own_kind(c) {
+                    if name == self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(&word)])); }
                     if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                     if name==self.class_word("qualified") { return Ok(Value::text(&word)); }
                     if name == "__getformat__" && word == "float" {
@@ -1275,8 +1280,14 @@ impl<'a> Engine<'a> {
                     // members of its own; what it names are the ones a
                     // value of the kind answers to.
                     if let Some(word)=Self::own_kind(c) {
-                        let named=self.kind_special_names(&word);
-                        return Ok(Value::Map(Rc::new(named.iter().map(|n|(Value::text(n),Value::text(&format!("<slot wrapper '{n}' of '{word}' objects>")))).collect())));
+                        let mut names = self.kind_special_names(&word);
+                        names.push(self.class_word("allocate").to_string());
+                        let mut entries = Vec::new();
+                        for key in names {
+                            let descriptor = self.class_get(subject.clone(), &key, true)?;
+                            entries.push((Value::text(&key), descriptor));
+                        }
+                        return Ok(Value::Map(Rc::new(entries.into())));
                     }
                     return Ok(Self::namespace(&c.shared.borrow()));
                 }
@@ -1551,6 +1562,10 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
             }
             _ => {}
+        }
+        if name == self.class_word("allocate") && matches!(subject, Value::Null | Value::Ellipsis | Value::Declined(_)) {
+            let kind = self.named_kind(&subject);
+            return self.class_get(kind, name, plain);
         }
         // Whatever is not a thing is of the kind the kind builtin names
         // for it, where it names one.
@@ -2186,11 +2201,18 @@ impl<'a> Engine<'a> {
             Value::Native(Builtin::SortOf, _) => Ok(self.metaclass_root()),
             Value::Native(Builtin::Bool, _) => Err(self.lang.bool_base.clone().unwrap_or_default().into()),
             Value::Native(_, name) if Lang::spells(&self.lang.builtin_bases, &name) => Ok(self.kind_class(&name)),
+            other if self.names_property_class(&other) => Ok(self.property_class()),
             _ => Err("TypeError: bases must be types".to_string().into()),
         }
     }
     pub(super) fn class_type(&mut self,args:Vec<Value>)->Flow<Value> {
-        let mut args: Vec<Value> = args.iter().map(Value::contents).collect();
+        let mut named = Vec::new(); let mut plain = Vec::new();
+        for (word, value) in self.call_items(args)? {
+            if let Some(word) = word { named.push((format!("\0keyword:{word}"), value)); }
+            else { plain.push(value.contents()); }
+        }
+        let mut args = plain;
+        if args.len() != 3 && !named.is_empty() { return Err("TypeError: type() takes no keyword arguments".into()); }
         if args.len() == 3 {
             let original = args[2].clone();
             if let Some(worth) = Self::worth_of(&original) { args[2] = worth.contents(); }
@@ -2221,10 +2243,11 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
-            [Value::Adapter(w)] if matches!(w.0,7|31)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,4|5|7|31)=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){parents.push(self.type_base(b)?);}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}
+                own.extend(named);
                 self.form_class(name.to_string(),parents,own)
             }
             _=>Err("TypeError: type() requires a name, a tuple of bases, and a dict".to_string().into()),
@@ -2374,8 +2397,13 @@ impl<'a> Engine<'a> {
             if !subclass && !matches!(value, Value::Object(_)) {
                 if let Some(word)=Self::own_kind(c) { return Ok(value.core_kind()==word); }
             }
-            let kind=match value {Value::Object(o) if !subclass=>Some(&o.class_now()),Value::Class(c) if subclass=>Some(c),_=>None};
-            return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));
+            let kind = match value {
+                Value::Object(o) if !subclass => Some(o.class_now()),
+                Value::Class(actual) if subclass => Some(actual.clone()),
+                Value::Class(actual) => Self::maker_beneath(actual),
+                _ => None,
+            };
+            return Ok(kind.map_or(false,|k|Rc::ptr_eq(&k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));
         }
         if let Value::Adapter(w)=wanted {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
@@ -2414,6 +2442,42 @@ impl<'a> Engine<'a> {
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
         if (3..=6).contains(&which) && args.len() >= 2 {
             if let Some(Value::Text(word)) = Self::worth_of(&args[1]) { args[1] = Value::Text(word); }
+        }
+        if which == 13 {
+            if let Value::Tuple(header) = args[4].contents() {
+                let opened = self.call_items(header.to_vec())?;
+                let mut bases = Vec::new(); let mut keywords = Vec::new();
+                for (key, value) in opened {
+                    match key {
+                        None => bases.push(value),
+                        Some(key) if Lang::spells(&self.lang.metaclass_word, &key) => args[2] = value,
+                        Some(key) => keywords.push(Value::tuple(vec![Value::text(&key), value])),
+                    }
+                }
+                args[1] = Value::tuple(bases); args[3] = Value::tuple(keywords);
+            }
+            let Value::Tuple(listed) = args[1].contents() else { return Err(self.class_refusal()); };
+            let mut bases = Vec::new();
+            for value in listed.iter() { if let Ok(base) = self.type_base(value) { bases.push(base); } }
+            let asked = (!matches!(args[2], Value::Null)).then(|| args[2].clone());
+            if let Some(maker) = self.maker_in_force(asked, &bases).ok().flatten() {
+                let target = Value::Class(maker);
+                let preparation = self.class_word("prepare").to_string();
+                match self.class_get(target, &preparation, false) {
+                    Ok(hook) => {
+                        let mut supplied = vec![args[0].clone(), args[1].clone()];
+                        if let Value::Tuple(options) = args[3].contents() {
+                            for option in options.iter() {
+                                if let Value::Tuple(pair) = option.contents() { supplied.push(Value::Tie(Rc::new((pair[0].clone(), pair[1].clone())))); }
+                            }
+                        }
+                        return self.class_apply(hook, supplied);
+                    },
+                    Err(fault) if self.attribute_fault(&fault) => {},
+                    Err(fault) => return Err(fault),
+                }
+            }
+            return Ok(Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true));
         }
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {

@@ -156,6 +156,12 @@ impl Value {
             }
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
+            Value::Adapter(w) if matches!(w.0, 1 | 2 | 14 | 19 | 29 | 30 | 40..=42) => {
+                let mut hash = i64::from(w.0);
+                for held in &w.1 { hash = hash.wrapping_mul(1_000_003) ^ held.core_hash()?; }
+                Some(hash)
+            }
+            Value::Adapter(w) if matches!(w.0, 4..=7) => Some((std::rc::Rc::as_ptr(w) as usize >> 4) as i64),
             Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
             Value::Null => Some(0x9e3779b9),
             Value::Ellipsis => Some(0x9e3779ba),

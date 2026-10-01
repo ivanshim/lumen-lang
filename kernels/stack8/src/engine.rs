@@ -4986,14 +4986,13 @@ impl<'a> Engine<'a> {
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
         let Value::Object(object) = value else { return None };
         let named = self.lang.class_special.get(place)?;
-        let mut class = Some(&object.class_now());
-        while let Some(current) = class {
+        let actual = object.class_now();
+        for current in std::iter::once(&actual).chain(actual.lineage.iter()) {
             if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) { return Some(value.clone()); }
             if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
             // A class saying how its things are equal, in its methods or
             // its namespace, and nothing of their hash, has unhashable things.
             if place == 8 && self.lang.class_special.get(2).map_or(false, |eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.borrow().iter().any(|(n, _)| n == eq)) { return Some(Value::Null); }
-            class = current.base.as_ref();
         }
         None
     }
@@ -5728,6 +5727,16 @@ impl<'a> Engine<'a> {
     }
 
     fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
+        if let Value::Class(class) = value {
+            let Some(maker) = Self::maker_beneath(class) else { return Ok(None); };
+            let Some(word) = self.lang.class_special.get(place) else { return Ok(None); };
+            let Some(method) = self.class_value(&maker, word) else { return Ok(None); };
+            let answer = self.bind_class_value(method, Some(value.clone()), maker).and_then(|bound| self.class_apply(bound, args));
+            return match answer {
+                Ok(held) => Ok(Some(held)), Err(Fault::Note(words)) => Err(words),
+                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            };
+        }
         if place == 3 && self.special_value(value, place).is_none() {
             return match self.special_call(value, 2, args)? {
                 Some(v @ Value::Declined(_)) => Ok(Some(v)),
@@ -5836,6 +5845,14 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
+        if matches!(value, Value::Class(_)) {
+            let first = if representation { 1 } else { 0 };
+            let mut shown = self.special_call(value, first, Vec::new())?;
+            if shown.is_none() && !representation { shown = self.special_call(value, 1, Vec::new())?; }
+            if let Some(shown) = shown {
+                return match shown.contents() { Value::Text(text) => Ok(text.to_string()), other => Err(format!("TypeError: {} returned non-string (type {})", if representation { "__repr__" } else { "__str__" }, other.core_kind())) };
+            }
+        }
         // Where the definition asks it, a collection reads the same
         // whether or not a representation was asked for: the members
         // inside it are always written as representations, so that text
@@ -7626,12 +7643,19 @@ impl<'a> Engine<'a> {
                     let class = self.drop_top()?.contents();
                     Some(self.class_get(class, name, false)?)
                 },
+                Action::Grab(name) if name.as_ref() == self.class_word("allocate") && self.data.last().is_some_and(|v| matches!(v.contents(), Value::Null | Value::Ellipsis | Value::Declined(_))) => {
+                    let singleton = self.drop_top()?.contents();
+                    Some(self.class_get(singleton, name, false)?)
+                },
                 Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
-                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc == 3 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
+                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc >= 3 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
                     let supplied=self.drop_many(argc)?;let mut args=Vec::new();
+                    if *builtin == Builtin::SortOf {
+                        let class = self.class_type(supplied)?; self.data.push(class); return Ok(());
+                    }
                     // The property builtin takes its accessors by name; the making of the property sorts them.
                     if *builtin==Builtin::ClassTool(11) && !self.class_word("descriptor.get").is_empty() { let made=self.class_work(11,supplied)?; self.data.push(made); return Ok(()); }
                     for (key,v) in self.call_items(supplied)? {
@@ -8319,6 +8343,14 @@ impl<'a> Engine<'a> {
                     }
                     ref cursor @ Value::Cursor(_) => self.apart_members(&cursor.clone(), *count, rest.is_some())?,
                     Value::Set(set) => set.borrow().items(),
+                    Value::Class(ref class) => {
+                        let yielded = self.class_walked(class)?;
+                        let Some(yielded) = yielded else {
+                            return Err(self.apart_fault(&self.lang.unpack_unwalkable, &[source.core_kind()]).unwrap_or_default().into());
+                        };
+                        let walk = self.core_iterator(&yielded)?;
+                        self.apart_members(&walk, *count, rest.is_some())?
+                    }
                     // A thing of the program's own is taken apart into
                     // the members its own walk hands over, asked for one
                     // at a time: such a walk may have no end at all, and
@@ -8650,7 +8682,9 @@ impl<'a> Engine<'a> {
                     // never lands among the class's own at all.
                     if plan.has_book {
                         if let Some(book) = given.next() {
-                            if let Value::Map(pairs) = book.contents() {
+                            let contents = Self::worth_of(&book).unwrap_or_else(|| book.clone()).contents();
+                            members.push(("\0prepared".to_string(), book));
+                            if let Value::Map(pairs) = contents {
                                 for (key, value) in pairs.iter() {
                                     if matches!(key, Value::Text(_)) {
                                         let named = key.plain();
@@ -8768,6 +8802,9 @@ impl<'a> Engine<'a> {
                 // for on, as reading one is: a name a place was taken
                 // out of stands for its cell from then on.
                 let held = { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } };
+                if self.fuller_classes() && name.as_ref() == self.class_word("allocate") && matches!(held, Value::Null | Value::Ellipsis | Value::Declined(_)) {
+                    self.data.push(Value::Flag(true)); return Ok(());
+                }
                 let class = match &held {
                     Value::Object(o) => Some(&o.class_now()),
                     Value::Class(c) => Some(c),
@@ -12319,6 +12356,18 @@ impl<'a> Engine<'a> {
     /// What walking a class yields, where the class has a method that
     /// hands it over; nothing where it has none.
     fn class_walked(&mut self, class: &Rc<Class>) -> Res<Option<Value>> {
+        if let Some(maker) = Self::maker_beneath(class) {
+            if let Some(name) = self.lang.class_special.get(15) {
+                if let Some(method) = self.class_value(&maker, name) {
+                    let receiver = Value::Class(class.clone());
+                    let answer = self.bind_class_value(method, Some(receiver), maker).and_then(|bound| self.class_apply(bound, Vec::new()));
+                    return match answer {
+                        Ok(walk) => Ok(Some(walk)), Err(Fault::Note(words)) => Err(words),
+                        Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                    };
+                }
+            }
+        }
         let Some(handing) = self.lang.class_walked.as_deref().and_then(|word| self.class_value(class, word)) else { return Ok(None) };
         match self.class_apply(handing, vec![Value::Class(class.clone())]) {
             Ok(yielded) => Ok(Some(yielded)),
@@ -12603,6 +12652,14 @@ impl<'a> Engine<'a> {
                 }
                 named.push((key, value));
             } else { args.push(value); }
+        }
+        if self.fuller_classes() && builtin == Builtin::ClassTool(11) {
+            args.extend(named.into_iter().map(|(key, value)| Value::Tie(Rc::new((Value::text(&key), value)))));
+            return self.class_work(11, args).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
+        }
+        if self.fuller_classes() && builtin == Builtin::SortOf && args.len() == 3 {
+            args.extend(named.into_iter().map(|(word, value)| Value::Tie(Rc::new((Value::text(&word), value)))));
+            return self.class_type(args).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
         }
         if builtin == Builtin::ToText && !self.lang.to_string_object.is_empty() && !named.is_empty() {
             let count = args.len() + named.len();
@@ -17779,6 +17836,9 @@ impl Engine<'_> {
                         _ => Self::own_kind(class).is_some() && value.core_kind() == kind,
                     });
                 }
+            }
+            if let Value::Class(actual) = value {
+                return Ok(Self::maker_beneath(actual).map_or(false, |m| Rc::ptr_eq(&m, class) || m.lineage.iter().any(|base| Rc::ptr_eq(base, class))));
             }
             return Ok(matches!(value, Value::Object(o) if o.class_now().named(&class.name, false)));
         }
