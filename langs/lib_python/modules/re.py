@@ -570,6 +570,11 @@ def _atom_matches(node, letter, opts):
     return _accept(node, letter, opts[0])
 
 
+def _ascii_members(node, opts):
+    return ''.join(chr(n) for n in range(128)
+                   if _atom_matches(node, chr(n), opts))
+
+
 class Pattern:
     def __init__(self, pattern, flags=0):
         self.flags = flags
@@ -594,9 +599,10 @@ class Pattern:
         self._simple = None
         if atom is not None:
             if atom[0] in ('lit', 'kind', 'class', 'dot'):
-                self._simple = (atom, 1, 1, True)
+                self._simple = (atom, 1, 1, True, _ascii_members(atom, self._opts))
             elif atom[0] == 'repeat' and atom[1][0] in ('lit', 'kind', 'class', 'dot'):
-                self._simple = (atom[1], atom[2], atom[3], atom[4])
+                self._simple = (atom[1], atom[2], atom[3], atom[4],
+                                _ascii_members(atom[1], self._opts))
         # A lazy captured span followed by one captured character can
         # scan directly until the second atom accepts a character.
         self._chunk = None
@@ -608,7 +614,11 @@ class Pattern:
                 end = _single_node(right[2])
                 if span is not None and end is not None:
                     if span[0] == 'repeat' and span[1][0] == 'dot' and span[2:] == [0, -1, False] and end[0] in ('lit', 'kind', 'class', 'dot'):
-                        self._chunk = (left[1], right[1], end)
+                        self._chunk = (left[1], right[1], end,
+                                       _ascii_members(end, self._opts),
+                                       ''.join(chr(n) for n in range(128)
+                                               if not _atom_matches(end, chr(n), self._opts)
+                                               and (self.dotall or n != 10)))
         # Whether the text a match runs against must be checked for
         # non-ASCII letters, computed once here rather than rescanning
         # the pattern's own text on every position a search tries.
@@ -640,20 +650,38 @@ class Pattern:
             string = string[:max(0, _position(endpos))]
         text = string.decode('latin-1') if self._bytes else string
         if self._simple is not None:
-            atom, minimum, maximum, greedy = self._simple
+            atom, minimum, maximum, greedy, ascii_members = self._simple
             end = pos
             limit = len(text) if maximum < 0 else min(len(text), pos + maximum)
-            while end < limit and (greedy or end - pos < minimum):
-                if not _atom_matches(atom, text[end], self._opts):
+            if not greedy:
+                limit = min(limit, pos + minimum)
+            while end < limit:
+                chunk = text[end:min(limit, end + 256)]
+                advance = len(chunk) - len(chunk.lstrip(ascii_members))
+                end += advance
+                if end == limit:
+                    break
+                if advance == len(chunk):
+                    continue
+                letter = text[end]
+                if not _atom_matches(atom, letter, self._opts):
                     break
                 end += 1
             return Match(self, string, pos, [end, {}]) if end - pos >= minimum else None
         if self._chunk is not None:
-            left, right, delimiter = self._chunk
+            left, right, delimiter, ascii_members, ascii_skip = self._chunk
             end = pos
             while end < len(text):
+                chunk = text[end:end + 256]
+                advance = len(chunk) - len(chunk.lstrip(ascii_skip))
+                end += advance
+                if end == len(text):
+                    break
+                if advance == len(chunk):
+                    continue
                 letter = text[end]
-                if _atom_matches(delimiter, letter, self._opts):
+                accepted = letter in ascii_members if letter < '\x80' else _atom_matches(delimiter, letter, self._opts)
+                if accepted:
                     return Match(self, string, pos, [end + 1, {left: [pos, end], right: [end, end + 1]}])
                 if not self.dotall and letter == '\n':
                     break
