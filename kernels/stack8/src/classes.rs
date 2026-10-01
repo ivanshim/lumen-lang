@@ -589,19 +589,25 @@ impl<'a> Engine<'a> {
                         if operation == "floor" && matches!(number, Value::Small(_) | Value::Huge(_)) {
                             return Ok(number);
                         }
-                        let ordinary = match number {
-                            Value::Small(n) => Some(n as f64),
-                            Value::Real(real) if real.floating => Some(crate::value::as_binary(&real.p, &real.q)),
+                        // The representation already records finiteness and
+                        // sign. Do not round it just to inspect the domain;
+                        // the native operation performs that conversion once.
+                        let signs = match number {
+                            Value::Small(n) => Some((n >= 0, n > 0)),
+                            Value::Real(real) if real.floating && !real.q.is_zero() => {
+                                let positive = !real.p.is_zero() && real.p.sign() == real.q.sign();
+                                Some((real.p.is_zero() || positive, positive))
+                            }
                             _ => None,
                         };
-                        if let Some(x) = ordinary {
+                        if let Some((nonnegative, positive)) = signs {
                             let domain = match operation.as_str() {
-                                "log" | "lgamma" => x > 0.0,
-                                "sqrt" => x >= 0.0,
+                                "log" | "lgamma" => positive,
+                                "sqrt" => nonnegative,
                                 "exp" | "floor" => true,
                                 _ => false,
                             };
-                            if x.is_finite() && domain {
+                            if domain {
                                 return self.class_apply(Value::text("__math"), vec![w.1[0].clone(),args[0].clone()]);
                             }
                         }
@@ -2290,7 +2296,8 @@ impl<'a> Engine<'a> {
             [Value::Adapter(_)] if self.kind_spelled(&args[0]).is_some()=>Ok(self.kind_maker_word()),
             // A method or a data member read off a builtin kind's own
             // word is of the descriptor kind CPython gives it.
-            [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,29|63|64)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if w.0==3 && matches!(w.1.first(),Some(Value::Adapter(draw)) if draw.0==63)=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
             [Value::Adapter(w)] if matches!(w.0,7|31)=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {

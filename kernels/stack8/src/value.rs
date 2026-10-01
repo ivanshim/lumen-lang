@@ -1858,7 +1858,11 @@ pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
         0 => (part, -1074i64),
         _ => (part | (1u64 << 52), power - 1075),
     };
-    let mut p = BigInt::from(whole);
+    // Remove the shared twos in the machine word, before allocating
+    // integers. The exact binary ratio is then already in lowest terms.
+    let cancel = if twos < 0 { whole.trailing_zeros().min(twos.unsigned_abs() as u32) } else { 0 };
+    let twos = twos + i64::from(cancel);
+    let mut p = BigInt::from(whole >> cancel);
     if below {
         p = -p;
     }
@@ -1875,7 +1879,10 @@ pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
 pub fn real_of(x: f64, places: usize) -> Value {
     match from_binary(x) {
         // A nought that came out below nought keeps its minus.
-        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), x.is_sign_negative()),
+        Some((p, q)) => Value::Real(Rc::new(Real {
+            floating: false, p, q, places,
+            below: x == 0.0 && x.is_sign_negative(), point: false,
+        })),
         None => outside_number(x, places),
     }
 }

@@ -598,18 +598,23 @@ impl<'a> Machine<'a> {
                             let worth=integer.settled();
                             if operation=="floor" && matches!(worth,Value::Small(_)|Value::Huge(_)) {return Ok(worth);}
                         }
-                        let numeric=match values.as_slice() {
+                        let regular=match values.as_slice() {
                             [number]=>match number.settled() {
-                                Value::Small(n)=>Some(n as f64),
-                                Value::Frac(r) if r.float_style=>Some(crate::data::nearest_binary(&r.above,&r.beneath)),
+                                Value::Small(n)=>Some((n>0,n==0)),
+                                Value::Frac(r) if r.float_style && !r.beneath.is_zero()=>{
+                                    // Read the exact ratio's domain; width
+                                    // conversion belongs to the operation.
+                                    let zero=r.above.is_zero();
+                                    Some((!zero && r.above.sign()==r.beneath.sign(),zero))
+                                }
                                 _=>None,
                             }
                             _=>None,
                         };
-                        let fast=numeric.is_some_and(|n|n.is_finite() && match operation.as_str() {
+                        let fast=regular.is_some_and(|(positive,zero)|match operation.as_str() {
                             "exp"|"floor"=>true,
-                            "sqrt"=>n>=0.0,
-                            "lgamma"|"log"=>n>0.0,
+                            "sqrt"=>positive || zero,
+                            "lgamma"|"log"=>positive,
                             _=>false,
                         });
                         if fast {
@@ -2339,7 +2344,10 @@ impl<'a> Machine<'a> {
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         // A method or a data member read off a native kind's own word
         // is of the descriptor kind CPython gives it.
-        if let [Value::Wrapped(7|35|60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(7|35|60|62|63,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(3,binding)]=values.as_slice(){
+            if matches!(binding.first(),Some(Value::Wrapped(62,_))) {return Ok(self.kind_named_after(&values[0]));}
+        }
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind

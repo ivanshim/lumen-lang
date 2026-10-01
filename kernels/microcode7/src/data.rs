@@ -1774,7 +1774,10 @@ pub fn ungrouped_figures(chars: &str, marks: &[char]) -> Option<String> {
 pub fn worth_of_binary(x: f64, figures: usize) -> Value {
     match binary_worth(x) {
         // A nought that came out under nought holds on to its minus.
-        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), x.is_sign_negative()),
+        Some((above, beneath)) => Value::Frac(Rc::new(Ratio {
+            float_style: false, above, beneath, places: Some(figures),
+            under: x == 0.0 && x.is_sign_negative(), pointed: false,
+        })),
         None => past_the_numbers(x, figures),
     }
 }
@@ -1810,6 +1813,12 @@ pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
         0 => (rest, -1074i64),
         _ => (rest | (1u64 << 52), step - 1075),
     };
+    // A denominator made only of twos can be reduced while the
+    // significand still fits in a machine word, without a bigint gcd.
+    let (run, halvings) = if halvings < 0 {
+        let shared = run.trailing_zeros().min(halvings.unsigned_abs() as u32);
+        (run >> shared, halvings + i64::from(shared))
+    } else { (run, halvings) };
     let mut above = BigInt::from(run);
     if under {
         above = -above;
