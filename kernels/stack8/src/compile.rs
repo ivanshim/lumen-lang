@@ -10457,13 +10457,21 @@ impl<'a> Compiler<'a> {
         if !self.lang.syntax_members.is_empty() {
             let mut depth = 0usize;
             let mut separated = false;
+            let mut clauses = false;
             for token in self.tokens.iter().skip(self.pos) {
                 let word = token.lexeme.as_str();
                 if depth == 0 && token.shape == Shape::Sign && word == pair.close { break; }
-                if depth == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
-                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                // A comma before the first clause makes the element a bare
+                // tuple, which the reference refuses; a comma inside a
+                // clause, such as the one between the names of an
+                // unparenthesized target, is ordinary.
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") {
+                    if separated {
+                        return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                    }
+                    clauses = true;
                 }
+                if depth == 0 && !clauses && token.is_lexeme(Shape::Sign, ",") { separated = true; }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }
                     else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }

@@ -9858,13 +9858,20 @@ impl<'a> Builder<'a> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
+            let mut inside_clauses = false;
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
                 if inner.is_empty() {
-                    if part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
-                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    // Only a comma in the element itself is refused; once
+                    // the clauses begin, a comma belongs to a target or an
+                    // iterable and stands as the reference allows.
+                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                        if comma_before_for {
+                            return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                        }
+                        inside_clauses = true;
                     }
+                    if !inside_clauses && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
                 }
                 if part.shape == Shape::Sign {
                     match part.lexeme.as_str() {
