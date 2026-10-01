@@ -1004,7 +1004,12 @@ impl<'a> Machine<'a> {
                 let Value::Wrapped(35, items) = cell.settled() else { return Err(String::from("TypeError: arg 5 (closure) must contain cells").into()); };
                 let Some((frame, slot)) = self.cell_place(&items) else { return Err(String::from("TypeError: arg 5 (closure) must contain cells").into()); };
                 let held = frame.cells.borrow().get(slot).cloned().unwrap_or(Value::Unset);
-                if address.up > 0 { layers[address.up - 1].cells.borrow_mut()[address.at] = held; }
+                if address.up > 0 {
+                    layers[address.up - 1].cells.borrow_mut()[address.at] = held;
+                    if frame.capture_slots.borrow().contains(&slot) {
+                        layers[address.up - 1].capture_slots.borrow_mut().insert(address.at);
+                    }
+                }
             }
             let shared_room = closure.first().and_then(|cell| match cell.settled() {
                 Value::Wrapped(35, items) => match items.first() { Some(Value::Bound(_, room)) => Some(room.clone()), _ => None },
@@ -1068,7 +1073,10 @@ impl<'a> Machine<'a> {
         if let Value::Thing(thing)=&created {
             // A thing whose class bids farewell is noted, so that a round
             // holding it can be found when the program asks.
-            if crate::ghost::bidding()&&crate::ghost::farewell_of(&thing.of).is_some() {crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(thing)));}
+            if crate::ghost::bidding()&&crate::ghost::farewell_of(&thing.of).is_some() {
+                crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(thing)));
+                if self.table.single("ext.builtin.exceptions.traceback").is_some() { crate::ghost::anchor(thing); }
+            }
             if self.table.single("ext.stmt.class.destructor").is_some()
                 || self.table.single("ext.stmt.class.finaliser").is_some() {
                 self.things.borrow_mut().push(Rc::downgrade(thing));
@@ -1398,7 +1406,12 @@ impl<'a> Machine<'a> {
     /// What a cell holds, or nothing where it is empty.
     pub(super) fn cell_contents(&self,items:&[Value])->Option<Value> {
         let (frame,at)=self.cell_place(items)?;
-        let held=frame.cells.borrow().get(at).cloned()?;
+        let mut held=frame.cells.borrow().get(at).cloned()?;
+        if frame.capture_slots.borrow().contains(&at) {
+            let Value::Shared(binding)=held else { unreachable!() };
+            let content=binding.borrow().clone();
+            held=content;
+        }
         (!matches!(held,Value::Unset)).then_some(held)
     }
     /// The root's making (`n`) or constructing (`i`), handed more than
@@ -2513,7 +2526,13 @@ impl<'a> Machine<'a> {
             // taken away.
             Value::Wrapped(35,items) if key==self.detail("cell.contents") => {
                 let Some((room,at))=self.cell_place(items) else{return Err(self.absent_attribute(&subject,key))};
-                room.cells.borrow_mut()[at]=replacement.unwrap_or(Value::Unset);
+                let value=replacement.unwrap_or(Value::Unset);
+                if room.capture_slots.borrow().contains(&at) {
+                    let Value::Shared(binding)=&room.cells.borrow()[at] else { unreachable!() };
+                    *binding.borrow_mut()=value;
+                } else {
+                    room.cells.borrow_mut()[at]=value;
+                }
                 return Ok(Value::Nil);
             }
             // A method holds nothing of its own: its thing and routine

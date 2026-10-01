@@ -5619,7 +5619,8 @@ impl<'a> Compiler<'a> {
             // written in is closed over that function's frame where the
             // definition runs, and only the value in its place is so
             // closed: the routine as assembled here knows no frame.
-            let reaches_out = !method.enclosing.is_empty();
+            let reaches_out = !method.enclosing.is_empty()
+                || method.annotation.as_ref().map_or(false, |annotation| !annotation.enclosing.is_empty());
             // A method an arm of a conditional defines is a member like
             // any other: the class cannot carry it among the methods it
             // always has, since the arm may not run.
