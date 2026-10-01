@@ -5703,3 +5703,5 @@ user comparisons; the four reference kernels ignore this label.
 `ext.builtin.build_class` names the class body builder; `ext.stmt.class.builder` supplies its lookup name and missing-builtin error for class statements.
 
 `ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.
+
+The Python floating math adapter also supplies compensated `fsum`, consuming its iterable lazily and preserving overflow and infinity errors.

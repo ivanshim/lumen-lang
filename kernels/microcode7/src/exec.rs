@@ -5258,6 +5258,11 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
             callable => callable,
         };
+        if args.is_empty() && self.table.has_any("ext.stmt.class.builder")
+            && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
+            let Value::Intrinsic(operation, _) = stands else { unreachable!() };
+            return self.names_here(frame, operation).map_err(Escape::Error);
+        }
         if let Value::Adorned(adornment) = &stands {
             let given = self.value_list(args, frame)?;
             return self.call_adornment(adornment, given, frame);
@@ -8075,6 +8080,11 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if args.is_empty() && self.table.has_any("ext.stmt.class.builder")
+                    && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
+                    let Value::Intrinsic(operation, _) = stands else { unreachable!() };
+                    return self.names_here(frame, operation).map_err(Escape::Error).map(Next::Value);
+                }
                 if let Value::Adorned(adornment) = &stands {
                     let given = self.value_list(args, frame)?;
                     return self.call_adornment(adornment, given, frame).map(Next::Value);
@@ -14329,6 +14339,62 @@ impl<'a> Machine<'a> {
         else { self.sum_added(x, y) }
     }
 
+    fn compensated_total(&mut self, supplied: &Value) -> Result<Value, String> {
+        let iterator = if let Some(kind) = Self::live_walk(supplied) { Self::cursor_value(kind) }
+            else { self.iterated_value(&supplied.settled())? };
+        let mut pieces = Vec::<f64>::new();
+        let mut exceptional = 0.0_f64;
+        let mut infinite = 0.0_f64;
+        loop {
+            let Some(term) = self.next_value(&iterator)? else { break; };
+            let term = term.settled();
+            let number = if let Some(number) = Self::dot_coordinate(&term) { number }
+                else if matches!(term, Value::Huge(_)) { return Err("OverflowError: int too large to convert to float".to_owned()); }
+                else if matches!(term, Value::Thing(_)) {
+                    let converted = self.user_operation(Prim::AsReal, &[term.clone()])?
+                        .ok_or_else(|| format!("TypeError: must be real number, not {}", term.kind_word()))?;
+                    Self::dot_coordinate(&converted).ok_or_else(|| "TypeError: __float__ returned non-float".to_owned())?
+                } else { return Err(format!("TypeError: must be real number, not {}", term.kind_word())); };
+            let mut accumulator = number;
+            let mut output = Vec::with_capacity(pieces.len() + 1);
+            for mut component in pieces.drain(..) {
+                if component.abs() > accumulator.abs() { std::mem::swap(&mut component, &mut accumulator); }
+                let combined = accumulator + component;
+                let residual = component - (combined - accumulator);
+                if residual != 0.0 { output.push(residual); }
+                accumulator = combined;
+            }
+            if accumulator.is_finite() {
+                if accumulator != 0.0 { output.push(accumulator); }
+                pieces = output;
+            } else {
+                if number.is_finite() { return Err("OverflowError: intermediate overflow in fsum".to_owned()); }
+                if number.is_infinite() { infinite += number; }
+                exceptional += number;
+            }
+        }
+        if infinite.is_nan() { return Err("ValueError: -inf + inf in fsum".to_owned()); }
+        let result = if exceptional != 0.0 { exceptional } else {
+            let mut total = pieces.pop().unwrap_or_default();
+            let mut error = 0.0;
+            while let Some(piece) = pieces.pop() {
+                let previous = total;
+                total += piece;
+                error = piece - (total - previous);
+                if error != 0.0 { break; }
+            }
+            if let Some(tail) = pieces.last() {
+                if (error > 0.0 && *tail > 0.0) || (error < 0.0 && *tail < 0.0) {
+                    let correction = error + error;
+                    let adjusted = total + correction;
+                    if adjusted - total == correction { total = adjusted; }
+                }
+            }
+            total
+        };
+        Ok(crate::data::worth_of_binary(result, self.real_figures()))
+    }
+
     fn dot_product(&mut self, first: &Value, second: &Value) -> Result<Value, String> {
         let mut begin = |offered: &Value| match Self::live_walk(offered) {
             Some(kind) => Ok(Self::cursor_value(kind)),
@@ -14470,6 +14536,11 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::Reckon && self.table.flag("ext.builtin.math.floating")
+            && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "fsum") {
+            if v.len() != 2 { return Err("TypeError: fsum expected 1 argument".to_owned()); }
+            return self.compensated_total(&v[1]);
+        }
         if op == Prim::Reckon && self.table.flag("ext.builtin.math.sumprod")
             && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
             if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
@@ -22696,7 +22767,7 @@ impl Machine<'_> {
 
     fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
         match callable {
-            Value::Method(..) => self.apply_class_member(callable.clone(), values).map_err(|escape| self.suspension_fault(escape)),
+            Value::Routine(_) | Value::Wrapped(..) | Value::Method(..) => self.apply_class_member(callable.clone(), values).map_err(|escape| self.suspension_fault(escape)),
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),

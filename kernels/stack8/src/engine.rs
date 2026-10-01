@@ -3616,8 +3616,12 @@ impl<'a> Engine<'a> {
         if self.lang.closes_over {
             // Each local owns a binding cell; mutable values inside it
             // retain their separate identity when the name is rebound.
-            for value in &mut frame {
-                *value = Value::Binding(Rc::new(RefCell::new(self.keep_collection(value.clone()))));
+            let mut inherited_cells = vec![false; frame.len()];
+            for (at, _) in &program.enclosed { inherited_cells[*at] = true; }
+            for (at, value) in frame.iter_mut().enumerate() {
+                if !inherited_cells[at] {
+                    *value = Value::Binding(Rc::new(RefCell::new(self.keep_collection(value.clone()))));
+                }
             }
         }
         for (at, cell) in &program.enclosed { frame[*at] = cell.clone(); }
@@ -12516,6 +12520,60 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn precise_sum(&mut self, iterable: &Value) -> Res<Value> {
+        let walk = match Self::living_source(iterable) {
+            Some(source) => Self::core_cursor(source),
+            None => self.core_iterator(&iterable.contents())?,
+        };
+        let mut partials: Vec<f64> = Vec::new();
+        let (mut special, mut infinities) = (0.0_f64, 0.0_f64);
+        while let Some(item) = self.core_step(&walk)? {
+            let item = item.contents();
+            let mut x = match Self::product_sum_float(&item) {
+                Some(x) => x,
+                None if matches!(item, Value::Huge(_)) => return Err("OverflowError: int too large to convert to float".into()),
+                None if matches!(item, Value::Object(_)) => {
+                    let converted = self.builtin(Builtin::AsReal, "float", &mut vec![item.clone()])?;
+                    Self::product_sum_float(&converted).ok_or_else(|| format!("TypeError: must be real number, not {}", item.core_kind()))?
+                }
+                None => return Err(format!("TypeError: must be real number, not {}", item.core_kind())),
+            };
+            let original = x;
+            let mut kept = 0;
+            for position in 0..partials.len() {
+                let mut y = partials[position];
+                if x.abs() < y.abs() { std::mem::swap(&mut x, &mut y); }
+                let hi = x + y;
+                let lo = y - (hi - x);
+                if lo != 0.0 { partials[kept] = lo; kept += 1; }
+                x = hi;
+            }
+            partials.truncate(kept);
+            if !x.is_finite() {
+                if original.is_finite() { return Err("OverflowError: intermediate overflow in fsum".into()); }
+                if original.is_infinite() { infinities += original; }
+                special += original;
+                partials.clear();
+            } else if x != 0.0 { partials.push(x); }
+        }
+        if infinities.is_nan() { return Err("ValueError: -inf + inf in fsum".into()); }
+        if special != 0.0 { return Ok(crate::complex::real(special)); }
+        let mut high = partials.pop().unwrap_or(0.0);
+        let mut remainder = 0.0;
+        while let Some(lowest) = partials.pop() {
+            let prior = high;
+            high = prior + lowest;
+            remainder = lowest - (high - prior);
+            if remainder != 0.0 { break; }
+        }
+        if partials.last().is_some_and(|last| (remainder < 0.0 && *last < 0.0) || (remainder > 0.0 && *last > 0.0)) {
+            let doubled = remainder * 2.0;
+            let nudged = high + doubled;
+            if doubled == nudged - high { high = nudged; }
+        }
+        Ok(crate::complex::real(high))
+    }
+
     fn product_sum(&mut self, p: &Value, q: &Value) -> Res<Value> {
         let mut iterator = |source: &Value| match Self::living_source(source) {
             Some(live) => Ok(Self::core_cursor(live)),
@@ -15900,6 +15958,11 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::Math && self.lang.math_floating
+            && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "fsum") {
+            if args.len() != 2 { return Err("TypeError: fsum expected 1 argument".into()); }
+            return self.precise_sum(&args[1]);
+        }
         if builtin == Builtin::Math && self.lang.math_sumprod
             && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
             if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
@@ -19233,7 +19296,7 @@ impl Engine<'_> {
             Value::ByteKind(mutable, _) => self.byte_call(u8::from(*mutable), &args),
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
-            Value::Method(..) => match self.class_apply(work.clone(), args) {
+            Value::Adapter(_) | Value::Method(..) => match self.class_apply(work.clone(), args) {
                 Ok(value) => Ok(value),
                 Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
             },
