@@ -601,7 +601,7 @@ impl<'a> Machine<'a> {
                         let regular=match values.as_slice() {
                             [number]=>match number.settled() {
                                 Value::Small(n)=>Some((n>0,n==0)),
-                                Value::Frac(r) if r.float_style && !r.beneath.is_zero()=>{
+                                Value::Frac(r) if r.places.is_some() && !r.beneath.is_zero()=>{
                                     // Read the exact ratio's domain; width
                                     // conversion belongs to the operation.
                                     let zero=r.above.is_zero();

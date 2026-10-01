@@ -594,7 +594,7 @@ impl<'a> Engine<'a> {
                         // the native operation performs that conversion once.
                         let signs = match number {
                             Value::Small(n) => Some((n >= 0, n > 0)),
-                            Value::Real(real) if real.floating && !real.q.is_zero() => {
+                            Value::Real(real) if !real.q.is_zero() => {
                                 let positive = !real.p.is_zero() && real.p.sign() == real.q.sign();
                                 Some((real.p.is_zero() || positive, positive))
                             }

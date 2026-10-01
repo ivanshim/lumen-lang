@@ -294,7 +294,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         if count < i32::MIN as i64 || count > i32::MAX as i64 { return Err(String::from("OverflowError: Python int too large to convert to C int")); }
     }
     let source=subject.as_ref();
-    let many=source.chars().count();
+    let many=if source.is_ascii() {source.len()} else {source.chars().count()};
     let answer=match work {
         ENCODE=>return Err(g.bad("encode")),
         REPR|MAKETRANS=>unreachable!(),
@@ -477,6 +477,25 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
 }
 
 fn seek(work: Work, source: &str, g: &Given) -> Result<Value,String> {
+    // An unbounded search borrows the original string instead of
+    // collecting it into letters and then copying the window back.
+    if g.tail.len()==1 && matches!(work,Work::COUNT|Work::FIND|Work::RFIND|Work::INDEX|Work::RINDEX) {
+        let sought=g.word(0)?;
+        if work==Work::COUNT {
+            let occurrences=if sought.is_empty() {source.chars().count()+1} else {source.matches(sought).count()};
+            return Ok(Value::Small(occurrences as i64));
+        }
+        let backwards=matches!(work,Work::RFIND|Work::RINDEX);
+        let place=if backwards {source.rfind(sought)} else {source.find(sought)};
+        return match place {
+            Some(byte)=>{
+                let before=&source[..byte];
+                Ok(Value::Small(if before.is_ascii() {byte as i64} else {before.chars().count() as i64}))
+            }
+            None if matches!(work,Work::INDEX|Work::RINDEX)=>Err(g.bad("missing")),
+            None=>Ok(Value::Small(-1)),
+        };
+    }
     let letters:Vec<char>=source.chars().collect();let size=letters.len();
     let bound=|place:usize,default:usize|->Result<usize,String>{
         let number=match g.tail.get(place) {None|Some(Value::Nil)=>return Ok(default),Some(v)=>count(v,g.table)?};
