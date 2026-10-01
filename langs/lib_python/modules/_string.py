@@ -4,8 +4,8 @@
 # character.
 
 def _require_str(value, name):
-    if type(value) != type(''):
-        raise 'TypeError: ' + name + '() argument must be str, not ' + type(value).__name__
+    if not isinstance(value, str):
+        raise TypeError('expected str, got ' + type(value).__name__)
 
 def _parse_field(text, start):
     # Reads one replacement field beginning just after its '{'. Returns the
@@ -100,14 +100,27 @@ def _formatter_parser(text):
         field_name, format_spec, conversion, i = _parse_field(text, i)
         yield (literal, field_name, format_spec, conversion)
 
+# Decimal digit block starts from CPython 3b564385e4c9,
+# Objects/unicodetype_db.h (PSF License), including Unicode 17 additions.
+_DECIMAL_ZEROES = [48, 1632, 1776, 1984, 2406, 2534, 2662, 2790, 2918, 3046, 3174, 3302, 3430, 3558, 3664, 3792, 3872, 4160, 4240, 6112, 6160, 6470, 6608, 6784, 6800, 6992, 7088, 7232, 7248, 42528, 43216, 43264, 43472, 43504, 43600, 44016, 65296, 66720, 68912, 68928, 69734, 69872, 69942, 70096, 70384, 70736, 70864, 71248, 71360, 71376, 71386, 71472, 71904, 72016, 72688, 72784, 73040, 73120, 73184, 73552, 90416, 92768, 92864, 93008, 93552, 118000, 120782, 120792, 120802, 120812, 120822, 123200, 123632, 124144, 124401, 125264, 130032]
+
 def _as_index(name):
-    # A field or subscript made only of digits is an index, not a name.
     if name == '':
         return None
+    answer = 0
     for letter in name:
-        if letter < '0' or letter > '9':
+        digit = None
+        code = ord(letter)
+        for zero in _DECIMAL_ZEROES:
+            if zero <= code < zero + 10:
+                digit = code - zero
+                break
+        if digit is None:
             return None
-    return int(name)
+        answer = answer * 10 + digit
+        if answer > 9223372036854775807:
+            raise ValueError('Too many decimal digits in format string')
+    return answer
 
 def formatter_field_name_split(field_name):
     _require_str(field_name, 'formatter_field_name_split')
@@ -136,8 +149,6 @@ def _field_name_rest(text, start):
                 letter = text[i]
                 if letter == '.' or letter == '[':
                     break
-                if letter == ']':
-                    raise "ValueError: Unexpected ']' in format string"
                 i += 1
             name = text[begin:i]
             if name == '':

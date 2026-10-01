@@ -161,6 +161,11 @@ class _Reader:
             if self.i >= len(self.pattern):
                 raise 'ValueError: unexpected end of pattern'
             marker = self.pattern[self.i]
+            if marker == 'a' and self.pattern[self.i:self.i + 2] == 'a:':
+                self.i += 2
+                node = self.choice()
+                self._close_group()
+                return ['ascii', node]
             if marker == ':':
                 self.i += 1
                 node = self.choice()
@@ -282,13 +287,17 @@ def _strip_verbose(pattern):
 def _word(letter):
     return letter != '' and letter in _WORD_LETTERS
 
-def _accept(node, letter, ignorecase):
+def _accept(node, letter, ignorecase, ascii_only=False):
     kind = node[0]
     if kind == 'lit':
+        if ascii_only and ord(letter) > 127 and ord(node[1]) < 128:
+            return False
         if ignorecase:
             return letter.lower() == node[1].lower()
         return letter == node[1]
     if kind == 'range':
+        if ascii_only and ord(letter) > 127 and ord(node[2]) < 128:
+            return False
         if ignorecase:
             for candidate in [letter, letter.lower(), letter.upper()]:
                 if ord(node[1]) <= ord(candidate) and ord(candidate) <= ord(node[2]):
@@ -308,6 +317,8 @@ def _accept(node, letter, ignorecase):
 
 def _walk(node, text, place, captures, opts):
     kind = node[0]
+    if kind == 'ascii':
+        return _walk(node[1], text, place, captures, (opts[0], opts[1], opts[2], True))
     if kind == 'seq':
         states = [[place, captures]]
         for part in node[1]:
@@ -388,12 +399,12 @@ def _walk(node, text, place, captures, opts):
     elif kind == 'class':
         answer = False
         for entry in node[2]:
-            if _accept(entry, letter, opts[0]):
+            if _accept(entry, letter, opts[0], len(opts) > 3 and opts[3]):
                 answer = True
         if node[1]:
             answer = not answer
     else:
-        answer = _accept(node, letter, opts[0])
+        answer = _accept(node, letter, opts[0], len(opts) > 3 and opts[3])
     return [[place + 1, captures]] if answer else []
 
 def _repeat(node, text, place, captures, count, opts):

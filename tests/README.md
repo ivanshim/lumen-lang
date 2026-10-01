@@ -11,6 +11,8 @@ order the reference suites need it.
 | Directory | Source | Commit | License |
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
+| `python/support/__init__.py`, `python/support/import_helper.py` | [python/cpython](https://github.com/python/cpython) `Lib/test/support` (string test imports) | `3b564385e4c9` | [python/LICENSE](python/LICENSE) (PSF License) |
+| `python/test_string.py` | [python/cpython](https://github.com/python/cpython) `Lib/test/test_string/test_string.py` | `3b564385e4c9` | [python/LICENSE](python/LICENSE) (PSF License) |
 | `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, and the support data they read (`mathdata/`, `test_import/data/syntax_warnings.py`) | `3b564385e4c9` (2026-09-07) | [python/LICENSE](python/LICENSE) (PSF License) |
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`

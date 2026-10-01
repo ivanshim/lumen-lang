@@ -349,3 +349,26 @@ class UserDict(MutableMapping):
         for key in iterable:
             made[key] = value
         return made
+
+
+# Source: CPython 3b564385e4c9, Lib/collections/__init__.py; PSF License.
+class ChainMap:
+    # Lookup portion of ChainMap; its other mapping protocols are not yet ported.
+
+    def __init__(self, *maps):
+        '''Initialize a ChainMap by setting *maps* to the given mappings.
+        If no mappings are provided, a single empty dictionary is used.
+
+        '''
+        self.maps = list(maps) or [{}]          # always at least one map
+
+    def __missing__(self, key):
+        raise KeyError(key)
+
+    def __getitem__(self, key):
+        for mapping in self.maps:
+            try:
+                return mapping[key]             # can't use 'key in mapping' with defaultdict
+            except KeyError:
+                pass
+        return self.__missing__(key)            # support subclasses that define __missing__
