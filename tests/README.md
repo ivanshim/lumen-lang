@@ -12,6 +12,7 @@ order the reference suites need it.
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
 | `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, `test_itertools.py`, and the support data they read (`mathdata/`, `test_import/data/syntax_warnings.py`) | `3b564385e4c9` (2026-09-07) | [python/LICENSE](python/LICENSE) (PSF License) |
+| `python/test/` | Unchanged CPython `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,os_helper,threading_helper,script_helper}.py` source archive; runtime compatibility helpers remain in `langs/lib_python/modules/test/` | `3b564385e4c9` | `python/LICENSE` (PSF) |
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a
