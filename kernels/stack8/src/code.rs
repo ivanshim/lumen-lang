@@ -387,6 +387,7 @@ pub enum Action {
     HasMember(Rc<str>),
     /// Write that property: the object, then the value.
     Plant(Rc<str>),
+    RestoreMember(Rc<str>),
     /// Take that property off the object above, as though it had never
     /// been written.
     Uproot(Rc<str>),

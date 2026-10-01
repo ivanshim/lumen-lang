@@ -9088,6 +9088,19 @@ impl<'a> Engine<'a> {
             // The property becomes a cell the object and the name that
             // takes it both stand for, so a write through either is a
             // write both see.
+            Action::RestoreMember(name) => {
+                let original = self.drop_top()?;
+                let changed = self.drop_top()?;
+                let owner = self.drop_top()?;
+                // Shared descriptor results were already mutated in place.
+                // Native attributes returning a snapshot still need writeback.
+                let supplied_by_class = matches!(&owner, Value::Object(instance) if self.class_value(&instance.class_now(), name).is_some());
+                let live_result = matches!(original, Value::Fields(_)) || supplied_by_class && matches!(original, Value::Collection(..) | Value::Bond(_) | Value::Binding(_));
+                if !live_result {
+                    self.class_write(owner, name, Some(changed), false)?;
+                }
+                Value::Null
+            }
             Action::BondField(name) => {
                 let owner = self.drop_top()?;
                 if !self.lang.class_special.is_empty() && matches!(owner, Value::Object(_)) {

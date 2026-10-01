@@ -8004,9 +8004,18 @@ impl<'a> Compiler<'a> {
                 // to the footing below that restores `self.waiting` and
                 // any hush/mute marks, rather than returning out of the
                 // whole statement with those left disturbed.
-                // Python mutates the returned collection; an item store
-                // never assigns a descriptor's result back to its owner.
-                if !self.lang.class_special.is_empty() || names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
+                if !self.lang.class_special.is_empty() && matches!(base.last(), Some(Instr::Act(Action::Grab(_), 1))) {
+                    let Some(Instr::Act(Action::Grab(member), 1)) = base.last() else { unreachable!() };
+                    let owner_at = self.mark();
+                    for instruction in relocated(base[..base.len() - 1].to_vec(), owner_at as i64 - from as i64) {
+                        self.put(instruction);
+                    }
+                    self.read(&made);
+                    self.read(&inner[0]);
+                    self.act(Action::RestoreMember(member.clone()), 3);
+                    self.discard();
+                    Ok(())
+                } else if names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
                     Ok(())
                 } else {
                     // What it stood on is written back into, read again
