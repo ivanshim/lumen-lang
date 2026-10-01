@@ -15573,10 +15573,14 @@ impl<'a> Machine<'a> {
                     // is sought by its own hash and its own equality
                     // here as it is wherever the set was grown.
                     (item, Value::Set(hay)) => {
-                        let entries = hay.borrow().entries.clone();
                         let address = if let Value::Set(candidate) = self.set_search_item(item) {
                             candidate.borrow().whole_address()
-                        } else { self.set_address(&entries, item)? };
+                        } else if matches!(item, Value::Thing(_) | Value::Keyed(..)) {
+                            // Custom equality can reach this set again, so
+                            // only that road needs an independent snapshot.
+                            let entries = hay.borrow().entries.clone();
+                            self.set_address(&entries, item)?
+                        } else { self.hash_for_set(item)? };
                         hay.borrow().keys.contains(&address)
                     }
                     (item, Value::Octets { cell, .. }) => {
