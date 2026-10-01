@@ -861,8 +861,12 @@ impl<'a> Engine<'a> {
                     }
                     let name = self.lang.constructor.clone().unwrap_or_default();
                     self.value_method(&worth, &name, positional, keywords)?;
-                } else if !args.is_empty() && kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() {
-                    self.root_refuses_arguments(&c,true)?;
+                } else if kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() {
+                    // Spreads are untied first: a class with no
+                    // constructor of its own refuses arguments, but a
+                    // spread that opened to nothing handed it none.
+                    let untied = self.call_items(args)?;
+                    if !untied.is_empty() { self.root_refuses_arguments(&c,true)?; }
                 }
             }
         }

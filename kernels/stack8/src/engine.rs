@@ -4337,6 +4337,25 @@ impl<'a> Engine<'a> {
                         // find: it reads them only when it was handed
                         // no dictionaries of its own.
                         Action::Builtin(Builtin::Eval | Builtin::RunText, _) if !program.body_of_all && !self.lang.compile_modes.is_empty() => {
+                            // Text run without dictionaries of its own
+                            // is read with the caller's own module for
+                            // its globals, as the reference reads the
+                            // caller's globals: the module's names stand
+                            // for its slots ahead of everything further out.
+                            {
+                                let path = self.routine_home(program);
+                                if let Some(Value::Object(space)) = self.modules.get(&path).cloned() {
+                                    let mut aliases = Vec::new();
+                                    for (name, _) in space.fields.borrow().iter() {
+                                        if name.starts_with('\0') { continue; }
+                                        let suffix = format!(":{}:{}", path, name);
+                                        if let Some(at) = self.registry.idents.iter().position(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                                            aliases.push((name.clone(), self.registry.idents[at].clone()));
+                                        }
+                                    }
+                                    self.registry.pending_globals = aliases;
+                                }
+                            }
                             // What the text is handed is a frame of its
                             // own: a name the routine keeps in a cell is
                             // given a cell of its own holding the same,
@@ -14924,10 +14943,16 @@ impl<'a> Engine<'a> {
             // these labels can, and what cannot be done gives false
             // back rather than stopping, as such a language expects.
             Builtin::FileRead => {
-                arity(1)?;
+                if args.is_empty() || args.len() > 2 { return Err(self.core_fault("core.arity", name)); }
+                // Asked for binary, the bytes are handed over as they
+                // lie; a text read keeps the lossy reading it always had.
+                let binary = args.len() == 2 && self.truth(&args[1]);
                 let sp = self.wording();
                 match std::fs::read(args[0].display(&sp)) {
                     Ok(bytes) => {
+                        if binary {
+                            return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str())));
+                        }
                         let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
                             .copied().map(char::from).collect::<String>().to_ascii_lowercase();
                         if !self.lang.syntax_members.is_empty() && (header.contains("coding: latin1") || header.contains("coding: latin-1")) {

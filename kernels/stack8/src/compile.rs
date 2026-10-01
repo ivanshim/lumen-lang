@@ -70,6 +70,10 @@ pub struct Registry {
     /// The global names the program's own lines have bound, as against
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
+    /// Aliases the outermost piece takes as its declared globals for
+    /// the next reading: the caller's own module's names standing for
+    /// its slots, as the reference's eval reads the caller's globals.
+    pub pending_globals: Vec<(String, String)>,
     pub program_bound: std::collections::HashSet<String>,
     builtin_exports: HashSet<String>,
     /// The names a write has actually bound at the outermost scope,
@@ -546,7 +550,7 @@ fn compile_pass(
         declared: vec![false; already.len()],
         idents: already,
         scopes: Vec::new(),
-        globals: Vec::new(),
+        globals: std::mem::take(&mut table.pending_globals),
         lasts: Vec::new(),
         cycles: Vec::new(),
         escapes: Vec::new(),

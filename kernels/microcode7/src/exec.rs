@@ -2678,7 +2678,7 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false, None, &[]) {
             Ok(built) => built,
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
@@ -14367,10 +14367,16 @@ impl<'a> Machine<'a> {
             // spells these labels does at all. What cannot be done
             // answers false rather than stopping the run.
             Prim::Slurp => {
-                n(1)?;
+                if v.is_empty() || v.len() > 2 { return Err(self.core_complaint("core.arity", name)); }
+                // Asked for binary, the bytes are handed over as they
+                // lie; a text read keeps the lossy reading it always had.
+                let binary = v.len() == 2 && self.object_truth(&v[1])?;
                 let w = self.wording();
                 match std::fs::read(v[0].render(w)) {
                     Ok(bytes) => {
+                        if binary {
+                            return Ok(Value::Octets { cell: Rc::new(RefCell::new(bytes)), changeable: false, lead: Rc::from(self.table.single("ext.system.bytes.type").unwrap_or("bytes")) });
+                        }
                         let opening = bytes.split(|part| *part == b'\n').take(2).flatten()
                             .copied().map(char::from).collect::<String>().to_ascii_lowercase();
                         let local = opening.contains("coding: latin1") || opening.contains("coding: latin-1");
@@ -19590,7 +19596,28 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str()))) {
+        // Text run without dictionaries of its own is read with the
+        // caller's own module for its globals, as the reference reads
+        // the caller's globals: the module's names stand for its own
+        // slots ahead of everything further out.
+        let mut aliasing: Vec<(String, String)> = Vec::new();
+        let home = self.active_trace.as_ref().and_then(|item| {
+            item.holds.borrow().iter().find(|(word, _)| word == "\0environment")
+                .and_then(|(_, held)| match held.settled() { Value::Bound(code, _) => Some(code), _ => None })
+                .map(|code| self.routine_home(&code))
+        });
+        if let Some(path) = home {
+            if let Some(Value::Thing(space)) = self.imported.get(&path).cloned() {
+                for (name, _) in space.holds.borrow().iter() {
+                    if name.starts_with('\0') { continue; }
+                    let wanted = format!("\0import/{path}/{name}");
+                    if self.idents.iter().any(|word| word == &wanted) {
+                        aliasing.push((name.clone(), wanted));
+                    }
+                }
+            }
+        }
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1, Some(Rc::from(file.as_str())), &aliasing) {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };

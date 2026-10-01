@@ -859,7 +859,13 @@ impl<'a> Machine<'a> {
                     let (positional, named) = self.open_arguments(given)?;
                     let key = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
                     self.value_member(&under, &key, positional, named)?;
-                }else if !given.is_empty()&&native.is_none()&&self.inherited_entry(&class,self.detail("allocate")).is_none(){self.root_turns_away(&class,'n')?;}
+                }else if native.is_none()&&self.inherited_entry(&class,self.detail("allocate")).is_none(){
+                    // Spreads are opened first: a class with no
+                    // constructor of its own refuses arguments, but a
+                    // spread that opened to nothing handed it none.
+                    let (positional, named) = self.open_arguments(given)?;
+                    if !positional.is_empty() || !named.is_empty() { self.root_turns_away(&class,'n')?; }
+                }
             }
         }
         Ok(created)

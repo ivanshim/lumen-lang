@@ -29,6 +29,18 @@ def pack(format, *values):
             if math.copysign(1.0, value) < 0:
                 bits += 9223372036854775808
         return bits.to_bytes(8, 'little' if format == '<d' else 'big')
+    layout = _int_layout(format)
+    if layout is not None:
+        endian, pieces = layout
+        if len(values) != len(pieces):
+            raise error('pack expected ' + str(len(pieces)) + ' items for packing (got ' + str(len(values)) + ')')
+        out = b''
+        for (size, signed), value in zip(pieces, values):
+            try:
+                out += int(value).to_bytes(size, endian, signed=signed)
+            except OverflowError:
+                raise error('argument out of range')
+        return out
     raise 'NotImplementedError: struct.pack needs byte values'
 
 def unpack(format, buffer):
@@ -70,7 +82,51 @@ def unpack(format, buffer):
         else:
             value = math.ldexp(fraction + 8388608, exponent - 150)
         return (-value if negative else value,)
+    layout = _int_layout(format)
+    if layout is not None:
+        endian, pieces = layout
+        total = 0
+        for size, signed in pieces:
+            total += size
+        if len(buffer) != total:
+            raise error('unpack requires a buffer of ' + str(total) + ' bytes')
+        values = []
+        at = 0
+        for size, signed in pieces:
+            values.append(int.from_bytes(buffer[at:at + size], endian, signed=signed))
+            at += size
+        return tuple(values)
     raise 'NotImplementedError: struct.unpack needs byte values'
+
+_INT_SIZES = {'b': (1, True), 'B': (1, False), 'h': (2, True), 'H': (2, False),
+              'i': (4, True), 'I': (4, False), 'l': (4, True), 'L': (4, False),
+              'q': (8, True), 'Q': (8, False)}
+
+def _int_layout(format):
+    # The pieces an integer-only format packs to, in order, with the
+    # prefix's endianness; None where a format has anything else.
+    endian = None
+    if format[:1] in ('@', '=', '<', '>', '!'):
+        endian = 'little' if format[0] in ('<', '=', '@') else 'big'
+        format = format[1:]
+    if endian is None:
+        endian = 'little'
+    pieces = []
+    count = ''
+    for code in format:
+        if code in '0123456789':
+            count += code
+            continue
+        if code in ' \t\n\r\v\f' and not count:
+            continue
+        if code not in _INT_SIZES:
+            return None
+        for _ in range(int(count) if count else 1):
+            pieces.append(_INT_SIZES[code])
+        count = ''
+    if count:
+        return None
+    return (endian, pieces)
 
 def calcsize(format):
     if not isinstance(format, str):

@@ -435,7 +435,7 @@ class _HostFile:
             if _host_file_exists(name):
                 if _host_file_kind(name) == 2:
                     raise IsADirectoryError(21, 'Is a directory', name)
-                brought = _host_file_read(name)
+                brought = _host_file_read(name, self._binary)
                 self._buffer = brought if brought is not False else ''
             else:
                 self._buffer = ''
@@ -446,7 +446,7 @@ class _HostFile:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = _host_file_read(name)
+            brought = _host_file_read(name, self._binary)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought

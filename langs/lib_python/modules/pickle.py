@@ -88,18 +88,15 @@ def _global_name(value):
         candidate = getattr(builtins, name)
         if candidate is value:
             return ('builtins', name)
-    namespace = __program_namespace()
-    for name in namespace:
-        candidate = namespace[name]
-        if candidate is value:
-            # Instances are global only when their reduction says so.
-            if isinstance(value, type) or callable(value):
-                return ('__main__', name)
     name = getattr(value, '__qualname__', getattr(value, '__name__', None))
     module = getattr(value, '__module__', None)
     if name is not None and '<locals>' not in name:
         parts = name.split('.')
-        for module_name in list(sys.modules):
+        # The module the value names as its own first, then the rest:
+        # the reference finds the value under its own name where it
+        # lives, before anything a caller happened to import.
+        module_names = ([module] if module is not None else []) + [m for m in list(sys.modules) if m != module]
+        for module_name in module_names:
             owner = sys.modules[module_name]
             if parts[0] not in dir(owner):
                 continue
@@ -108,6 +105,13 @@ def _global_name(value):
                 candidate = getattr(candidate, part, None)
             if candidate is value:
                 return (module_name, name)
+    namespace = __program_namespace()
+    for name in namespace:
+        candidate = namespace[name]
+        if candidate is value:
+            # Instances are global only when their reduction says so.
+            if isinstance(value, type) or callable(value):
+                return ('__main__', name)
     if name is not None and module is not None and isinstance(value, type):
         return (module, name)
     return None
@@ -313,7 +317,7 @@ def loads(data, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=
         raise TypeError('a bytes-like object is required, not str')
     if data[:4] == b'LP1\n':
         return _Reader(data[4:].decode()).get()
-    return _read_protocol(data)
+    return _read_protocol(data, encoding)
 
 
 
@@ -345,6 +349,26 @@ class Unpickler:
     def load(self):
         return load(self.file)
 
+
+def _decode_binstring(data, encoding):
+    # A binstring's bytes are text in the encoding the reader was given:
+    # latin1 keeps each byte as its own letter; bytes hands the bytes
+    # over whole; ASCII refuses a byte that is not one.
+    if encoding == 'bytes':
+        return bytes(data)
+    if encoding == 'latin1':
+        out = ''
+        for byte in data:
+            out += chr(byte)
+        return out
+    if encoding == 'utf-8':
+        return bytes(data).decode('utf-8')
+    out = ''
+    for byte in data:
+        if byte > 127:
+            raise UnicodeDecodeError('ascii', bytes([byte]), 0, 1, 'ordinal not in range(128)')
+        out += chr(byte)
+    return out
 
 def _unescape_string(text):
     # A protocol-0 string is written as its repr: quotes around escapes.
@@ -387,7 +411,7 @@ def _unescape_string(text):
             out += esc
     return out
 
-def _read_protocol(data):
+def _read_protocol(data, encoding='ASCII'):
     # The stack machine also accepts older standard range-iterator pickles.
     stack = []
     marks = []
@@ -488,12 +512,12 @@ def _read_protocol(data):
         elif op == 85:
             size = data[at]
             at += 1
-            stack.append(bytes(data[at:at + size]))
+            stack.append(_decode_binstring(data[at:at + size], encoding))
             at += size
         elif op == 84:
             size = int.from_bytes(data[at:at + 4], 'little')
             at += 4
-            stack.append(bytes(data[at:at + size]))
+            stack.append(_decode_binstring(data[at:at + size], encoding))
             at += size
         elif op == 70:
             end = data.index(b'\n', at)
@@ -531,8 +555,9 @@ def _read_protocol(data):
             stack[-1][key] = value
         elif op == 117:
             mark = marks.pop()
+            target = stack[mark - 1]
             for pair_at in range(mark, len(stack), 2):
-                stack[-1][stack[pair_at]] = stack[pair_at + 1]
+                target[stack[pair_at]] = stack[pair_at + 1]
             del stack[mark:]
         elif op in (112, 103):
             end = data.index(b'\n', at)

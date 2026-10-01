@@ -335,7 +335,7 @@ enum Mode {
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false, false, &[])
 }
 
 /// The same, saying besides which row the reading had reached when it
@@ -344,7 +344,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard, &column)), None, None, false, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard, &column)), None, None, false, false, &[])
         .map_err(|said| (said, at.get(), hard.get(), column.get()))
 }
 
@@ -353,7 +353,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
 /// statement that means one thing in a program of its own and another
 /// in a piece of a run in progress can tell the two apart.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true, false, &[])
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -371,7 +371,7 @@ pub fn build_within(
     before: u32,
     within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true, false)
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true, false, &[])
 }
 
 /// `build_within` and `build_from`, each saying besides which row the
@@ -387,24 +387,25 @@ pub fn build_within_at(
     within: Option<(String, Option<String>)>,
     value_only: bool,
     origin: Option<Rc<str>>,
+    aliasing: &[(String, String)],
 ) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only).map_err(|said| (said, at.get(), column.get()))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, origin, Some((&at, &hard, &column)), Some((inside, knows)), within, true, value_only, aliasing).map_err(|said| (said, at.get(), column.get()))
 }
 
 pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String], origin: Rc<str>) -> Result<Built, (String, u32, (usize, usize, u32))> {
     let line = std::cell::Cell::new(0);
     let fatal = std::cell::Cell::new(false);
     let span = std::cell::Cell::new((1, 1, 0));
-    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), Some((&line, &fatal, &span)), None, None, false, false)
+    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), Some((&line, &fatal, &span)), None, None, false, false, &[])
         .map_err(|message| (message, line.get(), span.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
     let column = std::cell::Cell::new((1usize, 1usize, 0u32));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard, &column)), None, None, true, false).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard, &column)), None, None, true, false, &[]).map_err(|said| (said, at.get()))
 }
 
 /// Text handed over to be read while the run goes: as one expression
@@ -419,25 +420,25 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
     let mut bound = shadowed.to_vec();
     let mut exports = HashSet::new();
     if table.flag("ext.stmt.function.closes_over") {
-        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), framed_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive).map_err(|said| (said, at.get(), column.get()))?;
+        let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), framed_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive, &[]).map_err(|said| (said, at.get(), column.get()))?;
         exports = discovery.native_exports;
         for name in discovery.bound_globally {
             if !bound.contains(&name) { bound.push(name); }
         }
     }
-    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, globe, born, framed_in, mark, None, None, true, &mut words, false, value_only, &bound, &exports, allow_top_await, interactive).map_err(|said| (said, at.get(), column.get()))
+    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, globe, born, framed_in, mark, None, None, true, &mut words, false, value_only, &bound, &exports, allow_top_await, interactive, &[]).map_err(|said| (said, at.get(), column.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool, aliasing: &[(String, String)]) -> Res<Built> {
     let mut words = HashMap::new();
     let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
-        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), None, None, None, mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false)?;
+        let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), None, None, None, mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false, aliasing)?;
         (pass.bound_globally, pass.native_exports)
     } else { (Vec::new(), HashSet::new()) };
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false)
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false, aliasing)
 }
 
 /// Every name a `global` statement names anywhere in this text, however
@@ -530,7 +531,7 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
     output
 }
 
-fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool) -> Res<Built> {
+fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool, aliasing: &[(String, String)]) -> Res<Built> {
     let original_words = tokens;
     let names_in_classes = class_spellings(tokens, table);
     let tokens = names_in_classes.as_slice();
@@ -538,7 +539,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
-    let top = Layer { async_walk_seen: false, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new(), encountered: Vec::new() };
+    let top = Layer { async_walk_seen: false, permits_async: allow_top_await, gathering_kind: None, expression_targets: Vec::new(), comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: aliasing.to_vec(), encountered: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
