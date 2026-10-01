@@ -621,6 +621,14 @@ def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None,
 # One-dimensional views use byte offsets into the original storage. A slice
 # keeps those offsets, and a cast groups them without copying the storage.
 class memoryview:
+    def __buffer__(self, flags, /):
+        from _buffer import getbuffer
+        return getbuffer(self, flags)
+
+    def __release_buffer__(self, view, /):
+        from _buffer import releasebuffer
+        return releasebuffer(self, view)
+
     def __init__(self, object):
         from array import array
         if isinstance(object, memoryview):

@@ -1,5 +1,6 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str)] = &[
+    ("_buffer", include_str!("_buffer.py")),
     ("_codec_idna", include_str!("_codec_idna.py")),
     ("_codec_names", include_str!("_codec_names.py")),
     ("_collections", include_str!("_collections.py")),
@@ -10,6 +11,8 @@ pub static MODULES: &[(&str, &str)] = &[
     ("_testcapi", include_str!("_testcapi.py")),
     ("_testinternalcapi", include_str!("_testinternalcapi.py")),
     ("_testlimitedcapi", include_str!("_testlimitedcapi.py")),
+    ("_thread", include_str!("_thread.py")),
+    ("_weakref", include_str!("_weakref.py")),
     ("abc", include_str!("abc.py")),
     ("annotationlib", include_str!("annotationlib.py")),
     ("array", include_str!("array.py")),

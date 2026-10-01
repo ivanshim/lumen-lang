@@ -1,5 +1,4 @@
 # Source: CPython 3b564385e4c9, Lib/collections/__init__.py. PSF License.
-# Adapted imports and Python replacements for native container helpers.
 '''This module implements specialized container datatypes providing
 alternatives to Python's general purpose built-in containers, dict,
 list, set, and tuple.
@@ -34,14 +33,8 @@ import sys as _sys
 _sys.modules['collections.abc'] = _collections_abc
 abc = _collections_abc
 
-def _copy(value):
-    from copy import copy
-    return copy(value)
-def _nlargest(n, iterable, key=None):
-    # Equivalent stable ordering while the heap accelerator is unavailable.
-    if n <= 0:
-        return []
-    return sorted(iterable, key=key, reverse=True)[:n]
+lazy from copy import copy as _copy
+lazy from heapq import nlargest as _nlargest
 from itertools import chain as _chain
 from itertools import repeat as _repeat
 from itertools import starmap as _starmap
@@ -49,7 +42,7 @@ from keyword import iskeyword as _iskeyword
 from operator import eq as _eq
 from operator import itemgetter as _itemgetter
 from reprlib import recursive_repr as _recursive_repr
-from weakref import proxy as _proxy
+from _weakref import proxy as _proxy
 
 try:
     from _collections import deque
@@ -336,14 +329,14 @@ class OrderedDict(dict):
         return self
 
     def __or__(self, other):
-        if not isinstance(other, dict):
+        if not isinstance(other, (dict, frozendict)):
             return NotImplemented
         new = self.__class__(self)
         new.update(other)
         return new
 
     def __ror__(self, other):
-        if not isinstance(other, dict):
+        if not isinstance(other, (dict, frozendict)):
             return NotImplemented
         new = self.__class__(other)
         new.update(self)
@@ -479,7 +472,7 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
 
     def __repr__(self):
         'Return a nicely formatted representation string'
-        return self.__class__.__name__ + repr_fmt % tuple(self)
+        return self.__class__.__name__ + repr_fmt % self
 
     def _asdict(self):
         'Return a new dict which maps field names to their values.'
@@ -515,7 +508,6 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
         '_asdict': _asdict,
         '__getnewargs__': __getnewargs__,
         '__match_args__': field_names,
-        '__class_getitem__': classmethod(_collections_abc.GenericAlias),
     }
     for index, name in enumerate(field_names):
         doc = _sys.intern(f'Alias for field number {index}')
@@ -667,7 +659,7 @@ class Counter(dict):
 
         '''
         # Emulate Bag.do from Smalltalk and Multiset.begin from C++.
-        return (elem for elem, count in self.items() for _ in range(count))
+        return _chain.from_iterable(_starmap(_repeat, self.items()))
 
     # Override dict methods where necessary
 
@@ -754,7 +746,7 @@ class Counter(dict):
     def __delitem__(self, elem):
         'Like dict.__delitem__() but does not raise KeyError for missing values.'
         if elem in self:
-            dict.__delitem__(self, elem)
+            super().__delitem__(elem)
 
     def __repr__(self):
         if not self:
@@ -1228,14 +1220,14 @@ class UserDict(_collections_abc.MutableMapping):
     def __or__(self, other):
         if isinstance(other, UserDict):
             return self.__class__(self.data | other.data)
-        if isinstance(other, dict):
+        if isinstance(other, (dict, frozendict)):
             return self.__class__(self.data | other)
         return NotImplemented
 
     def __ror__(self, other):
         if isinstance(other, UserDict):
             return self.__class__(other.data | self.data)
-        if isinstance(other, dict):
+        if isinstance(other, (dict, frozendict)):
             return self.__class__(other | self.data)
         return NotImplemented
 

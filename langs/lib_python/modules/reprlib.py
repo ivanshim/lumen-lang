@@ -1,12 +1,11 @@
 # Source: CPython 3b564385e4c9, Lib/reprlib.py. PSF License.
-# Thread identity is supplied by the single-thread library.
 """Redo the builtin repr() (representation) but with limits on most sizes."""
 
 __all__ = ["Repr", "repr", "recursive_repr"]
 
 import builtins
 from itertools import islice
-from threading import get_ident
+from _thread import get_ident
 
 def recursive_repr(fillvalue='...'):
     'Decorator to make a repr function return fillvalue for a recursive call'

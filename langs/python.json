@@ -161,6 +161,7 @@
     "' and '",
     "'"
   ],
+  "ext.stmt.class.native.name": ["__native_type_name__"],
   "ext.stmt.class.annotations": [
     "__annotations__"
   ],

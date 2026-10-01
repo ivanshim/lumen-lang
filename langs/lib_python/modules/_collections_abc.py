@@ -1,5 +1,4 @@
 # Source: CPython 3b564385e4c9, Lib/_collections_abc.py. PSF License.
-# The generic alias and buffer registrations use the source library types.
 # Copyright 2007 Google, Inc. All Rights Reserved.
 # Licensed to PSF under a Contributor Agreement.
 
@@ -37,7 +36,7 @@ Unit tests are in test_collections.
 from abc import ABCMeta, abstractmethod
 import sys
 
-from types import GenericAlias
+GenericAlias = type(list[int])
 EllipsisType = type(...)
 def _f(): pass
 FunctionType = type(_f)
@@ -107,13 +106,7 @@ del _ag
 ### ONE-TRICK PONIES ###
 
 def _check_methods(C, *methods):
-    # Native byte kinds expose descriptors without an MRO attribute.
-    mro = getattr(C, '__mro__', None)
-    if mro is None:
-        for method in methods:
-            if getattr(C, method, None) is None:
-                return NotImplemented
-        return True
+    mro = C.__mro__
     for method in methods:
         for B in mro:
             if method in B.__dict__:
@@ -462,11 +455,6 @@ class Buffer(metaclass=ABCMeta):
         if cls is Buffer:
             return _check_methods(C, "__buffer__")
         return NotImplemented
-
-
-Buffer.register(bytes)
-Buffer.register(bytearray)
-Buffer.register(memoryview)
 
 
 class _CallableGenericAlias(GenericAlias):
@@ -834,7 +822,7 @@ class Mapping(Collection):
 
     __reversed__ = None
 
-# No immutable dictionary builtin is supplied by this interpreter.
+Mapping.register(frozendict)
 Mapping.register(mappingproxy)
 Mapping.register(framelocalsproxy)
 
@@ -1183,8 +1171,7 @@ class MutableSequence(Sequence):
 MutableSequence.register(list)
 MutableSequence.register(bytearray)
 
-_deprecated_ByteString = ByteString
-del ByteString
+_deprecated_ByteString = globals().pop("ByteString")
 
 def __getattr__(attr):
     if attr == "ByteString":

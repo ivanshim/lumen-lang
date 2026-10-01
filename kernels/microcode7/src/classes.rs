@@ -294,10 +294,18 @@ impl<'a> Machine<'a> {
         if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
             if !matches!(candidate.settled(), Value::Text(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", candidate.kind_word()).into()); }
         }
+        let native_name = self.table.single("ext.stmt.class.native.name")
+            .and_then(|key| entries.iter().position(|(name, _)| name == key))
+            .map(|position| entries.remove(position).1.settled());
+        if native_name.as_ref().is_some_and(|value| !matches!(value, Value::Text(_))) {
+            return Err(String::from("TypeError: native type name must be a str").into());
+        }
+        let mut constants = builder.map(|m| vec![("\0metaclass".to_owned(), Value::Blueprint(m))]).unwrap_or_default();
+        if let Some(name) = native_name { constants.push(("\0native-name".to_string(), name)); }
         let shown=entries.iter().find(|(k,_)|k==self.detail("qualified")).map_or(title.clone(),|(_,v)|v.bare());
         let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:parents.first().cloned(),parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
-            methods:vec![],constants:builder.map(|m|vec![("\0metaclass".to_owned(),Value::Blueprint(m))]).unwrap_or_default(),
+            methods:vec![],constants,
             shared:RefCell::new(entries),weak_slot:Cell::new(None),sealed:Cell::new(false)});
         self.name_slots(&class)?;
         // Every entry whose blueprint wants its name is given it now, the
@@ -1647,11 +1655,46 @@ impl<'a> Machine<'a> {
             // first the entry is handed when it is called.
             if let Some(carried)=self.carried_by_kind(&value,key) { return Ok(carried); }
         }
+        if self.table.spells("ext.stmt.class.builtin", "bytes") && (key == "__buffer__" || key == "__release_buffer__") {
+            let provider = match &value {
+                Value::OctetKind { changeable, .. } | Value::Octets { changeable, .. } => key == "__buffer__" || *changeable,
+                Value::Blueprint(class) => Self::native_word(class).or_else(|| Self::native_beneath(class)).as_deref().is_some_and(|word| word == "bytearray" || key == "__buffer__" && word == "bytes"),
+                _ => false,
+            };
+            if provider {
+                return Ok(match value {
+                    Value::Blueprint(ref class) => {
+                        let word = Self::native_word(class).or_else(|| Self::native_beneath(class)).unwrap_or_default();
+                        Value::Intrinsic(Prim::ValueMethod, Rc::from(format!("{word}.{key}")))
+                    },
+                    Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::ValueMethod, Rc::from(format!("{}.{key}", self.octet_kind_word(changeable)))),
+                    _ => Value::Member(Rc::new(value.clone()), key.to_string()),
+                });
+            }
+        }
+        if key == "__class_getitem__" && self.table.spells("ext.stmt.class.builtin", "tuple") {
+            let base = match &value {
+                Value::Blueprint(class) if self.inherited_entry(class, key).is_none() => Self::native_word(class).or_else(|| Self::native_beneath(class)),
+                Value::Intrinsic(op, word) if Self::names_a_kind(op) => Some(word.to_string()),
+                _ => None,
+            };
+            if base.as_deref().is_some_and(|word| ["list", "tuple", "set", "dict", "frozenset"].contains(&word)) {
+                return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+            }
+        }
+        if let Value::OctetKind { changeable, .. } = &value {
+            {
+                let word = self.octet_kind_word(*changeable).to_owned();
+                let blueprint = self.native_kind(&word);
+                return self.read_class_member(Value::Blueprint(blueprint), key, direct);
+            }
+        }
         if let Value::Blueprint(b)=&value {
             if key == self.detail("flags") {
                 // The seal takes the base-standing bit off and puts the
                 // unchangeable one on.
                 let mut bits = if Self::sealed(b) { 512 | 256 } else { 512 | 1024 };
+                if b.constants.iter().any(|(label, _)| label == "\0native-name") { bits |= 256; }
                 // Things of a class's own making answer to the cycle
                 // collector; what stands on an atomic worth does not.
                 if Self::native_word(b).is_none() && !matches!(Self::native_beneath(b).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray")) { bits |= 16384; }
@@ -1691,7 +1734,7 @@ impl<'a> Machine<'a> {
                 // value of that kind answers to.
                 if let Some(word)=Self::native_word(b) {
                     let named=self.kind_member_names(&word);
-                    let pairs=named.iter().map(|n|(Value::text(n),Value::text(&format!("<slot wrapper '{n}' of '{word}' objects>")))).collect();
+                    let pairs=named.iter().map(|n|(Value::text(n),if n == "__buffer__" || n == "__release_buffer__" { Value::Intrinsic(Prim::ValueMethod, Rc::from(format!("{word}.{n}"))) } else { Value::text(&format!("<slot wrapper '{n}' of '{word}' objects>")) })).collect();
                     return Ok(Value::Dict(Rc::new(pairs)));
                 }
                 return Ok(Self::member_map(&b.shared.borrow()));
@@ -1835,7 +1878,7 @@ impl<'a> Machine<'a> {
             }
             if self.namespace_holding(&value).is_some() {
                 let handler = t.holds.borrow().iter().find_map(|(word, held)| if word == "__getattr__" { Some(held.settled()) } else { None });
-                if let Some(handler) = handler { return self.apply_class_member(handler, vec![Value::text(key)]); }
+                if let Some(handler) = handler { return self.apply_class_member(handler, vec![Value::text(key)]).map(|answer| answer.settled()); }
             }
         }else if let Value::Method(code,t)=&value {
             if key==self.detail("receiver"){return Ok(Value::Thing(t.clone()));}
@@ -2208,8 +2251,10 @@ impl<'a> Machine<'a> {
             Value::Blueprint(b)=>{
                 // A class the seal marked unchangeable takes no write to
                 // a member of it, setting one and taking one off alike.
-                if Self::sealed(b) {
-                    return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", b.name).into());
+                if Self::sealed(b) || b.constants.iter().any(|(label, _)| label == "\0native-name") {
+                    let native = b.constants.iter().find(|(label, _)| label == "\0native-name");
+                    let title = native.map_or_else(|| b.name.clone(), |(_, value)| value.bare());
+                    return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{}'", title).into());
                 }
                 // The kinds of the two named singletons take no entry
                 // of their own and give none up, as the reference fixes them.
