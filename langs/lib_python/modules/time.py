@@ -152,7 +152,8 @@ def _break_down(seconds):
 def gmtime(seconds=None):
     if seconds is None:
         seconds = time()
-    return struct_time(_break_down(seconds), 'UTC', 0)
+    # The meridian's own breakdown is named GMT, as the C library names it.
+    return struct_time(_break_down(seconds), 'GMT', 0)
 
 def localtime(seconds=None):
     # The host's zone being UTC, the local breakdown is the meridian's.
@@ -327,7 +328,14 @@ def strftime(format, fields=None):
         elif ch == 'z':
             out += '+0000'
         elif ch == 'Z':
-            out += 'UTC'
+            # A broken-down time carrying a zone name keeps it; one
+            # made by hand is named for the zone when it says it is not
+            # in daylight time, and nameless when it cannot say.
+            zone = getattr(fields, 'tm_zone', None)
+            if zone is not None:
+                out += zone
+            elif parts[8] >= 0:
+                out += 'UTC'
         elif ch == '%':
             out += '%'
         else:

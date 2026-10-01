@@ -2040,6 +2040,20 @@ impl<'a> Engine<'a> {
                 // so that its routines see the new value; a thing's member
                 // is simply written over.
                 let module=self.modules.values().any(|held|matches!(held,Value::Object(space) if Rc::ptr_eq(space,o)));
+                // A name a module takes from outside that it never bound
+                // for itself becomes one of its own globals, standing in
+                // the place its routines read it from, as the reference's
+                // module.__dict__ write is a global write.
+                if module && value.is_some() && !o.fields.borrow().iter().any(|(n,_)| n == name) {
+                    let suffix = format!(":{}:{}", o.class_now().name, name);
+                    if let Some(slot) = self.registry.idents.iter().position(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                        let shared = Value::Bond(Rc::new(RefCell::new(value.clone().unwrap())));
+                        self.world.resize(self.registry.idents.len(), Value::Blank);
+                        self.world[slot] = shared.clone();
+                        o.fields.borrow_mut().push((name.to_string(), shared));
+                        return Ok(Value::Null);
+                    }
+                }
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {

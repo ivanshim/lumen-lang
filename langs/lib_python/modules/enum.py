@@ -85,18 +85,12 @@ class IntEnum(int, Enum):
         return '<' + self.__class__.__name__ + '.' + self.name + ': ' + repr(self.value) + '>'
 
 # The reference's global_enum files an enumeration's members under their
-# own names in the module the enumeration was written in. Here the module
-# is reached through the language's module cache; a module the cache has
-# not kept (or cannot be written) simply keeps its members on the class.
+# own names in the module the enumeration was written in: a write to the
+# module's own globals, which is what an attribute write to a module is.
 def global_enum(cls, update_str=False):
-    import sys
-    home = sys.modules.get(cls.__module__)
-    if home is not None:
-        for member in cls._members:
-            try:
-                setattr(home, member.name, member)
-            except AttributeError:
-                pass
+    home = __import__(cls.__module__)
+    for member in cls._members:
+        setattr(home, member.name, member)
     return cls
 
 class StrEnum(str, Enum):

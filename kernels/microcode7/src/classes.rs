@@ -2126,6 +2126,20 @@ impl<'a> Machine<'a> {
                     } else { self.value_member(&native, "pop", vec![Value::text(key)], Vec::new())?; }
                     return Ok(Value::Nil);
                 }
+                // A name a module takes from outside that it never bound
+                // for itself becomes one of its own globals, standing in
+                // the cell its routines read it from, as the reference's
+                // module.__dict__ write is a global write.
+                if replacement.is_some() && !t.holds.borrow().iter().any(|(k,_)| k==key)
+                    && self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, t))) {
+                    let wanted = format!("\0import/{}/{key}", t.blueprint().name);
+                    if let Some(at) = self.idents.iter().position(|word| word == &wanted) {
+                        let linked = Value::Shared(Rc::new(RefCell::new(replacement.clone().unwrap())));
+                        self.outermost.cells.borrow_mut()[at] = linked.clone();
+                        t.holds.borrow_mut().push((key.to_owned(), linked));
+                        return Ok(Value::Nil);
+                    }
+                }
                 if replacement.is_some()&&!self.allowed_slot(&t.blueprint(),key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }
             Value::Blueprint(b)=>{
