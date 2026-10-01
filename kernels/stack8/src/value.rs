@@ -522,6 +522,12 @@ fn next_map_revision() -> u64 {
     MAP_REVISION.with(|stamp| { let next = stamp.get().wrapping_add(1); stamp.set(next); next })
 }
 
+#[derive(Debug)]
+enum NameLookup {
+    Fixed(std::collections::HashMap<Rc<str>, usize>),
+    Mutable,
+}
+
 /// A map's rows, in the order a program wrote them, paired with a
 /// lookup from a key's own text (`member_key`) to the row it sits at.
 /// The lookup is worked out the first time something asks for it, from
@@ -538,14 +544,62 @@ fn next_map_revision() -> u64 {
 /// `DerefMut`, keeps the rows and the lookup growing side by side
 /// instead, so a map built one key at a time never has its lookup
 /// thrown away and walked afresh for the next key.
-#[derive(Debug)]
 pub struct KeyedPairs {
     rows: Vec<(Value, Value)>,
     pub revision: u64,
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
+    names: RefCell<Option<Box<NameLookup>>>,
+}
+
+impl std::fmt::Debug for KeyedPairs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyedPairs").field("rows", &self.rows)
+            .field("revision", &self.revision).field("lookup", &self.lookup).finish()
+    }
 }
 
 impl KeyedPairs {
+    /// Namespace reads compare spelling alone, without calling a key's
+    /// equality or hash. Keep their first matching row separately from
+    /// the general key lookup. A key held in a writable cell can change
+    /// without changing the rows, so such maps retain the linear search.
+    pub fn named_row(&self, name: &str) -> Result<Option<usize>, ()> {
+        fn spelling(key: &Value) -> Result<Option<&Rc<str>>, ()> {
+            match key {
+                Value::Text(word) => Ok(Some(word)),
+                Value::Hashed(pair) => spelling(&pair.0),
+                Value::Bond(_) => Err(()),
+                _ => Ok(None),
+            }
+        }
+        let mut names = self.names.borrow_mut();
+        if names.is_none() {
+            let mut positions = std::collections::HashMap::new();
+            let mut fixed = true;
+            for (at, (key, _)) in self.rows.iter().enumerate() {
+                match spelling(key) {
+                    Ok(Some(word)) => { positions.entry(word.clone()).or_insert(at); }
+                    Ok(None) => {}
+                    Err(()) => { fixed = false; break; }
+                }
+            }
+            *names = Some(Box::new(if fixed { NameLookup::Fixed(positions) } else { NameLookup::Mutable }));
+        }
+        match names.as_deref().expect("names just indexed") {
+            NameLookup::Fixed(positions) => Ok(positions.get(name).copied()),
+            NameLookup::Mutable => Err(()),
+        }
+    }
+
+    /// A namespace write used to borrow the rows mutably, advancing the
+    /// revision and discarding the general key lookup. Preserve those
+    /// effects while retaining the index of unchanged key spellings.
+    pub fn overwrite_named_row(&mut self, at: usize, value: Value) {
+        self.revision = next_map_revision();
+        *self.lookup.borrow_mut() = None;
+        self.rows[at].1 = value;
+    }
+
     /// The lookup, worked out from scratch across every row the first
     /// time one is needed, with the count of rows it could find no
     /// text for beside it.
@@ -594,6 +648,7 @@ impl KeyedPairs {
         self.settle_lookup();
         let at = self.rows.len();
         self.revision = next_map_revision();
+        *self.names.borrow_mut() = None;
         self.rows.push((key, value));
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
     }
@@ -601,7 +656,7 @@ impl KeyedPairs {
 
 impl From<Vec<(Value, Value)>> for KeyedPairs {
     fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
-        KeyedPairs { rows, revision: next_map_revision(), lookup: RefCell::new(None) }
+        KeyedPairs { rows, revision: next_map_revision(), lookup: RefCell::new(None), names: RefCell::new(None) }
     }
 }
 
@@ -610,7 +665,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), revision: self.revision, lookup: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, lookup: RefCell::new(None), names: RefCell::new(None) }
     }
 }
 
@@ -629,6 +684,7 @@ impl std::ops::DerefMut for KeyedPairs {
     fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
+        *self.names.borrow_mut() = None;
         &mut self.rows
     }
 }
@@ -2259,5 +2315,60 @@ impl Drop for Members {
 impl Drop for Class {
     fn drop(&mut self) {
         crate::faint::plain_departing();
+    }
+}
+
+#[cfg(test)]
+mod namespace_lookup_tests {
+    use super::*;
+
+    #[test]
+    fn spelling_uses_first_row_and_unwraps_hashed_keys() {
+        let wrapped = Value::Hashed(Rc::new((Value::text("beta"), Value::Small(7))));
+        let pairs = KeyedPairs::from(vec![
+            (Value::text("alpha"), Value::Small(1)),
+            (wrapped, Value::Small(2)),
+            (Value::text("alpha"), Value::Small(3)),
+            (Value::Small(4), Value::Null),
+        ]);
+        assert_eq!(pairs.named_row("alpha"), Ok(Some(0)));
+        assert_eq!(pairs.named_row("beta"), Ok(Some(1)));
+        assert_eq!(pairs.named_row("absent"), Ok(None));
+    }
+
+    #[test]
+    fn namespace_index_follows_row_changes_and_copies() {
+        let mut pairs = KeyedPairs::from(vec![(Value::text("a"), Value::Small(1))]);
+        assert_eq!(pairs.named_row("a"), Ok(Some(0)));
+        let revision = pairs.revision;
+        pairs.overwrite_named_row(0, Value::Small(2));
+        assert_ne!(pairs.revision, revision);
+        assert_eq!(pairs.named_row("a"), Ok(Some(0)));
+        assert!(matches!(pairs.names.borrow().as_deref(), Some(NameLookup::Fixed(_))));
+        let copy = pairs.clone();
+        pairs.insert_proven_absent(Value::text("b"), Value::text("b").member_key().unwrap(), Value::Null);
+        assert_eq!(pairs.named_row("b"), Ok(Some(1)));
+        assert_eq!(copy.named_row("b"), Ok(None));
+        pairs.swap(0, 1);
+        assert_eq!(pairs.named_row("a"), Ok(Some(1)));
+        pairs.remove(0);
+        assert_eq!(pairs.named_row("a"), Ok(Some(0)));
+        assert_eq!(pairs.named_row("b"), Ok(None));
+        pairs[0].0 = Value::text("c");
+        assert_eq!(pairs.named_row("a"), Ok(None));
+        assert_eq!(pairs.named_row("c"), Ok(Some(0)));
+    }
+
+    #[test]
+    fn mutable_key_spellings_require_a_fresh_scan() {
+        let cell = Rc::new(RefCell::new(Value::text("old")));
+        let key = Value::Hashed(Rc::new((Value::Bond(cell.clone()), Value::Small(0))));
+        let mut pairs = KeyedPairs::from(vec![(key, Value::Null)]);
+        assert_eq!(pairs.named_row("old"), Err(()));
+        *cell.borrow_mut() = Value::text("new");
+        assert_eq!(pairs.named_row("new"), Err(()));
+        pairs.remove(0);
+        pairs.push((Value::text("fixed"), Value::Null));
+        assert_eq!(pairs.named_row("fixed"), Ok(Some(0)));
     }
 }

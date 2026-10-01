@@ -18741,7 +18741,10 @@ fn key_spells(key: &Value, name: &str) -> bool {
 /// What a dictionary kept in a cell holds under a name, if anything.
 fn book_entry(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
     match &*book.borrow() {
-        Value::Map(pairs) => pairs.iter().find(|(key, _)| key_spells(key, name)).map(|(_, held)| held.clone()),
+        Value::Map(pairs) => {
+            let at = pairs.named_row(name).unwrap_or_else(|()| pairs.iter().position(|(key, _)| key_spells(key, name)));
+            at.map(|at| pairs[at].1.clone())
+        },
         _ => None,
     }
 }
@@ -18751,9 +18754,9 @@ fn book_entry(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
 fn book_write(book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>) {
     if let Value::Map(pairs) = &mut *book.borrow_mut() {
         let pairs = Rc::make_mut(pairs);
-        let at = pairs.iter().position(|(key, _)| key_spells(key, name));
+        let at = pairs.named_row(name).unwrap_or_else(|()| pairs.iter().position(|(key, _)| key_spells(key, name)));
         match (at, value) {
-            (Some(at), Some(held)) => pairs[at].1 = held,
+            (Some(at), Some(held)) => pairs.overwrite_named_row(at, held),
             (Some(at), None) => { pairs.remove(at); }
             (None, Some(held)) => pairs.push((Value::text(name), held)),
             (None, None) => {}
