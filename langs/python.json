@@ -1025,6 +1025,10 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin._random": [
+    "__random"
+  ],
+  "ext.stmt.class.parent.bind": true,
   "ext.builtin.max": [
     "max"
   ],

@@ -476,6 +476,11 @@ only. The extension labels so far, all from PHP:
   defers the making of the class to the class piece.
 - `ext.stmt.class.unready`: the complaint when a class can be read but
   its making cannot yet be honoured by the run.
+- `ext.stmt.class.parent.bind`: a switch; the parent word may be spelled
+  with a class and the thing it is for, `super(C, x)`, and answers with
+  the stand-in whose member reads walk the forebears of that class after
+  it, their members bound to that thing. Python's two-argument `super()`
+  is written on it.
 - `ext.op.member.pipes`: a member mark may also spell the old pipe to a
   builtin. Those builtins keep their old calling path; other names are
   read as members. Full dispatch belongs to the class piece.
@@ -1167,6 +1172,21 @@ only. The extension labels so far, all from PHP:
   what lies past every number. PHP's `sqrt`, `log`, `sin`, `atan2`,
   `hypot`, `fdiv` and the rest of them are written on it, and so are its
   `NAN` and `INF`.
+- `ext.builtin._random`: a builtin lending the Mersenne Twister stream
+  the Python library's `random` draws its chance from, and the system's
+  own disorder as raw bytes. The first thing it is given is the name of
+  the working and the rest are what the working takes: `begin` opens a
+  stream and answers with the mark it answers to; `seed` plants a stream
+  from a whole number split into words from its low end; `entropy`
+  plants one from the system's own disorder and says whether it could;
+  `next` draws a real of the width's 53 bits; `bits` draws a run of
+  whole bits as long as asked; `state` answers with the 624 kept words
+  and the place among them; `restore` lays them back; `bytes` answers
+  with so many bytes of the system's own disorder. One label covers them
+  all because the one stream kept is the kernel's own, and a definition
+  has no way of spelling a generator whose words must number their
+  period. Python's `_random` module and its `os.urandom` are written on
+  it.
 - `ext.builtin.output.begun`: a builtin answering whether anything has
   gone out of the run yet. What is held back in a piece of output kept
   aside has not gone out. PHP's `headers_sent` and
@@ -4364,6 +4384,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | Label | lumen | rplumen | python | rust | php (extra) | c (extra) | javascript (extra) | pascal (extra) | ruby (extra) | swift (extra) |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | `true` | - | `true` | - | - | - | - | - |
+| `ext.builtin._random` | - | - | `__random` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
 | `ext.builtin.any` | - | - | `any` | - | - | - | - | - | - | - |
@@ -5242,6 +5263,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
+| `ext.stmt.class.parent.bind` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.class.property` | - | - | `property` | - | - | - | - | - | - | - |
 | `ext.stmt.class.property.setter` | - | - | `setter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |

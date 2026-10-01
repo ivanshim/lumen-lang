@@ -8638,7 +8638,11 @@ impl<'a> Machine<'a> {
         if handed > ordinary.len() && gather.is_none() {
             return Err(self.overfull_complaint(program, manners, &fitted, handed).into());
         }
-        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())); }
+        // The gathered names stand as a mapping of the call's own, kept
+        // in a cell so that a member working on it -- a member writing
+        // into it, setdefault among them -- reaches the name it was
+        // handed by, as any mapping handed over is reached.
+        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())).keep(false); }
         // Every unfilled place is told at once: first those taken in
         // order, and the ones taken by name only when none of those is.
         let unfilled = |wanted: &dyn Fn(char) -> bool| -> Vec<String> {
@@ -14952,6 +14956,21 @@ impl<'a> Machine<'a> {
                     2 | 3 => width(2)?,
                     _ => 0.0,
                 };
+                // A floor answers with a whole number rather than a
+                // real of the width: taking toward nought and stepping
+                // back where that stepped over the worth reaches the
+                // one beneath it, however far past every place of the
+                // width the answer lies.
+                if working == "floor" {
+                    let one = width(1)?;
+                    if !one.is_finite() { return Err("ValueError: a non-finite value has no integer floor".to_string()); }
+                    let mut whole = one.trunc();
+                    if whole > one { whole -= 1.0; }
+                    return Ok(match num_traits::FromPrimitive::from_f64(whole) {
+                        Some(small) => Value::Small(small),
+                        None => Value::Huge(Rc::new(<BigInt as num_traits::FromPrimitive>::from_f64(whole).unwrap_or_default())),
+                    });
+                }
                 if working == "fma" {
                     let one = width(1)?;
                     let three = width(3)?;
@@ -14977,6 +14996,243 @@ impl<'a> Machine<'a> {
                         result
                     },
                     None => return Err(format!("{}(): there is no working called '{}'", name, working)),
+                }
+            }
+            // The Mersenne Twister a library module draws its chance
+            // from, worked by name (ext.builtin._random): a drawing
+            // stream opened, set going from a whole number or from the
+            // system's own disorder, drawn on at the width's 53 bits or
+            // as a stretch of whole bits, and told or put back to where
+            // it stands. What a stream keeps never becomes a worth: the
+            // library holds only the mark its stream answers to, and
+            // the system's own disorder can be asked for as octets.
+            Prim::Chance => {
+                // How many words the Twister keeps, and how far ahead
+                // each rolled word reaches for another.
+                const KEPT: usize = 624;
+                const REACH: usize = 397;
+                // A word tempered into the shape the stream hands out.
+                fn temper(mut worth: u32) -> u32 {
+                    worth ^= worth >> 11;
+                    worth ^= (worth << 7) & 0x9d2c_5680;
+                    worth ^= (worth << 15) & 0xefc6_0000;
+                    worth ^= worth >> 18;
+                    worth
+                }
+                // The stream set going from the one word every start
+                // begins at, before any key of words reshapes it.
+                fn sprout(mt: &mut [u32; KEPT], first: u32) {
+                    mt[0] = first;
+                    for at in 1..KEPT {
+                        let behind = mt[at - 1];
+                        mt[at] = 1812433253u32.wrapping_mul(behind ^ (behind >> 30)).wrapping_add(at as u32);
+                    }
+                }
+                // The stream set going from a key of words, of whatever
+                // length, scattered over the kept words the long way.
+                fn set_going(mt: &mut [u32; KEPT], key: &[u32]) {
+                    if key.is_empty() { return set_going(mt, &[0]); }
+                    sprout(mt, 19650218);
+                    let (mut at, mut from) = (1usize, 0usize);
+                    for _ in 0..key.len().max(KEPT) {
+                        let behind = mt[at - 1];
+                        mt[at] = (mt[at] ^ (behind ^ (behind >> 30)).wrapping_mul(1664525))
+                            .wrapping_add(key[from]).wrapping_add(from as u32);
+                        at += 1;
+                        from += 1;
+                        if at == KEPT { mt[0] = mt[KEPT - 1]; at = 1; }
+                        if from == key.len() { from = 0; }
+                    }
+                    for _ in 0..KEPT - 1 {
+                        let behind = mt[at - 1];
+                        mt[at] = (mt[at] ^ (behind ^ (behind >> 30)).wrapping_mul(1566083941))
+                            .wrapping_sub(at as u32);
+                        at += 1;
+                        if at == KEPT { mt[0] = mt[KEPT - 1]; at = 1; }
+                    }
+                    mt[0] = 0x8000_0000;
+                }
+                // All the kept words rolled over once. The first stretch
+                // of them reaches REACH ahead into words still standing
+                // as they were; the rest wrap back onto words this very
+                // rolling has already laid down.
+                fn roll(mt: &mut [u32; KEPT]) {
+                    let stood: Vec<u32> = mt.to_vec();
+                    for at in 0..KEPT - REACH {
+                        let pair = (mt[at] & 0x8000_0000) | (mt[at + 1] & 0x7fff_ffff);
+                        mt[at] = stood[at + REACH] ^ (pair >> 1) ^ (if pair & 1 == 1 { 0x9908_b0df } else { 0 });
+                    }
+                    for at in KEPT - REACH..KEPT {
+                        let neighbour = if at + 1 == KEPT { 0 } else { at + 1 };
+                        let pair = (mt[at] & 0x8000_0000) | (mt[neighbour] & 0x7fff_ffff);
+                        mt[at] = mt[at + REACH - KEPT] ^ (pair >> 1) ^ (if pair & 1 == 1 { 0x9908_b0df } else { 0 });
+                    }
+                }
+                // One word drawn from the stream at the spot it stands.
+                fn draw(mt: &mut [u32; KEPT], spot: &mut usize) -> u32 {
+                    if *spot >= KEPT { roll(mt); *spot = 0; }
+                    let worth = temper(mt[*spot]);
+                    *spot += 1;
+                    worth
+                }
+                // The system's own disorder, read from where it is kept.
+                fn disorder(want: usize) -> Result<Vec<u8>, String> {
+                    use std::io::Read;
+                    let mut numbers = vec![0u8; want];
+                    std::fs::File::open("/dev/urandom")
+                        .and_then(|mut source| source.read_exact(&mut numbers))
+                        .map_err(|_| "OSError: the source of disorder did not answer".to_string())?;
+                    Ok(numbers)
+                }
+                thread_local! {
+                    static DRAWN_ON: RefCell<Vec<([u32; KEPT], usize)>> = RefCell::new(Vec::new());
+                }
+                let Some(working) = v.first().map(|x| x.render(w)) else {
+                    return Err(format!("{}() wants the name of a working first of all", name));
+                };
+                // The stream a mark answers to, or the complaint that it
+                // answers to none.
+                let marked = |which: usize| -> Result<usize, String> {
+                    DRAWN_ON.with(|streams| match streams.borrow().get(which) {
+                        Some(_) => Ok(which),
+                        None => Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                    })
+                };
+                let whole = |at: usize| -> Result<BigInt, String> { v[at].as_big() };
+                match working.as_str() {
+                    "begin" => {
+                        if v.len() != 1 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                        let mut fresh = ([0u32; KEPT], 0usize);
+                        sprout(&mut fresh.0, 19650218);
+                        fresh.1 = KEPT;
+                        let mark = DRAWN_ON.with(|streams| { streams.borrow_mut().push(fresh); streams.borrow().len() - 1 });
+                        Value::Small(mark as i64)
+                    }
+                    "seed" => {
+                        if v.len() != 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                        let which = whole(1)?.to_usize().ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?;
+                        marked(which)?;
+                        // The number breaks into words from its low end;
+                        // a nothing of a number still sets going with one
+                        // empty word of a key.
+                        let (_, digits) = whole(2)?.to_u32_digits();
+                        let key = if digits.is_empty() { vec![0u32] } else { digits };
+                        DRAWN_ON.with(|streams| {
+                            let stream = &mut streams.borrow_mut()[which];
+                            set_going(&mut stream.0, &key);
+                            stream.1 = KEPT;
+                        });
+                        Value::Nil
+                    }
+                    "entropy" => {
+                        if v.len() != 2 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                        let which = whole(1)?.to_usize().ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?;
+                        marked(which)?;
+                        match disorder(KEPT * 4) {
+                            Ok(numbers) => {
+                                let key: Vec<u32> = numbers.chunks_exact(4).map(|four| u32::from_le_bytes([four[0], four[1], four[2], four[3]])).collect();
+                                DRAWN_ON.with(|streams| {
+                                    let stream = &mut streams.borrow_mut()[which];
+                                    set_going(&mut stream.0, &key);
+                                    stream.1 = KEPT;
+                                });
+                                Value::Flag(true)
+                            }
+                            Err(_) => Value::Flag(false),
+                        }
+                    }
+                    "next" => {
+                        if v.len() != 2 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                        let which = whole(1)?.to_usize().ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?;
+                        marked(which)?;
+                        let (high, low) = DRAWN_ON.with(|streams| {
+                            let (mt, spot) = &mut streams.borrow_mut()[which];
+                            (draw(mt, spot) >> 5, draw(mt, spot) >> 6)
+                        });
+                        let drawn = (high as f64 * 67108864.0 + low as f64) * (1.0 / 9007199254740992.0);
+                        let mut worth = crate::data::worth_of_binary(drawn, self.real_figures());
+                        if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = self.table.flag("ext.builtin.math.floating"); }
+                        worth
+                    }
+                    "bits" => {
+                        if v.len() != 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                        let which = whole(1)?.to_usize().ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?;
+                        let count = whole(2)?.to_u64().ok_or_else(|| "OverflowError: Python int too large to convert to C uint64_t".to_string())?;
+                        marked(which)?;
+                        if count <= 32 {
+                            let word = DRAWN_ON.with(|streams| {
+                                let (mt, spot) = &mut streams.borrow_mut()[which];
+                                if count == 0 { 0 } else { draw(mt, spot) >> (32 - count) }
+                            });
+                            Value::Small(word as i64)
+                        } else {
+                            let words = ((count - 1) / 32 + 1) as usize;
+                            if words > isize::MAX as usize / 4 { return Err("MemoryError".to_string()); }
+                            // The highest word carries only the bits left
+                            // over above the whole words below it.
+                            let leftover = (count - 1) % 32 + 1;
+                            let limbs = DRAWN_ON.with(|streams| {
+                                let (mt, spot) = &mut streams.borrow_mut()[which];
+                                let mut limbs: Vec<u32> = Vec::with_capacity(words);
+                                let mut laid = 0usize;
+                                while laid < words {
+                                    let mut word = draw(mt, spot);
+                                    if laid == words - 1 { word >>= 32 - leftover; }
+                                    limbs.push(word);
+                                    laid += 1;
+                                }
+                                limbs
+                            });
+                            Value::Huge(Rc::new(BigInt::from(num_bigint::BigUint::new(limbs))))
+                        }
+                    }
+                    "state" => {
+                        if v.len() != 2 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                        let which = whole(1)?.to_usize().ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?;
+                        marked(which)?;
+                        DRAWN_ON.with(|streams| {
+                            let (mt, spot) = &streams.borrow()[which];
+                            let mut told: Vec<Value> = mt.iter().map(|word| Value::Small(*word as i64)).collect();
+                            told.push(Value::Small(*spot as i64));
+                            Value::Tuple(crate::tuples::Sequence::tuple(told))
+                        })
+                    }
+                    "restore" => {
+                        if v.len() != 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                        let which = whole(1)?.to_usize().ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?;
+                        marked(which)?;
+                        let row = collection_read(&v[2]);
+                        let parts = match &row {
+                            Value::Tuple(parts) | Value::Vector(parts) | Value::Row(parts) => parts,
+                            _ => return Err("TypeError: state vector must be a tuple".to_string()),
+                        };
+                        if parts.len() != KEPT + 1 { return Err("ValueError: state vector is the wrong size".to_string()); }
+                        let mut mt = [0u32; KEPT];
+                        for at in 0..KEPT {
+                            let given = parts[at].as_big().map_err(|_| "TypeError: an integer is required".to_string())?;
+                            let Ok(within) = i64::try_from(given) else {
+                                return Err("OverflowError: int too large to convert to C long".to_string());
+                            };
+                            if within < 0 { return Err("OverflowError: can't convert negative value to unsigned int".to_string()); }
+                            if within > u32::MAX as i64 { return Err("OverflowError: int too large to convert to C unsigned int".to_string()); }
+                            mt[at] = within as u32;
+                        }
+                        let place = parts[KEPT].as_big().map_err(|_| "TypeError: an integer is required".to_string())?
+                            .to_i64().ok_or_else(|| "OverflowError: int too large to convert to C long".to_string())?;
+                        if !(0..=KEPT as i64).contains(&place) { return Err("ValueError: invalid state".to_string()); }
+                        DRAWN_ON.with(|streams| {
+                            let stream = &mut streams.borrow_mut()[which];
+                            stream.0 = mt;
+                            stream.1 = place as usize;
+                        });
+                        Value::Nil
+                    }
+                    "bytes" => {
+                        if v.len() != 2 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                        let want = whole(1)?.to_usize().ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?;
+                        self.octets(disorder(want)?, false)
+                    }
+                    _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 }
             }
             Prim::OutBegun => {
