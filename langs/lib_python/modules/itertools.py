@@ -33,9 +33,10 @@ class count(_Iterator):
     _keyword_constructor = True
     def _initialize(self, start=0, step=1):
         for value in (start, step):
-            if not isinstance(value, (int, float, complex)) and not hasattr(value, '__add__'):
-                raise TypeError('a number is required')
-            if isinstance(value, (str, bytes, list, tuple, dict, set)):
+            kind = type(value)
+            if not isinstance(value, complex) and not any(
+                hasattr(kind, name) for name in ('__index__', '__int__', '__float__')
+            ):
                 raise TypeError('a number is required')
         self.current = start
         self.step = step
