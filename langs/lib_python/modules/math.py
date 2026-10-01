@@ -13,12 +13,24 @@ def _overflow_guard(x):
         float(x)
 
 def sqrt(x):
+    if type(x) == type(1.0):
+        # A real of the width needs nothing asked around it.
+        if x < 0:
+            raise ValueError('expected a nonnegative input, got ' + str(x))
+        return __math('sqrt', x)
     _overflow_guard(x)
     if x < 0:
         raise ValueError('expected a nonnegative input, got ' + str(float(x)))
     return __math('sqrt', x)
 
 def fabs(x):
+    if type(x) == type(1.0):
+        # A real of the width needs nothing asked around it.
+        if x == 0:
+            return __math('fdiv', 0.0, 1.0)
+        if x < 0:
+            return __math('fdiv', -x, 1.0)
+        return __math('fdiv', x, 1.0)
     _check_real(x)
     x = float(x)
     if x == 0:
@@ -40,6 +52,11 @@ def _answers_own(x, name):
     return hasattr(type(x), name)
 
 def floor(x):
+    if type(x) == type(1.0):
+        # A real of the width needs nothing asked around it.
+        if isinf(x) or isnan(x):
+            raise 'ValueError: a non-finite value has no integer floor'
+        return __math('floor', x)
     if _answers_own(x, '__floor__'):
         method = x.__floor__
         if method is None:
@@ -52,10 +69,7 @@ def floor(x):
     x = float(x)
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer floor'
-    n = int(x)
-    if n > x:
-        n -= 1
-    return n
+    return __math('floor', x)
 
 def ceil(x):
     if _answers_own(x, '__ceil__'):
@@ -108,6 +122,9 @@ def pow(x, y):
     return __math('pow', x, y)
 
 def exp(x):
+    if type(x) == type(1.0):
+        # A real of the width needs nothing asked around it.
+        return __math('exp', x)
     _check_real(x)
     return __math('exp', x)
 
@@ -155,6 +172,11 @@ def _log_value(x, working, per_bit):
     # only where the whole number already answers to more than one.
     if _is_integral(x):
         return _log_int(int(x), working, per_bit)
+    if type(x) == type(1.0):
+        # A real of the width needs nothing asked around it.
+        if x <= 0:
+            raise ValueError('expected a positive input, got ' + str(x))
+        return __math(working, x)
     if hasattr(x, '__float__'):
         try:
             real = float(x)
@@ -664,9 +686,10 @@ def gamma(x):
     return __math('fdiv', r, 1.0)
 
 def lgamma(x):
-    _check_real(x)
-    _overflow_guard(x)
-    x = float(x)
+    if type(x) != type(1.0):
+        _check_real(x)
+        _overflow_guard(x)
+        x = float(x)
     if isnan(x):
         return x
     if isinf(x):
@@ -678,11 +701,10 @@ def lgamma(x):
     absx = -x if x < 0 else x
     if absx < 1e-20:
         return -__math('log', absx)
-    r = __math('log', _lanczos_sum(absx)) - _lanczos_g
-    r = r + (absx - 0.5) * (__math('log', absx + _lanczos_g - 0.5) - 1)
-    if x < 0:
-        s = _sinpi(absx)
-        r = _logpi - __math('log', -s if s < 0 else s) - __math('log', absx) - r
+    # The Lanczos working itself is lent by the kernel (ext.builtin.math,
+    # the working 'lgamma'), worked at the width with the very numbers
+    # the two spellings here carry, so both come to the one real.
+    r = __math('lgamma', x)
     if isinf(r):
         raise 'OverflowError: math range error'
     return r

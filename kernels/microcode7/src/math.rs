@@ -261,8 +261,59 @@ pub fn whole_part(v: &Value) -> Option<BigInt> {
 
 /// A real-valued working named by word, over the reals of the width:
 /// what it gives, or nothing at all where no working goes by that name.
+/// The log of the gamma curve: the Lanczos ratio with the reference
+/// fallback's own coefficients, read small end first below five and as a
+/// ratio in one-over-x above it, and the negative half of the line
+/// answered through the sine of a whole turn with its whole and half
+/// turns folded away. The numbers and their order are the library's
+/// own, so both spellings come to the one real of the width.
+pub fn log_gamma(x: f64) -> f64 {
+    const G: f64 = 6.02468004077673;
+    const TOP: [f64; 13] = [23531376880.41076, 42919803642.6491, 35711959237.35567, 17921034426.03721,
+        6039542586.352028, 1439720407.3117216, 248874557.86205417, 31426415.585400194,
+        2876370.6289353725, 186056.26539522348, 8071.672002365816, 210.82427775157936, 2.5066282746310002];
+    const BOTTOM: [f64; 13] = [0.0, 39916800.0, 120543840.0, 150917976.0, 105258076.0,
+        45995730.0, 13339535.0, 2637558.0, 357423.0, 32670.0, 1925.0, 66.0, 1.0];
+    let ratio = |v: f64| -> f64 {
+        let (mut above, mut below) = (0.0f64, 0.0f64);
+        if v < 5.0 {
+            let mut at: i32 = 12;
+            loop {
+                above = above * v + TOP[at as usize];
+                below = below * v + BOTTOM[at as usize];
+                if at == 0 { break; }
+                at -= 1;
+            }
+        } else {
+            for at in 0..13 {
+                above = above / v + TOP[at];
+                below = below / v + BOTTOM[at];
+            }
+        }
+        above / below
+    };
+    let size = x.abs();
+    let mut out = ratio(size).ln() - G;
+    out += (size - 0.5) * ((size + G - 0.5).ln() - 1.0);
+    if x < 0.0 {
+        let folded = size % 2.0;
+        let circle = std::f64::consts::PI;
+        let leg = (2.0 * folded + 0.5) as i64;
+        let sine = match leg {
+            0 => (circle * folded).sin(),
+            1 => (circle * (folded - 0.5)).cos(),
+            2 => (circle * (1.0 - folded)).sin(),
+            3 => -(circle * (folded - 1.5)).cos(),
+            _ => (circle * (folded - 2.0)).sin(),
+        };
+        out = 1.1447298858494002 - sine.abs().ln() - size.ln() - out;
+    }
+    out
+}
+
 pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
     Some(match named {
+        "lgamma" => log_gamma(one),
         "atan2" => one.atan2(two),
         "hypot" => one.hypot(two),
         "pow" => one.powf(two),
