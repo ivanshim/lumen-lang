@@ -78,7 +78,7 @@ impl Machine<'_> {
                 22 | 42 => {
                     if let (Some(&a), Some(&z)) = (self.code.get(pc), self.code.get(pc+1)) {
                         answer |= a <= n && n <= z || a <= other && other <= z;
-                        if op == 42 { if let Some(c) = char::from_u32(n) { for up in c.to_uppercase() { answer |= a <= up as u32 && up as u32 <= z; } } }
+                        if op == 42 { if let Some(up) = char::from_u32(n).and_then(|c| c.to_uppercase().next()) { answer |= a <= up as u32 && up as u32 <= z; } }
                     }
                     pc += 2;
                 }

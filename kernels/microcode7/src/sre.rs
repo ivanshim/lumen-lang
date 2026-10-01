@@ -76,7 +76,8 @@ impl Regex<'_> {
                     let a = self.instruction(here); let z = self.instruction(here+1); here += 2;
                     found |= (a..=z).contains(&value) || (a..=z).contains(&companion);
                     if operation == 42 {
-                        if let Some(ch) = char::from_u32(value) { found |= ch.to_uppercase().any(|up| (a..=z).contains(&(up as u32))); }
+                        let capital = char::from_u32(value).and_then(|ch| ch.to_uppercase().next());
+                        found |= capital.is_some_and(|ch| (a..=z).contains(&(ch as u32)));
                     }
                 }
                 9 => { for ch in [value, companion] { if ch < 256 { found |= self.instruction(here+ch as usize/32) & (1u32 << (ch%32)) != 0; } } here += 8; }

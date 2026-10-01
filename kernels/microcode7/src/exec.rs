@@ -437,7 +437,7 @@ pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     imported: HashMap<String, Value>,
-    wildcard_names: Vec<(Rc<str>, String, usize)>,
+    wildcard_names: HashMap<Rc<str>, std::collections::BTreeMap<String, usize>>,
     loaded_spaces: HashMap<Rc<str>, String>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
@@ -1462,7 +1462,7 @@ impl<'a> Machine<'a> {
             library_directory: None,
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
-            wildcard_names: Vec::new(),
+            wildcard_names: HashMap::new(),
             loaded_spaces: HashMap::new(),
             within_spare: false,
             world_book: None,
@@ -4616,7 +4616,7 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Bound(p.clone(), frame.clone()))
             }
-            Form::Const(Value::OctetKind { changeable, .. }) if !self.wildcard_names.is_empty() => {
+            Form::Const(Value::OctetKind { changeable, .. }) if self.wildcard_names.contains_key(&self.written_in) => {
                 let held = self.spread_value(self.octet_kind_word(*changeable));
                 match held { Some(value) => Ok(value), None => match node { Form::Const(value) => Ok(value.clone()), _ => unreachable!() } }
             }
@@ -4739,7 +4739,7 @@ impl<'a> Machine<'a> {
                 self.store(slot, frame, v.clone())?;
                 Ok(v)
             }
-            Form::Apply(Callee::Prim(Prim::Seq, _), args) if self.wildcard_names.is_empty() => {
+            Form::Apply(Callee::Prim(Prim::Seq, _), args) if !self.wildcard_names.contains_key(&self.written_in) => {
                 let mut last = Value::Nil;
                 for a in args {
                     // What the statement before came to is let go
@@ -5611,7 +5611,7 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Apply(Callee::Prim(op, name), args) if !self.wildcard_names.is_empty()
+            Form::Apply(Callee::Prim(op, name), args) if self.wildcard_names.contains_key(&self.written_in)
                 && self.spread_override(name, *op).is_some() => {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
@@ -14184,10 +14184,8 @@ impl<'a> Machine<'a> {
                             }
                         }
                         if self.rules.names_shadow_builtins {
-                            match self.wildcard_names.iter_mut().find(|(file, word, _)| file == &self.written_in && word == &name) {
-                                Some((_, _, address)) => *address = slot,
-                                None => self.wildcard_names.push((self.written_in.clone(), name, slot)),
-                            }
+                            self.wildcard_names.entry(self.written_in.clone())
+                                .or_default().insert(name, slot);
                         }
                     }
                 }
@@ -18714,7 +18712,8 @@ impl Machine<'_> {
         // Library helpers keep their own native operations even when
         // the calling module has imported a replacement for that word.
         if self.calls.last().is_some_and(|call| call.of_library && !self.stands_for_the_run(&call.named)) { return None; }
-        let (_, _, slot) = self.wildcard_names.iter().rev().find(|(file, name, _)| file == &self.written_in && name == word)?;
+        let names = self.wildcard_names.get(&self.written_in)?;
+        let slot = names.get(word)?;
         let cells = self.outermost.cells.borrow();
         match cells.get(*slot)? {
             Value::Shared(place) => Some(place.borrow().clone()).filter(|value| !matches!(value, Value::Unset)),

@@ -8,7 +8,8 @@ _TOKEN = object()
 _NO_COUNT = object()
 
 def _case_value(i, operation):
-    i = _index(i)
+    if type(i) is not int:
+        i = _index(i)
     if not -2147483648 <= i <= 2147483647:
         raise OverflowError('Python int too large to convert to C int')
     if i < 0:
