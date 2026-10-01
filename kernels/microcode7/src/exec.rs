@@ -2309,7 +2309,14 @@ impl<'a> Machine<'a> {
         // the run ended: a thing a farewell makes is not swept up in its
         // own turn, so the shutdown cannot grow without end while a
         // farewell holds on to new allocations.
+        let pending = self.things.borrow().iter().filter_map(std::rc::Weak::upgrade).collect::<Vec<_>>();
         self.things.borrow_mut().clear();
+        for thing in pending.into_iter() {
+            if let Some(farewell) = crate::ghost::farewell_of(&thing.blueprint()) {
+                if !crate::ghost::first_farewell(&thing) { continue; }
+                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
+            }
+        }
         crate::ghost::release_all_anchors();
     }
 
@@ -22865,6 +22872,10 @@ impl Machine<'_> {
                 Ok(false)
             }
             Value::Blueprint(class) => {
+                let module_names = self.table.strings("ext.system.module.kind");
+                if module_names.last() == Some(&class.name) {
+                    if self.namespace_holding(&item.settled()).is_some() { return Ok(true); }
+                }
                 // A class whose metaclass speaks for the kind is asked first.
                 if let Some(told) = self.builder_answers(expected, item, false).map_err(|e| self.suspension_fault(e))? { return Ok(told); }
                 // Every value at all is of the class every value is of.

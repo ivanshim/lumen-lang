@@ -1622,7 +1622,14 @@ impl<'a> Engine<'a> {
         // stood when the run ended: an object a finaliser makes is not
         // swept up in its own turn, so the shutdown cannot grow without
         // end while a finaliser holds on to new allocations.
+        let standing: Vec<_> = self.things_made.borrow().iter().filter_map(|weak| weak.upgrade()).collect();
         self.things_made.borrow_mut().clear();
+        for object in standing {
+            let Some(finalizer) = crate::faint::last_word_of(&object.class_now()) else { continue };
+            if crate::faint::first_words(&object) {
+                self.speak_ignoring(finalizer, vec![Value::Object(object)], "deallocator");
+            }
+        }
         crate::faint::release_all_anchors();
     }
 
@@ -19392,6 +19399,8 @@ impl Engine<'_> {
         // reads it back this way rather than needing `type(None)`.
         if matches!(kind, Value::Null) { return Ok(matches!(value, Value::Null)); }
         if let Value::Class(class) = kind {
+            if self.lang.module_kind.last().is_some_and(|word| word == &class.name)
+                && self.module_holding(&value.contents()).is_some() { return Ok(true); }
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
             // Every value whatever is of the class every other one is of.
