@@ -427,8 +427,14 @@ class TestSuite:
         self.tests = [*self.tests, test]
 
     def addTests(self, tests):
+        if isinstance(tests, TestSuite):
+            self.tests = [*self.tests, tests]
+            return
         for test in tests:
             self.addTest(test)
+
+    def __iter__(self):
+        return iter(self.tests)
 
     def _fixture(self, name, result):
         if self.class_ is None or getattr(self.class_, '__unittest_skip__', False):
@@ -491,6 +497,12 @@ class TestLoader:
             for test in tests.tests:
                 test._test_module = module_name
             suite.addTest(tests)
+        load_tests = None
+        for name in list(names):
+            if name == 'load_tests':
+                load_tests = names[name]
+        if load_tests is not None:
+            return load_tests(self, suite, pattern)
         return suite
 
     def discover(self, start_dir, pattern='test*.py', top_level_dir=None):

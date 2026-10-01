@@ -98,6 +98,55 @@ def bigmemtest(size, memuse, dry_run=True):
 def requires_mac_ver(*version):
     return _identity
 
+def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
+    single_param = False
+    if isinstance(arg_names, str):
+        arg_names = arg_names.replace(',', ' ').split()
+        if len(arg_names) == 1:
+            single_param = True
+    arg_values = tuple(arg_values)
+    def decorator(func):
+        if isinstance(func, type):
+            raise TypeError('subTests() can only decorate methods, not classes')
+        def iter_subtest_kwargs():
+            for values in arg_values:
+                yield dict(zip(arg_names, (values,) if single_param else values))
+        def wrapper(self, /, *args, **kwargs):
+            for subtest_kwargs in iter_subtest_kwargs():
+                with self.subTest(**subtest_kwargs):
+                    func(self, *args, **kwargs, **subtest_kwargs)
+                if _do_cleanups:
+                    self.doCleanups()
+        return wrapper
+    return decorator
+
+# Setting the zone the clock runs in asks the host for tzset. A host
+# without one makes the reference itself skip, and this host is one.
+def run_with_tz(tz):
+    def decorator(func):
+        def inner(*args, **kwds):
+            import os, time
+            try:
+                tzset = time.tzset
+            except AttributeError:
+                raise unittest.SkipTest("tzset required")
+            if 'TZ' in os.environ:
+                orig_tz = os.environ['TZ']
+            else:
+                orig_tz = None
+            os.environ['TZ'] = tz
+            tzset()
+            try:
+                return func(*args, **kwds)
+            finally:
+                if orig_tz is None:
+                    del os.environ['TZ']
+                else:
+                    os.environ['TZ'] = orig_tz
+                tzset()
+        return inner
+    return decorator
+
 def run_with_locale(*locales):
     return _identity
 
@@ -208,6 +257,29 @@ class _AlwaysEqual:
 # Comparison dispatch is not yet honoured for user objects. The value
 # remains visible, so uses which require it will meet that limitation.
 ALWAYS_EQ = _AlwaysEqual()
+
+# A thing greater than everything but itself, and one smaller than
+# everything but itself; the reference builds its pair out of
+# total_ordering, and these are the answers that falls out of.
+class _Largest:
+    def __eq__(self, other): return isinstance(other, _Largest)
+    def __ne__(self, other): return not isinstance(other, _Largest)
+    def __lt__(self, other): return False
+    def __le__(self, other): return isinstance(other, _Largest)
+    def __gt__(self, other): return not isinstance(other, _Largest)
+    def __ge__(self, other): return True
+
+LARGEST = _Largest()
+
+class _Smallest:
+    def __eq__(self, other): return isinstance(other, _Smallest)
+    def __ne__(self, other): return not isinstance(other, _Smallest)
+    def __gt__(self, other): return False
+    def __ge__(self, other): return isinstance(other, _Smallest)
+    def __lt__(self, other): return not isinstance(other, _Smallest)
+    def __le__(self, other): return True
+
+SMALLEST = _Smallest()
 
 # These entry points can be imported, but their absent machinery must
 # be named before a test can mistake it for a successful check.
