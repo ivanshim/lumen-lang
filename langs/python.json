@@ -2848,6 +2848,7 @@
     "() requires a code object with ",
     " free vars, not "
   ],
+  "ext.stmt.class.detail.classcell": ["__classcell__"],
   "ext.stmt.class.detail.cell.contents": [
     "cell_contents"
   ],
@@ -3578,6 +3579,9 @@
   "ext.system.module.doc": [
     "__doc__"
   ],
+  "ext.builtin.build_class": ["__build_class__"],
+  "ext.stmt.class.builder": ["__build_class__", "NameError: __build_class__ not found"],
+  "ext.system.module.kind": ["types", "ModuleType"],
   "ext.system.module.builtins": [
     "__builtins__"
   ],

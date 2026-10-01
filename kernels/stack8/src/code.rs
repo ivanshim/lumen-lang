@@ -883,6 +883,8 @@ impl Builtin {
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {
+    /// The live class namespace slot and, when used by methods, its class cell.
+    pub class_namespace: Option<(String, Option<String>)>,
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
     pub code_names: Vec<String>,
