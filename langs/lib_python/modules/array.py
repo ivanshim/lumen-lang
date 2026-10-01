@@ -32,6 +32,15 @@ class array:
             else:
                 self.append(int.from_bytes(piece, 'little', signed=True))
 
+    def byteswap(self):
+        if self.itemsize == 1:
+            return
+        swapped = []
+        for value in self.data:
+            piece = value.to_bytes(self.itemsize, 'little', signed=True)
+            swapped = [*swapped, int.from_bytes(piece, 'big', signed=True)]
+        self.data = swapped
+
     def __len__(self):
         return len(self.data)
 

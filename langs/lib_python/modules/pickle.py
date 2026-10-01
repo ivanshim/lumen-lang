@@ -346,6 +346,47 @@ class Unpickler:
         return load(self.file)
 
 
+def _unescape_string(text):
+    # A protocol-0 string is written as its repr: quotes around escapes.
+    out = ''
+    at = 0
+    while at < len(text):
+        ch = text[at]
+        if ch != '\\':
+            out += ch
+            at += 1
+            continue
+        at += 1
+        esc = text[at]
+        at += 1
+        if esc == 'n':
+            out += '\n'
+        elif esc == 'r':
+            out += '\r'
+        elif esc == 't':
+            out += '\t'
+        elif esc == '\\':
+            out += '\\'
+        elif esc == "'":
+            out += "'"
+        elif esc == '"':
+            out += '"'
+        elif esc == 'x':
+            out += chr(int(text[at:at + 2], 16))
+            at += 2
+        elif esc == 'u':
+            out += chr(int(text[at:at + 4], 16))
+            at += 4
+        elif esc in '01234567':
+            digits = esc
+            while len(digits) < 3 and at < len(text) and text[at] in '01234567':
+                digits += text[at]
+                at += 1
+            out += chr(int(digits, 8))
+        else:
+            out += esc
+    return out
+
 def _read_protocol(data):
     # The stack machine also accepts older standard range-iterator pickles.
     stack = []
@@ -425,6 +466,86 @@ def _read_protocol(data):
             index = data[at]
             at += 1
             if op == 113:
+                memo[index] = stack[-1]
+            else:
+                stack.append(memo[index])
+        elif op == 136:
+            stack.append(True)
+        elif op == 137:
+            stack.append(False)
+        elif op == 78:
+            stack.append(None)
+        elif op == 83:
+            end = data.index(b'\n', at)
+            text = data[at:end].decode()
+            at = end + 1
+            stack.append(_unescape_string(text[1:len(text) - 1]))
+        elif op == 86:
+            end = data.index(b'\n', at)
+            text = data[at:end].decode()
+            at = end + 1
+            stack.append(_unescape_string(text))
+        elif op == 85:
+            size = data[at]
+            at += 1
+            stack.append(bytes(data[at:at + size]))
+            at += size
+        elif op == 84:
+            size = int.from_bytes(data[at:at + 4], 'little')
+            at += 4
+            stack.append(bytes(data[at:at + size]))
+            at += size
+        elif op == 70:
+            end = data.index(b'\n', at)
+            stack.append(float(data[at:end].decode()))
+            at = end + 1
+        elif op == 71:
+            import struct
+            stack.append(struct.unpack('>d', data[at:at + 8])[0])
+            at += 8
+        elif op == 93:
+            stack.append([])
+        elif op == 125:
+            stack.append({})
+        elif op == 108:
+            mark = marks.pop()
+            value = list(stack[mark:])
+            del stack[mark:]
+            stack.append(value)
+        elif op == 97:
+            stack[-1].append(stack.pop())
+        elif op == 101:
+            mark = marks.pop()
+            stack[-1].extend(stack[mark:])
+            del stack[mark:]
+        elif op == 100:
+            mark = marks.pop()
+            value = {}
+            for pair_at in range(mark, len(stack), 2):
+                value[stack[pair_at]] = stack[pair_at + 1]
+            del stack[mark:]
+            stack.append(value)
+        elif op == 115:
+            value = stack.pop()
+            key = stack.pop()
+            stack[-1][key] = value
+        elif op == 117:
+            mark = marks.pop()
+            for pair_at in range(mark, len(stack), 2):
+                stack[-1][stack[pair_at]] = stack[pair_at + 1]
+            del stack[mark:]
+        elif op in (112, 103):
+            end = data.index(b'\n', at)
+            index = int(data[at:end].decode())
+            at = end + 1
+            if op == 112:
+                memo[index] = stack[-1]
+            else:
+                stack.append(memo[index])
+        elif op in (114, 106):
+            index = int.from_bytes(data[at:at + 4], 'little')
+            at += 4
+            if op == 114:
                 memo[index] = stack[-1]
             else:
                 stack.append(memo[index])

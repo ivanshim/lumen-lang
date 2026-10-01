@@ -48,6 +48,26 @@ class TestResult:
     def wasSuccessful(self):
         return len(self.failures) == 0 and len(self.errors) == 0 and len(self.unexpectedSuccesses) == 0
 
+class _NotWarns:
+    def __init__(self, expected):
+        self.expected = expected
+
+    def __enter__(self):
+        import warnings
+        self.manager = warnings.catch_warnings(record=True, _internal=True)
+        self.manager.__enter__()
+        warnings.simplefilter('always', self.expected)
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.manager.__exit__(kind, value, traceback)
+        if kind is not None:
+            return False
+        for record in self.manager.records:
+            if isinstance(record.message, self.expected):
+                raise AssertionError(repr(record.message) + ' triggered')
+        return False
+
 class TestCase:
     _test_case = True
     failureException = AssertionError
@@ -288,6 +308,13 @@ class TestCase:
 
     def assertWarns(self, expected, *args, **kwargs):
         context = _Warns(expected)
+        if len(args) == 0:
+            return context
+        with context:
+            args[0](*args[1:], **kwargs)
+
+    def _assertNotWarns(self, expected, *args, **kwargs):
+        context = _NotWarns(expected)
         if len(args) == 0:
             return context
         with context:
