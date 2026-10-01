@@ -561,6 +561,13 @@ impl<'a> Engine<'a> {
         Self::own_class_value(c,name).or_else(|| c.lineage.iter().find_map(|b| Self::own_class_value(b,name)))
     }
     pub(super) fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
+    fn descriptor_apply(&mut self, callable: Value, args: Vec<Value>) -> Flow<Value> {
+        // Native callables use ordinary dispatch, and stored strings stay
+        // strings. Routine calls retain their attached namespace here.
+        if !self.lang.class_builder.is_empty() && matches!(callable.contents(), Value::Native(..) | Value::ByteKind(..) | Value::SortOf(..) | Value::Text(_)) {
+            self.call_held(callable, args).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))
+        } else { self.class_apply(callable, args) }
+    }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
         match callable {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
@@ -644,10 +651,7 @@ impl<'a> Engine<'a> {
                 }
                 3 => {
                     args.insert(0,w.1[1].clone());
-                    let callable = w.1[0].clone();
-                    if !self.lang.class_builder.is_empty() && matches!(callable.contents(), Value::Native(..) | Value::ByteKind(..) | Value::SortOf(..)) {
-                        self.call_held(callable, args).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))
-                    } else { self.class_apply(callable, args) }
+                    self.descriptor_apply(w.1[0].clone(), args)
                 }
                 // A member a builtin kind carries, standing loose: the
                 // first value it is called with is the one it works
@@ -734,12 +738,10 @@ impl<'a> Engine<'a> {
                     let held = Self::worth_of(&descriptor).ok_or_else(|| self.class_refusal())?;
                     let Value::Adapter(wrapped) = held else { return Err(self.class_refusal()); };
                     if wrapped.0 != 4 { return Err(self.class_refusal()); }
-                    let callable = wrapped.1[0].clone();
-                    if matches!(callable.contents(), Value::Native(..) | Value::ByteKind(..) | Value::SortOf(..)) {
-                        self.call_held(callable, args).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))
-                    } else { self.class_apply(callable, args) }
+                    self.descriptor_apply(wrapped.1[0].clone(), args)
                 }
-                4 | 8 => self.class_apply(w.1[0].clone(),args),
+                4 => self.descriptor_apply(w.1[0].clone(), args),
+                8 => self.class_apply(w.1[0].clone(),args),
                 5 => Err(self.core_fault("core.uncallable", "classmethod").into()),
                 13 if args.len() == 1 => {
                     let Value::Adapter(property) = &w.1[0] else { return Err(self.class_refusal()); };
@@ -1446,8 +1448,10 @@ impl<'a> Engine<'a> {
                     // A set answers some of its methods through builtins
                     // that take the receiver first, so reading one binds
                     // it to the worth.
-                    if matches!(self.lang.builtins.get(name),Some(b) if b.set_method()) {
-                        return Ok(Self::adapter(3,vec![Value::text(name),worth]));
+                    if let Some(operation) = self.lang.builtins.get(name).copied().filter(|op| op.set_method()) {
+                        let callable = if self.lang.class_builder.is_empty() { Value::text(name) }
+                            else { Value::Native(operation, Rc::from(name)) };
+                        return Ok(Self::adapter(3,vec![callable,worth]));
                     }
                 }
                 // A native base's reduction slots must not be replaced by

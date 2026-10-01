@@ -713,6 +713,7 @@ impl<'a> Machine<'a> {
                             }
                         }
                     }
+                    4 if self.table.has_any("ext.stmt.class.builder") => self.apply_held(kept[0].clone(), values),
                     4|8=>self.apply_class_member(kept[0].clone(),values),
                     73 => {
                         if !self.open_arguments(values.clone())?.1.is_empty() {

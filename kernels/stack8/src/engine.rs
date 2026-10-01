@@ -5352,11 +5352,14 @@ impl<'a> Engine<'a> {
             }
         }
         // A set answers some of its methods through builtins that take
-        // the receiver first, so the member bound to the value is the
-        // word itself with the value behind it. A set that cannot be
-        // changed answers none of the methods that would alter it.
-        if matches!((&held, self.lang.builtins.get(name)), (Value::Set(_), Some(word)) if word.set_method() && !(word.set_alters() && held.set_fixed())) {
-            return Ok(Some(Value::Adapter(Rc::new((3, vec![Value::text(name), held])))));
+        // the receiver first. Python keeps the native callable with
+        // its receiver, rather than treating its spelling as callable.
+        // A fixed set answers none of the methods that would alter it.
+        let operation = self.lang.builtins.get(name).copied().filter(|word| matches!(&held, Value::Set(_)) && word.set_method() && !(word.set_alters() && held.set_fixed()));
+        if let Some(operation) = operation {
+            let callable = if self.lang.class_builder.is_empty() { Value::text(name) }
+                else { Value::Native(operation, Rc::from(name)) };
+            return Ok(Some(Value::Adapter(Rc::new((3, vec![callable, held])))));
         }
         let Some(operation) = self.lang.value_methods.get(name).cloned() else { return Ok(None) };
         if !crate::methods::answered(&held, &operation) { return Ok(None); }
