@@ -286,6 +286,10 @@ pub struct Compiler<'a> {
     gives_back: std::collections::HashSet<String>,
     /// The parameters of the method just read that name properties too.
     promoted: Vec<String>,
+    /// The piece depth a parameter default being read belongs to: the
+    /// class body the method is written in, whose own names the default
+    /// may see, or none while anything else is read.
+    default_depth: Option<usize>,
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
@@ -579,7 +583,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, default_depth: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1094,7 +1098,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
-        let alias = self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned();
+        let at = self.default_depth.unwrap_or(self.pieces.len());
+        let alias = self.class_names.last().filter(|(depth, _)| *depth == at).and_then(|(_, names)| names.get(name)).cloned();
         if let Some(alias) = alias {
             let slot = self.cell_to_read(&alias, false);
             if self.lang.shadow_builtins && self.lang.builtins.contains_key(name)
@@ -6646,11 +6651,16 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
+            // Being read where the method is written, the expression
+            // sees the names a class body around the method keeps, as
+            // the reference reading it there sees them.
+            let outside = self.default_depth.replace(self.pieces.len() - 1);
             let read = self.expr(0);
             {
                 let unit = self.pieces.last_mut().expect("a unit");
                 for slot in shadowed { unit.declared[slot] = false; }
             }
+            self.default_depth = outside;
             read?;
             self.write(&formals[*at]);
             self.land(past);

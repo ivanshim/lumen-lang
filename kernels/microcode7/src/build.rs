@@ -138,6 +138,10 @@ pub struct Builder<'a> {
     within: Option<(String, Option<String>)>,
     receiver: Option<String>,
     class_bindings: Vec<(usize, HashMap<String, Address>)>,
+    /// The layer depth a parameter default being read belongs to: the
+    /// class body the method is written in, whose own names the default
+    /// may see, or none while anything else is read.
+    default_depth: Option<usize>,
     /// The names a class body under way has itself declared `global`,
     /// kept apart from `class_bindings`'s members and from the layer
     /// around the class: the declaration reaches only the body's own
@@ -564,7 +568,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1551,9 +1555,14 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        let at = self.default_depth.unwrap_or(self.layers.len());
         if let Some((depth, names)) = self.class_bindings.last() {
-            if *depth == self.layers.len() {
+            if *depth == at {
                 if let Some(slot) = names.get(name).cloned() {
+                    // A place kept for the body's own depth is further
+                    // off from anywhere deeper the name is read, by
+                    // just how much deeper that is.
+                    let slot = if at == self.layers.len() { slot } else { let mut moved = slot; moved.up += self.layers.len() - at; moved };
                     let conditional = self.table.flag("ext.syntax.names.shadow_builtins")
                         && self.table.prims.contains_key(name)
                         && self.under_way.last().is_some_and(|body| body.uncertain.iter().any(|word| word == name));
@@ -6592,11 +6601,16 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
+            // Being read where the method is written, the expression
+            // sees the names a class body around the method keeps, as
+            // the reference reading it there sees them.
+            let outside = self.default_depth.replace(self.layers.len() - 1);
             let read = self.expr(0);
             {
                 let layer = self.layers.last_mut().expect("a layer");
                 for (index, name) in renamed { layer.idents[index] = name; }
             }
+            self.default_depth = outside;
             let value = read?;
             let slot = self.address_to_write(&formals[at]);
             let written = Form::Write(slot.clone(), Box::new(value));
