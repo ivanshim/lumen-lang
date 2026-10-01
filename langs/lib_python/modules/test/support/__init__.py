@@ -87,6 +87,42 @@ def is_resource_enabled(resource):
 def requires_resource(resource):
     return unittest.skipUnless(is_resource_enabled(resource), 'resource ' + resource + ' is not enabled')
 
+def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
+    """Run a test once for each combination of the given arguments.
+
+    ``arg_names`` is either one name or a comma separated string of
+    names, and ``arg_values`` is a sequence of values (or value tuples).
+    Each run happens inside its own ``subTest``, so a failure names the
+    values that produced it.
+    """
+    single_param = False
+    if isinstance(arg_names, str):
+        arg_names = arg_names.replace(',', ' ').split()
+        if len(arg_names) == 1:
+            single_param = True
+    arg_values = tuple(arg_values)
+
+    def decorator(func):
+        if isinstance(func, type):
+            raise TypeError('subTests() can only decorate methods, not classes')
+
+        import functools
+
+        def iter_subtest_kwargs():
+            for values in arg_values:
+                yield dict(zip(arg_names, (values,) if single_param else values))
+
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            for subtest_kwargs in iter_subtest_kwargs():
+                with self.subTest(**subtest_kwargs):
+                    func(self, *args, **kwargs, **subtest_kwargs)
+                if _do_cleanups:
+                    self.doCleanups()
+        return wrapper
+
+    return decorator
+
 # A note for a runner that would put tests in threads at once. Nothing
 # here does, so the note is kept and the test runs.
 def thread_unsafe(reason=''):

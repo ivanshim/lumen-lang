@@ -13,6 +13,8 @@ S = 16
 DOTALL = S
 X = 64
 VERBOSE = X
+A = 256
+ASCII = A
 
 _DIGITS = '0123456789'
 _WORD_LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
@@ -121,6 +123,12 @@ class _Reader:
             return ['lit', '\f']
         if mark == 'v':
             return ['lit', '\v']
+        if mark == 'x':
+            hx = self.pattern[self.i:self.i+2]
+            if len(hx) < 2 or not all(c in '0123456789abcdefABCDEF' for c in hx):
+                raise 'ValueError: invalid \\x escape'
+            self.i += 2
+            return ['lit', chr(int(hx, 16))]
         if not inside and mark in '123456789':
             return ['backref', int(mark)]
         if mark in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789':
