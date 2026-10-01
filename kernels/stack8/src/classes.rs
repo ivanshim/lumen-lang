@@ -1615,11 +1615,20 @@ impl<'a> Engine<'a> {
     /// it, as the reference reads the module of a class out of the
     /// globals the class was written in.
     fn defining_home(&self) -> String {
-        if let Some((_, path)) = self.module_slots.get(&self.source) {
-            if let Some(Value::Object(space)) = self.modules.get(path) {
-                if let Some((_, held)) = space.fields.borrow().iter().find(|(name, _)| name == "__name__") {
-                    if let Value::Text(word) = held.contents() { return word.to_string(); }
-                }
+        // The module the class's own code belongs to: the module the
+        // routine now running was written in, named the way that
+        // module's namespace names it. A routine written in the program
+        // itself belongs to the run's own module, wherever the call
+        // that reached it came from.
+        let running = self.trace_frame.as_ref().and_then(|frame| {
+            let fields = frame.fields.borrow();
+            match &fields.get(6)?.1 { Value::Routine(program) => Some(program.clone()), _ => None }
+        });
+        let Some(program) = running else { return self.class_word("main").to_string(); };
+        let path = self.routine_home(&program);
+        if let Some(Value::Object(space)) = self.modules.get(&path) {
+            if let Some((_, held)) = space.fields.borrow().iter().find(|(name, _)| name == "__name__") {
+                if let Value::Text(word) = held.contents() { return word.to_string(); }
             }
             return path.clone();
         }

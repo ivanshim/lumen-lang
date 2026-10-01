@@ -1285,14 +1285,22 @@ impl<'a> Machine<'a> {
     /// it, as the reference reads the module of a class out of the
     /// globals the class was written in.
     fn home_of_written(&self) -> String {
-        if let Some(path) = self.loaded_spaces.get(&self.written_in).cloned() {
-            if let Some(Value::Thing(space)) = self.imported.get(&path) {
-                let named = space.holds.borrow().iter()
-                    .find(|(key, _)| key == "__name__")
-                    .and_then(|(_, value)| match value.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
-                if let Some(word) = named { return word; }
-            }
-            return path;
+        // The module the class's own code belongs to: the module the
+        // routine now running was written in, named the way that
+        // module's namespace names it. A routine written in the program
+        // itself belongs to the run's own module, wherever the call
+        // that reached it came from.
+        let running = self.active_trace.as_ref().and_then(|frame| {
+            frame.holds.borrow().iter().find(|(word, _)| word == " environment")
+                .and_then(|(_, held)| match held.settled() { Value::Bound(code, _) => Some(code), _ => None })
+        });
+        let Some(code) = running else { return self.detail("main").to_owned() };
+        let path = self.routine_home(&code);
+        if let Some(Value::Thing(space)) = self.imported.get(&path) {
+            let named = space.holds.borrow().iter()
+                .find(|(key, _)| key == "__name__")
+                .and_then(|(_, value)| match value.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
+            if let Some(word) = named { return word; }
         }
         self.detail("main").to_owned()
     }
