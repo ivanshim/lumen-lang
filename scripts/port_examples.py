@@ -1908,6 +1908,15 @@ def write_library_report(lib, defs, coverage):
     LIBRARY_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+# These Python examples are maintained by hand: Python floors quotients and
+# rounds ties to even, while their Lumen originals use the shared core rules.
+PYTHON_EXCLUSIONS = frozenset({
+    "constructs/integer_quotient.py",
+    "constructs/integer_quotient_minimal.py",
+    "constructs/round_function.py",
+})
+
+
 def main():
     lib, constants = load_library()
     defs = definitions()
@@ -1928,10 +1937,17 @@ def main():
         out_root = ROOT / "examples" / lang
         # Remove earlier ports so a newly skipped example leaves no stale file.
         for old in out_root.rglob(f"*.{ext}"):
+            if lang == "python" and old.relative_to(out_root).as_posix() in PYTHON_EXCLUSIONS:
+                continue
             if old.read_text(encoding="utf-8", errors="replace").find("port_examples.py") >= 0:
                 old.unlink()
         for ex in examples:
             rel = ex.relative_to(LUMEN_EXAMPLES).with_suffix(f".{ext}")
+            if lang == "python" and rel.as_posix() in PYTHON_EXCLUSIONS:
+                assert (out_root / rel).is_file(), f"missing hand-written Python example: {rel}"
+                results[(ex, lang)] = None
+                written[lang] += 1
+                continue
             try:
                 emitter = PostfixEmitter(d) if d["syntax.notation"] == "postfix" else Emitter(d)
                 text = port_one(emitter, ex, lib, constants, mirrored[lang])

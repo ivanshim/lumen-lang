@@ -1,5 +1,5 @@
 import sys
-# Ported from examples/lumen/constructs/integer_quotient_minimal.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+# Python numeric example, maintained by hand: floor division and ties to even.
 sys.stdout.write("=== MINIMAL // OPERATOR VALIDATION ===\n\n")
 sys.stdout.write("1. Integer // Integer (positive): 17 // 5 = ")
 q = 17 // 5
@@ -8,28 +8,28 @@ sys.stdout.write("   Identity check: 17 == 5 * 3 + (17 % 5) ? ")
 identity = 5 * q + (17 % 5)
 print(identity == 17)
 sys.stdout.write("\n")
-sys.stdout.write("2. Truncate toward zero: -17 // 5 = ")
+sys.stdout.write("2. Floor division: -17 // 5 = ")
 q = -17 // 5
 print(q)
-sys.stdout.write("   Identity check: -17 == 5 * (-3) + (-17 % 5) ? ")
+sys.stdout.write("   Identity check: -17 == 5 * (-4) + (-17 % 5) ? ")
 identity = 5 * q + (-17 % 5)
 print(identity == -17)
 sys.stdout.write("\n")
 sys.stdout.write("3. 17 // -5 = ")
 q = 17 // -5
 print(q)
-sys.stdout.write("   Identity check: 17 == -5 * (-3) + (17 % -5) ? ")
+sys.stdout.write("   Identity check: 17 == -5 * (-4) + (17 % -5) ? ")
 identity = -5 * q + (17 % -5)
 print(identity == 17)
 sys.stdout.write("\n")
-sys.stdout.write("4. Rational // Integer: (17/3) // 2 = ")
+sys.stdout.write("4. Float // Integer: (17/3) // 2 = ")
 q = (17 / 3) // 2
 print(q)
 sys.stdout.write("\n")
-sys.stdout.write("5. Rational // Rational: (20/3) // (3/2) = ")
+sys.stdout.write("5. Float // Float: (20/3) // (3/2) = ")
 print((20 / 3) // (3 / 2))
 sys.stdout.write("\n")
-sys.stdout.write("6. Real // Integer: 3.5 // 2 = ")
+sys.stdout.write("6. Float // Integer: 3.5 // 2 = ")
 print(3.5 // 2)
 sys.stdout.write("\n")
 sys.stdout.write("7. Precedence: 20 // 3 * 2 = ")

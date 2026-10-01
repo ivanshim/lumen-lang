@@ -42,7 +42,7 @@
     "NotImplementedError: this complex operation is not supported"
   ],
   "ext.builtin.complex.zero": [
-    "ZeroDivisionError: complex division by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.builtin.file.exists": [
     "__file_exists"
@@ -772,7 +772,7 @@
     "TypeError: vars() argument must have __dict__ attribute"
   ],
   "ext.builtin.core.zero": [
-    "ZeroDivisionError: integer division or modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.builtin.default": [
     "default"
@@ -2172,6 +2172,7 @@
   "ext.literal.ellipsis.unready": [
     "NotImplementedError: ellipsis values are not supported"
   ],
+  "ext.op.arithmetic.python_numbers": true,
   "ext.op.arithmetic.binary": true,
   "ext.op.arithmetic.flags": true,
   "ext.op.arithmetic.strict": true,
@@ -2369,7 +2370,7 @@
     "ZeroDivisionError: 0.0 cannot be raised to a negative power"
   ],
   "ext.op.quot.real_zero": [
-    "ZeroDivisionError: float floor division by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.quot.zero": [
     "ZeroDivisionError: division by zero"
@@ -2465,7 +2466,7 @@
   ],
   "ext.op.rem.formats_text": true,
   "ext.op.rem.real_zero": [
-    "ZeroDivisionError: float modulo"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.sequence.assign": [
     "TypeError: '",
@@ -3508,7 +3509,7 @@
     "unsupported operand types"
   ],
   "ext.system.fault.modulo": [
-    "ZeroDivisionError: integer modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.system.fault.name": [
     "name '",
