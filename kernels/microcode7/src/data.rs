@@ -1305,6 +1305,19 @@ impl Value {
         Some(padded)
     }
 
+    /// Internal storage is a string only when its blueprint descends from str.
+    pub(super) fn type_text(&self) -> Value {
+        let value = self.settled();
+        if let Value::Thing(thing) = &value {
+            let class = thing.blueprint();
+            let string = std::iter::once(class.as_ref()).chain(class.ancestry.iter().map(Rc::as_ref))
+                .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
+            if string {
+                if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
+            }
+        }
+        value
+    }
     pub fn bare(&self) -> String {
         match self {
             Value::Complex(pair) => crate::complex::written(pair),
@@ -1383,7 +1396,10 @@ impl Value {
             }
             Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
-            Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
+            Value::Blueprint(b) => {
+                if let Some(title) = b.python_title() { return format!("<class '{title}'>"); }
+                b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name))
+            },
             // A method or a data member carried by a native kind and
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
@@ -1543,7 +1559,18 @@ pub enum Reach {
 }
 
 #[derive(Debug)]
+pub struct TypeNames {
+    pub short: Value,
+    pub full: Value,
+    pub module_key: String,
+    /// Original qualification for the inherited string-based super lookup.
+    pub declared: Value,
+}
+
+#[derive(Debug)]
 pub struct Blueprint {
+    /// The mutable names of a Python class, outside its dictionary.
+    pub type_names: RefCell<Option<TypeNames>>,
     pub ancestry: Vec<Rc<Blueprint>>,
     pub parents: Vec<Rc<Blueprint>>,
     pub presentation: Option<String>,
@@ -1567,6 +1594,22 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
+    pub(super) fn python_title(&self) -> Option<String> {
+        let kept = self.type_names.borrow();
+        let names = kept.as_ref()?;
+        let module = self.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.type_text() { text @ (Value::Text(_) | Value::Unpaired(_)) => Some(text.bare()), _ => None });
+        Some(match module { Some(word) if word != "builtins" => format!("{word}.{}", names.full.type_text().bare()), _ => names.short.type_text().bare() })
+    }
+    /// A character-format complaint uses qualification, unlike repr's
+    /// short-name fallback for builtin or non-string modules.
+    pub(super) fn python_qualified_title(&self) -> Option<String> {
+        let kept = self.type_names.borrow();
+        let names = kept.as_ref()?;
+        let module = self.shared.borrow().iter().find(|entry| entry.0 == names.module_key).and_then(|entry| match entry.1.type_text() { text @ (Value::Text(_) | Value::Unpaired(_)) => Some(text.bare()), _ => None });
+        let full = names.full.type_text().bare();
+        Some(match module { Some(word) if word != "builtins" => format!("{word}.{full}"), _ => full })
+    }
+
     pub fn program(&self, name: &str) -> Option<&Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
             Some((_, p)) => Some(p),

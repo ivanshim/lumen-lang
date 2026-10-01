@@ -1455,6 +1455,19 @@ impl Value {
         Some(shown)
     }
 
+    /// Unwrap native string storage only for a real string descendant.
+    pub(super) fn type_text(&self) -> Value {
+        let held = self.contents();
+        if let Value::Object(object) = &held {
+            let class = object.class_now();
+            let string = std::iter::once(class.as_ref()).chain(class.lineage.iter().map(Rc::as_ref))
+                .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
+            if string {
+                if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
+            }
+        }
+        held
+    }
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
@@ -1522,7 +1535,10 @@ impl Value {
             }
             Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
-            Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
+            Value::Class(c) => {
+                if let Some(title) = c.python_title() { return format!("<class '{title}'>"); }
+                c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name))
+            },
             // A kind's own method read from the kind itself is bound to
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
@@ -1698,6 +1714,9 @@ pub const MAKER_MEMBER: &str = "\0metaclass";
 /// and the values it keeps for itself.
 #[derive(Debug)]
 pub struct Class {
+    /// Python heap-type names, the module label, and the original
+    /// qualification used by the existing string-based lexical super lookup.
+    pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
     pub lineage: Vec<Rc<Class>>,
     pub direct: Vec<Rc<Class>>,
     pub outline: Option<String>,
@@ -1722,6 +1741,22 @@ pub struct Class {
 }
 
 impl Class {
+    pub(super) fn python_title(&self) -> Option<String> {
+        let names = self.python_names.borrow();
+        let (short, qualified, module_key, _) = names.as_ref()?;
+        let module = self.shared.borrow().iter().find(|(key, _)| key == module_key).and_then(|(_, value)| match value.type_text() { text @ (Value::Text(_) | Value::Codepoints(_)) => Some(text.plain()), _ => None });
+        Some(match module { Some(module) if module != "builtins" => format!("{module}.{}", qualified.type_text().plain()), _ => short.type_text().plain() })
+    }
+    /// Percent-character errors keep the public qualification even when repr
+    /// falls back to the short name because no usable module is present.
+    pub(super) fn python_qualified_title(&self) -> Option<String> {
+        let names = self.python_names.borrow();
+        let (_, qualified, module_key, _) = names.as_ref()?;
+        let module = self.shared.borrow().iter().find(|(key, _)| key == module_key).and_then(|(_, value)| match value.type_text() { text @ (Value::Text(_) | Value::Codepoints(_)) => Some(text.plain()), _ => None });
+        let local = qualified.type_text().plain();
+        Some(match module { Some(module) if module != "builtins" => format!("{module}.{local}"), _ => local })
+    }
+
     /// The program of that name, in this class or the nearest one
     /// beneath it that has one.
     pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {
