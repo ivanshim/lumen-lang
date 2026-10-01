@@ -33,7 +33,7 @@ use crate::lang::{Lang, Brackets, Blocks, Complaint};
 use crate::arith;
 use crate::lex::{Shape, Token};
 use crate::value::{Reach, Value, MAKER_MEMBER};
-use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt, Taking};
+use crate::code::{Operand, Builtin, Action, ImportStyle, Routine, Cell, Instr, Plan, Attempt, Taking};
 
 thread_local! {
     static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
@@ -3341,10 +3341,11 @@ impl<'a> Compiler<'a> {
             if !lang.syntax_members.is_empty() && (!self.piece().outermost || self.in_class_body()) { return Err("SyntaxError: import * only allowed at module level".into()); }
             self.take();
             if lang.import_values {
-                self.act(Action::Import(module.clone(), None, false), 0);
+                self.act(Action::Import(module.clone(), ImportStyle::Star), 0);
                 self.act(Action::ImportAll, 1);
             }
         } else {
+            let mut collected: Vec<(String, String, bool)> = Vec::new();
             loop {
                 let feature_at = self.pos;
                 let original = self.import_name(!from)?;
@@ -3378,13 +3379,7 @@ impl<'a> Compiler<'a> {
                     self.pos = feature_at;
                     return Err(if original == "braces" { "SyntaxError: not a chance".into() } else { format!("SyntaxError: future feature {original} is not defined") });
                 }
-                if lang.import_values {
-                    self.act(Action::Import(if from { module.clone() } else { original.clone() }, from.then_some(original), !from && !aliased), 0);
-                } else { self.constant(Value::Null); }
-                self.claim(&bound);
-                self.importing = true;
-                self.write(&bound);
-                self.importing = false;
+                collected.push((original.clone(), bound.clone(), aliased));
                 let comma = lang.calling.as_ref().and_then(|g| g.between.as_ref());
                 if !comma.map_or(false, |mark| self.at_symbol(mark)) {
                     break;
@@ -3395,6 +3390,50 @@ impl<'a> Compiler<'a> {
                 }
                 if group.map_or(false, |g| self.at_symbol(&g.close)) {
                     break;
+                }
+            }
+            if lang.import_values {
+                if from {
+                    if !collected.is_empty() {
+                        let names: Vec<String> = collected.iter().map(|(name, _, _)| name.clone()).collect();
+                        self.act(Action::Import(module.clone(), ImportStyle::Names(names)), 0);
+                        for (member, bound, _) in &collected {
+                            self.act(Action::ImportFrom(module.clone(), member.clone()), 0);
+                            self.claim(bound);
+                            self.importing = true;
+                            self.write(bound);
+                            self.importing = false;
+                        }
+                        self.discard();
+                    }
+                } else {
+                    for (original, bound, aliased) in &collected {
+                        self.act(Action::Import(original.clone(), ImportStyle::Plain), 0);
+                        let parts: Vec<&str> = original.split('.').collect();
+                        if *aliased && parts.len() > 1 {
+                            for at in 1..parts.len() {
+                                let head = parts[..at].join(".");
+                                self.act(Action::ImportFrom(head, parts[at].to_string()), 0);
+                            }
+                        }
+                        self.claim(bound);
+                        self.importing = true;
+                        self.write(bound);
+                        self.importing = false;
+                        if *aliased && parts.len() > 1 {
+                            for _ in 0..parts.len() - 1 {
+                                self.discard();
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (_, bound, _) in &collected {
+                    self.constant(Value::Null);
+                    self.claim(bound);
+                    self.importing = true;
+                    self.write(bound);
+                    self.importing = false;
                 }
             }
         }

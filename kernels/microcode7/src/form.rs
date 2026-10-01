@@ -80,6 +80,7 @@ pub enum Prim {
     /// Mark a class unchangeable: no member writes, no standing as a base.
     ClassSeal,
     BringModule,
+    ImportMember,
     SpreadModule,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,

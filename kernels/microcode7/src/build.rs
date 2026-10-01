@@ -3136,9 +3136,10 @@ impl<'a> Builder<'a> {
             }
             self.advance();
             if self.table.flag("ext.stmt.import.value") {
-                writes.push(prim_call(Prim::SpreadModule, vec![prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(Value::Nil), constant(Value::Flag(false))])]));
+                writes.push(prim_call(Prim::SpreadModule, vec![prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(Value::tuple(vec![Value::text("*")]))])]));
             }
         } else {
+            let mut gathered: Vec<(String, String, bool)> = Vec::new();
             loop {
                 let named_at = self.pos;
                 let original = self.module_path(!taking_names)?;
@@ -3175,13 +3176,7 @@ impl<'a> Builder<'a> {
                     let complaint = match original.as_str() { "braces" => "not a chance".to_owned(), name => format!("future feature {name} is not defined") };
                     return Err(format!("SyntaxError: {complaint}"));
                 }
-                let worth = if self.table.flag("ext.stmt.import.value") {
-                    prim_call(Prim::BringModule, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
-                } else { constant(Value::Nil) };
-                self.claim(&local);
-                self.importing = true;
-                writes.push(self.write(&local, worth));
-                self.importing = false;
+                gathered.push((original, local, alias));
                 if !self.on_any("syntax.call.separator") {
                     break;
                 }
@@ -3192,6 +3187,45 @@ impl<'a> Builder<'a> {
                 }
                 if enclosed && self.on_any("syntax.group.close") {
                     break;
+                }
+            }
+            if self.table.flag("ext.stmt.import.value") {
+                if taking_names {
+                    if !gathered.is_empty() {
+                        let module_slot = self.gensym("import");
+                        let fromlist = Value::tuple(gathered.iter().map(|(name, _, _)| Value::text(name)).collect());
+                        writes.push(Form::Write(module_slot.clone(), Box::new(prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(fromlist)]))));
+                        for (name, local, _) in &gathered {
+                            let member = prim_call(Prim::ImportMember, vec![Form::Read(module_slot.clone()), constant(Value::text(&path)), constant(Value::text(name))]);
+                            self.claim(local);
+                            self.importing = true;
+                            writes.push(self.write(local, member));
+                            self.importing = false;
+                        }
+                        writes.push(Form::Forget(module_slot));
+                    }
+                } else {
+                    for (name, local, alias) in &gathered {
+                        let mut worth = prim_call(Prim::BringModule, vec![constant(Value::text(name)), constant(Value::Nil)]);
+                        if *alias && name.contains('.') {
+                            let parts: Vec<&str> = name.split('.').collect();
+                            for at in 1..parts.len() {
+                                let head = parts[..at].join(".");
+                                worth = prim_call(Prim::ImportMember, vec![worth, constant(Value::text(&head)), constant(Value::text(parts[at]))]);
+                            }
+                        }
+                        self.claim(local);
+                        self.importing = true;
+                        writes.push(self.write(local, worth));
+                        self.importing = false;
+                    }
+                }
+            } else {
+                for (_, local, _) in &gathered {
+                    self.claim(local);
+                    self.importing = true;
+                    writes.push(self.write(local, constant(Value::Nil)));
+                    self.importing = false;
                 }
             }
         }

@@ -41,7 +41,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
 use crate::value::{Descriptor, Class, Ending, Instance, KeyedPairs, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
-use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
+use crate::code::{Operand, Builtin, Action, ImportStyle, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
 /// loop written around it. Only the latter must pass through last parts.
@@ -8872,13 +8872,58 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(object)
             }
-            Action::Import(path, member, root) => {
-                let module = self.import_module(path)?;
-                if let Some(name) = member {
+            Action::Import(path, style) => {
+                // The import is asked of the builtins in force here, the
+                // very way the reference's import statement calls
+                // __import__: absent from the caller's own builtins it
+                // is the ImportError the reference names; a reading of
+                // the caller's own that raises raises here rather than
+                // silently falling back to the kernel's own builtins.
+                let importer = match self.builtin_named("__import__")? {
+                    Some(held) => held,
+                    None => return Err("ImportError: __import__ not found".into()),
+                };
+                if matches!(importer.contents(), Value::Native(Builtin::Summon, _)) {
+                    let module = self.import_module(path)?;
+                    match style {
+                        ImportStyle::Plain => self.import_module(path.split('.').next().unwrap_or(path))?,
+                        _ => module,
+                    }
+                } else {
+                    // A __import__ of the program's own is called with
+                    // the names the import statement hands it, and what
+                    // it answers stands for the import itself.
+                    let globals = Value::Bond(self.book_here(true));
+                    let locals = Value::Bond(self.book_here(false));
+                    let fromlist = match style {
+                        ImportStyle::Plain => Value::Null,
+                        ImportStyle::Star => Value::tuple(vec![Value::text("*")]),
+                        ImportStyle::Names(names) => Value::tuple(names.iter().map(|name| Value::text(name)).collect()),
+                    };
+                    self.call_held(importer, vec![Value::text(path), globals, locals, fromlist, Value::Small(0)])?
+                }
+            }
+            Action::ImportFrom(path, name) => {
+                // The member a from-import (or a dotted aliased import)
+                // names is read off the module the import itself left on
+                // the stack: a package's own submodule is read in as the
+                // reference's __import__ reads it in, and a value the
+                // program's own __import__ answered with answers through
+                // the protocol it answers to.
+                let module = self.data.last().cloned().ok_or_else(|| "Stack underflow".to_string())?;
+                if self.is_builtin_module(&module, path) {
                     self.import_member(&module, path, name)?
-                } else if *root {
-                    self.import_module(path.split('.').next().unwrap_or(path))?
-                } else { module }
+                } else {
+                    // A member the program's own __import__ answered
+                    // without is a missing import, not a missing
+                    // attribute: the ImportError the reference names,
+                    // whatever the answer's own reading raises standing.
+                    match self.class_get(module.clone(), name, false) {
+                        Ok(value) => value,
+                        Err(fault) if self.attribute_fault(&fault) => return Err(self.import_member_fault_from(&module, name).into()),
+                        Err(fault) => return Err(fault),
+                    }
+                }
             }
             Action::ImportAll => {
                 let module = self.drop_top()?;
@@ -17467,42 +17512,25 @@ impl Engine<'_> {
         walk
     }
 
-    /// What a value keeps no built-in writing for reduces to, for the
-    /// module that writes values out to bytes: nothing for a value
-    /// with no such reduction, else the pieces that opposite number
-    /// reads back into a value the very same as this one -- the same
-    /// kind, and, for a walk, standing at the very place this one
-    /// does, so that a value already stepped some way into keeps
-    /// standing there once it is written out and read back.
-    fn reduction_constructor(&mut self, op: Builtin) -> Res<Value> {
-        let label = self.lang.builtins.iter().find(|(_, candidate)| **candidate == op)
-            .map(|(label, _)| label.clone()).unwrap_or_default();
-        let Some(module) = self.modules.get("builtins").cloned() else {
-            return Ok(Value::Native(op, Rc::from(label)));
-        };
-        let namespace = self.class_word("namespace").to_string();
-        let book = match self.class_get(module, &namespace, false) {
-            Ok(book) => book,
-            Err(Fault::Note(words)) => return Err(words),
-            Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-        };
-        self.special_dyad(&Action::At, &book.contents(), &Value::text(&label))
-            .map(|value| value.contents())
-    }
-
     fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
         let pack = |parts: Vec<Value>| Value::tuple(parts);
         let native = |op: Builtin| {
             let word = self.lang.builtins.iter().find(|(_, candidate)| **candidate == op).map(|(word, _)| word.clone()).unwrap_or_default();
             Value::Native(op, Rc::from(word))
         };
-        let iter = native(Builtin::Iter);
+        // The constructor a reduction names is read out of the
+        // builtins in force here, the very way CPython's
+        // list_iterator.__reduce__ asks for its `iter` through
+        // _PyEval_GetBuiltin: absent, the missing name is an
+        // AttributeError; a reading of the caller's own that raises
+        // raises here rather than falling back to the kernel's own.
         if let Value::Counted(row) = value {
             return Ok(pack(vec![native(Builtin::Span), pack(vec![Value::of_big(row.start.clone()), Value::of_big(row.stop.clone()), Value::of_big(row.step.clone())])]));
         }
         if let Value::Generator(cell) = value {
             let held = cell.borrow();
             if held.walked.is_none() || held.program.is_some() { return Err("TypeError: cannot pickle generator object".into()); }
+            let iter = self.builtin_named("iter")?.ok_or_else(|| "AttributeError: iter".to_string())?;
             let entries = if held.closed { Vec::new() } else { held.items.get(held.pc..).unwrap_or_default().to_vec() };
             return Ok(pack(vec![iter, pack(vec![Value::array(entries)])]));
         }
@@ -17512,9 +17540,13 @@ impl Engine<'_> {
             matches!(held.source, CursorSource::IndexedBack(..))
                 || matches!(held.walked.as_deref(), Some("list_reverseiterator" | "reversed"))
         };
-        let maker = self.reduction_constructor(if reversed_walk { Builtin::Reversed } else { Builtin::Iter })?;
+        let maker = if reversed_walk {
+            self.builtin_named("reversed")?.ok_or_else(|| "AttributeError: reversed".to_string())?
+        } else {
+            self.builtin_named("iter")?.ok_or_else(|| "AttributeError: iter".to_string())?
+        };
         let reverse = if reversed_walk { maker.clone() } else { native(Builtin::Reversed) };
-        let iter = if reversed_walk { iter } else { maker };
+        let iter = maker;
         let saved = cell.borrow().clone();
         if saved.finished || matches!(&saved.source, CursorSource::Items(items, place) if *place >= items.len()) {
             match &saved.source {
@@ -18988,6 +19020,16 @@ impl Engine<'_> {
         None
     }
 
+    /// Whether a value on the stack is the kernel's own module standing
+    /// under this path: read in by the import itself, and not a value the
+    /// program's own __import__ answered with.
+    fn is_builtin_module(&self, module: &Value, path: &str) -> bool {
+        self.modules.get(path).map_or(false, |known| match (known, module) {
+            (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        })
+    }
+
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
         if let Value::Object(object) = module {
             if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
@@ -19013,6 +19055,26 @@ impl Engine<'_> {
             Some(file) => format!("{told} ({file})"),
             None => told,
         }
+    }
+
+    /// The words for a member a value the program's own __import__
+    /// answered with has not: the name and the module CPython names in
+    /// "cannot import name", taken from the module's own __name__ and
+    /// __file__ the way CPython takes them, with the unknown-location
+    /// wording where the module carries no file of its own.
+    fn import_member_fault_from(&mut self, module: &Value, name: &str) -> String {
+        let modname = match self.class_get(module.clone(), "__name__", false) {
+            Ok(Value::Text(named)) => named.to_string(),
+            _ => "<unknown module name>".to_string(),
+        };
+        let pieces = &self.lang.import_member_missing;
+        let told = if pieces.len() == 3 { format!("{}{name}{}{modname}{}", pieces[0], pieces[1], pieces[2]) }
+            else { format!("ImportError: cannot import name '{name}' from '{modname}'") };
+        let location = match self.class_get(module.clone(), "__file__", false) {
+            Ok(Value::Text(file)) => file.to_string(),
+            _ => "unknown location".to_string(),
+        };
+        format!("{told} ({location})")
     }
 
     /// Where a module's own text was read from, for a module the run
@@ -19276,6 +19338,71 @@ impl Engine<'_> {
             }
         }
         self.native_dict()
+    }
+
+    /// Look a name up in the builtins in force where the run stands,
+    /// through the mapping protocol they answer to, the very way the
+    /// reference's _PyEval_GetBuiltin reads its builtins: a key gone
+    /// missing is nothing, a reading of the caller's own that raises
+    /// raises here uncaught, and the kernel's own dictionary is read
+    /// live so a program that changed it reads the change.
+    fn builtin_named(&mut self, name: &str) -> Res<Option<Value>> {
+        // A dictionary of builtins the caller handed over is read the
+        // very way any name is read from it, so a mapping of its own --
+        // read-only, raising, or merely short of a name -- is honoured.
+        if self.reading_in.is_some() {
+            let book = self.book_here(true);
+            if let Some(word) = self.lang.module_builtins.first().cloned() {
+                let held = match self.book_get(&book, &word) {
+                    Ok(v) => v,
+                    Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+                };
+                if let Some(held) = held {
+                    if !self.our_native_dict(&held) {
+                        let dictionary = match self.as_builtins_dictionary(held) {
+                            Ok(v) => v,
+                            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
+                        };
+                        return self.dyn_lookup(&dictionary, name)
+                            .map_err(|fled| { self.carried = Some(fled); self.special_fault() });
+                    }
+                }
+            }
+        }
+        self.builtin_from_module(name)
+    }
+
+    /// A builtin of the kernel's own, read out of the builtins module's
+    /// dictionary where the module stands, live, so a program that
+    /// changed the module reads the change; before the module is read
+    /// in, the kernel's own dictionary answers.
+    fn builtin_from_module(&mut self, name: &str) -> Res<Option<Value>> {
+        let dictionary = match self.modules.get("builtins").cloned() {
+            Some(module) => {
+                let namespace = self.class_word("namespace").to_string();
+                match self.class_get(module, &namespace, false) {
+                    Ok(book) => book.contents(),
+                    Err(Fault::Note(words)) => return Err(words),
+                    Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                }
+            }
+            None => self.native_dict(),
+        };
+        match self.special_dyad(&Action::At, &dictionary, &Value::text(name)) {
+            Ok(held) => Ok(Some(held.contents())),
+            Err(words) => {
+                let fled = match self.carried.take() {
+                    Some(fled) => fled,
+                    None => match self.as_fault(&words) {
+                        Some(value) => Fault::Thrown(value),
+                        None => Fault::Note(words),
+                    },
+                };
+                if self.fault_names(&fled, "KeyError") { return Ok(None); }
+                self.carried = Some(fled);
+                Err(self.special_fault())
+            }
+        }
     }
 
     /// The module the unbound names stand in, read in the first time it
