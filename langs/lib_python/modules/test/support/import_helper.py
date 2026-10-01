@@ -11,12 +11,13 @@ def import_module(name, deprecated=False, required_on=None):
                 raise
         raise unittest.SkipTest(str(msg))
 
-# This run keeps no module cache to isolate and carries no accelerator
-# modules to block, so a fresh import is the import an import statement
-# makes. As the reference does, None is handed back for a module that
-# cannot be imported at all.
+# Requested dependencies must exist before the target is imported. As in
+# CPython, an unavailable accelerator makes a fresh import return None.
+# Blocking an absent accelerator needs no change to the module cache.
 def import_fresh_module(name, fresh=(), blocked=(), deprecated=False, usefrozen=False):
     try:
+        for dependency in fresh:
+            __load_module(dependency)
         return __load_module(name)
     except ImportError:
         return None

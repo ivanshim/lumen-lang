@@ -1,15 +1,18 @@
 #!/bin/bash
 
 # lumen-lang test script: runs every example on the selected kernels, and
-# requires every kernel to print what the first one (stream35) printed.
+# compares successful output from stack8 and microcode7 for Python.
+# Python uses ext.* arithmetic labels ignored by the four reference kernels.
+# Other languages retain all six kernels, compared with stream35.
 # Usage: ./test.sh [--lang all|<language>] [--kernel stream35|microcode11|microcode4|microcode7|stack5|stack8] [--omit file1 file2 ...]
 #        ./test.sh <file>
 # Languages built into the binary are picked by file extension; languages in
 # langs/extras/ are passed to the binary as `--lang <definition file>`, so
 # every run of the suite exercises reading a definition at run time.
 # If --lang is not specified, tests Lumen. If --kernel is not specified,
-# tests every kernel, each program on stream35 first and the others must
-# print the same. TEST_QUIET=1 prints program output only for failures.
+# tests Python on the two full kernels; other languages run on all six.
+# The selected kernels must exit successfully and print the same output.
+# TEST_QUIET=1 prints program output only for failures.
 # The release binary is used: the debug one is ten times slower on the
 # heavy programs.
 
@@ -37,7 +40,7 @@ show_help() {
     echo "  ./test.sh --help                             Show this help message"
     echo "  ./test.sh <filename>                         Test single file (searches the example directories)"
     echo "  ./test.sh --lang <language>                  Test all files of one language, or all"
-    echo "  ./test.sh --kernel <kernel>                  Test with one kernel only (default: all five)"
+    echo "  ./test.sh --kernel <kernel>                  Test with one kernel only (default: two for Python, six otherwise)"
     echo "  ./test.sh --omit <file1> [file2] ...         Exclude specific files"
     echo ""
     echo -e "${BLUE}ARGUMENTS:${NC}"
@@ -165,7 +168,21 @@ run_test() {
     fi
 }
 
-if [ -z "$KERNEL_FILTER" ]; then test_kernels=(stream35 microcode11 microcode4 microcode7 stack5 stack8); else test_kernels=("$KERNEL_FILTER"); fi
+select_kernels() {
+    if [ "$1" = python ]; then
+        test_kernels=(stack8 microcode7)
+        if [ -n "$KERNEL_FILTER" ]; then
+            case "$KERNEL_FILTER" in
+                stack8|microcode7) test_kernels=("$KERNEL_FILTER") ;;
+                *) echo "Python examples require stack8 or microcode7: reference kernels ignore ext.* labels." >&2; exit 1 ;;
+            esac
+        fi
+    elif [ -z "$KERNEL_FILTER" ]; then
+        test_kernels=(stream35 microcode11 microcode4 microcode7 stack5 stack8)
+    else
+        test_kernels=("$KERNEL_FILTER")
+    fi
+}
 
 if [ -n "$SINGLE_FILE" ]; then
     title="Single File Test: $(basename "$SINGLE_FILE")"
@@ -186,12 +203,14 @@ echo ""
 
 if [ -n "$SINGLE_FILE" ]; then
     echo -e "${YELLOW}Testing: $(basename "$SINGLE_FILE")${NC}"
+    select_kernels "$language"
     first=1
     for kernel in "${test_kernels[@]}"; do run_test "$SINGLE_FILE" "$kernel" "$language" "$first"; first=0; done
     echo ""
     TESTED_LANGUAGES+=("$language")
 else
     for lang in "${test_languages[@]}"; do
+        select_kernels "$lang"
         echo -e "${YELLOW}${DISPLAY[$lang]} Examples:${NC}"
         # Every file of the language's extension under its directory, subdirectories included.
         while IFS= read -r file; do
@@ -209,6 +228,7 @@ echo "  Test Summary (By Language, Then Kernel)"
 echo "=========================================="
 echo ""
 for lang in "${TESTED_LANGUAGES[@]}"; do
+    select_kernels "$lang"
     echo -e "${BLUE}${DISPLAY[$lang]}:${NC}"
     for kernel in "${test_kernels[@]}"; do
         passed=${RESULTS["${lang}:${kernel}:passed"]}; failed=${RESULTS["${lang}:${kernel}:failed"]}; timeout=${RESULTS["${lang}:${kernel}:timeout"]}

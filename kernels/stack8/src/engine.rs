@@ -33,6 +33,7 @@ impl Drop for ByteExport {
 use std::collections::HashMap;
 use std::cell::RefCell;
 use num_bigint::BigInt;
+use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
 use num_traits::{ToPrimitive, Signed, Zero};
@@ -61,6 +62,33 @@ struct Beside {
     in_pipe: Option<std::process::ChildStdin>,
     out_pipe: Option<std::process::ChildStdout>,
     err_pipe: Option<std::process::ChildStderr>,
+}
+
+/// One bit for each signal number waiting to be taken up: the host's
+/// own handler for an arrived interrupt sets its bit here, and a
+/// program asking for a signal to be raised sets the same bit. The
+/// engine gathers the bits where one statement gives way to the next,
+/// never in the middle of one.
+static SIGNALS_PENDING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether the host has been asked to note interrupts for this
+/// process: it is asked once, the first time a language that takes
+/// signals up between statements runs.
+static HOST_WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn signal_arrived(number: i32) {
+    if (1..=64).contains(&number) {
+        SIGNALS_PENDING.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Ask the host to note an interrupt's arrival: the note is only a bit
+/// left pending; the run takes it up itself where a raised value is
+/// free to rise and be caught.
+fn watch_host_signals() {
+    if HOST_WATCHING.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
+    unsafe extern "C" { fn signal(number: i32, handler: extern "C" fn(i32)) -> usize; }
+    unsafe { signal(2, signal_arrived) };
 }
 
 pub struct Engine<'a> {
@@ -222,6 +250,12 @@ pub struct Engine<'a> {
     /// its own, so a throw or an ending is kept here and raised again
     /// where the reading stood.
     carried: Option<Fault>,
+    /// The handler each signal number was given to answer with: a
+    /// callable of the program's own, the mark for paying the signal no
+    /// mind, or the mark for the signal's own way. A number never given
+    /// one keeps its own way. Only a language taking signals up between
+    /// statements ever writes here.
+    signal_handlers: HashMap<i64, Value>,
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
@@ -452,7 +486,7 @@ impl<'a> Engine<'a> {
             classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
             }));
         }
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
@@ -1115,6 +1149,9 @@ impl<'a> Engine<'a> {
 
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         crate::faint::name_last_word(lang.finaliser.clone());
+        if lang.signals_between_statements {
+            watch_host_signals();
+        }
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         let mut world: Vec<Value> = idents.iter().map(|word| if lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
@@ -1124,7 +1161,7 @@ impl<'a> Engine<'a> {
             if let (Some(slot), Some(name)) = (find(&lang.fault_value), &lang.fault_value) {
                 world[slot] = Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                     name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                 }));
             }
         }
@@ -1175,6 +1212,7 @@ impl<'a> Engine<'a> {
             things_made: RefCell::new(Vec::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
+            signal_handlers: HashMap::new(),
             absent_member: None,
             absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
@@ -1488,23 +1526,40 @@ impl<'a> Engine<'a> {
     /// order the objects were made, each by the method its class names
     /// for it. An object made by one of those is let go in its turn.
     pub fn let_things_go(&mut self) {
-        let Some(named) = self.lang.destructor.clone() else { return };
-        let mut at = 0;
-        loop {
-            let standing = {
-                let made = self.things_made.borrow();
-                match made.get(at) {
-                    Some(loosely) => loosely.upgrade(),
-                    None => break,
-                }
-            };
-            at += 1;
-            let Some(thing) = standing else { continue };
-            let Some(method) = thing.class_now().method(&named).cloned() else { continue };
-            if !crate::faint::first_words(&thing) { continue; }
-            let _ = self.invoke(&method, vec![Value::Object(thing)]);
+        if let Some(named) = self.lang.destructor.clone().as_deref() {
+            // The words an object says as it goes: the destructor the
+            // language names outright. An object made while another is
+            // being let go is let go in its own turn.
+            let mut at = 0;
+            loop {
+                let standing = {
+                    let made = self.things_made.borrow();
+                    match made.get(at) {
+                        Some(loosely) => loosely.upgrade(),
+                        None => break,
+                    }
+                };
+                at += 1;
+                let Some(thing) = standing else { continue };
+                let Some(method) = thing.class_now().method(named).cloned() else { continue };
+                if !crate::faint::first_words(&thing) { continue; }
+                let _ = self.invoke(&method, vec![Value::Object(thing)]);
+            }
+            self.things_made.borrow_mut().clear();
+            return;
         }
+        // A language with no destructor lets its finaliser-capable
+        // objects say their last words once, from a snapshot of what
+        // stood when the run ended: an object a finaliser makes is not
+        // swept up in its own turn, so the shutdown cannot grow without
+        // end while a finaliser holds on to new allocations.
+        let snapshot: Vec<Rc<Instance>> = self.things_made.borrow().iter().filter_map(|held| held.upgrade()).collect();
         self.things_made.borrow_mut().clear();
+        for thing in snapshot {
+            let Some(words) = crate::faint::last_word_of(&thing.class_now()) else { continue };
+            if !crate::faint::first_words(&thing) { continue; }
+            self.speak_ignoring(words, vec![Value::Object(thing)], "deallocator");
+        }
     }
 
     /// What is still being kept when the run ends is let go, outermost
@@ -1988,7 +2043,7 @@ impl<'a> Engine<'a> {
             if let Some(Value::Class(class)) = self.native_exceptions.get(&self.lang.special_stop[0]).cloned() {
                 return Some(self.exception_instance(class, vec![], Value::Null));
             }
-            let class = Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) };
+            let class = Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.made += 1;
             return Some(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: Rc::new(class), fields: RefCell::new(vec![]), mark: self.made })));
         }
@@ -3193,6 +3248,27 @@ impl<'a> Engine<'a> {
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
         let outcome = self.run_instrs(program, &mut frame);
+        // A signal still left pending as the outermost body's own last
+        // statement is done is taken up here, while the body's frame
+        // and line still stand: what it raises is the run's ending,
+        // exactly as though the last statement had raised it.
+        let outcome = match outcome {
+            Ok(()) if program.body_of_all && self.lang.signals_between_statements => match self.deliver_signals() {
+                Ok(()) => Ok(()),
+                Err(fault) => {
+                    let fault = match fault {
+                        Fault::Note(words) => match self.as_fault(&words) {
+                            Some(value) => Fault::Thrown(value),
+                            None => Fault::Note(words),
+                        },
+                        other => other,
+                    };
+                    if let Fault::Thrown(value) = &fault { self.record_trace(value, program); }
+                    Err(fault)
+                }
+            },
+            other => other,
+        };
         self.trace_frame = caller_frame;
         self.inline_comp = previous_comp;
         self.refresh_observed_frame();
@@ -3344,6 +3420,22 @@ impl<'a> Engine<'a> {
                 if matches!(ran, Ok(Passage::Suspended)) {
                     return self.gave_way(suspended, at, depth, active, Phase::Body);
                 }
+                // The body ran to its end with its guard still up: a
+                // signal still pending is taken up now, exactly as
+                // though the body's last statement had raised it, so
+                // the guard's own arms and leaving see it. Nothing of
+                // the kind stands on a call's way back, so one raised
+                // inside an entering method is deferred to the body's
+                // own edge, as the entering method means it to be.
+                let ran = match ran {
+                    Ok(Passage::Along(mark)) if mark == plan.body.1 && self.lang.signals_between_statements => {
+                        match self.deliver_signals() {
+                            Ok(()) => Ok(Passage::Along(mark)),
+                            Err(fault) => Err(fault),
+                        }
+                    }
+                    other => other,
+                };
                 let ending = match ran {
                     Err(Fault::Note(words)) => match self.carried.take() {
                         Some(fled) => Err(fled),
@@ -3749,6 +3841,10 @@ impl<'a> Engine<'a> {
 
     pub(super) fn iterator(&mut self, source: Value) -> Flow<Value> {
         if matches!(source, Value::Generator(_)) { return Ok(source); }
+        if self.lang.python_numbers {
+            let value = source.contents();
+            if matches!(value, Value::Counted(_)) { return Ok(self.core_iterator(&value)?); }
+        }
         let items = self.comprehension_items(&source)?;
         Ok(self.watched_walk(&source, items))
     }
@@ -4044,7 +4140,7 @@ impl<'a> Engine<'a> {
             None => {
                 let class = Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: None, answers: Vec::new(), fields: Vec::new(),
-                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
                 self.frame_class = Some(class.clone());
                 class
             }
@@ -4222,6 +4318,16 @@ impl<'a> Engine<'a> {
                 }
                 if let Some(over) = self.out_of_room() {
                     return Err(over);
+                }
+                // A cycle whose body holds no statement of its own — a
+                // comprehension's walk, say — meets no statement's
+                // edge, so a signal left pending is looked for here,
+                // as seldom as the clock is.
+                if self.lang.signals_between_statements && SIGNALS_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                    if let Err(fault) = self.deliver_signals() {
+                        pc = self.offer_signal_fault(fault, &mut guards)?;
+                        continue;
+                    }
                 }
             }
             match &instrs[pc] {
@@ -4504,6 +4610,16 @@ impl<'a> Engine<'a> {
                     // business.
                     self.under = None;
                     self.entering = None;
+                    // A statement's edge is also where a signal left
+                    // pending is taken up; what it raises is offered to
+                    // whoever watches, exactly as though the statement
+                    // just reached had raised it itself.
+                    if self.lang.signals_between_statements {
+                        if let Err(fault) = self.deliver_signals() {
+                            pc = self.offer_signal_fault(fault, &mut guards)?;
+                            continue;
+                        }
+                    }
                 }
                 Instr::Mute(quiet) => {
                     let deep = self.muted.get();
@@ -4568,8 +4684,13 @@ impl<'a> Engine<'a> {
                             Action::Ge => Some(Value::Flag(x >= y)),
                             Action::Eq => Some(Value::Flag(x == y)),
                             Action::Ne => Some(Value::Flag(x != y)),
-                            Action::Mod if *y != 0 => x.checked_rem(*y).map(Value::Small),
-                            Action::IntDiv if *y != 0 => x.checked_div(*y).map(Value::Small),
+                            Action::Mod if *y != 0 => x.checked_rem(*y).and_then(|r| {
+                                if self.lang.python_numbers && r != 0 && (r < 0) != (*y < 0) { r.checked_add(*y) } else { Some(r) }
+                            }).map(Value::Small),
+                            Action::IntDiv if *y != 0 => x.checked_div(*y).and_then(|q| {
+                                let r = x.checked_rem(*y)?;
+                                if self.lang.python_numbers && r != 0 && (r < 0) != (*y < 0) { q.checked_sub(1) } else { Some(q) }
+                            }).map(Value::Small),
                             _ => None,
                         },
                         _ => None,
@@ -5214,6 +5335,20 @@ impl<'a> Engine<'a> {
             if let Some(view) = raw { return Ok(Some(Value::View(Rc::new((view.0.clone(), "mapping".to_string()))))); }
         }
         let held = value.contents();
+        if let Value::Native(op, _) = &held {
+            if Self::kind_builtin(op) && ["bases", "mro", "order"].iter().any(|key| name == self.class_word(key)) {
+                let root = Value::Class(self.root_class());
+                let mut parents = Vec::new();
+                if *op == Builtin::Bool { if let Some(integer) = self.spelled_kind("int") { parents.push(integer); } }
+                if parents.is_empty() { parents.push(root.clone()); }
+                if name == self.class_word("bases") { return Ok(Some(Value::tuple(vec![parents[0].clone()]))); }
+                let mut line = vec![held.clone()];
+                if *op == Builtin::Bool { line.extend(parents); }
+                line.push(root);
+                let result = Value::tuple(line);
+                return Ok(Some(if name == self.class_word("order") { Self::adapter(0, vec![result]) } else { result }));
+            }
+        }
         if name == self.class_word("namespace") {
             let kind = match &held {
                 Value::Native(op, spelling) if Self::kind_builtin(op) => Some(spelling.clone()),
@@ -5228,6 +5363,9 @@ impl<'a> Engine<'a> {
                 let map=Value::Map(Rc::new(members.into()));
                 return Ok(Some(Value::View(Rc::new((map,"mapping".to_string())))));
             }
+        }
+        if name == self.class_word("kind") && !name.is_empty() && matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Text(_) | Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Complex(_) | Value::Bytes(..) | Value::Null | Value::Set(_)) {
+            return Ok(Some(self.named_kind(&held)));
         }
         // Each of the two singletons a program can name is the one
         // value of its kind, and answers for the very class the kind
@@ -5579,9 +5717,13 @@ impl<'a> Engine<'a> {
         // `__getitem__` from how far its last place still stands
         // above nought.
         if place == 78 {
-            let Value::Cursor(cell) = receiver else { return Ok(Value::Small(0)); };
+            let Value::Cursor(cell) = receiver.contents() else { return Ok(Value::Small(0)); };
             let indexed_back = { let held = cell.borrow(); match &held.source {
                 CursorSource::Items(items, at) => return Ok(Value::Small(items.len().saturating_sub(*at) as i64)),
+                CursorSource::Living(values, at) => {
+                    let size = match &*values.borrow() { Value::Array(row) => row.len(), _ => 0 };
+                    return Ok(Value::Small(if held.finished { 0 } else { size.saturating_sub(*at) } as i64));
+                }
                 CursorSource::Counted(row, at) => {
                     let left = row.length() - at;
                     return Ok(Value::of_big(if left > BigInt::from(0) { left } else { BigInt::from(0) }));
@@ -5932,6 +6074,7 @@ impl<'a> Engine<'a> {
                     }
                     let module = self.class_word("main");
                     Ok(if object.class_now().base.is_none() && object.class_now().name == "object" { "<object object at 0x1>".to_owned() }
+                        else if let Some(title) = object.class_now().python_title() { format!("<{title} object at 0x1>") }
                         else if module.is_empty() { format!("<{} object>", object.class_now().name) }
                         else { format!("<{module}.{} object at 0x1>", object.class_now().name) })
                 }
@@ -6094,10 +6237,11 @@ impl<'a> Engine<'a> {
 
     /// The name a formatting complaint gives a value: the qualified name
     /// of a thing's class, and the core kind of anything else.
-    fn format_kind(&self, value: &Value) -> String {
+    fn format_kind(&self, value: &Value, code: char) -> String {
         match value {
             Value::Object(o) => {
                 let class = o.class_now();
+                if code == 'c' { if let Some(title) = class.python_qualified_title() { return title; } }
                 let qualified = self.class_value(&class, self.class_word("qualified")).and_then(|v| match v {
                     Value::Text(name) if !name.is_empty() => Some(name.to_string()),
                     _ => None,
@@ -7148,7 +7292,11 @@ impl<'a> Engine<'a> {
             // handed over does.
             Builtin::Round if matches!(args.first(), Some(Value::Object(_))) => {
                 let asked: Vec<Value> = if matches!(args.get(1), Some(Value::Null)) { Vec::new() } else { args[1..].to_vec() };
-                match self.special_call(&args[0], 73, asked)? { Some(answer) => answer, None => return Ok(None) }
+                match self.special_call(&args[0], 73, asked)? {
+                    Some(answer) => answer,
+                    None if self.lang.python_numbers => return Err(format!("TypeError: type {} doesn't define __round__ method", Self::shown_kind(&args[0]))),
+                    None => return Ok(None),
+                }
             }
             // Division with remainder asks the left thing, then the right
             // one reflected; power with a modulus likewise, the modulus
@@ -7547,7 +7695,7 @@ impl<'a> Engine<'a> {
     fn fields_entries(o: &crate::value::Instance) -> Vec<(Value, Value)> {
         let fields = o.fields.borrow();
         let mut entries: Vec<(Value, Value)> = fields.iter()
-            .filter(|(key, held)| !key.starts_with('\0') && !matches!(held, Value::Blank))
+            .filter(|(key, held)| !key.starts_with(['\0', '#']) && !matches!(held, Value::Blank))
             .map(|(key, held)| (Value::text(key), held.clone())).collect();
         if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -8368,6 +8516,10 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
+                if self.lang.python_numbers {
+                    let plain = source.contents();
+                    if matches!(plain, Value::Counted(_)) { let walk = self.core_iterator(&plain)?; self.data.push(walk); return Ok(()); }
+                }
                 // A cursor is not gathered here, nor a generator: each
                 // is walked one member at a time, so a loop that breaks
                 // off leaves the rest, and what a body says before a
@@ -8680,7 +8832,7 @@ impl<'a> Engine<'a> {
                     methods: plan.methods.clone(),
                     shared: RefCell::new(take(&plan.shared_names)),
                     constants: take(&plan.constant_names),
-                    weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+                    weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                 }))
             }
             Action::Make => {
@@ -8701,7 +8853,7 @@ impl<'a> Engine<'a> {
                 if self.lang.finaliser.is_some() && crate::faint::last_word_of(&class).is_some() {
                     crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&object)));
                 }
-                if self.lang.destructor.is_some() {
+                if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
                     self.things_made.borrow_mut().push(Rc::downgrade(&object));
                 }
                 let maker = self.lang.constructor.as_deref().and_then(|m| class.method(m)).cloned();
@@ -8817,6 +8969,8 @@ impl<'a> Engine<'a> {
                     Value::Native(op, _) if Self::kind_builtin(op) => name.as_ref() == self.class_word("module")
                         || name.as_ref() == self.class_word("qualified")
                         || (name.as_ref() == "__getformat__" && *op == Builtin::AsReal),
+                    Value::ByteKind(..) => name.as_ref() == self.class_word("module")
+                        || name.as_ref() == self.class_word("qualified"),
                     _ => false,
                 };
                 // A builtin kind also carries the members its own values answer to.
@@ -8899,6 +9053,11 @@ impl<'a> Engine<'a> {
                 // Either bytes kind stands as a value of its own rather
                 // than as a builtin word, so it answers for its name here.
                 Value::ByteKind(mutable, _) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(self.byte_kind_word(mutable)),
+                // The same bytes kind answers for its qualified name and
+                // its module as well, which the builtin kinds hand back
+                // in the class reader.
+                Value::ByteKind(mutable, _) if name.as_ref() == self.class_word("qualified") => Value::text(self.byte_kind_word(mutable)),
+                Value::ByteKind(_, _) if name.as_ref() == self.class_word("module") => Value::text(self.home_module_word()),
                 // The member that fills a template is handed over bound
                 // to the text it was read from, as the other members of
                 // a text are, and fills the template when it is called.
@@ -8916,6 +9075,18 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(o) => {
                     if let Some(value) = self.frame_member(&o, name) { self.data.push(value); return Ok(()); }
+                    // A module whose namespace is a shared dictionary
+                    // (the main program's own globals) reads its
+                    // members through that dictionary, so an attribute
+                    // answers the live global of that name.
+                    if let Some((_, dictionary)) = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").cloned() {
+                        if let Value::Map(entries) = dictionary.contents() {
+                            if let Some((_, value)) = entries.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == name.as_ref())) {
+                                self.data.push(value.clone());
+                                return Ok(());
+                            }
+                        }
+                    }
                     let found = if self.exception_class(&o.class_now()) && self.lang.exception_cause.as_deref() == Some(name.as_ref()) {
                         Some(o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone()).unwrap_or(Value::Null))
                     } else if self.exception_class(&o.class_now()) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
@@ -9396,7 +9567,7 @@ impl<'a> Engine<'a> {
                             lineage: Vec::new(), direct: Vec::new(), outline: None,
                             name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
                             answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
-                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                         });
                         self.made += 1;
                         let fields = if bare { Vec::new() } else { vec![("message".to_string(), message)] };
@@ -10051,20 +10222,25 @@ impl<'a> Engine<'a> {
                     None => {}
                     Some(Value::Flag(flag)) => return Ok(Answer::Whole(Value::Small(i64::from(flag)))),
                     Some(whole @ (Value::Small(_) | Value::Huge(_))) => return Ok(Answer::Whole(whole)),
-                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value))),
+                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value, code))),
                 }
                 if let Some(index) = self.special_index(&thing)? { return Ok(Answer::Whole(index)); }
             } else if matches!(code, 'e' | 'E' | 'f' | 'F' | 'g' | 'G') {
                 match self.special_call(&thing, 39, Vec::new())? {
                     None => {}
                     Some(real @ (Value::Real(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => return Ok(Answer::Whole(real)),
-                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value))),
+                    Some(_) => return Ok(Answer::BadMethod(self.format_kind(value, code))),
                 }
                 if let Some(index) = self.special_index(&thing)? { return Ok(Answer::Whole(index)); }
             } else if let Some(index) = self.special_index(&thing)? {
                 return Ok(Answer::Whole(index));
             }
-            Ok(if let Some(worth) = worth() { Answer::Whole(worth) } else { Answer::Missing(self.format_kind(value)) })
+            Ok(if let Some(worth) = worth() { Answer::Whole(worth) } else if code == 'c' {
+                match &thing {
+                    Value::Object(object) if object.class_now().python_qualified_title().is_some() => Answer::CharacterType(self.format_kind(value, code)),
+                    _ => Answer::Missing(self.format_kind(value, code)),
+                }
+            } else { Answer::Missing(self.format_kind(value, code)) })
         };
         writer.percent(template, arguments, &mut asked, false)
     }
@@ -10744,7 +10920,7 @@ impl<'a> Engine<'a> {
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", self.told(a, &sp), self.told(b, &sp)));
         Ok(match op {
-            Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_else(|| "Matrix multiplication cannot run".into())),
+            Action::Matrix => return Err(if self.lang.matrix_unready.is_some() { self.operands_complaint(&self.sign_of(op), a, b) } else { "Matrix multiplication cannot run".into() }),
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
             Action::Or => Value::Flag(self.truth(a) || self.truth(b)),
             // The one no number answers to comes before nothing and
@@ -11413,6 +11589,29 @@ impl<'a> Engine<'a> {
                     Action::Mod => Operation::Remainder,
                     _ => Operation::Raise,
                 };
+                if self.lang.python_numbers && matches!(op, Action::IntDiv | Action::Mod) {
+                    if let (Some(x), Some(y)) = (arith::Exact::from_value(a), arith::Exact::from_value(b)) {
+                        if matches!(a, Value::Real(_)) || matches!(b, Value::Real(_)) {
+                            let mut dividend = crate::value::as_binary(&x.p, &x.q);
+                            let mut divisor = crate::value::as_binary(&y.p, &y.q);
+                            if dividend == 0.0 && x.below { dividend = -0.0; }
+                            if divisor == 0.0 && y.below { divisor = -0.0; }
+                            let mut rem = dividend % divisor;
+                            let mut div = (dividend - rem) / divisor;
+                            if rem != 0.0 && rem.is_sign_negative() != divisor.is_sign_negative() {
+                                rem += divisor;
+                                div -= 1.0;
+                            } else if rem == 0.0 { rem = 0.0f64.copysign(divisor); }
+                            let mut floor = div.floor();
+                            if div - floor > 0.5 { floor += 1.0; }
+                            if div == 0.0 { floor = 0.0f64.copysign(dividend / divisor); }
+                            return Ok(crate::value::real_of(if matches!(op, Action::Mod) { rem } else { floor }, arith::DEFAULT_PLACES));
+                        }
+                        if x.q == BigInt::from(1) && y.q == BigInt::from(1) && !y.p.is_zero() {
+                            return Ok(Value::of_big(if matches!(op, Action::Mod) { x.p.mod_floor(&y.p) } else { x.p.div_floor(&y.p) }));
+                        }
+                    }
+                }
                 let result = if self.lang.arithmetic_binary { arith::binary_work(calc, a, b) } else { None };
                 match result.or_else(|| arith::calculate(calc, a, b)) {
                     // A language may tell taking the remainder by
@@ -12590,6 +12789,67 @@ impl<'a> Engine<'a> {
         answered
     }
 
+    /// A fault that taking a signal up produced, offered to the
+    /// innermost guard exactly as a raised value is offered: the guard
+    /// takes it and running goes on from the guard's catch; where no
+    /// guard watches, the fault leaves the run altogether.
+    fn offer_signal_fault(&mut self, fault: Fault, guards: &mut Vec<(usize, usize, usize)>) -> Flow<usize> {
+        let fault = match fault {
+            Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
+                Some(made) => Fault::Thrown(made),
+                None => Fault::Note(told),
+            },
+            other => other,
+        };
+        let Fault::Thrown(raised) = fault else { return Err(fault) };
+        let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
+        self.under = None;
+        self.entering = None;
+        self.hushed.set(quiet);
+        self.data.truncate(depth);
+        self.data.push(raised);
+        Ok(catch)
+    }
+
+    /// The signals left pending, taken up now that one statement is
+    /// giving way to the next, the lowest number first. A number paid
+    /// no mind goes by; a number left to its own way rises as an
+    /// interrupt where that way is the interrupt signal's own, and is
+    /// let go otherwise — the reference ends the run outright for
+    /// several of the rest, which is further than this runtime goes. A
+    /// number given a callable runs it with the number and nothing for
+    /// a frame, and whatever that raises is the fault this taking-up
+    /// stands for. Whatever is still to take up when a fault rises
+    /// waits for the next edge instead.
+    fn deliver_signals(&mut self) -> Flow<()> {
+        let pending = SIGNALS_PENDING.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if pending == 0 { return Ok(()); }
+        let mut handled = 0u64;
+        for number in 1..=64u32 {
+            let bit = 1u64 << (number - 1);
+            if pending & bit == 0 { continue; }
+            handled |= bit;
+            let handler = self.signal_handlers.get(&(number as i64)).cloned();
+            let outcome: Flow<()> = match handler {
+                Some(Value::Small(1)) => Ok(()),
+                Some(routine) if !matches!(routine, Value::Small(_)) => {
+                    match self.call_held(routine, vec![Value::Small(number as i64), Value::Null]) {
+                        Ok(_) => Ok(()),
+                        Err(words) => Err(match self.carried.take() { Some(fled) => fled, None => Fault::Note(words) }),
+                    }
+                }
+                _ if number == 2 => Err(Fault::Note("\0KeyboardInterrupt:".to_string())),
+                _ => Ok(()),
+            };
+            if let Err(fault) = outcome {
+                let later = pending & !handled;
+                if later != 0 { SIGNALS_PENDING.fetch_or(later, std::sync::atomic::Ordering::Relaxed); }
+                return Err(fault);
+            }
+        }
+        Ok(())
+    }
+
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         if !self.lang.compile_modes.is_empty() && matches!(builtin, Builtin::RunText | Builtin::Eval | Builtin::ReadyText | Builtin::Summon | Builtin::OuterNames | Builtin::NearNames) {
             return self.text_builtin(builtin, name, items);
@@ -12774,6 +13034,11 @@ impl<'a> Engine<'a> {
                 // An error policy given by itself leaves the encoding to
                 // be the wide one.
                 if args.len() == 1 { args.push(Value::text(&self.byte_codec_name(Self::CODEC_WIDE))); }
+                2
+            } else if builtin == Builtin::Bytes(39) && key == "delete" {
+                // bytes.translate(table, /, delete=b'') keeps the dropped
+                // row after the table, read only by name; the receiver
+                // sits first, so the keyword fills the third place.
                 2
             } else {
                 let words = &self.lang.call_builtin_amiss;
@@ -15162,6 +15427,37 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
+            // The host's signals, one step at a time: give a number
+            // the handler it answers with (0), answering the one it had;
+            // ask which handler a number was given (1); or leave a
+            // number pending (2), to be taken up at the next
+            // statement's edge. A number never given a handler keeps
+            // the signal's own way.
+            Builtin::Signal => {
+                if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
+                let step = as_index(&args[0])?;
+                match step {
+                    0 => {
+                        arity(3)?;
+                        let which = as_index(&args[1])? as i64;
+                        self.signal_handlers.insert(which, args[2].clone()).unwrap_or(Value::Null)
+                    }
+                    1 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])? as i64;
+                        self.signal_handlers.get(&which).cloned().unwrap_or(Value::Null)
+                    }
+                    2 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])?;
+                        if (1..=64).contains(&which) {
+                            SIGNALS_PENDING.fetch_or(1u64 << (which - 1), std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Value::Null
+                    }
+                    _ => return Err(format!("{name}() knows no step {step}")),
+                }
+            }
             // A second interpreter started beside this one, its writing
             // reached through pipes, one step at a time: begin one (0,
             // with the words, the surroundings, and how each of the
@@ -15400,7 +15696,7 @@ impl<'a> Engine<'a> {
                 Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                     name: title.to_string(), base: Some(parent.clone()), answers: Vec::new(),
                     fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                    constants: Vec::new(), shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+                    constants: Vec::new(), shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                 }))
             }
             Builtin::CopyValue => {
@@ -16153,7 +16449,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Class(Rc::new(Class {
                         lineage: Vec::new(), direct: Vec::new(), outline: None, name: word.clone(), base: None,
                         answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                        constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+                        constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                     })));
                 }
                 // A thing is of no kind the core knows, so a language
@@ -17871,7 +18167,7 @@ impl Engine<'_> {
             if matches!(b, Builtin::SetAttr | Builtin::DelAttr) && matches!(args.first(), Some(Value::Generator(_))) {
                 return self.class_work(if b == Builtin::SetAttr { 4 } else { 5 }, args).map_err(|fault| fault.told(&self.wording()));
             }
-            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) {
+            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || (matches!(b, Builtin::SetAttr | Builtin::DelAttr) && self.stands_for_kind(v))) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
                 if let Some(work) = work {
                     return match self.class_work(work, args) {
@@ -18312,33 +18608,32 @@ impl Engine<'_> {
                     let (q,r) = a.as_big()?.div_mod_floor(&divisor);
                     Value::tuple(vec![Value::of_big(q),Value::of_big(r)])
                 } else {
-                    let (p,q) = arith::parts(&a).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    if let Value::Real(real) = &z {
-                        if real.q.is_zero() {
-                            let x = crate::value::as_binary(&p, &q);
-                            let y = crate::value::as_binary(&real.p, &real.q);
-                            if y.is_infinite() && x.is_finite() {
-                                let opposite = x != 0.0 && x.is_sign_negative() != y.is_sign_negative();
-                                let quotient = if opposite { -1.0 } else { 0.0 };
-                                let remainder = if opposite { y } else { x };
-                                return Ok(Value::tuple(vec![
-                                    crate::value::real_of(quotient, arith::DEFAULT_PLACES),
-                                    crate::value::real_of(remainder, arith::DEFAULT_PLACES),
-                                ]));
-                            }
-                        }
+                    let dividend = arith::Exact::from_value(&a).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    let divisor = arith::Exact::from_value(&z).ok_or_else(|| self.core_fault("core.unready", name))?;
+                    let mut x = crate::value::as_binary(&dividend.p, &dividend.q);
+                    let mut y = crate::value::as_binary(&divisor.p, &divisor.q);
+                    if self.lang.python_numbers && x == 0.0 && dividend.below { x = -0.0; }
+                    if self.lang.python_numbers && y == 0.0 && divisor.below { y = -0.0; }
+                    if y.is_infinite() && x.is_finite() && (!self.lang.python_numbers || x != 0.0) {
+                        let opposite = x != 0.0 && x.is_sign_negative() != y.is_sign_negative();
+                        let quotient = if opposite { -1.0 } else { 0.0 };
+                        let remainder = if opposite { y } else { x };
+                        return Ok(Value::tuple(vec![
+                            crate::value::real_of(quotient, arith::DEFAULT_PLACES),
+                            crate::value::real_of(remainder, arith::DEFAULT_PLACES),
+                        ]));
                     }
-                    let (r,s) = arith::parts(&z).ok_or_else(|| self.core_fault("core.unready", name))?;
-                    let (x,y) = (crate::value::as_binary(&p,&q),crate::value::as_binary(&r,&s));
                     if y == 0.0 { return Err("ZeroDivisionError: division by zero".into()); }
                     let mut rem = x % y;
-                    let mut div = (x-rem)/y;
-                    if rem != 0.0 && rem.is_sign_negative() != y.is_sign_negative() { rem += y; div -= 1.0; }
-                    if rem == 0.0 { rem = 0.0f64.copysign(y); }
+                    let mut div = (x - rem) / y;
+                    if rem != 0.0 && rem.is_sign_negative() != y.is_sign_negative() {
+                        rem += y;
+                        div -= 1.0;
+                    } else if rem == 0.0 { rem = 0.0f64.copysign(y); }
                     let mut floor = div.floor();
                     if div - floor > 0.5 { floor += 1.0; }
-                    if div == 0.0 { floor = 0.0f64.copysign(x/y); }
-                    Value::tuple(vec![crate::value::real_of(floor,arith::DEFAULT_PLACES), crate::value::real_of(rem,arith::DEFAULT_PLACES)])
+                    if div == 0.0 { floor = 0.0f64.copysign(x / y); }
+                    Value::tuple(vec![crate::value::real_of(floor, arith::DEFAULT_PLACES), crate::value::real_of(rem, arith::DEFAULT_PLACES)])
                 }
             }
             Builtin::Power => {
@@ -18391,8 +18686,15 @@ impl Engine<'_> {
                     if let Some(n) = &ndigits_big {
                         if *n > BigInt::from(323) { return Ok(args[0].clone()); }
                         if *n < BigInt::from(-308) {
-                            return Ok(crate::value::real_of(if f.p.is_negative() { -0.0 } else { 0.0 }, arith::DEFAULT_PLACES));
+                            return Ok(crate::value::real_of(if f.p.is_negative() || (self.lang.python_numbers && f.below) { -0.0 } else { 0.0 }, arith::DEFAULT_PLACES));
                         }
+                    }
+                }
+                if self.lang.python_numbers && matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    if let Some(n) = &ndigits_big {
+                        if n >= &BigInt::from(0) { return Ok(Value::of_big(args[0].as_big()?)); }
+                        let width = args[0].as_big()?.abs().to_str_radix(10).len();
+                        if -n > BigInt::from(width) { return Ok(Value::Small(0)); }
                     }
                 }
                 let digits = match &ndigits_big { None => 0, Some(n) => n.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
@@ -18420,13 +18722,13 @@ impl Engine<'_> {
                     let scale = BigInt::from(10).pow(places);
                     let (top, bottom) = if digits < 0 { (p.abs(), &q * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32)) } else { (p.abs() * &scale, q.clone()) };
                     let (mut whole, remainder) = top.div_rem(&bottom);
-                    if remainder * 2 >= bottom { whole += 1; }
+                    if &remainder * 2 > bottom || (&remainder * 2 == bottom && (!self.lang.python_numbers || whole.is_odd())) { whole += 1; }
                     if p.is_negative() { whole = -whole; }
                     if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { return Ok(Value::of_big(whole)); }
                     let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
                     let result = crate::value::as_binary(&above, &beneath);
                     if result.is_infinite() { return Err("OverflowError: rounded value too large to represent".to_string()); }
-                    return Ok(crate::value::real_of(if result == 0.0 && p.is_negative() { -0.0 } else { result }, arith::DEFAULT_PLACES));
+                    return Ok(crate::value::real_of(if result == 0.0 && (p.is_negative() || (self.lang.python_numbers && matches!(&x, Value::Real(real) if real.below))) { -0.0 } else { result }, arith::DEFAULT_PLACES));
                 }
                 // Keep the library's scale, signed half, and truncating quotient.
                 let scale = Value::of_big(BigInt::from(10).pow(places));
@@ -18604,7 +18906,7 @@ impl Engine<'_> {
         }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
-            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) }),
+            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
             fields: RefCell::new(fields), mark: self.made,
         });
         let module = Value::Object(object);
@@ -18992,6 +19294,26 @@ impl Engine<'_> {
         book
     }
 
+    /// The main program's own module, registered under the name the
+    /// language gives it so that `sys.modules[__name__]` answers with a
+    /// real module whose `__dict__` is the very dictionary `globals()`
+    /// answers with. A language with no such name, or no cache of
+    /// modules, is left alone. The module and the book are made here,
+    /// before the program runs, sharing the selfsame cells the program
+    /// has been writing through all along.
+    pub fn register_main_module(&mut self) {
+        let main = self.class_word("main").to_string();
+        if main.is_empty() { return; }
+        let book = self.outer_book_made();
+        self.made += 1;
+        let object = Rc::new(Instance {replacement_class: RefCell::new(None),
+            class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: main.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false) }),
+            fields: RefCell::new(vec![("\0namespace".to_string(), Value::Bond(book))]), mark: self.made,
+        });
+        self.modules.insert(main, Value::Object(object));
+        self.refresh_module_cache();
+    }
+
     /// The dictionary standing for the names where the run is: the
     /// text book being run, else the outermost one. Asked for the outer
     /// names, a text read into two dictionaries answers with its outer.
@@ -19051,7 +19373,7 @@ impl Engine<'_> {
         if let Some(class) = &self.code_class { return class.clone(); }
         let class = Rc::new(Class {
             direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.compile_kind.clone().unwrap_or_default(),
-            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
+            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
         });
         self.code_class = Some(class.clone());
         class

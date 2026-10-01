@@ -2333,3 +2333,24 @@ MathTests and StrTest classes now finish inside AWS Lambda's 870-second limit (7
 longer need whole-file runs on the build machine.
 
 Merged, the fifty files still count 2620 on both kernels.
+
+### 1aw. Batch 20u merged as #528; batch 20v: Python arithmetic and the first standard-library tests
+
+Batch 20v folds six reviewed branches, integrated by a GPT-6.1 Sol worker. fix/python-floor-final (GPT-6.1 Sol) gives
+Python its own floor division, modulo sign and round-half-even behind Python labels: binop, builtin, float, fractions,
+long, math, pow and range gain 14 passes between them. fix/class-doc-name (GPT-6.1 Sol) adds two builtin passes from
+class metadata lookup; fix/startup-cleanup (DeepSeek V4 Pro) one from orderly interpreter shutdown;
+fix/with-signals-inferencenet (Kimi K3) one test_with pass from signal delivery inside with-blocks.
+
+The other two start the deployability track: CPython 3.14's own test files added byte for byte from commit
+3b564385e4c9, with the library they test. fix/stdlib-functools (GPT-6.1 Sol) adds test_functools and test_operator and
+the unchanged test.support files they import; fix/stdlib-text (DeepSeek V4 Pro) adds test_textwrap, test_fnmatch and
+test_shlex. Measured on both kernels: test_functools 152/340, test_operator 49/110, test_textwrap 68/68, test_fnmatch
+24/24, test_shlex 30/46.
+
+The Lambda checker now splits test_long by class and the slowest classes by method, finding inherited test methods with
+Python's own parser (a regex had dropped 45 StrTest methods). The merged full check completes every file on Lambda
+except one MathTests part past the 870-second limit on both kernels, whose 83/88 was counted whole on the build
+machine. No pass is lost anywhere; 1180 scratch programs agree; every gate passes.
+
+Merged, the fifty-five files count 2961 of 3390 on both kernels (2620 of 2802 on fifty files before).

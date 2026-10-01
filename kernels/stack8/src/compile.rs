@@ -1993,6 +1993,17 @@ impl<'a> Compiler<'a> {
         if let Some(issue) = self.python_type_scope_problem() { return Err(issue); }
         let began = self.pos;
         self.note_syntax_warnings(began);
+        // A language whose run takes signals up between statements gives
+        // every statement a mark of its own, even one standing on the
+        // same line as the statement before it: the mark is where the
+        // run looks. The library's own statements go unmarked, as they
+        // do for a complaint's line, and the statement reader marks none
+        // of this one's again.
+        if self.lang.signals_between_statements && self.look().row as u32 > self.before {
+            let row = self.look().row as u32 - self.before;
+            self.piece().line = row;
+            self.put(Instr::Line(row));
+        }
         self.stmt_read()?;
         self.stmt_closed(began)
     }
@@ -8932,7 +8943,7 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.lexeme) && !lang.exceptions.contains(&tok.lexeme) {
             self.take();
-            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) };
+            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
@@ -10286,6 +10297,8 @@ impl<'a> Compiler<'a> {
                     self.discard();
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
                     self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                } else if native.is_none() && call.is_none() && lang.member_amiss.is_some() {
+                    self.act(Action::Grab(Rc::from(named.as_str())), 1);
                 } else if native.is_none() && lang.member_amiss.is_some() {
                     // The receiver's kind answers to no such name, and a
                     // definition wording that complaint has no pipe to

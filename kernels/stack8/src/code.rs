@@ -624,6 +624,13 @@ pub enum Builtin {
     /// this may run a second interpreter beside itself and read its
     /// writing back.
     Subprocess,
+    /// The host's own signals, one word told which step it is on
+    /// (ext.builtin.signal): give a number the handler it answers with,
+    /// ask which handler a number was given, or leave a number pending
+    /// so the run takes it up where one statement gives way to the
+    /// next. Only a language spelling this may have signals taken up
+    /// between its statements at all.
+    Signal,
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,

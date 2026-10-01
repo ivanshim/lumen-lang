@@ -29,6 +29,8 @@ type Answer = Result<String, String>;
 pub enum NumberAnswer {
     Whole(Value),
     Missing(String),
+    /// A known character-format type label, including a valid empty label.
+    CharacterType(String),
     BadMethod(String),
 }
 
@@ -573,6 +575,11 @@ impl Layout<'_> {
                         _ => match asked.value_numbered(item, conversion)? {
                             NumberAnswer::Whole(whole) => self.character(&whole, of_bytes)
                                 .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
+                            NumberAnswer::CharacterType(name) => {
+                                let required = if of_bytes { "an integer in range(256) or a single byte" }
+                                    else { "an integer or a unicode character" };
+                                return Err(self.complain("ext.op.rem.format.character", &[&location, required, &name]));
+                            },
                             NumberAnswer::Missing(name) | NumberAnswer::BadMethod(name) => {
                                 let expected = if of_bytes { "an integer in range(256) or a single byte" }
                                     else { "an integer or a unicode character" };
@@ -614,6 +621,7 @@ impl Layout<'_> {
                                 let named = if name.is_empty() { item.kind_word() } else { name };
                                 return Err(self.complain(key, &[&location, &conversion.to_string(), &named]));
                             }
+                            NumberAnswer::CharacterType(_) => unreachable!(),
                         }
                     }
                     if accepts_real {

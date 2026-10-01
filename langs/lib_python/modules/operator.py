@@ -1,76 +1,102 @@
-# These routines ask the ordinary operators to do their own work.
-def add(a, b):
-    return a + b
+# Source: CPython 3b564385e4c9, Lib/operator.py; PSF License.
+"""
+Operator Interface
 
-def sub(a, b):
-    return a - b
+This module exports a set of functions corresponding to the intrinsic
+operators of Python.  For example, operator.add(x, y) is equivalent
+to the expression x+y.  The function names are those used for special
+methods; variants without leading and trailing '__' are also provided
+for convenience.
 
-def mul(a, b):
-    return a * b
+This is the pure Python implementation of the module.
+"""
 
-def truediv(a, b):
-    return a / b
+__all__ = ['abs', 'add', 'and_', 'attrgetter', 'call', 'concat', 'contains', 'countOf',
+           'delitem', 'eq', 'floordiv', 'ge', 'getitem', 'gt', 'iadd', 'iand',
+           'iconcat', 'ifloordiv', 'ilshift', 'imatmul', 'imod', 'imul',
+           'index', 'indexOf', 'inv', 'invert', 'ior', 'ipow', 'irshift',
+           'is_', 'is_none', 'is_not', 'is_not_none', 'isub', 'itemgetter', 'itruediv',
+           'ixor', 'le', 'length_hint', 'lshift', 'lt', 'matmul', 'methodcaller', 'mod',
+           'mul', 'ne', 'neg', 'not_', 'or_', 'pos', 'pow', 'rshift',
+           'setitem', 'sub', 'truediv', 'truth', 'xor']
 
-def floordiv(a, b):
-    quotient = a // b
-    if (b > 0 and quotient * b > a) or (b < 0 and quotient * b < a):
-        quotient -= 1
-    return quotient
+from builtins import abs as _abs
 
-def mod(a, b):
-    if isinstance(a, (str, float, complex)) or isinstance(b, (float, complex)):
-        return a % b
-    return a - floordiv(a, b) * b
 
-def pow(a, b):
-    return a ** b
-
-def neg(a):
-    return -a
-
-def pos(a):
-    return +a
-
-def abs(a):
-    if a < 0:
-        return -a
-    return a
-
-def eq(a, b):
-    return a == b
-
-def ne(a, b):
-    return a != b
+# Comparison Operations *******************************************************#
 
 def lt(a, b):
+    "Same as a < b."
     return a < b
 
 def le(a, b):
+    "Same as a <= b."
     return a <= b
 
-def gt(a, b):
-    return a > b
+def eq(a, b):
+    "Same as a == b."
+    return a == b
+
+def ne(a, b):
+    "Same as a != b."
+    return a != b
 
 def ge(a, b):
+    "Same as a >= b."
     return a >= b
 
-def is_(a, b):
-    return a is b
+def gt(a, b):
+    "Same as a > b."
+    return a > b
 
-def is_not(a, b):
-    return a is not b
+# Logical Operations **********************************************************#
 
 def not_(a):
+    "Same as not a."
     return not a
 
 def truth(a):
-    return not not a
+    "Return True if a is true, False otherwise."
+    return True if a else False
 
-def contains(a, b):
-    return b in a
+def is_(a, b):
+    "Same as a is b."
+    return a is b
 
-def getitem(a, b):
-    return a[b]
+def is_not(a, b):
+    "Same as a is not b."
+    return a is not b
+
+def is_none(a):
+    "Same as a is None."
+    return a is None
+
+def is_not_none(a):
+    "Same as a is not None."
+    return a is not None
+
+# Mathematical/Bitwise Operations *********************************************#
+
+def abs(a):
+    "Same as abs(a)."
+    return _abs(a)
+
+def add(a, b):
+    "Same as a + b."
+    return a + b
+
+def and_(a, b):
+    "Same as a & b."
+    return a & b
+
+def floordiv(a, b):
+    "Same as a // b."
+    result = a // b
+    # The shared quotient truncates; the Python library supplies floor division.
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        if (b > 0 and result * b > a) or (b < 0 and result * b < a):
+            result -= 1
+    return result
 
 def index(a):
     if isinstance(a, int):
@@ -89,325 +115,388 @@ def index(a):
         raise 'TypeError: __index__ returned non-int (type ' + type(answer).__name__ + ')'
     raise 'TypeError: value cannot be interpreted as an integer'
 
-class _ItemGetter:
-    def __init__(self, names):
-        self.names = names
 
-    def take(self, value):
-        if len(self.names) == 1:
-            return value[self.names[0]]
-        return [value[name] for name in self.names]
-
-def itemgetter(*items):
-    if len(items) == 0:
-        raise 'TypeError: itemgetter needs at least one item'
-    return _ItemGetter(items).take
-
-class _AttrGetter:
-    def __init__(self, names):
-        self.names = names
-
-    def take(self, value):
-        result = []
-        for name in self.names:
-            # A dotted attribute is followed one word at a time.
-            word = ''
-            held = value
-            for ch in list(name):
-                if ch == '.':
-                    held = getattr(held, word)
-                    word = ''
-                else:
-                    word += ch
-            result.append(getattr(held, word))
-        if len(result) == 1:
-            return result[0]
-        return result
-
-def attrgetter(*names):
-    if len(names) == 0:
-        raise 'TypeError: attrgetter needs at least one attribute'
-    for name in names:
-        if type(name) != type(''):
-            raise 'TypeError: attribute names must be strings'
-    return _AttrGetter(names).take
-
-# Bit work can be written with division and remainders, including the
-# sign extension of negative whole numbers.
-def _bits(a, b, operation):
-    a = index(a)
-    b = index(b)
-    result = 0
-    place = 1
-    while a not in (0, -1) or b not in (0, -1):
-        left = a - floordiv(a, 2) * 2
-        right = b - floordiv(b, 2) * 2
-        if operation == 'and':
-            digit = left * right
-        elif operation == 'or':
-            digit = 1 if left + right != 0 else 0
-        else:
-            digit = (left + right) % 2
-        result += digit * place
-        place *= 2
-        a = floordiv(a, 2)
-        b = floordiv(b, 2)
-    negative = (a == -1 and b == -1) if operation == 'and' else (a == -1 or b == -1)
-    if operation == 'xor':
-        negative = a != b
-    if negative:
-        result -= place
-    return result
-
-def and_(a, b):
-    return _bits(a, b, 'and')
-
-def or_(a, b):
-    return _bits(a, b, 'or')
-
-def xor(a, b):
-    return _bits(a, b, 'xor')
-
-def invert(a):
-    return -index(a) - 1
+def inv(a):
+    "Same as ~a."
+    return ~a
+invert = inv
 
 def lshift(a, b):
-    a, b = index(a), index(b)
-    if b < 0:
-        raise 'ValueError: negative shift count'
-    return a * 2 ** b
+    "Same as a << b."
+    return a << b
 
-def rshift(a, b):
-    a, b = index(a), index(b)
-    if b < 0:
-        raise 'ValueError: negative shift count'
-    return floordiv(a, 2 ** b)
+def mod(a, b):
+    "Same as a % b."
+    if isinstance(a, int) and isinstance(b, int):
+        return a - floordiv(a, b) * b
+    return a % b
 
-def concat(a, b):
-    if type(a) == type([]) and type(b) == type([]):
-        return [*a, *b]
-    return a + b
+def mul(a, b):
+    "Same as a * b."
+    return a * b
 
 def matmul(a, b):
-    raise 'NotImplementedError: matrix multiplication is not supported'
+    "Same as a @ b."
+    return a @ b
 
-def countOf(sequence, value):
-    return sum([1 for item in sequence if item == value])
+def neg(a):
+    "Same as -a."
+    return -a
 
-def indexOf(sequence, value):
-    position = 0
-    for item in sequence:
-        if item == value:
-            return position
-        position += 1
-    raise 'ValueError: sequence.index(x): x not in sequence'
+def or_(a, b):
+    "Same as a | b."
+    return a | b
 
-def length_hint(value, default=0):
-    try:
-        return len(value)
-    except TypeError:
-        pass
-    try:
-        hint = value.__length_hint__()
-    except AttributeError:
-        return default
-    if hint is NotImplemented:
-        return default
-    if not isinstance(hint, int):
-        raise TypeError('Length hint must be an integer, not ' + type(hint).__name__)
-    if hint < 0:
-        raise ValueError('__length_hint__() should return >= 0')
-    return hint
+def pos(a):
+    "Same as +a."
+    return +a
 
-def setitem(sequence, key, value):
-    sequence[key] = value
+def pow(a, b):
+    "Same as a ** b."
+    return a ** b
 
-class _MethodCaller:
-    def __init__(self, name, args, kwargs):
-        self.name = name
-        self.args = args
-        self.kwargs = kwargs
+def rshift(a, b):
+    "Same as a >> b."
+    return a >> b
 
-    def call(self, obj):
-        return getattr(obj, self.name)(*self.args, **self.kwargs)
+def sub(a, b):
+    "Same as a - b."
+    return a - b
 
-def methodcaller(name, *args, **kwargs):
-    if type(name) != type(''):
-        raise 'TypeError: method name must be a string'
-    return _MethodCaller(name, args, kwargs).call
+def truediv(a, b):
+    "Same as a / b."
+    return a / b
+
+def xor(a, b):
+    "Same as a ^ b."
+    return a ^ b
+
+# Sequence Operations *********************************************************#
+
+def concat(a, b):
+    "Same as a + b, for a and b sequences."
+    if not hasattr(a, '__getitem__'):
+        msg = "'%s' object can't be concatenated" % type(a).__name__
+        raise TypeError(msg)
+    return a + b
+
+def contains(a, b):
+    "Same as b in a (note reversed operands)."
+    return b in a
+
+def countOf(a, b):
+    "Return the number of items in a which are, or which equal, b."
+    count = 0
+    for i in a:
+        if i is b or i == b:
+            count += 1
+    return count
 
 def delitem(a, b):
+    "Same as del a[b]."
     del a[b]
 
-def is_none(a):
-    return a is None
+def getitem(a, b):
+    "Same as a[b]."
+    return a[b]
 
-def is_not_none(a):
-    return a is not None
+def indexOf(a, b):
+    "Return the first index of b in a."
+    for i, j in enumerate(a):
+        if j is b or j == b:
+            return i
+    else:
+        raise ValueError('sequence.index(x): x not in sequence')
 
-inv = invert
+def setitem(a, b, c):
+    "Same as a[b] = c."
+    a[b] = c
 
-__add__ = add
+def length_hint(obj, default=0):
+    """
+    Return an estimate of the number of items in obj.
+    This is useful for presizing containers when building from an iterable.
 
-__sub__ = sub
+    If the object supports len(), the result will be exact. Otherwise, it may
+    over- or under-estimate by an arbitrary amount. The result will be an
+    integer >= 0.
+    """
+    if not isinstance(default, int):
+        msg = ("'%s' object cannot be interpreted as an integer" %
+               type(default).__name__)
+        raise TypeError(msg)
 
-__mul__ = mul
+    try:
+        return len(obj)
+    except TypeError:
+        pass
 
-__truediv__ = truediv
+    try:
+        hint = type(obj).__length_hint__
+    except AttributeError:
+        return default
 
-__floordiv__ = floordiv
+    try:
+        val = hint(obj)
+    except TypeError:
+        return default
+    if val is NotImplemented:
+        return default
+    if not isinstance(val, int):
+        msg = ('__length_hint__ must be integer, not %s' %
+               type(val).__name__)
+        raise TypeError(msg)
+    if val < 0:
+        msg = '__length_hint__() should return >= 0'
+        raise ValueError(msg)
+    return val
 
-__mod__ = mod
+# Other Operations ************************************************************#
 
-__pow__ = pow
-
-__neg__ = neg
-
-__pos__ = pos
-
-__abs__ = abs
-
-__eq__ = eq
-
-__ne__ = ne
-
-__lt__ = lt
-
-__le__ = le
-
-__gt__ = gt
-
-__ge__ = ge
-
-__contains__ = contains
-
-__getitem__ = getitem
-
-__index__ = index
-
-__and__ = and_
-
-__or__ = or_
-
-__xor__ = xor
-
-__invert__ = invert
-
-__lshift__ = lshift
-
-__rshift__ = rshift
-
-__concat__ = concat
-
-__matmul__ = matmul
-
-__setitem__ = setitem
-
-__delitem__ = delitem
-
-__not__ = not_
-
-def iadd(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return add(a, b)
-
-__iadd__ = iadd
-
-def isub(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return sub(a, b)
-
-__isub__ = isub
-
-def imul(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return mul(a, b)
-
-__imul__ = imul
-
-def itruediv(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return truediv(a, b)
-
-__itruediv__ = itruediv
-
-def ifloordiv(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return floordiv(a, b)
-
-__ifloordiv__ = ifloordiv
-
-def imod(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return mod(a, b)
-
-__imod__ = imod
-
-def ipow(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return pow(a, b)
-
-__ipow__ = ipow
-
-def iand(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return and_(a, b)
-
-__iand__ = iand
-
-def ior(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return or_(a, b)
-
-__ior__ = ior
-
-def ixor(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return xor(a, b)
-
-__ixor__ = ixor
-
-def ilshift(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return lshift(a, b)
-
-__ilshift__ = ilshift
-
-def irshift(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return rshift(a, b)
-
-__irshift__ = irshift
-
-def iconcat(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return concat(a, b)
-
-__iconcat__ = iconcat
-
-def imatmul(a, b):
-    if type(a) == type([]) or isinstance(a, dict):
-        raise 'NotImplementedError: in-place container operators need shared mutable storage'
-    return matmul(a, b)
-
-__imatmul__ = imatmul
-
-__inv__ = invert
-
-def call(obj, *args, **kwargs):
+def call(obj, /, *args, **kwargs):
+    """Same as obj(*args, **kwargs)."""
     return obj(*args, **kwargs)
 
+# Generalized Lookup Objects **************************************************#
+
+class attrgetter:
+    """
+    Return a callable object that fetches the given attribute(s) from its operand.
+    After f = attrgetter('name'), the call f(r) returns r.name.
+    After g = attrgetter('name', 'date'), the call g(r) returns (r.name, r.date).
+    After h = attrgetter('name.first', 'name.last'), the call h(r) returns
+    (r.name.first, r.name.last).
+    """
+    __slots__ = ('_attrs', '_call')
+
+    def __init__(self, attr, /, *attrs):
+        if not attrs:
+            if not isinstance(attr, str):
+                raise TypeError('attribute name must be a string')
+            self._attrs = (attr,)
+            names = attr.split('.')
+            def func(obj):
+                for name in names:
+                    obj = getattr(obj, name)
+                return obj
+            self._call = func
+        else:
+            self._attrs = (attr,) + attrs
+            getters = tuple(map(attrgetter, self._attrs))
+            def func(obj):
+                return tuple(getter(obj) for getter in getters)
+            self._call = func
+
+    def __call__(self, obj, /):
+        return self._call(obj)
+
+    def __repr__(self):
+        return '%s.%s(%s)' % (self.__class__.__module__,
+                              self.__class__.__qualname__,
+                              ', '.join(map(repr, self._attrs)))
+
+    def __reduce__(self):
+        return self.__class__, self._attrs
+
+class itemgetter:
+    """
+    Return a callable object that fetches the given item(s) from its operand.
+    After f = itemgetter(2), the call f(r) returns r[2].
+    After g = itemgetter(2, 5, 3), the call g(r) returns (r[2], r[5], r[3])
+    """
+    __slots__ = ('_items', '_call')
+
+    def __init__(self, item, /, *items):
+        if not items:
+            self._items = (item,)
+            def func(obj):
+                return obj[item]
+            self._call = func
+        else:
+            self._items = items = (item,) + items
+            def func(obj):
+                return tuple(obj[i] for i in items)
+            self._call = func
+
+    def __call__(self, obj, /):
+        return self._call(obj)
+
+    def __repr__(self):
+        return '%s.%s(%s)' % (self.__class__.__module__,
+                              self.__class__.__name__,
+                              ', '.join(map(repr, self._items)))
+
+    def __reduce__(self):
+        return self.__class__, self._items
+
+class methodcaller:
+    """
+    Return a callable object that calls the given method on its operand.
+    After f = methodcaller('name'), the call f(r) returns r.name().
+    After g = methodcaller('name', 'date', foo=1), the call g(r) returns
+    r.name('date', foo=1).
+    """
+    __slots__ = ('_name', '_args', '_kwargs')
+
+    def __init__(self, name, /, *args, **kwargs):
+        self._name = name
+        if not isinstance(self._name, str):
+            raise TypeError('method name must be a string')
+        self._args = args
+        self._kwargs = kwargs
+
+    def __call__(self, obj, /):
+        return getattr(obj, self._name)(*self._args, **self._kwargs)
+
+    def __repr__(self):
+        args = [repr(self._name)]
+        args.extend(map(repr, self._args))
+        args.extend('%s=%r' % (k, v) for k, v in self._kwargs.items())
+        return '%s.%s(%s)' % (self.__class__.__module__,
+                              self.__class__.__name__,
+                              ', '.join(args))
+
+    def __reduce__(self):
+        if not self._kwargs:
+            return self.__class__, (self._name,) + self._args
+        else:
+            from functools import partial
+            return partial(self.__class__, self._name, **self._kwargs), self._args
+
+
+# In-place Operations *********************************************************#
+
+def iadd(a, b):
+    "Same as a += b."
+    a += b
+    return a
+
+def iand(a, b):
+    "Same as a &= b."
+    a &= b
+    return a
+
+def iconcat(a, b):
+    "Same as a += b, for a and b sequences."
+    if not hasattr(a, '__getitem__'):
+        msg = "'%s' object can't be concatenated" % type(a).__name__
+        raise TypeError(msg)
+    a += b
+    return a
+
+def ifloordiv(a, b):
+    "Same as a //= b."
+    a //= b
+    return a
+
+def ilshift(a, b):
+    "Same as a <<= b."
+    a <<= b
+    return a
+
+def imod(a, b):
+    "Same as a %= b."
+    a %= b
+    return a
+
+def imul(a, b):
+    "Same as a *= b."
+    a *= b
+    return a
+
+def imatmul(a, b):
+    "Same as a @= b."
+    a @= b
+    return a
+
+def ior(a, b):
+    "Same as a |= b."
+    a |= b
+    return a
+
+def ipow(a, b):
+    "Same as a **= b."
+    a **=b
+    return a
+
+def irshift(a, b):
+    "Same as a >>= b."
+    a >>= b
+    return a
+
+def isub(a, b):
+    "Same as a -= b."
+    a -= b
+    return a
+
+def itruediv(a, b):
+    "Same as a /= b."
+    a /= b
+    return a
+
+def ixor(a, b):
+    "Same as a ^= b."
+    a ^= b
+    return a
+
+
+try:
+    from _operator import *
+except ImportError:
+    pass
+else:
+    from _operator import __doc__  # noqa: F401
+
+# All of these "__func__ = func" assignments have to happen after importing
+# from _operator to make sure they're set to the right function
+__lt__ = lt
+__le__ = le
+__eq__ = eq
+__ne__ = ne
+__ge__ = ge
+__gt__ = gt
+__not__ = not_
+__abs__ = abs
+__add__ = add
+__and__ = and_
 __call__ = call
+__floordiv__ = floordiv
+__index__ = index
+__inv__ = inv
+__invert__ = invert
+__lshift__ = lshift
+__mod__ = mod
+__mul__ = mul
+__matmul__ = matmul
+__neg__ = neg
+__or__ = or_
+__pos__ = pos
+__pow__ = pow
+__rshift__ = rshift
+__sub__ = sub
+__truediv__ = truediv
+__xor__ = xor
+__concat__ = concat
+__contains__ = contains
+__delitem__ = delitem
+__getitem__ = getitem
+__setitem__ = setitem
+__iadd__ = iadd
+__iand__ = iand
+__iconcat__ = iconcat
+__ifloordiv__ = ifloordiv
+__ilshift__ = ilshift
+__imod__ = imod
+__imul__ = imul
+__imatmul__ = imatmul
+__ior__ = ior
+__ipow__ = ipow
+__irshift__ = irshift
+__isub__ = isub
+__itruediv__ = itruediv
+__ixor__ = ixor
+
+# Tie these imported classes to their defining module.
+attrgetter.__module__ = __name__
+itemgetter.__module__ = __name__
+methodcaller.__module__ = __name__
