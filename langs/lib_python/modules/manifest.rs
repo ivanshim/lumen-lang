@@ -2,6 +2,7 @@
 pub static MODULES: &[(&str, &str)] = &[
     ("_codec_idna", include_str!("_codec_idna.py")),
     ("_codec_names", include_str!("_codec_names.py")),
+    ("_colorize", include_str!("_colorize.py")),
     ("_decimal", include_str!("_decimal.py")),
     ("_pylong", include_str!("_pylong.py")),
     ("_string", include_str!("_string.py")),
@@ -24,6 +25,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("dataclasses", include_str!("dataclasses.py")),
     ("datetime", include_str!("datetime.py")),
     ("decimal", include_str!("decimal.py")),
+    ("difflib", include_str!("difflib.py")),
     ("dis", include_str!("dis.py")),
     ("doctest", include_str!("doctest.py")),
     ("enum", include_str!("enum.py")),
@@ -35,6 +37,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("inspect", include_str!("inspect.py")),
     ("io", include_str!("io.py")),
     ("itertools", include_str!("itertools.py")),
+    ("keyword", include_str!("keyword.py")),
     ("json", include_str!("json.py")),
     ("locale", include_str!("locale.py")),
     ("marshal", include_str!("marshal.py")),
