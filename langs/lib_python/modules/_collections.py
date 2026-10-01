@@ -111,3 +111,69 @@ class defaultdict(dict):
     def __reduce__(self):
         args = (self.default_factory,)
         return type(self), args, None, None, iter(self.items())
+
+
+from reprlib import recursive_repr as _guard
+
+class OrderedDict(dict):
+    def move_to_end(self, key, last=True):
+        value = self.pop(key)
+        if last:
+            self[key] = value
+        else:
+            tail = list(self.items())
+            self.clear()
+            self[key] = value
+            self.update(tail)
+
+    def popitem(self, last=True):
+        if not self:
+            raise KeyError('dictionary is empty')
+        key = next(reversed(self)) if last else next(iter(self))
+        return key, self.pop(key)
+
+    @_guard()
+    def __repr__(self):
+        if not self:
+            return type(self).__name__ + '()'
+        return type(self).__name__ + '(' + repr(list(self.items())) + ')'
+
+    def __eq__(self, other):
+        match = dict.__eq__(self, other)
+        if match is NotImplemented or not match:
+            return match
+        if isinstance(other, OrderedDict):
+            return list(self) == list(other)
+        return True
+
+    def __ne__(self, other):
+        match = self.__eq__(other)
+        return NotImplemented if match is NotImplemented else not match
+
+    def copy(self):
+        return type(self)(self)
+
+    @classmethod
+    def fromkeys(cls, iterable, value=None):
+        result = cls()
+        for key in iterable:
+            result[key] = value
+        return result
+
+    def __or__(self, other):
+        if not isinstance(other, dict):
+            return NotImplemented
+        result = self.copy()
+        result.update(other)
+        return result
+
+    def __ror__(self, other):
+        if not isinstance(other, dict):
+            return NotImplemented
+        result = type(self)(other)
+        result.update(self)
+        return result
+
+OrderedDict.__module__ = "collections"
+deque.__module__ = "collections"
+defaultdict.__module__ = "collections"
