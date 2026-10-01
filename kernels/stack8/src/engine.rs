@@ -77,6 +77,7 @@ pub struct Engine<'a> {
     property_class: Option<Rc<Class>>,
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
+    kind_descriptors: RefCell<Vec<(String, String, Value)>>,
     function_members: Vec<(Value, Rc<Instance>)>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -1133,7 +1134,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(),
             native_exceptions,
             lang,
             world,
@@ -2289,6 +2290,7 @@ impl<'a> Engine<'a> {
     }
 
     fn what_it_spells(&self, v: Value) -> Value {
+        let v = if matches!(v, Value::Bond(_) | Value::Collection(..)) { v.contents() } else { v };
         let Value::Text(name) = &v else { return v };
         if !self.lang.spelled_stands {
             return v;
@@ -2775,6 +2777,11 @@ impl<'a> Engine<'a> {
                         Value::Set(s) => items.extend(s.borrow().items().into_iter().map(|v| (None, v))),
                         Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
                         Value::Map(m) => items.extend(m.iter().map(|(k, _)| (None, match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() }))),
+                        Value::Object(_) => {
+                            let members = self.comprehension_items(&pair.1);
+                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            items.extend(members?.into_iter().map(|value| (None, value)));
+                        }
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
                     },
                     Value::Flag(true) => {
@@ -3162,6 +3169,8 @@ impl<'a> Engine<'a> {
         if program.generator && self.lang.yield_suspends {
             self.left_the_call(false, watching, noted);
             let mut generator = Generator::new(Some(program.clone()), frame, Vec::new());
+            generator.walked = if program.code_flags & 512 != 0 { Some(Rc::from("async_generator")) }
+                else if program.code_flags & 128 != 0 { Some(Rc::from("coroutine")) } else { None };
             let function = Value::Routine(program.clone());
             generator.name = self.class_get(function.clone(), &self.class_word("name").to_string(), true)?.plain();
             generator.qualified = self.class_get(function, &self.class_word("qualified").to_string(), true)?.plain();
@@ -5006,6 +5015,10 @@ impl<'a> Engine<'a> {
     /// read as a class: a sample of the kind is asked, so the namespace
     /// of the kind and the members of a value of it never part ways.
     pub(super) fn kind_special_names(&self, word: &str) -> Vec<String> {
+        let callable_kind = matches!(word, "function" | "builtin_function_or_method" | "method" | "method_descriptor" | "wrapper_descriptor" | "type");
+        if callable_kind || word == "NoneType" {
+            return self.lang.class_special.iter().enumerate().filter(|(place, _)| *place == 8 || callable_kind && *place == 17).map(|(_, name)| name.clone()).collect();
+        }
         let Some(sample) = self.kind_sample(word) else { return Vec::new() };
         self.lang.class_special.iter().filter(|name| self.native_special(&sample, name)).cloned().collect()
     }
@@ -5190,6 +5203,14 @@ impl<'a> Engine<'a> {
     /// it works upon is the first thing it is called with, the way an
     /// unbound method is called. Nothing where the word names no
     /// builtin kind, or where that kind carries no such member.
+    fn held_kind_descriptor(&self, kind: &str, name: &str) -> Value {
+        let mut held = self.kind_descriptors.borrow_mut();
+        if let Some((_, _, value)) = held.iter().find(|(word, member, _)| word == kind && member == name) { return value.clone(); }
+        let value = Self::adapter(29, vec![Value::text(kind), Value::text(name)]);
+        held.push((kind.to_string(), name.to_string(), value.clone()));
+        value
+    }
+
     pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
         let word: Rc<str> = match value {
             Value::Class(c) => Rc::from(Self::own_kind(c)?),
@@ -5197,12 +5218,15 @@ impl<'a> Engine<'a> {
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
         };
+        if word.as_ref() == "type" && [8, 17].iter().any(|index| self.lang.class_special.get(*index).map_or(false, |slot| slot == name)) {
+            return Some(self.held_kind_descriptor(&word, name));
+        }
         let sample = self.kind_sample(&word)?;
         if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
             return Some(Value::Native(Builtin::Text(crate::strings::TextOp::Maketrans), Rc::from(name)));
         }
         if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
-        Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
+        Some(self.held_kind_descriptor(&word, name))
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
@@ -5498,6 +5522,12 @@ impl<'a> Engine<'a> {
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' too.
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        let mut args = args;
+        if matches!(place, 2 | 3) && matches!(receiver.contents(), Value::Map(_)) {
+            if let Some(other) = args.first_mut() {
+                if let Some(worth) = Self::worth_of(other).filter(|worth| matches!(worth.contents(), Value::Map(_))) { *other = worth.contents(); }
+            }
+        }
         if place == usize::MAX - 1 {
             if !named.is_empty() || args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
             let destination = Self::holding_cell(receiver);
@@ -6832,7 +6862,7 @@ impl<'a> Engine<'a> {
         if matches!(op, Action::Same | Action::Unsame) && (matches!(Self::worth_of(a), Some(Value::Text(_))) || matches!(Self::worth_of(b), Some(Value::Text(_)))) { return self.dyadic(op, a, b); }
         let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
         if left.is_some() || right.is_some() {
-            if let (Action::At, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
+            if let (Action::At | Action::Toward | Action::Apart, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
                 if let Some(method) = self.lang.missing_key.as_deref().and_then(|word| self.class_value(&o.class_now(), word)) {
                     let wanted = self.special_key(b)?;
                     let mut found = None;
@@ -6985,6 +7015,17 @@ impl<'a> Engine<'a> {
         if self.lang.class_special.is_empty() { return Ok(None); }
         if op == Builtin::Hash && args.len() == 1 && matches!(args[0], Value::Method(..)) {
             return Ok(args[0].core_hash().map(Value::Small));
+        }
+        if let (Builtin::Fetch, [target @ Value::Object(object), key]) = (op, args) {
+            if let (Some(Value::Map(rows)), Some(handler)) = (Self::worth_of(target).map(|value| value.contents()), self.lang.missing_key.as_ref().and_then(|name| self.class_value(&object.class_now(), name))) {
+                let (position, _) = self.map_locate(&rows, Some(&rows), key)?;
+                if let Some(position) = position { return Ok(Some(rows[position].1.clone())); }
+                return match self.class_apply(handler, vec![target.clone(), key.clone()]) {
+                    Ok(answer) => Ok(Some(answer)),
+                    Err(Fault::Note(words)) => Err(words),
+                    Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+                };
+            }
         }
         let first = args.first();
         // Writing a value out looks into a set for a thing; the other
@@ -7220,7 +7261,7 @@ impl<'a> Engine<'a> {
                 let key = self.special_key(&args[0])?;
                 let mut found = None;
                 for (at, (old, _)) in entries.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
-                if let Some(at) = found { entries[at].1 = args[1].clone(); } else { entries.push((key, args[1].clone())); }
+                if let Some(at) = found { entries.overwrite_row(at, args[1].clone()); } else { entries.push((key, args[1].clone())); }
                 Value::Map(Rc::new(entries))
             }
             Builtin::Erase if args.len() == 2 && matches!(&args[0], Value::Map(_)) => {
@@ -7547,7 +7588,7 @@ impl<'a> Engine<'a> {
     fn fields_entries(o: &crate::value::Instance) -> Vec<(Value, Value)> {
         let fields = o.fields.borrow();
         let mut entries: Vec<(Value, Value)> = fields.iter()
-            .filter(|(key, held)| !key.starts_with('\0') && !matches!(held, Value::Blank))
+            .filter(|(key, held)| !key.starts_with('\0') && !matches!(held.contents(), Value::Blank))
             .map(|(key, held)| (Value::text(key), held.clone())).collect();
         if let Some((_, Value::Map(extra))) = fields.iter().find(|(key, _)| key == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -8307,6 +8348,7 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?).contents();
+                let source = self.worth_free_of(&source, &[15]).map(|worth| worth.contents()).unwrap_or(source);
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
@@ -17724,6 +17766,13 @@ impl Engine<'_> {
 
     fn core_apply(&mut self, work: &Value, mut args: Vec<Value>) -> Res<Value> {
         match work {
+            Value::Method(..) | Value::Adapter(_) => match self.class_apply(work.clone(), args) {
+                Ok(answer) => Ok(answer),
+                Err(raised) => {
+                    self.carried = Some(raised);
+                    Err(self.core_fault("core.unready", &work.core_kind()))
+                }
+            },
             Value::ByteKind(mutable, _) => self.byte_call(u8::from(*mutable), &args),
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),

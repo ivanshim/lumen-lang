@@ -6303,6 +6303,7 @@ impl<'a> Compiler<'a> {
         // after the name is still a body.
         if self.on_sep() && !self.block_ahead() {
             return self.routine(name, formals, least, true, |a| {
+            a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
                 a.constant(Value::Null);
@@ -6316,6 +6317,7 @@ impl<'a> Compiler<'a> {
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
         let built = self.routine(name, formals, least, true, |a| {
+            a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
@@ -8820,7 +8822,11 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
-            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
+            // A method introduces its own async scope; only the class body
+            // and a comprehension directly inside it retain the class restriction.
+            let nested_walk = self.piece().comprehension_kind.is_some();
+            let class_expression = self.class_names.last().map_or(false, |(depth, _)|
+                *depth == self.pieces.len() || (nested_walk && *depth + 1 == self.pieces.len()));
             if self.forbids_await || !self.piece().asynchronous || class_expression {
                 let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {phrase}"));

@@ -277,7 +277,9 @@ impl Suspension {
         Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
-            holding: Vec::new(), walked: None, stepping_through: None, source_reading: None }
+            holding: Vec::new(),
+            walked: match program.flags & (128 | 512) { 512 => Some("async_generator"), 128 => Some("coroutine"), _ => None },
+            stepping_through: None, source_reading: None }
     }
 }
 
@@ -359,6 +361,7 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    loose_entries: RefCell<HashMap<(String, String), Value>>,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
     /// routine was, kept so the pair stays its own, what calls of it now
@@ -1258,7 +1261,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -1796,6 +1799,7 @@ impl<'a> Machine<'a> {
     }
 
     fn what_it_spells(&self, v: Value) -> Value {
+        let v = match v { Value::Shared(_) | Value::Mutable(..) => v.settled(), other => other };
         let Value::Text(name) = &v else { return v };
         if !self.spelled_stands {
             return v;
@@ -6299,6 +6303,15 @@ impl<'a> Machine<'a> {
     /// the kind read as a class: a sample of the kind is asked, so what
     /// the kind names and what a value of it answers stay one thing.
     pub(super) fn kind_member_names(&self, word: &str) -> Vec<String> {
+        let calls = ["function", "builtin_function_or_method", "method", "method_descriptor", "wrapper_descriptor", "type"].contains(&word);
+        if calls || word == "NoneType" {
+            let slots = self.table.strings("ext.stmt.class.special");
+            let mut names = Vec::new();
+            if let Some(hash) = slots.get(8) { names.push(hash.clone()); }
+            if calls { if let Some(call) = slots.get(17) { names.push(call.clone()); } }
+            return names;
+        }
+
         let Some(sample) = self.kind_stand_in(word) else { return Vec::new() };
         let mut gathered = Vec::new();
         if matches!(sample, Value::Set(_) | Value::Dict(_)) {
@@ -6569,6 +6582,12 @@ impl<'a> Machine<'a> {
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' own.
     fn native_member_run(&mut self, receiver: &Value, name: &str, at: usize, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        let mut arguments = arguments;
+        if (at == 2 || at == 3) && matches!(receiver.settled(), Value::Dict(_)) {
+            if let Some(input) = arguments.get_mut(0) {
+                if let Some(Value::Dict(rows)) = Self::underlying(input).map(|value| value.settled()) { *input = Value::Dict(rows); }
+            }
+        }
         if at == usize::MAX - 1 {
             if !keywords.is_empty() || arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
             let holder = Self::native_cell(receiver);
@@ -6785,6 +6804,13 @@ impl<'a> Machine<'a> {
     /// called, as an unbound method is handed one. Nothing where the
     /// word names no native kind, or where that kind carries nothing
     /// under the name.
+    fn kind_entry(&self, word: &str, member: &str) -> Value {
+        let key = (word.to_owned(), member.to_owned());
+        self.loose_entries.borrow_mut().entry(key).or_insert_with(|| {
+            Value::Wrapped(60, Rc::new(vec![Value::text(word), Value::text(member)]).into())
+        }).clone()
+    }
+
     pub(super) fn carried_by_kind(&self, value: &Value, name: &str) -> Option<Value> {
         let word: String = match value {
             Value::Blueprint(b) => Self::native_word(b)?,
@@ -6792,12 +6818,18 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
             _ => return None,
         };
+        if word == "type" {
+            let slots = self.table.strings("ext.stmt.class.special");
+            if slots.get(8).map_or(false, |slot| slot == name) || slots.get(17).map_or(false, |slot| slot == name) {
+                return Some(self.kind_entry(&word, name));
+            }
+        }
         let stand_in = self.kind_stand_in(&word)?;
         if let (Value::Text(_), Some(op @ Prim::Textual(crate::text::Work::MAKETRANS))) = (&stand_in, self.table.prims.get(name)) {
             return Some(Value::Intrinsic(*op, Rc::from(name)));
         }
         if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
-        Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into()))
+        Some(self.kind_entry(&word, name))
     }
 
     /// The word the definition gives the module the builtin names live in.
@@ -8451,6 +8483,7 @@ impl<'a> Machine<'a> {
                         Value::Text(text) => {
                             for letter in text.chars() { positions.push(Value::text(&letter.to_string())); }
                         }
+                        Value::Thing(_) => positions.extend(self.object_members(&pair.1)?),
                         _ => return Err(self.argument_fault("ext.syntax.call.spread.amiss", None).into()),
                     }
                 }
@@ -8638,7 +8671,8 @@ impl<'a> Machine<'a> {
         if handed > ordinary.len() && gather.is_none() {
             return Err(self.overfull_complaint(program, manners, &fitted, handed).into());
         }
-        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())); }
+        // Keyword collectors own a mutable dictionary shared by saved bound methods.
+        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())).keep(true); }
         // Every unfilled place is told at once: first those taken in
         // order, and the ones taken by name only when none of those is.
         let unfilled = |wanted: &dyn Fn(char) -> bool| -> Vec<String> {
@@ -11112,7 +11146,7 @@ impl<'a> Machine<'a> {
     fn attribute_entries(t: &crate::data::Thing) -> Vec<(Value, Value)> {
         let holds = t.holds.borrow();
         let mut entries: Vec<(Value, Value)> = holds.iter()
-            .filter(|(name, held)| !name.starts_with('\0') && !matches!(held, Value::Unset))
+            .filter(|(name, held)| !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
             .map(|(name, held)| (Value::text(name), held.clone())).collect();
         if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
             entries.extend(extra.iter().cloned());
@@ -11737,7 +11771,7 @@ impl<'a> Machine<'a> {
                 return Ok(Some(target.clone()));
             }
         }
-        if let (Prim::At, [subject @ Value::Thing(t), key]) = (operation, operands) {
+        if let (Prim::At | Prim::Fetch | Prim::Toward | Prim::Apart, [subject @ Value::Thing(t), key]) = (operation, operands) {
             if let (Some(Value::Dict(entries)), Some(method)) = (Self::underlying(subject).map(|w| w.settled()), self.table.single("ext.stmt.class.missing").and_then(|word| self.inherited_entry(&t.blueprint(), word))) {
                 let wanted = self.hash_key(key)?;
                 let mut found = None;
@@ -13460,7 +13494,8 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                let mut values: Vec<Value> = match &v[0] {
+                let portion = self.underlying_unless(&v[0], &[15]).unwrap_or_else(|| v[0].clone()).settled();
+                let mut values: Vec<Value> = match &portion {
                     Value::Generator(state) => {
                         let mut yielded = Vec::new();
                         loop {
@@ -20309,6 +20344,12 @@ impl Machine<'_> {
 
     fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
         match callable {
+            Value::Method(..) | Value::Wrapped(_, _) => {
+                self.apply_class_member(callable.clone(), values).map_err(|escaped| {
+                    self.got_away = Some(escaped);
+                    self.core_complaint("core.unready", &callable.kind_word())
+                })
+            }
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),
