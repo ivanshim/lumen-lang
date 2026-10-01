@@ -29,14 +29,41 @@ def namedtuple(typename, field_names, rename=False, defaults=None, module=None):
         names = list(field_names)
     return __derive_class(typename, _Record, {'_fields': names, '__name__': typename})
 
-# Named records bear fields of their own. Tuple indexing, immutability
-# and the remaining tuple methods await the object protocol.
+# Named records bear fields of their own, filled in the order the names
+# stand in, whether the values arrive in that order by position or each
+# under its own name. Tuple indexing, immutability and the remaining
+# tuple methods await the object protocol.
 class _Record:
-    def __init__(self, *values):
-        if len(values) != len(self._fields):
+    def __init__(self, *values, **named):
+        fields = self._fields
+        for name in named:
+            if name not in fields:
+                raise TypeError(type(self).__name__ + ' has no field ' + repr(name))
+        if named:
+            if values:
+                raise TypeError(type(self).__name__ + ' takes its values by position or by field name, not both')
+            values = []
+            for name in fields:
+                if name not in named:
+                    raise TypeError(type(self).__name__ + ' is missing field ' + repr(name))
+                values.append(named[name])
+        if len(values) != len(fields):
             raise 'TypeError: wrong number of namedtuple fields'
         for i in range(len(values)):
-            setattr(self, self._fields[i], values[i])
+            setattr(self, fields[i], values[i])
+
+    def __repr__(self):
+        pairs = []
+        for name in self._fields:
+            pairs.append(name + '=' + repr(getattr(self, name)))
+        return type(self).__name__ + '(' + ', '.join(pairs) + ')'
+
+    def __iter__(self):
+        for name in self._fields:
+            yield getattr(self, name)
+
+    def __len__(self):
+        return len(self._fields)
 
 class deque:
     def __init__(self, iterable=None, maxlen=None):
@@ -151,9 +178,51 @@ class defaultdict(dict):
         args = (self.default_factory,)
         return type(self), args, None, None, iter(self.items())
 
-class Counter:
+class Counter(dict):
+    """A mapping of each item to how many times it was counted.
+
+    A missing key answers zero rather than raising, and the counting
+    ways of making one -- from a walk of items, from a mapping of
+    counts, or from names each standing for one -- all add to what is
+    already there."""
+
+    def __new__(cls, *args, **kwargs):
+        return super().__new__(cls)
+
     def __init__(self, iterable=None, **kwargs):
-        raise 'NotImplementedError: Counter needs object indexing methods'
+        super().__init__()
+        self.update(iterable, **kwargs)
+
+    def __missing__(self, key):
+        return 0
+
+    def update(self, iterable=None, **kwargs):
+        if iterable is not None:
+            if hasattr(iterable, 'items'):
+                for key, count in iterable.items():
+                    self[key] = count + self[key]
+            else:
+                for item in iterable:
+                    self[item] = self[item] + 1
+        if kwargs:
+            for key, count in kwargs.items():
+                self[key] = count + self[key]
+
+    def most_common(self, n=None):
+        pairs = [(key, count) for key, count in self.items()]
+        pairs.sort(key=lambda pair: pair[1], reverse=True)
+        if n is None:
+            return pairs
+        return pairs[:n]
+
+    def elements(self):
+        for key, count in self.items():
+            if count > 0:
+                for _ in range(count):
+                    yield key
+
+    def __repr__(self):
+        return type(self).__name__ + '(' + repr(dict(self)) + ')'
 
 
 # A list and a dictionary written out in Python, for a program that

@@ -88,6 +88,28 @@ def shuffle(sequence):
 def uniform(a, b):
     return a + (b - a) * random()
 
+def expovariate(lambd=1.0):
+    import math
+    # One minus the next draw, so the logarithm never sees zero.
+    return -math.log(1.0 - random()) / lambd
+
+def lognormvariate(mu, sigma):
+    import math
+    return math.exp(gauss(mu, sigma))
+
+def triangular(low=0.0, high=1.0, mode=None):
+    import math
+    u = random()
+    try:
+        c = 0.5 if mode is None else (mode - low) / (high - low)
+    except ZeroDivisionError:
+        return low
+    if u > c:
+        u = 1.0 - u
+        c = 1.0 - c
+        low, high = high, low
+    return low + (high - low) * math.sqrt(u * c)
+
 
 _gauss_next = None
 
@@ -125,6 +147,14 @@ class Random:
         self.seed(seed)
 
     def seed(self, value=None):
+        if isinstance(value, str):
+            # The reference folds a text's own writing into the number
+            # it seeds with; the fold here is this library's own, and
+            # stands only for that text, as that one does.
+            mixed = 1469598103934665603
+            for piece in value.encode('utf-8'):
+                mixed = ((mixed ^ piece) * 1099511628211) & 0xffffffffffffffff
+            value = mixed
         if value is None:
             try:
                 import os
@@ -206,3 +236,46 @@ class Random:
         while index >= n:
             index = self.getrandbits(k)
         return sequence[index]
+
+    def random(self):
+        # The reference's own draw: twenty-seven figures of one word
+        # and twenty-six of the next, scaled into [0, 1).
+        high = self.getrandbits(32) >> 5
+        low = self.getrandbits(32) >> 6
+        return (high * 67108864.0 + low) * (1.0 / 9007199254740992.0)
+
+    def gauss(self, mu=0.0, sigma=1.0):
+        import math
+        z = getattr(self, 'gauss_next', None)
+        if z is None:
+            angle = self.random() * math.tau
+            radius = math.sqrt(-2.0 * math.log(1.0 - self.random()))
+            z = math.cos(angle) * radius
+            self.gauss_next = math.sin(angle) * radius
+        else:
+            self.gauss_next = None
+        return mu + z * sigma
+
+    def uniform(self, a, b):
+        return a + (b - a) * self.random()
+
+    def expovariate(self, lambd=1.0):
+        import math
+        return -math.log(1.0 - self.random()) / lambd
+
+    def lognormvariate(self, mu, sigma):
+        import math
+        return math.exp(self.gauss(mu, sigma))
+
+    def triangular(self, low=0.0, high=1.0, mode=None):
+        import math
+        u = self.random()
+        try:
+            c = 0.5 if mode is None else (mode - low) / (high - low)
+        except ZeroDivisionError:
+            return low
+        if u > c:
+            u = 1.0 - u
+            c = 1.0 - c
+            low, high = high, low
+        return low + (high - low) * math.sqrt(u * c)

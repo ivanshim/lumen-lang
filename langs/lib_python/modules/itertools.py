@@ -5,6 +5,14 @@ class _Count:
         self.start = start
         self.step = step
 
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        value = self.start
+        self.start = self.start + self.step
+        return value
+
 class _Repeat:
     def __init__(self, value):
         self.value = value
@@ -154,7 +162,14 @@ def starmap(function, iterable):
     return [function(*args) for args in _finite(iterable)]
 
 def compress(data, selectors):
-    data, selectors = _finite(data), _finite(selectors)
+    data = _finite(data)
+    if isinstance(selectors, _Count):
+        # A counted selector keeps or drops each place by the number
+        # standing there, and walks on as many places as the data had.
+        start, step = selectors.start, selectors.step
+        selectors.start = start + len(data) * step
+        return [data[i] for i in range(len(data)) if start + i * step]
+    selectors = _finite(selectors)
     return [data[i] for i in range(len(data) if len(data) < len(selectors) else len(selectors)) if selectors[i]]
 
 def filterfalse(predicate, iterable):
