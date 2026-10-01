@@ -17225,6 +17225,15 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Span(bounds) = at {
+            if let Value::Text(word) = target {
+                if self.rules.indexed_text && word.is_ascii() {
+                    let (span, places, contiguous) = self.span_selection(bounds, word.len())?;
+                    let selected = if contiguous { word[span].to_owned() } else {
+                        places.iter().map(|place| word.as_bytes()[*place] as char).collect()
+                    };
+                    return Ok(Value::text(&selected));
+                }
+            }
             let row = match target {
                 Value::Vector(values) | Value::Tuple(values) => values.as_ref().clone(),
                 Value::Text(text) if self.rules.indexed_text => {

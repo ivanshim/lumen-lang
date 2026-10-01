@@ -11787,6 +11787,12 @@ impl<'a> Engine<'a> {
                 Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
+                if text.is_ascii() {
+                    let (begin, end, step, positions) = self.slice_places(parts, text.len())?;
+                    if step == 1 { return Ok(Value::text(&text[begin..end])); }
+                    let bytes = text.as_bytes();
+                    return Ok(Value::text(&positions.into_iter().map(|at| char::from(bytes[at])).collect::<String>()));
+                }
                 let letters: Vec<char> = text.chars().collect();
                 let (_, _, _, places) = self.slice_places(parts, letters.len())?;
                 Ok(Value::text(&places.into_iter().map(|i| letters[i]).collect::<String>()))
