@@ -8320,6 +8320,9 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?).contents();
+                let source = self.worth_free_of(&source, &[15])
+                    .filter(|value| matches!(value, Value::Tuple(_) | Value::Array(_) | Value::Map(_)))
+                    .unwrap_or(source);
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {

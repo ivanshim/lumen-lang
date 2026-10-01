@@ -847,6 +847,7 @@ impl<'a> Machine<'a> {
                 }
                 let initial = match self.table.prims.get(word) {
                     Some(Prim::Uniques) => Vec::new(),
+                    Some(Prim::Dictionary) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => Vec::new(),
                     Some(Prim::AsReal) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => {
                         self.open_arguments(given.clone())?.0.into_iter().take(1).collect()
                     },

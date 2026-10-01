@@ -6316,6 +6316,8 @@ impl<'a> Compiler<'a> {
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
         let built = self.routine(name, formals, least, true, |a| {
+            // Python methods have the same None fallthrough as functions.
+            a.piece().python_fallthrough = !lang.compile_modes.is_empty();
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }

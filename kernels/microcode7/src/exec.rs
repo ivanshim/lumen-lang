@@ -8641,7 +8641,11 @@ impl<'a> Machine<'a> {
         if handed > ordinary.len() && gather.is_none() {
             return Err(self.overfull_complaint(program, manners, &fitted, handed).into());
         }
-        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())); }
+        if let Some(slot) = gather_names {
+            // Keyword arguments form one mutable mapping, shared by any
+            // bound members subsequently read from that parameter.
+            fitted[slot] = Value::Dict(Rc::new(spare_names.into())).keep(false);
+        }
         // Every unfilled place is told at once: first those taken in
         // order, and the ones taken by name only when none of those is.
         let unfilled = |wanted: &dyn Fn(char) -> bool| -> Vec<String> {
@@ -13467,7 +13471,12 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                let mut values: Vec<Value> = match &v[0] {
+                let inherited = self.underlying_unless(&v[0], &[15]).map(|item| item.settled());
+                let source = match inherited {
+                    Some(row @ (Value::Tuple(_) | Value::Vector(_) | Value::Dict(_))) => row,
+                    _ => v[0].clone(),
+                };
+                let mut values: Vec<Value> = match &source {
                     Value::Generator(state) => {
                         let mut yielded = Vec::new();
                         loop {

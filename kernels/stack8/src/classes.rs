@@ -831,6 +831,7 @@ impl<'a> Engine<'a> {
             let mut initial = args.clone();
             match self.lang.builtins.get(word) {
                 Some(Builtin::Set) => initial.clear(),
+                Some(Builtin::Dict) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => initial.clear(),
                 Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }

@@ -459,7 +459,14 @@ impl Layout<'_> {
     /// keyed mark's name among keys that are rows of bytes, and a
     /// character mark holds one byte alone.
     pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere, of_bytes: bool) -> Answer {
-        let stored = supplied.settled();
+        let mut stored = supplied.settled();
+        if let Value::Thing(object) = &stored {
+            let contents = object.holds.borrow().iter().find_map(|(key, item)| {
+                if key != "\0underlying" { return None; }
+                match item.settled() { row @ Value::Tuple(_) => Some(row), _ => None }
+            });
+            if let Some(row) = contents { stored = row; }
+        }
         let supplied = &stored;
         let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(supplied) };
         let mut used = 0usize;
