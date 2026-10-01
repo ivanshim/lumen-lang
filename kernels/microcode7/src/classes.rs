@@ -1788,8 +1788,11 @@ impl<'a> Machine<'a> {
                 // A set answers some of its methods with primitives that
                 // take the receiver first, so one read through the thing
                 // is tied to the worth it keeps.
-                if matches!(self.table.prims.get(key),Some(Prim::SetCall(1..=17))) {
-                    return Ok(Self::wrap(3,vec![Value::text(key),under]));
+                if let Some(operation @ Prim::SetCall(1..=17)) = self.table.prims.get(key).copied() {
+                    let callable = if self.table.has_any("ext.stmt.class.builder") {
+                        Value::Intrinsic(operation, Rc::from(key))
+                    } else { Value::text(key) };
+                    return Ok(Self::wrap(3,vec![callable,under]));
                 }
             }
         }else if let Value::Method(code,t)=&value {

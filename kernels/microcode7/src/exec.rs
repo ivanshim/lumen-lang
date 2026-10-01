@@ -6963,15 +6963,18 @@ impl<'a> Machine<'a> {
             }
         }
         // A set answers some of its methods with primitives that take
-        // the receiver first, so the member is the word itself with the
-        // set standing behind it. A sealed set holds no altering working
-        // of its own, so no member of that name is to be found upon it.
-        let setted = match self.table.prims.get(name) {
-            Some(Prim::SetCall(code @ 1..=17)) => matches!(value.settled(), Value::Set(_)) && !(Self::set_alters(*code) && value.set_sealed()),
-            _ => false,
+        // the receiver first. Python binds the actual operation rather
+        // than its spelling, so ordinary callable dispatch can invoke it.
+        // A sealed set holds no altering working of its own.
+        let setted = match self.table.prims.get(name).copied() {
+            Some(operation @ Prim::SetCall(code @ 1..=17)) if matches!(value.settled(), Value::Set(_)) && !(Self::set_alters(code) && value.set_sealed()) => Some(operation),
+            _ => None,
         };
-        if setted {
-            return Some(Value::Wrapped(3, Rc::new(vec![Value::text(name), value.settled()])));
+        if let Some(operation) = setted {
+            let callable = if self.table.has_any("ext.stmt.class.builder") {
+                Value::Intrinsic(operation, Rc::from(name))
+            } else { Value::text(name) };
+            return Some(Value::Wrapped(3, Rc::new(vec![callable, value.settled()])));
         }
         let class = match value {
             Value::Thing(thing) => {
