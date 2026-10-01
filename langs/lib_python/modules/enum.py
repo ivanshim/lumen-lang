@@ -84,6 +84,21 @@ class IntEnum(int, Enum):
     def __repr__(self):
         return '<' + self.__class__.__name__ + '.' + self.name + ': ' + repr(self.value) + '>'
 
+# The reference's global_enum files an enumeration's members under their
+# own names in the module the enumeration was written in. Here the module
+# is reached through the language's module cache; a module the cache has
+# not kept (or cannot be written) simply keeps its members on the class.
+def global_enum(cls, update_str=False):
+    import sys
+    home = sys.modules.get(cls.__module__)
+    if home is not None:
+        for member in cls._members:
+            try:
+                setattr(home, member.name, member)
+            except AttributeError:
+                pass
+    return cls
+
 class StrEnum(str, Enum):
     def __str__(self):
         return str(self.value)

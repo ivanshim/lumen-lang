@@ -86,9 +86,26 @@ def _location(stacklevel):
     return [frame['file'], frame['line']]
 
 
+def _outside(prefixes):
+    # The frame the warning is laid at is the first one standing outside
+    # the files the prefixes name: the deprecation is the caller's, not
+    # the library's own.
+    calls = __warning_calls()
+    for at in range(1, len(calls)):
+        frame = calls[at]
+        file = frame['file']
+        outside = True
+        for prefix in prefixes:
+            if file.startswith(prefix):
+                outside = False
+                break
+        if outside:
+            return [file, frame['line']]
+    raise NotImplementedError('warning stack level lies outside the known calls')
+
 def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=None):
-    if skip_file_prefixes is not None and len(skip_file_prefixes) != 0:
-        raise NotImplementedError('warning frame prefix selection cannot run yet')
+    if skip_file_prefixes is not None and len(skip_file_prefixes) != 0 and stacklevel != 1:
+        raise ValueError('skip_file_prefixes cannot be used with stacklevel')
     if isinstance(message, Warning):
         category = type(message)
     elif category is None:
@@ -97,7 +114,10 @@ def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixe
         raise TypeError('category must be a Warning subclass')
     if not isinstance(message, Warning):
         message = category(message)
-    place = _location(stacklevel)
+    if skip_file_prefixes is not None and len(skip_file_prefixes) != 0:
+        place = _outside(skip_file_prefixes)
+    else:
+        place = _location(stacklevel)
     filename = place[0]
     module = filename
     for position in range(len(filename)):

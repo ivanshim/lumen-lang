@@ -316,6 +316,11 @@ def loads(data, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=
     return _read_protocol(data)
 
 
+
+# The reference keeps its pure-Python loads beside the dispatching
+# one; the loads here is that pure one already.
+_loads = loads
+
 def dump(obj, file, protocol=None, *, fix_imports=True, buffer_callback=None):
     file.write(dumps(obj, protocol, fix_imports=fix_imports, buffer_callback=buffer_callback))
 

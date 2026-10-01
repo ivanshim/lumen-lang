@@ -1,3 +1,12 @@
+# A new thing with named fields changed, after the thing's own
+# __replace__ the way the reference spells it.
+def replace(obj, /, **changes):
+    cls = obj.__class__
+    func = getattr(cls, '__replace__', None)
+    if func is None:
+        raise TypeError('replace() does not support ' + cls.__name__ + ' objects')
+    return func(obj, **changes)
+
 # Copying uses the same reconstruction and state hooks as pickling.
 import pickle
 

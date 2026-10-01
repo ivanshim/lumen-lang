@@ -161,6 +161,35 @@ class _Reader:
             if self.i >= len(self.pattern):
                 raise 'ValueError: unexpected end of pattern'
             marker = self.pattern[self.i]
+            # Scoped flags: (?i:...), (?-i:...) and the like hold their
+            # flag for their own span alone; i, m and s are the flags
+            # this engine knows.
+            if marker in 'ims-':
+                on = True
+                values = [None, None, None]
+                while True:
+                    if self.i >= len(self.pattern):
+                        raise 'ValueError: unexpected end of pattern'
+                    letter = self.pattern[self.i]
+                    if letter == '-':
+                        on = False
+                        self.i += 1
+                        continue
+                    if letter in 'ims':
+                        self.i += 1
+                        values['ims'.index(letter)] = on
+                        continue
+                    if letter == ':':
+                        self.i += 1
+                        node = self.choice()
+                        self._close_group()
+                        return ['scope', values, node]
+                    if letter == ')':
+                        self.i += 1
+                        if values[0] is not None:
+                            self.flags_now = values[0]
+                        return ['scope', values, ['seq', []]]
+                    raise 'NotImplementedError: this regular expression group form is not supported'
             if marker == ':':
                 self.i += 1
                 node = self.choice()
@@ -330,6 +359,11 @@ def _walk(node, text, place, captures, opts):
             found[node[1]] = [place, state[0]]
             states.append([state[0], found])
         return states
+    if kind == 'scope':
+        inner = (opts[0] if node[1][0] is None else node[1][0],
+                 opts[1] if node[1][1] is None else node[1][1],
+                 opts[2] if node[1][2] is None else node[1][2])
+        return _walk(node[2], text, place, captures, inner)
     if kind == 'repeat':
         return _repeat(node, text, place, captures, 0, opts)
     if kind == 'lookahead':

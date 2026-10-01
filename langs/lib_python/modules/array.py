@@ -1,12 +1,12 @@
 # Numeric array elements are kept in a list.
-typecodes = 'iB'
+typecodes = 'iBq'
 
 class array:
     def __init__(self, typecode, initializer=None):
-        if typecode not in ('i', 'B'):
-            raise 'NotImplementedError: array supports only signed four-byte integers and unsigned bytes'
+        if typecode not in ('i', 'B', 'q'):
+            raise 'NotImplementedError: array supports only signed four- and eight-byte integers and unsigned bytes'
         self.typecode = typecode
-        self.itemsize = 1 if typecode == 'B' else 4
+        self.itemsize = 1 if typecode == 'B' else (8 if typecode == 'q' else 4)
         self.data = []
         if initializer is not None:
             self.extend(initializer)
@@ -17,9 +17,26 @@ class array:
         if self.typecode == 'B':
             if value < 0 or value > 255:
                 raise OverflowError('unsigned byte integer is out of range')
-        elif value < -2147483648 or value > 2147483647:
+        elif self.typecode == 'i' and (value < -2147483648 or value > 2147483647):
             raise 'OverflowError: signed integer is greater than maximum'
         self.data = [*self.data, int(value)]
+
+    def fromfile(self, fileobj, count):
+        data = fileobj.read(count * self.itemsize)
+        if len(data) < count * self.itemsize:
+            raise EOFError("read() didn't return enough bytes")
+        for at in range(0, len(data), self.itemsize):
+            piece = data[at:at + self.itemsize]
+            if self.typecode == 'B':
+                self.append(piece[0])
+            else:
+                self.append(int.from_bytes(piece, 'little', signed=True))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __iter__(self):
+        return iter(self.data)
 
     def extend(self, values):
         for value in values:
