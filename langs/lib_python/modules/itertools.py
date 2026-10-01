@@ -61,6 +61,12 @@ def islice(iterable, *bounds):
 def chain(*iterables):
     return [item for iterable in iterables for item in iterable]
 
+def _chain_from_iterable(iterables):
+    for iterable in iterables:
+        yield from iterable
+
+chain.from_iterable = _chain_from_iterable
+
 def product(*iterables, repeat=1):
     result = [[]]
     for times in range(repeat):

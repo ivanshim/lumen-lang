@@ -61,12 +61,17 @@ GeneratorType = type(__generator_probe())
 del __generator_probe
 
 
-class CoroutineType:
+async def _coroutine_kind_probe():
     pass
+_coroutine_kind_value = _coroutine_kind_probe()
+CoroutineType = type(_coroutine_kind_value)
+_coroutine_kind_value.close()
+del _coroutine_kind_value, _coroutine_kind_probe
 
-
-class AsyncGeneratorType:
-    pass
+async def _async_generator_kind_probe():
+    yield
+AsyncGeneratorType = type(_async_generator_kind_probe())
+del _async_generator_kind_probe
 
 
 class FrameType:
@@ -247,6 +252,18 @@ class GenericAlias:
         else:
             self.__args__ = (args,)
 
+    @property
+    def __parameters__(self):
+        parameters = []
+        for arg in self.__args__:
+            nested = getattr(arg, '__parameters__', ())
+            if type(arg).__name__ in ('TypeVar', 'TypeVarTuple', 'ParamSpec'):
+                nested = (arg,)
+            for parameter in nested:
+                if parameter not in parameters:
+                    parameters.append(parameter)
+        return tuple(parameters)
+
     def __call__(self, *args, **keywords):
         return self.__origin__(*args, **keywords)
 
@@ -349,3 +366,103 @@ __all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType',
            'EllipsisType', 'NotImplementedType', 'UnionType',
            'ModuleType', 'MappingProxyType', 'SimpleNamespace',
            'GenericAlias', 'DynamicClassAttribute']
+
+# Source: CPython 3b564385e4c9, Lib/types.py. PSF License.
+# Function recognition uses the native function kind rather than its constructor.
+class _GeneratorWrapper:
+    def __init__(self, gen):
+        self.__wrapped = gen
+        self.__isgen = gen.__class__ is GeneratorType
+        self.__name__ = getattr(gen, '__name__', None)
+        self.__qualname__ = getattr(gen, '__qualname__', None)
+    def send(self, val):
+        return self.__wrapped.send(val)
+    def throw(self, tp, *rest):
+        return self.__wrapped.throw(tp, *rest)
+    def close(self):
+        return self.__wrapped.close()
+    @property
+    def gi_code(self):
+        return self.__wrapped.gi_code
+    @property
+    def gi_frame(self):
+        return self.__wrapped.gi_frame
+    @property
+    def gi_running(self):
+        return self.__wrapped.gi_running
+    @property
+    def gi_yieldfrom(self):
+        return self.__wrapped.gi_yieldfrom
+    @property
+    def gi_suspended(self):
+        return self.__wrapped.gi_suspended
+    @property
+    def gi_state(self):
+        return self.__wrapped.gi_state
+    @property
+    def cr_state(self):
+        return self.__wrapped.gi_state.replace('GEN_', 'CORO_')
+    cr_code = gi_code
+    cr_frame = gi_frame
+    cr_running = gi_running
+    cr_await = gi_yieldfrom
+    cr_suspended = gi_suspended
+    def __next__(self):
+        return next(self.__wrapped)
+    def __iter__(self):
+        if self.__isgen:
+            return self.__wrapped
+        return self
+    __await__ = __iter__
+
+def coroutine(func):
+    """Convert regular generator function to a coroutine."""
+
+    if not callable(func):
+        raise TypeError('types.coroutine() expects a callable')
+
+    if (func.__class__ is type(lambda: None) and
+        getattr(func, '__code__', None).__class__ is CodeType):
+
+        co_flags = func.__code__.co_flags
+
+        # Check if 'func' is a coroutine function.
+        # (0x180 == CO_COROUTINE | CO_ITERABLE_COROUTINE)
+        if co_flags & 0x180:
+            return func
+
+        # Check if 'func' is a generator function.
+        # (0x20 == CO_GENERATOR)
+        if co_flags & 0x20:
+            co = func.__code__
+            # 0x100 == CO_ITERABLE_COROUTINE
+            func.__code__ = co.replace(co_flags=co.co_flags | 0x100)
+            return func
+
+    # The following code is primarily to support functions that
+    # return generator-like objects (for instance generators
+    # compiled with Cython).
+
+    # Delay functools and _collections_abc import for speeding up types import.
+    import functools
+    import _collections_abc
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        coro = func(*args, **kwargs)
+        if (coro.__class__ is CoroutineType or
+            coro.__class__ is GeneratorType and coro.gi_code.co_flags & 0x100):
+            # 'coro' is a native coroutine object or an iterable coroutine
+            return coro
+        if (isinstance(coro, _collections_abc.Generator) and
+            not isinstance(coro, _collections_abc.Coroutine)):
+            # 'coro' is either a pure Python generator iterator, or it
+            # implements collections.abc.Generator (and does not implement
+            # collections.abc.Coroutine).
+            return _GeneratorWrapper(coro)
+        # 'coro' is either an instance of collections.abc.Coroutine or
+        # some other object -- pass it through.
+        return coro
+
+    return wrapped
+
+__all__.append("coroutine")

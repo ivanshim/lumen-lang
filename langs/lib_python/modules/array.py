@@ -44,3 +44,7 @@ class array:
 
     def __float__(self):
         return float(self.tobytes())
+
+# As in CPython, numeric arrays implement the mutable sequence protocol.
+from collections.abc import MutableSequence
+MutableSequence.register(array)

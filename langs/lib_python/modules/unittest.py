@@ -232,6 +232,10 @@ class TestCase:
     def assertIsSubclass(self, cls, superclass, msg=None):
         self._check(issubclass(cls, superclass), _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
 
+    def assertNotIsSubclass(self, cls, superclass, msg=None):
+        if issubclass(cls, superclass):
+            self.fail(msg or '%s is a subclass of %s' % (repr(cls), repr(superclass)))
+
     def assertNotIsInstance(self, value, kind, msg=None):
         self._check(not isinstance(value, kind), _representation(value) + ' is an instance of the requested class', msg)
 
@@ -474,7 +478,7 @@ class TestLoader:
         else:
             if type(module) == type(''):
                 module = _host_load_module(module)
-            names = _host_program_namespace(module)
+            names = vars(module)
             module_name = _class_name(module)
         suite = TestSuite()
         for name in _ordered(list(names)):
@@ -485,7 +489,7 @@ class TestLoader:
             if not _spellable(name):
                 continue
             cls = names[name]
-            if isinstance(cls, TestCase) or not getattr(cls, '_test_case', False):
+            if not isinstance(cls, type) or not getattr(cls, '_test_case', False):
                 continue
             tests = self.loadTestsFromTestCase(cls)
             for test in tests.tests:
