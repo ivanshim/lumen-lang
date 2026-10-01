@@ -48,6 +48,15 @@ def islice(iterable, *bounds):
         if stop is None:
             raise 'NotImplementedError: an unbounded repeat cannot be gathered'
         return [iterable.value for i in range(start, stop, step)]
+    if start == 0 and step == 1 and stop is not None:
+        result = []
+        at = 0
+        for item in iterable:
+            if at >= stop:
+                break
+            result.append(item)
+            at += 1
+        return result
     result = []
     at = 0
     for item in iterable:
@@ -106,6 +115,8 @@ def zip_longest(*iterables, fillvalue=None):
     for row in rows:
         if len(row) > length:
             length = len(row)
+    if len(rows) == 2 and len(rows[0]) == len(rows[1]):
+        return [[rows[0][i], rows[1][i]] for i in range(length)]
     return [[row[i] if i < len(row) else fillvalue for row in rows] for i in range(length)]
 
 def accumulate(iterable, func=None, initial=None):

@@ -1908,6 +1908,44 @@ def write_library_report(lib, defs, coverage):
     LIBRARY_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def python_number_examples(relative, text):
+    """Adjust only explanatory text for Python's numeric results."""
+    name = relative.as_posix()
+    if name == "constructs/round_function.py":
+        changes = [
+            ("round half away from zero", "round halves to even"),
+        ]
+    elif name == "constructs/integer_quotient_minimal.py":
+        changes = [
+            ("Truncate toward zero", "Floor division"),
+            ("5 * (-3) + (-17 % 5)", "5 * (-4) + (-17 % 5)"),
+            ("-5 * (-3) + (17 % -5)", "-5 * (-4) + (17 % -5)"),
+            ("Rational // Integer", "Float // Integer"),
+            ("Rational // Rational", "Float // Float"),
+            ("Real // Integer", "Float // Integer"),
+        ]
+    elif name == "constructs/integer_quotient.py":
+        changes = [
+            ("quotient truncates to -5", "quotient floors to -3"),
+            ("Verify truncation toward zero", "Verify floor division"),
+            ("(not floor division which would be 2.5 -> 2, but truncate 2.5 -> 2) [OK]", "(floor of 2.5 is 2) [OK]"),
+            ("(not floor division which would be -2.5 -> -3, but truncate -2.5 -> -2) [OK]", "(floor of -2.5 is -3) [OK]"),
+            ("[OK] Truncates toward zero (not floor division)", "[OK] Floors quotients"),
+            ("Rational // Integer = Rational", "Float // Integer = Float"),
+            ("Rational // Rational = Rational", "Float // Float = Float"),
+            ("Float Literals (Real) // Integer = Real", "Float Literals // Integer = Float"),
+            ("[OK] Rational // Integer returns Rational", "[OK] Float // Integer returns Float"),
+            ("[OK] Rational // Rational returns Rational", "[OK] Float // Float returns Float"),
+            ("Real // ... returns Real", "Float // ... returns Float"),
+        ]
+    else:
+        return text
+    for prior, current in changes:
+        if prior not in text:
+            raise ValueError(f"{name}: missing source wording {prior!r}")
+        text = text.replace(prior, current)
+    return text
+
 def main():
     lib, constants = load_library()
     defs = definitions()
@@ -1939,6 +1977,8 @@ def main():
                 results[(ex, lang)] = str(why)
                 continue
             target = out_root / rel
+            if lang == "python":
+                text = python_number_examples(rel, text)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
             results[(ex, lang)] = None
