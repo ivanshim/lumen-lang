@@ -4990,6 +4990,10 @@ impl<'a> Engine<'a> {
         for current in std::iter::once(&actual).chain(actual.lineage.iter()) {
             if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) { return Some(value.clone()); }
             if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
+            // A native hash precedes a later mixin in the linearization;
+            // leave it to the worth's hash rather than walking past it.
+            if place == 8 && Self::own_kind(current).and_then(|word| self.kind_sample(&word))
+                .is_some_and(|sample| self.native_special(&sample, named)) { return None; }
             // A class saying how its things are equal, in its methods or
             // its namespace, and nothing of their hash, has unhashable things.
             if place == 8 && self.lang.class_special.get(2).map_or(false, |eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.borrow().iter().any(|(n, _)| n == eq)) { return Some(Value::Null); }

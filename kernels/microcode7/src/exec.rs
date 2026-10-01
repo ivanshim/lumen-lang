@@ -10945,6 +10945,13 @@ impl<'a> Machine<'a> {
             let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.clone());
             if own.is_some() { return own; }
             if let Some((_, body)) = blueprint.methods.iter().find(|(key, _)| key == word) { return Some(Value::Routine(body.clone())); }
+            // Native hashing owns this position in the ancestry, even
+            // when a later parent supplies a hash routine of its own.
+            if index == 8 {
+                if let Some(sample) = Self::native_word(blueprint).and_then(|word| self.kind_stand_in(&word)) {
+                    if self.native_member(&sample, word) { return None; }
+                }
+            }
             // Equality given, in the methods or the namespace, without a
             // hash: the things cannot be hashed.
             if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal) || blueprint.shared.borrow().iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
