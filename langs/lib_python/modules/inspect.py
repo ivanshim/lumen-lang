@@ -111,6 +111,14 @@ def getcoroutinestate(coroutine):
     return CORO_CREATED
 
 
+def iscoroutinefunction(object):
+    # A coroutine function carries the CO_COROUTINE flag on its code, so
+    # a caller can tell it apart from an ordinary function before calling
+    # it: an ordinary call would hand back a coroutine without running it.
+    code = getattr(object, '__code__', None)
+    return code is not None and (code.co_flags & CO_COROUTINE) != 0
+
+
 def __getattr__(name):
     raise 'NotImplementedError: inspect.' + name + ' needs to read a compiled body, which this runtime does not hand out'
 

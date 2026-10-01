@@ -107,18 +107,30 @@ def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
             raise TypeError('subTests() can only decorate methods, not classes')
 
         import functools
+        import inspect
 
         def iter_subtest_kwargs():
             for values in arg_values:
                 yield dict(zip(arg_names, (values,) if single_param else values))
 
-        @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
-            for subtest_kwargs in iter_subtest_kwargs():
-                with self.subTest(**subtest_kwargs):
-                    func(self, *args, **kwargs, **subtest_kwargs)
-                if _do_cleanups:
-                    self.doCleanups()
+        if inspect.iscoroutinefunction(func):
+            # A coroutine method must be awaited, or the runner would
+            # hand the body a coroutine it never runs.
+            @functools.wraps(func)
+            async def wrapper(self, *args, **kwargs):
+                for subtest_kwargs in iter_subtest_kwargs():
+                    with self.subTest(**subtest_kwargs):
+                        await func(self, *args, **kwargs, **subtest_kwargs)
+                    if _do_cleanups:
+                        self.doCleanups()
+        else:
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                for subtest_kwargs in iter_subtest_kwargs():
+                    with self.subTest(**subtest_kwargs):
+                        func(self, *args, **kwargs, **subtest_kwargs)
+                    if _do_cleanups:
+                        self.doCleanups()
         return wrapper
 
     return decorator
