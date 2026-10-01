@@ -890,7 +890,12 @@ impl<'a> Machine<'a> {
         held.iter().find(|(key, _)| key == binding).and_then(|(_, item)| match item.settled() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
-        }).or(original)
+        }).or(original).map(|number| match original {
+            // A larger logical limit cannot enlarge the execution thread's
+            // native stack, which must still refuse excessively deep calls.
+            Some(capacity) if number > capacity => capacity,
+            _ => number,
+        })
     }
 
     /// One more call under way, unless the table's limit on them is
@@ -3689,6 +3694,7 @@ impl<'a> Machine<'a> {
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown at them is raised on the spot.
     fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
+        self.deeper()?;
         let previous_reading = self.reading_now;
         if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) { self.reading_now = Some(book); }
         let chosen = generator.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| self.constructor_world(body)));
@@ -3696,6 +3702,7 @@ impl<'a> Machine<'a> {
         let result = self.step_into_body(generator, sent, hurled, given);
         if let Some(previous) = previous_world { self.world_book = previous; }
         self.reading_now = previous_reading;
+        self.standing -= 1;
         result
     }
 
@@ -6187,7 +6194,7 @@ impl<'a> Machine<'a> {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
-                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Of if values.len()==2 && (values[1].bare() == self.detail("kind") || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -7017,6 +7024,10 @@ impl<'a> Machine<'a> {
         match op { Prim::Octets(40) => Value::text(self.builtin_module()), _ => Value::Nil }
     }
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if name == self.rules.detail_kind && !name.is_empty() {
+            let actual = value.settled();
+            return self.prim(Prim::SortOf, "type", &[actual]).ok();
+        }
         if let Value::Intrinsic(op, word) = value {
             if !Self::names_a_kind(op) {
                 if name == self.rules.detail_qualified { return Some(Value::text(word)); }
@@ -11997,7 +12008,13 @@ impl<'a> Machine<'a> {
                     None => settled.push(operand.clone()),
                 }
             }
-            if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
+            let mapping_comparison = matches!(operation, Prim::Eq | Prim::Ne)
+                && settled.iter().all(|value| matches!(value.settled(), Value::Dict(_)));
+            let mapping_read = matches!(operation, Prim::At | Prim::Fetch)
+                && settled.first().is_some_and(|value| matches!(value.settled(), Value::Dict(_)));
+            // Dictionary operations already compare keys and values through
+            // their Python methods; nested instances do not block this road.
+            if changed && (mapping_comparison || mapping_read || !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
                 // A thing over a value that is not a number hashes as
                 // itself, the way CPython's own hash of a NaN does, and
                 // not as the worth that stood in for it here.
@@ -13669,7 +13686,12 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                let mut values: Vec<Value> = match &v[0] {
+                let plain = v[0].settled();
+                let offered = if let Value::Blueprint(kind) = &plain {
+                    self.blueprint_walk(kind)?.unwrap_or(plain)
+                } else { plain };
+                let offered = offered.settled();
+                let mut values: Vec<Value> = match &offered {
                     Value::Generator(state) => {
                         let mut yielded = Vec::new();
                         loop {
@@ -14032,6 +14054,15 @@ impl<'a> Machine<'a> {
             }
             Prim::ProgramNames => {
                 if v.len() == 1 {
+                    if let Value::Thing(namespace) = v[0].settled() {
+                        let pairs: Vec<_> = namespace.holds.borrow().iter().filter_map(|(word, cell)| {
+                            let item = cell.settled();
+                            (!matches!(item, Value::Unset)).then(|| (Value::text(word), item))
+                        }).collect();
+                        return Ok(Value::Dict(Rc::new(pairs.into())));
+                    }
+                }
+                if v.len() == 1 {
                     let Value::Small(depth) = v[0] else { return Err(String::from("TypeError: an integer is required")); };
                     let mut at = self.active_trace.clone();
                     for _ in 0..depth.max(0) {
@@ -14117,6 +14148,7 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
+                if !word.is_empty() && word == self.rules.detail_kind { return Ok(Value::Flag(true)); }
                 if self.integer_attribute(&v[0], &word).is_some()
                     || matches!(v[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.table.spells("ext.builtin.bytes.from_int", &word) {
                     return Ok(Value::Flag(true));
@@ -16285,7 +16317,10 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Octets { cell, .. } => Value::Small(cell.borrow().len() as i64),
                     Value::Unpaired(numbers) => Value::Small(numbers.len() as i64),
-                    Value::Text(s) => Value::Small(s.chars().count() as i64),
+                    Value::Text(s) => {
+                        let count = if s.is_ascii() { s.len() } else { s.chars().count() };
+                        Value::Small(count as i64)
+                    },
                     Value::Vector(l) | Value::Tuple(l) | Value::Arguments(l) => Value::Small(l.len() as i64),
                     Value::Set(members) => Value::Small(members.borrow().keys.len() as i64),
                     Value::TextRow(words, _) => Value::Small(words.len() as i64),
@@ -17763,7 +17798,7 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool, w: Names) -> String {
             // Kept as bytes, a character is a byte and the width is the
             // count of them; kept as letters, it is what they are
             // spelled with that is counted.
-            let wide = if w.kept_as_bytes { s.chars().count() } else { s.len() };
+            let wide = if w.kept_as_bytes && !s.is_ascii() { s.chars().count() } else { s.len() };
             format!("string({}) \"{}\"", wide, s)
         }
         Value::Flag(b) => format!("bool({})", b),
@@ -18470,17 +18505,34 @@ impl Machine<'_> {
             if self.import_cache_names(path) { return Ok(value.clone()); }
         }
         if path.starts_with('.') {
-            return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_string());
+            let Some(owner) = self.loaded_spaces.get(&self.written_in) else {
+                return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().into());
+            };
+            let mut parts: Vec<&str> = owner.split('.').collect();
+            if !self.written_in.ends_with("/__init__.py") { parts.pop(); }
+            let dots = path.len() - path.trim_start_matches('.').len();
+            for _ in 1..dots {
+                if parts.len() < 2 { return Err("ImportError: attempted relative import beyond top-level package".into()); }
+                parts.pop();
+            }
+            if parts.is_empty() { return Err("ImportError: attempted relative import with no known parent package".into()); }
+            let mut resolved = parts.join(".");
+            if dots < path.len() { resolved.push('.'); resolved.push_str(&path[dots..]); }
+            return self.load_namespace(&resolved);
         }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
         let from_disk = self.sys_path_source(path);
         let text = match &from_disk {
             Some((_, text)) => text.clone(),
-            None => self.library_sources.get(path).cloned().ok_or_else(|| {
-                let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
-                format!("{before}{path}{after}")
-            })?,
+            None => {
+                let embedded = self.library_sources.get(path).cloned();
+                let external = || self.library_module_file(path).and_then(|location| std::fs::read_to_string(location).ok());
+                embedded.or_else(external).ok_or_else(|| {
+                    let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
+                    format!("{before}{path}{after}")
+                })?
+            },
         };
         let own_file = match &from_disk {
             Some((file, _)) => Some(file.clone()),
@@ -18619,6 +18671,14 @@ impl Machine<'_> {
             let candidate = directory.join(relative);
             if candidate.is_file() {
                 return Some(made_absolute(&candidate.to_string_lossy()));
+            }
+        }
+        if path.starts_with("test.") {
+            let suffix = path[5..].replace('.', "/");
+            let test_root = directory.join("../../../tests/python");
+            let possibilities = [test_root.join(format!("{suffix}.py")), test_root.join(suffix).join("__init__.py")];
+            for location in possibilities {
+                if location.is_file() { return Some(made_absolute(&location.to_string_lossy())); }
             }
         }
         None
@@ -20613,7 +20673,7 @@ impl Machine<'_> {
         // primitive alone is handed the cell as it stands.
         // A list or a dictionary's window is walked as it stands, so what
         // iter is handed is looked at before it is settled into a copy.
-        let live = if op == Prim::Iterator && input.len() == 1 { Self::live_walk(&input[0]) } else { None };
+        let live = if matches!((op, input.len()), (Prim::Iterator, 1) | (Prim::Numbered, 1..)) { Self::live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
         let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some(owner.settled()), _ => None };
         // A member read by name is bound to the value as it stands, so
@@ -20816,6 +20876,8 @@ impl Machine<'_> {
                 };
                 let address: u64 = match &held {
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
+                    Value::Ellipsis => 4,
+                    Value::Refusal(label) => label.as_ptr() as usize as u64,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Vector(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Intrinsic(_, word) => {
@@ -20839,6 +20901,7 @@ impl Machine<'_> {
                     Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Huge(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Frac(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Complex(parts) => Rc::as_ptr(parts) as usize as u64,
                     _ => return Err(self.core_complaint("core.unready", name)),
                 };
                 let stamp = (input[0].kind_word(), address);
@@ -21006,7 +21069,7 @@ impl Machine<'_> {
                 }
                 require(1, 2)?;
                 let first = input.get(1).map(whole).transpose()?.unwrap_or_default();
-                let source = self.iterated_value(&input[0])?;
+                let source = if let Some(kind) = live { Self::cursor_value(kind) } else { self.iterated_value(&input[0])? };
                 Ok(Self::cursor_value(IteratorKind::Count(source, first)))
             }
             Zipped | Mapped => {

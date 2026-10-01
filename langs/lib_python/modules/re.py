@@ -120,6 +120,13 @@ class _Reader:
             return ['lit', '\f']
         if mark == 'v':
             return ['lit', '\v']
+        if mark in 'xuU':
+            width = 2 if mark == 'x' else (4 if mark == 'u' else 8)
+            digits = self.pattern[self.i:self.i + width]
+            if len(digits) != width or any(c not in '0123456789abcdefABCDEF' for c in digits):
+                raise ValueError('incomplete escape \\' + mark)
+            self.i += width
+            return ['lit', chr(int(digits, 16))]
         if not inside and mark in '123456789':
             return ['backref', int(mark)]
         if mark in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789':
@@ -309,34 +316,18 @@ def _accept(node, letter, ignorecase):
 def _walk(node, text, place, captures, opts):
     kind = node[0]
     if kind == 'seq':
-        states = [[place, captures]]
-        for part in node[1]:
-            if len(states) == 0:
-                break
-            next_states = []
-            for state in states:
-                next_states = [*next_states, *_walk(part, text, state[0], state[1], opts)]
-            states = next_states
-        return states
+        return _sequence(node[1], 0, text, place, captures, opts)
     if kind == 'or':
-        states = []
-        for arm in node[1]:
-            states = [*states, *_walk(arm, text, place, captures, opts)]
-        return states
+        return _alternatives(node[1], text, place, captures, opts)
     if kind == 'group':
-        states = []
-        for state in _walk(node[2], text, place, captures, opts):
-            found = __copy_value(state[1], False)
-            found[node[1]] = [place, state[0]]
-            states.append([state[0], found])
-        return states
+        return _captured(node, text, place, captures, opts)
     if kind == 'repeat':
         return _repeat(node, text, place, captures, 0, opts)
     if kind == 'lookahead':
-        states = _walk(node[2], text, place, captures, opts)
+        state = next(iter(_walk(node[2], text, place, captures, opts)), None)
         if node[1]:
-            return [[place, states[0][1]]] if len(states) else []
-        return [] if len(states) else [[place, captures]]
+            return [[place, state[1]]] if state is not None else []
+        return [] if state is not None else [[place, captures]]
     if kind == 'lookbehind':
         found = None
         s = place
@@ -396,21 +387,45 @@ def _walk(node, text, place, captures, opts):
         answer = _accept(node, letter, opts[0])
     return [[place + 1, captures]] if answer else []
 
+def _sequence(parts, index, text, place, captures, opts):
+    if index == len(parts):
+        yield [place, captures]
+        return
+    for end, groups in _walk(parts[index], text, place, captures, opts):
+        yield from _sequence(parts, index + 1, text, end, groups, opts)
+
+
+def _alternatives(arms, text, place, captures, opts):
+    for arm in arms:
+        yield from _walk(arm, text, place, captures, opts)
+
+
+def _captured(node, text, place, captures, opts):
+    for end, groups in _walk(node[2], text, place, captures, opts):
+        found = _host_copy_value(groups, False)
+        found[node[1]] = [place, end]
+        yield [end, found]
+
+
 def _repeat(node, text, place, captures, count, opts):
-    states = []
-    if count >= node[2] and not node[4]:
-        states.append([place, captures])
-    if node[3] < 0 or count < node[3]:
-        for state in _walk(node[1], text, place, captures, opts):
-            if state[0] != place:
-                states = [*states, *_repeat(node, text, state[0], state[1], count + 1, opts)]
-            elif count + 1 >= node[2]:
-                states.append(state)
-            elif count < node[2]:
-                states = [*states, *_repeat(node, text, place, state[1], count + 1, opts)]
-    if count >= node[2] and node[4]:
-        states.append([place, captures])
-    return states
+    pending = [(place, captures, count, False)]
+    while pending:
+        position, saved, used, emit = pending.pop()
+        if emit:
+            yield [position, saved]
+            continue
+        if used >= node[2]:
+            if node[4]:
+                pending.append((position, saved, used, True))
+            else:
+                yield [position, saved]
+        if node[3] < 0 or used < node[3]:
+            branches = list(_walk(node[1], text, position, saved, opts))
+            for end, groups in reversed(branches):
+                if end != position or used + 1 < node[2]:
+                    pending.append((end, groups, used + 1, False))
+                elif used + 1 >= node[2]:
+                    pending.append((end, groups, used + 1, True))
 
 class Match:
     def __init__(self, pattern, text, start, state):
@@ -524,6 +539,16 @@ def _expand(repl, found):
         i += 1
     return result
 
+import operator
+import sys
+
+def _position(value):
+    value = operator.index(value)
+    if value > sys.maxsize or value < -sys.maxsize - 1:
+        raise OverflowError('Python int too large to convert to C ssize_t')
+    return value
+
+
 class Pattern:
     def __init__(self, pattern, flags=0):
         self.flags = flags
@@ -531,7 +556,9 @@ class Pattern:
         self.multiline = (flags & MULTILINE) != 0
         self.dotall = (flags & DOTALL) != 0
         self.verbose = (flags & VERBOSE) != 0
-        text = _strip_verbose(pattern) if self.verbose else pattern
+        self._bytes = isinstance(pattern, bytes)
+        source = pattern.decode('latin-1') if self._bytes else pattern
+        text = _strip_verbose(source) if self.verbose else source
         reader = _Reader(text)
         self.tree = reader.choice()
         if reader.i != len(text):
@@ -545,16 +572,18 @@ class Pattern:
         # the pattern's own text on every position a search tries.
         shorthand = False
         for mark in ['\\w', '\\W', '\\d', '\\D', '\\s', '\\S', '\\b']:
-            if mark in pattern:
+            if mark in source:
                 shorthand = True
         self._shorthand = shorthand
 
     def _check_text(self, string):
-        if not self._shorthand:
-            return
-        for letter in list(string):
-            if ord(letter) > 127:
-                raise 'NotImplementedError: Unicode shorthand classes are not supported'
+        if self._bytes != isinstance(string, (bytes, bytearray)):
+            raise TypeError('cannot use a bytes pattern on a string-like object' if self._bytes else 'cannot use a string pattern on a bytes-like object')
+        if self._shorthand:
+            text = string.decode('latin-1') if self._bytes else string
+            for letter in text:
+                if ord(letter) > 127:
+                    raise NotImplementedError('Unicode shorthand classes are not supported')
 
     def match(self, string, pos=0, endpos=None):
         self._check_text(string)
@@ -564,24 +593,27 @@ class Pattern:
         # The part of `match` a caller who already checked the text
         # (`search`, `_next`) may call directly, at every position it
         # tries, without paying for that check again each time.
+        pos = max(0, min(_position(pos), len(string)))
         if endpos is not None:
-            string = string[:endpos]
-        states = _walk(self.tree, string, pos, {}, self._opts)
-        return Match(self, string, pos, states[0]) if len(states) else None
+            string = string[:max(0, _position(endpos))]
+        state = next(iter(_walk(self.tree, string.decode('latin-1') if self._bytes else string, pos, {}, self._opts)), None)
+        return Match(self, string, pos, state) if state is not None else None
 
     def fullmatch(self, string, pos=0, endpos=None):
         self._check_text(string)
+        pos = max(0, min(_position(pos), len(string)))
         if endpos is not None:
-            string = string[:endpos]
-        for state in _walk(self.tree, string, pos, {}, self._opts):
+            string = string[:max(0, _position(endpos))]
+        for state in _walk(self.tree, string.decode('latin-1') if self._bytes else string, pos, {}, self._opts):
             if state[0] == len(string):
                 return Match(self, string, pos, state)
         return None
 
     def search(self, string, pos=0, endpos=None):
         self._check_text(string)
+        pos = max(0, min(_position(pos), len(string)))
         if endpos is not None:
-            string = string[:endpos]
+            string = string[:max(0, _position(endpos))]
         while pos <= len(string):
             found = self._match_at(string, pos)
             if found is not None:
@@ -591,8 +623,9 @@ class Pattern:
 
     def _next(self, string, pos, empty_at):
         self._check_text(string)
+        pos = max(0, min(_position(pos), len(string)))
         while pos <= len(string):
-            for state in _walk(self.tree, string, pos, {}, self._opts):
+            for state in _walk(self.tree, string.decode('latin-1') if self._bytes else string, pos, {}, self._opts):
                 if pos != empty_at or state[0] != pos:
                     return Match(self, string, pos, state)
             pos += 1
@@ -602,8 +635,9 @@ class Pattern:
         return _FindIter(self, string, pos, endpos)
 
     def findall(self, string, pos=0, endpos=None):
+        pos = max(0, min(_position(pos), len(string)))
         if endpos is not None:
-            string = string[:endpos]
+            string = string[:max(0, _position(endpos))]
         result = []
         empty_at = -1
         while pos <= len(string):

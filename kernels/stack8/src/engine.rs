@@ -3019,7 +3019,11 @@ impl<'a> Engine<'a> {
         fields.iter().find(|(key, _)| key == binding).and_then(|(_, value)| match value.contents() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
-        }).or(fallback)
+        }).or(fallback).map(|requested| {
+            // Python frames also consume native stack while executing.
+            // Retain its safe ceiling when the Python limit is increased.
+            requested.min(fallback.unwrap_or(requested))
+        })
     }
 
     /// One step further into a call a thing answers with its own call
@@ -3074,7 +3078,7 @@ impl<'a> Engine<'a> {
         // counted.
         if !program.body_of_all {
             if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                if self.calls.len() >= limit { return Err(format!("\0{}", words).into()); }
+                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
             }
         }
         let n = if let Some(rules) = &program.parameter_rules {
@@ -3830,11 +3834,12 @@ impl<'a> Engine<'a> {
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown in is raised on the spot.
     fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, hurled: Option<Value>, given: &[Value]) -> Flow<Option<Value>> {
+        self.reaching_further()?;
         let book = held.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| self.constructor_book(body)));
-        let Some(book) = book else { return self.step_generator_body(held, sent, hurled, given); };
-        let saved = self.outer_book.replace(book);
+        let saved = book.map(|book| self.outer_book.replace(book));
         let outcome = self.step_generator_body(held, sent, hurled, given);
-        self.outer_book = saved;
+        if let Some(saved) = saved { self.outer_book = saved; }
+        self.answered();
         outcome
     }
 
@@ -5229,11 +5234,9 @@ impl<'a> Engine<'a> {
                 return Ok(Some(Value::View(Rc::new((map,"mapping".to_string())))));
             }
         }
-        // Each of the two singletons a program can name is the one
-        // value of its kind, and answers for the very class the kind
-        // builtin names for it.
-        if matches!(held, Value::Declined(_) | Value::Ellipsis) && name == self.class_word("kind") {
-            return Ok(Some(self.named_kind(&held)));
+        // Every value exposes the same class as the type builtin.
+        if !name.is_empty() && name == self.class_word("kind") {
+            return self.builtin_call(Builtin::SortOf, "type", vec![(None, held)]).map(Some);
         }
         if let Some(size) = self.integer_member(&held, name) { return Ok(Some(size)); }
         if name == self.class_word("flags") && !name.is_empty() {
@@ -7626,6 +7629,10 @@ impl<'a> Engine<'a> {
                     let class = self.drop_top()?.contents();
                     Some(self.class_get(class, name, false)?)
                 },
+                Action::Grab(name) if name.as_ref() == self.class_word("kind") => {
+                    let subject = self.drop_top()?.contents();
+                    Some(self.class_get(subject, name, false)?)
+                },
                 Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
@@ -8306,8 +8313,11 @@ impl<'a> Engine<'a> {
                 Value::array(together)
             }
             Action::Unpack(count, rest) => {
-                let source = collection_contents(&self.drop_top()?).contents();
+                let mut source = collection_contents(&self.drop_top()?).contents();
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
+                if let Value::Class(class) = &source {
+                    if let Some(iterable) = self.class_walked(&class.clone())? { source = collection_contents(&iterable).contents(); }
+                }
                 let mut items = match source {
                     Value::Generator(ref generator) => {
                         let mut found = Vec::new();
@@ -8821,9 +8831,8 @@ impl<'a> Engine<'a> {
                 };
                 // A builtin kind also carries the members its own values answer to.
                 let kind_carries = self.loose_kind_member(&held, name).is_some();
-                // Each of the two singletons a program can name is the
-                // one value of its kind, and answers for that kind.
-                let lone_kind = matches!(&held, Value::Declined(_) | Value::Ellipsis) && name.as_ref() == self.class_word("kind");
+                // The class attribute is present on builtin values too.
+                let lone_kind = !name.is_empty() && name.as_ref() == self.class_word("kind");
                 // A walk over a routine's own body answers whether it is
                 // running, where a language has a word for that.
                 let generator_running = matches!(&held, Value::Generator(_)) && (self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref())
@@ -11854,7 +11863,7 @@ impl<'a> Engine<'a> {
                     return Err(self.sequence_subscript_fault(target, at));
                 }
                 let index = match at { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().ok_or_else(||crate::strings::fault(self.lang,"index"))?, _ => return Err(crate::strings::fault(self.lang,"integer")) };
-                let length = s.chars().count() as i64;
+                let length = text_width(s, true) as i64;
                 let offset = if index < 0 { index.saturating_add(length) } else { index };
                 return s.chars().nth(offset as usize).map(|c|Value::text(&c.to_string())).ok_or_else(||crate::strings::fault(self.lang,"index"));
             }
@@ -15431,6 +15440,14 @@ impl<'a> Engine<'a> {
                 answer
             }
             Builtin::ProgramNamespace => {
+                if let [value] = args.as_slice() {
+                    if let Value::Object(module) = value.contents() {
+                        return Ok(Value::Map(Rc::new(module.fields.borrow().iter().filter_map(|(key, held)| {
+                            let value = held.contents();
+                            if matches!(value, Value::Blank) { None } else { Some((Value::text(key), value)) }
+                        }).collect())));
+                    }
+                }
                 if let [Value::Small(depth)] = args.as_slice() {
                     let mut current = self.trace_frame.clone().map_or(Value::Null, Value::Object);
                     for _ in 0..(*depth).max(0) {
@@ -16051,7 +16068,7 @@ impl<'a> Engine<'a> {
                 match &args[0] {
                     Value::Bytes(row, ..) => Value::Small(row.borrow().len() as i64),
                     Value::Codepoints(row) => Value::Small(row.len() as i64),
-                    Value::Text(s) => Value::Small(s.chars().count() as i64),
+                    Value::Text(s) => Value::Small(text_width(s, true) as i64),
                     Value::Array(items) | Value::Tuple(items) => Value::Small(items.len() as i64),
                     Value::Set(s) => Value::Small(s.borrow().held.len() as i64),
                     Value::Words(items, _) => Value::Small(items.len() as i64),
@@ -16536,8 +16553,8 @@ pub fn places_default() -> Value {
 /// bytes the letters are spelled with.
 fn text_width(s: &str, as_bytes: bool) -> usize {
     match as_bytes {
-        true => s.chars().count(),
-        false => s.len(),
+        true if !s.is_ascii() => s.chars().count(),
+        _ => s.len(),
     }
 }
 
@@ -17841,7 +17858,7 @@ impl Engine<'_> {
         // A cursor over a list, or over a window upon a map, reads it as
         // it stands, so what iter is handed is looked at before its
         // cell is opened.
-        let living = if b == Builtin::Iter && args.len() == 1 { Self::living_source(&args[0]) } else { None };
+        let living = if (b == Builtin::Iter && args.len() == 1) || (b == Builtin::Enumerate && !args.is_empty()) { Self::living_source(&args[0]) } else { None };
         let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.clone()), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
@@ -18040,9 +18057,12 @@ impl Engine<'_> {
                     },
                     Value::Huge(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Real(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Complex(number) => Rc::as_ptr(number) as usize as u64,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Flag(v) => if *v { 2 } else { 1 },
                     Value::Null => 0,
+                    Value::Ellipsis => 4,
+                    Value::Declined(word) => word.as_ptr() as usize as u64,
                     _ => return Err(self.core_fault("core.unready", name)),
                 };
                 let filed = format!("{}:{}", args[0].core_kind(), id);
@@ -18219,7 +18239,10 @@ impl Engine<'_> {
                 }
                 arity(1, 2)?;
                 let n = args.get(1).map(integer).transpose()?.unwrap_or_else(|| BigInt::from(0));
-                let walk = self.core_iterator(&args[0])?;
+                let walk = match living {
+                    Some(source) => Self::core_cursor(source),
+                    None => self.core_iterator(&args[0])?,
+                };
                 Self::core_cursor(CursorSource::Numbered(walk, n))
             }
             Builtin::Zip | Builtin::Map => {
@@ -18519,7 +18542,20 @@ impl Engine<'_> {
     /// A module owns cells in the same world, under names no source can
     /// spell. Its routines keep those addresses after the reader returns.
     fn import_module(&mut self, path: &str) -> Flow<Value> {
-        if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
+        if path.starts_with('.') {
+            let current = self.module_slots.get(&self.source).map(|(_, name)| name.clone());
+            let Some(current) = current else { return Err(self.lang.import_relative_unready.clone().into()) };
+            let is_package = self.source.ends_with("/__init__.py");
+            let mut base = if is_package { current } else { current.rsplit_once('.').map(|(owner, _)| owner.to_owned()).unwrap_or_default() };
+            let levels = path.chars().take_while(|c| *c == '.').count();
+            for _ in 1..levels {
+                base = base.rsplit_once('.').map(|(owner, _)| owner.to_owned()).ok_or_else(|| "ImportError: attempted relative import beyond top-level package".to_string())?;
+            }
+            if base.is_empty() { return Err("ImportError: attempted relative import with no known parent package".into()); }
+            let tail = &path[levels..];
+            let full = if tail.is_empty() { base } else { format!("{base}.{tail}") };
+            return self.import_module(&full);
+        }
         // A name a program's own code took out of `sys.modules` is
         // read in again rather than handed the standing instance: that
         // dictionary is where CPython keeps such a cache, and a program
@@ -18535,7 +18571,9 @@ impl Engine<'_> {
         let from_disk = self.sys_path_source(path);
         let source = match &from_disk {
             Some((_, source)) => source.clone(),
-            None => match self.module_sources.get(path).cloned() {
+            None => match self.module_sources.get(path).cloned().or_else(|| {
+                self.library_module_file(path).and_then(|file| std::fs::read_to_string(file).ok())
+            }) {
                 Some(source) => source,
                 None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
             },
@@ -18667,6 +18705,12 @@ impl Engine<'_> {
         if std::path::Path::new(&flat).is_file() { return Some(made_absolute(&flat)); }
         let package = format!("{root}/{stem}/__init__.py");
         if std::path::Path::new(&package).is_file() { return Some(made_absolute(&package)); }
+        if let Some(test_name) = path.strip_prefix("test.") {
+            let tests = format!("{root}/../../../tests/python/{}", test_name.replace('.', "/"));
+            for file in [format!("{tests}.py"), format!("{tests}/__init__.py")] {
+                if std::path::Path::new(&file).is_file() { return Some(made_absolute(&file)); }
+            }
+        }
         None
     }
 

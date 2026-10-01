@@ -878,7 +878,9 @@ impl<'a> Machine<'a> {
                     let (positional, named) = self.open_arguments(given)?;
                     let key = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
                     self.value_member(&under, &key, positional, named)?;
-                }else if !given.is_empty()&&native.is_none()&&self.inherited_entry(&class,self.detail("allocate")).is_none(){self.root_turns_away(&class,'n')?;}
+                }else if native.is_none() && self.inherited_entry(&class,self.detail("allocate")).is_none() {
+                    if !self.opened_arguments(given)?.is_empty() { self.root_turns_away(&class,'n')?; }
+                }
             }
         }
         Ok(created)
@@ -950,6 +952,12 @@ impl<'a> Machine<'a> {
         told.into()
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
+        let settled = entry.settled();
+        let entry = if matches!(settled, Value::Wrapped(..) | Value::Adorned(_)) { settled } else { entry };
+        if let Value::Adorned(descriptor) = &entry {
+            if descriptor.manner == 's' { return Ok(descriptor.target.clone()); }
+            if descriptor.manner == 'c' { return Ok(Self::wrap(3, vec![descriptor.target.clone(), Value::Blueprint(owner)])); }
+        }
         match &entry {
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
@@ -1672,7 +1680,10 @@ impl<'a> Machine<'a> {
             if let Some(root)=self.from_the_root(key,false){return Ok(root);}
         }else if let Value::Thing(t)=&value {
             if !direct {if let Some(reader)=self.inherited_entry(&t.blueprint(),self.detail("get")){return self.apply_class_member(reader,vec![value.clone(),Value::text(key)]);}}
-            if key==self.detail("kind"){return Ok(Value::Blueprint(t.blueprint().clone()));}
+            if key==self.detail("kind") {
+                if self.namespace_holding(&value).is_some() { return Ok(self.kind_named_after(&value)); }
+                return Ok(Value::Blueprint(t.blueprint().clone()));
+            }
             if key==self.detail("namespace"){
                 if let Some(descriptor)=self.inherited_entry(&t.blueprint(),key) {
                     return self.member_binding(descriptor,Some(value.clone()),t.blueprint().clone());
@@ -1907,7 +1918,7 @@ impl<'a> Machine<'a> {
         // Whatever is no thing is of the kind the kind primitive names
         // for it, where it names one.
         if key==self.detail("kind")&&!matches!(value,Value::Thing(_)) {
-            if let Ok(kind)=self.class_from_type(vec![value.clone()]) {return Ok(kind);}
+            return self.prim(Prim::SortOf, "type", &[value.clone()]).map_err(Escape::from);
         }
         self.sought_in_vain = Some((key.to_owned(), value.clone()));
         Err(self.absent_attribute(&value,key))

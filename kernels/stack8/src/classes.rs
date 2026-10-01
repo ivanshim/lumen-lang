@@ -853,7 +853,7 @@ impl<'a> Engine<'a> {
                     }
                     let name = self.lang.constructor.clone().unwrap_or_default();
                     self.value_method(&worth, &name, positional, keywords)?;
-                } else if !args.is_empty() && kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() {
+                } else if kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() && !self.call_items(args)?.is_empty() {
                     self.root_refuses_arguments(&c,true)?;
                 }
             }
@@ -1026,6 +1026,13 @@ impl<'a> Engine<'a> {
         told.into()
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
+        let value = match value.contents() {
+            inner @ (Value::Adapter(_) | Value::Descriptor(_)) => inner,
+            _ => value,
+        };
+        if let Value::Descriptor(descriptor) = &value {
+            return self.descriptor_read(descriptor, subject.unwrap_or(Value::Class(class)));
+        }
         if let Value::Adapter(w) = &value {
             return match w.0 {
                 4 => Ok(w.1[0].clone()),
@@ -1322,7 +1329,9 @@ impl<'a> Engine<'a> {
                 if !plain { if let Some(f)=self.class_value(&o.class_now(),self.class_word("get")) {
                     return self.class_apply(f,vec![subject.clone(),Value::text(name)]);
                 } }
-                if name==self.class_word("kind") {return Ok(Value::Class(o.class_now().clone()));}
+                if name==self.class_word("kind") {
+                    return Ok(if self.module_holding(&subject).is_some() { self.named_kind(&subject) } else { Value::Class(o.class_now().clone()) });
+                }
                 if name==self.class_word("namespace") {
                     if let Some(descriptor)=self.class_value(&o.class_now(),name) {
                         return self.bind_class_value(descriptor,Some(subject.clone()),o.class_now().clone());
@@ -1555,7 +1564,7 @@ impl<'a> Engine<'a> {
         // Whatever is not a thing is of the kind the kind builtin names
         // for it, where it names one.
         if name==self.class_word("kind") && !matches!(subject,Value::Object(_)) {
-            if let Ok(kind)=self.class_type(vec![subject.clone()]) {return Ok(kind);}
+            return self.builtin_call(Builtin::SortOf, "type", vec![(None, subject.clone())]).map_err(Into::into);
         }
         self.absent_member = Some((name.to_string(), subject.clone()));
         Err(self.missing_member(&subject,name))

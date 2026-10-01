@@ -431,6 +431,18 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 Value::Thing(_) => return Err(g.bad("protocol")),
                 _=>return Err(g.bad("walk")),
             };
+            if row.iter().any(|v| matches!(v, Value::Unpaired(_))) {
+                let separator: Vec<_> = source.chars().map(|c| c as u32).collect();
+                let mut joined = Vec::new();
+                for (index, item) in row.iter().enumerate() {
+                    if index > 0 { joined.extend(separator.iter().copied()); }
+                    match item.character_numbers() {
+                        Some(numbers) => joined.extend(numbers),
+                        None => return Err(g.bad("join")),
+                    }
+                }
+                return Ok(Value::characters(joined));
+            }
             let mut portions=Vec::new();
             for item in &row {match item {Value::Text(t)=>portions.push(t.as_ref()),_=>return Err(g.bad("join"))}}
             Value::text(&portions.join(source))

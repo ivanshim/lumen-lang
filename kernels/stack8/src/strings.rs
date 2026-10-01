@@ -482,6 +482,14 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 Value::Object(_) => return Err(fault(lang,"protocol")),
                 _=>return Err(fault(lang,"walk")),
             };
+            if items.iter().any(|item| matches!(item, Value::Codepoints(_))) {
+                let mut codes = Vec::new();
+                for (i, value) in items.iter().enumerate() {
+                    if i != 0 { codes.extend(s.chars().map(u32::from)); }
+                    codes.extend(value.text_codes().ok_or_else(|| fault(lang, "join"))?);
+                }
+                return Ok(Value::from_codes(codes));
+            }
             let mut out=String::new();for (i,v) in items.iter().enumerate() {if i>0 {out.push_str(s);}let Value::Text(t)=v else {return Err(fault(lang,"join"));};out.push_str(t);}
             Value::text(&out)
         }
