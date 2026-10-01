@@ -10,8 +10,8 @@ def _ordered(iterable, key=None, reverse=False):
             if not before:
                 break
             at -= 1
-        values = [*values[:at], item, *values[at:]]
-        keys = [*keys[:at], wanted, *keys[at:]]
+        values.insert(at, item)
+        keys.insert(at, wanted)
     return values
 
 def nsmallest(n, iterable, key=None):

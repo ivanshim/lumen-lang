@@ -7090,9 +7090,7 @@ impl<'a> Machine<'a> {
     /// The working a value's method of this name stands for, where the
     /// table gives one a builtin kind answers to.
     fn value_method_named(&self, name: &str) -> Option<String> {
-        crate::table::BUILTIN_LABELS.iter()
-            .find(|(label, prim)| *prim == Prim::ValueMethod && self.table.spells(label, name))
-            .map(|(label, _)| label.strip_prefix("ext.builtin.method.").unwrap_or(label).to_string())
+        self.table.method_names.get(name).map(|operation| (*operation).to_owned())
     }
 
     /// A pair of a thing and a method's name, standing where a routine
