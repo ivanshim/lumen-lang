@@ -16376,11 +16376,27 @@ impl<'a> Engine<'a> {
             }
             Builtin::CodeOf => {
                 arity(1)?;
-                if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
-                let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
-                match s.chars().next() {
-                    Some(c) => Value::Small(c as i64),
-                    None => return Err(format!("{}() requires a non-empty string", name)),
+                if let Some(words) = self.lang.core_words.get("core.ord").filter(|words| words.len() == 4) {
+                    let given = args[0].contents();
+                    let held = match &given {
+                        Value::Object(object) if matches!(Self::kind_beneath(&object.class_now()).as_deref(), Some("str" | "bytes" | "bytearray")) => Self::worth_of(&given).map(|worth| worth.contents()).unwrap_or(given.clone()),
+                        _ => given.clone(),
+                    };
+                    let (size, point) = match &held {
+                        Value::Text(s) => (s.chars().count(), s.chars().next().map(u32::from)),
+                        Value::Codepoints(row) => (row.len(), row.first().copied()),
+                        Value::Bytes(row, ..) => { let bytes = row.borrow(); (bytes.len(), bytes.first().map(|&b| u32::from(b))) },
+                        _ => return Err(format!("{}{}{}", words[2], Self::shown_kind(&given), words[3])),
+                    };
+                    if size != 1 { return Err(format!("{}{}{}", words[0], size, words[1])); }
+                    Value::Small(i64::from(point.expect("one character has a code point")))
+                } else {
+                    if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
+                    let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
+                    match s.chars().next() {
+                        Some(c) => Value::Small(c as i64),
+                        None => return Err(format!("{}() requires a non-empty string", name)),
+                    }
                 }
             }
             Builtin::CharOf => {

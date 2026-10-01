@@ -746,6 +746,12 @@
     "TypeError: '",
     "' object is not reversible"
   ],
+  "ext.builtin.core.ord": [
+    "TypeError: ord() expected a character, but string of length ",
+    " found",
+    "TypeError: ord() expected string of length 1, but ",
+    " found"
+  ],
   "ext.builtin.core.chr.range": [
     "ValueError: chr() arg not in range(0x110000)"
   ],

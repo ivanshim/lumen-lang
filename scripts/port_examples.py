@@ -1908,12 +1908,14 @@ def write_library_report(lib, defs, coverage):
     LIBRARY_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-# These Python examples are maintained by hand: Python floors quotients and
-# rounds ties to even, while their Lumen originals use the shared core rules.
+# These Python examples are maintained by hand: Python floors quotients,
+# rounds ties to even, and requires one character for ord(). Their Lumen
+# originals use the shared core rules.
 PYTHON_EXCLUSIONS = frozenset({
     "constructs/integer_quotient.py",
     "constructs/integer_quotient_minimal.py",
     "constructs/round_function.py",
+    "constructs/ord_chr.py",
 })
 
 

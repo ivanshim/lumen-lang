@@ -16562,13 +16562,30 @@ impl<'a> Machine<'a> {
             }
             Prim::CodeOf => {
                 n(1)?;
-                match &v[0] {
-                    Value::Unpaired(numbers) => Value::Small(numbers[0] as i64),
-                    Value::Text(s) => match s.chars().next() {
-                        Some(c) => Value::Small(c as i64),
-                        None => return Err(format!("{}() requires a non-empty string", name)),
-                    },
-                    _ => return Err(format!("{}() requires a string argument", name)),
+                let words = self.table.strings("ext.builtin.core.ord");
+                if words.len() == 4 {
+                    let given = v[0].settled();
+                    let held = match &given {
+                        Value::Thing(thing) if matches!(Self::native_beneath(&thing.blueprint()).as_deref(), Some("str" | "bytes" | "bytearray")) => Self::underlying(&given).map(|worth| worth.settled()).unwrap_or(given.clone()),
+                        _ => given.clone(),
+                    };
+                    let (length, code) = match &held {
+                        Value::Text(s) => (s.chars().count(), s.chars().next().map(u32::from)),
+                        Value::Unpaired(row) => (row.len(), row.first().copied()),
+                        Value::Octets { cell, .. } => { let row = cell.borrow(); (row.len(), row.first().map(|&b| u32::from(b))) },
+                        _ => return Err(format!("{}{}{}", words[2], given.kind_word(), words[3])),
+                    };
+                    if length != 1 { return Err(format!("{}{}{}", words[0], length, words[1])); }
+                    Value::Small(i64::from(code.expect("one unit has one code")))
+                } else {
+                    match &v[0] {
+                        Value::Unpaired(numbers) => Value::Small(numbers[0] as i64),
+                        Value::Text(s) => match s.chars().next() {
+                            Some(c) => Value::Small(c as i64),
+                            None => return Err(format!("{}() requires a non-empty string", name)),
+                        },
+                        _ => return Err(format!("{}() requires a string argument", name)),
+                    }
                 }
             }
             Prim::CharOf => {

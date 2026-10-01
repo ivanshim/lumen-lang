@@ -98,6 +98,8 @@ starred subscript, after the entire subscript has been read.
   remainder and divmod refuse complex operands using the shared binary
   complaint, which includes the actual operation requested.
 
+- `ext.builtin.core.ord` gives Python’s length and operand-type complaints for `ord()`; its presence also enables bytes, bytearray, and native subclasses.
+
 ## Format rules
 
 1. A file is one flat JSON object. Every file carries the same labels in the
@@ -4477,6 +4479,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.issubclass.subject` | - | - | `TypeError: issubclass() arg 1 must be a class` | - | - | - | - | - | - | - |
 | `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
 | `ext.builtin.core.not_iterator` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
+| `ext.builtin.core.ord` | - | - | `TypeError: ord() expected a character, but string of length ` ` found` `TypeError: ord() expected string of length 1, but ` ` found` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` `TypeError: unsupported operand type(s) for ** or pow(): '` `', '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
