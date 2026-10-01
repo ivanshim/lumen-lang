@@ -1,4 +1,4 @@
-# Source: CPython 3b564385e4c9, Lib/re/__init__.py; PSF License.
+# From CPython 3b564385e4c9 Lib/re/__init__.py; PSF License.
 #
 # Secret Labs' Regular Expression Engine
 #
@@ -139,8 +139,21 @@ __all__ = [
     "UNICODE", "NOFLAG", "RegexFlag", "PatternError"
 ]
 
-# The runtime flag adapter supplies the IntFlag API used by this package.
-from ._flags import *
+@enum.global_enum
+@enum._simple_enum(enum.IntFlag, boundary=enum.KEEP)
+class RegexFlag:
+    NOFLAG = 0
+    ASCII = A = _compiler.SRE_FLAG_ASCII # assume ascii "locale"
+    IGNORECASE = I = _compiler.SRE_FLAG_IGNORECASE # ignore case
+    LOCALE = L = _compiler.SRE_FLAG_LOCALE # assume current 8-bit locale
+    UNICODE = U = _compiler.SRE_FLAG_UNICODE # assume unicode "locale"
+    MULTILINE = M = _compiler.SRE_FLAG_MULTILINE # make anchors look for newline
+    DOTALL = S = _compiler.SRE_FLAG_DOTALL # make dot match newline
+    VERBOSE = X = _compiler.SRE_FLAG_VERBOSE # ignore whitespace and comments
+    # sre extensions (experimental, don't rely on these)
+    DEBUG = _compiler.SRE_FLAG_DEBUG # dump pattern after compilation
+    __str__ = object.__str__
+    _numeric_repr_ = hex
 
 # sre exception
 PatternError = error = _compiler.PatternError

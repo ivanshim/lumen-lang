@@ -301,7 +301,7 @@ impl<'a> Engine<'a> {
         let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
-        let module = self.class_word("main").to_string();
+        let module = self.module_slots.get(&self.source).map_or_else(|| self.class_word("main").to_string(), |(_, name)| name.clone());
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
             members.push((self.class_word("module").to_string(), Value::text(&module)));
         }
@@ -600,7 +600,11 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
-                9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
+                9 if w.1.is_empty() && args.len() == 2 => {
+                    let parent = args[0].contents();
+                    if !matches!(parent, Value::Class(_)) { return Err(self.class_refusal()); }
+                    Ok(Self::adapter(9, vec![parent, args[1].contents()]))
+                },
                 0 => Ok(w.1[0].clone()),
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
@@ -1077,9 +1081,9 @@ impl<'a> Engine<'a> {
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
                 16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
-                // A working of the property class, read through a
-                // property: bound to it. Its kept accessors read plainly.
-                20..=27 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                // Property workings and root method descriptors take
+                // the instance when installed as class members.
+                20..=27 | 30 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match subject { Some(Value::Object(o)) => Ok(self.property_reading(&o, &w.1[0].plain())), _ => Ok(value) },
                 _ => Ok(value),
             };
@@ -1135,6 +1139,11 @@ impl<'a> Engine<'a> {
                 let order: Vec<_> = std::iter::once(dynamic.clone()).chain(dynamic.lineage.iter().cloned()).collect();
                 if let Some(start) = order.iter().position(|class| Rc::ptr_eq(class, owner)) {
                     for class in &order[start + 1..] {
+                        if name == self.class_word("allocate") {
+                            if let Some(word) = Self::own_kind(class) {
+                                if word != self.class_word("root") { return Ok(Self::adapter(14, vec![Value::text(&word)])); }
+                            }
+                        }
                         if let Some(value) = Self::own_class_value(class, name) {
                             return self.bind_class_value(value, Some(receiver.clone()), dynamic);
                         }

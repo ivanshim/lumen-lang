@@ -4677,6 +4677,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
 | `ext.builtin.method.strip` | - | - | `strip` | - | - | - | - | - | - | - |
 | `ext.builtin.method.swapcase` | - | - | `swapcase` | - | - | - | - | - | - | - |
+| `ext.builtin.method.take_bytes` | - | - | `take_bytes` `bytearray.take_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.method.title` | - | - | `title` | - | - | - | - | - | - | - |
 | `ext.builtin.method.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
@@ -5621,3 +5622,5 @@ when the module is builtins or non-string. Percent-character complaints instead
 keep the public qualification, without changing the lexical declaration name.
 
 `ext.builtin.sre` names the Python-only SRE bytecode matching, character-case, and Unicode lookup primitive. The embedded CPython `re` package supplies parsing and compilation.
+
+Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.

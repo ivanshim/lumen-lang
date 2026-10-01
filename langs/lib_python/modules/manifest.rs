@@ -60,7 +60,6 @@ pub static MODULES: &[(&str, &str)] = &[
     ("re._casefix", include_str!("re/_casefix.py")),
     ("re._compiler", include_str!("re/_compiler.py")),
     ("re._constants", include_str!("re/_constants.py")),
-    ("re._flags", include_str!("re/_flags.py")),
     ("re._optimizer", include_str!("re/_optimizer.py")),
     ("re._parser", include_str!("re/_parser.py")),
     ("re._properties", include_str!("re/_properties.py")),

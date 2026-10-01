@@ -324,7 +324,7 @@ impl<'a> Machine<'a> {
         let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).collect();
         natives.dedup();
         if natives.len()>1 {return Err(self.table.single("ext.stmt.class.layout").unwrap_or(self.detail("unready")).to_owned().into());}
-        let module=self.detail("main").to_owned();
+        let module=match self.loaded_spaces.get(&self.written_in) { Some(owner)=>owner.clone(), None=>self.detail("main").to_owned() };
         if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(&module)));}
         if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
             if !matches!(if self.detail("name").is_empty() { Self::underlying(candidate).unwrap_or_else(|| candidate.settled()) } else { candidate.type_text() }, Value::Text(_) | Value::Unpaired(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", Self::type_argument_kind(candidate)).into()); }
@@ -629,7 +629,11 @@ impl<'a> Machine<'a> {
             Value::Blueprint(c)=>self.construct_ordered(c,values),
             Value::Wrapped(tag,kept)=>{
                 match tag {
-                    9 if kept.is_empty() && values.len() == 2 && matches!(values[0], Value::Blueprint(_)) => Ok(Value::Wrapped(9, Rc::new(values).into())),
+                    9 if kept.is_empty() && values.len() == 2 => {
+                        values = values.iter().map(Value::settled).collect();
+                        if let Value::Blueprint(_) = values[0] { Ok(Value::Wrapped(9, Rc::new(values).into())) }
+                        else { Err(self.class_unready()) }
+                    },
                     0=>Ok(kept[0].clone()),
                     1 if !values.is_empty()=>{
                         let Some(Value::Blueprint(c))=values.first() else{return Err(self.class_unready())};
@@ -1013,9 +1017,9 @@ impl<'a> Machine<'a> {
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
             Value::Wrapped(32,items) if receiver.is_some()=>return self.slot_value(&receiver.unwrap(),items),
-            // A working of the property blueprint, reached through a
-            // property, is tied to it; a kept accessor reads at once.
-            Value::Wrapped(50..=57,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
+            // Root descriptors and property workings keep their receiver.
+            // The accessors stored on a property are read directly.
+            Value::Wrapped(36 | 50..=57,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(58,items)=>return Ok(match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>entry}),
             _=>{}
         }
@@ -1499,6 +1503,11 @@ impl<'a> Machine<'a> {
                 let mut passed = false;
                 for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
                     if passed {
+                        if key == self.detail("allocate") {
+                            if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
+                                return Ok(Self::wrap(14, vec![Value::text(&native)]));
+                            }
+                        }
                         if let Some(entry) = Self::own_entry(base, key) {
                             return self.member_binding(entry, Some(instance.clone()), actual.clone());
                         }

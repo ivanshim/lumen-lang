@@ -1,4 +1,4 @@
-# Source: CPython 3b564385e4c9, Lib/re/_optimizer.py; PSF License.
+# From CPython 3b564385e4c9 Lib/re/_optimizer.py; PSF License.
 #
 # Secret Labs' Regular Expression Engine
 #
@@ -218,7 +218,7 @@ def _optimize_charset_segment(charset, iscased=None, fixup=None, fixes=None,
     # less significant byte is a bit index in the chunk (just like the
     # CHARSET matching).
 
-    charmap = bytes(charmap) # should be hashable
+    charmap = charmap.take_bytes() # should be hashable
     comps = {}
     mapping = bytearray(256)
     block = 0
@@ -247,10 +247,10 @@ def _mk_bitmap(bits, _CODEBITS=_CODEBITS, _int=int):
 
 def _bytes_to_codes(b):
     # Convert block indices to word array
-    import sys
-    width = _sre.CODESIZE
-    return [int.from_bytes(b[i:i+width], sys.byteorder)
-            for i in range(0, len(b), width)]
+    a = memoryview(b).cast('I')
+    assert a.itemsize == _sre.CODESIZE
+    assert len(a) * a.itemsize == len(b)
+    return a.tolist()
 
 def _simple(p):
     # check if this subpattern is a "simple" operator

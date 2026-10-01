@@ -1078,6 +1078,7 @@
   "ext.builtin.method.clear": [
     "clear"
   ],
+  "ext.builtin.method.take_bytes": ["take_bytes", "bytearray.take_bytes"],
   "ext.builtin.method.copy": [
     "copy"
   ],

@@ -29,7 +29,12 @@ def _index(n):
     if type(n) is int:
         return n
     from operator import index
-    return index(n)
+    try:
+        return index(n)
+    except TypeError:
+        if getattr(type(n), '__index__', None) is None:
+            raise TypeError("'%s' object cannot be interpreted as an integer" % type(n).__name__)
+        raise
 
 def _buffer(value):
     if isinstance(value, str):
@@ -52,7 +57,7 @@ class Pattern:
         self._groups = groups
         self._groupindex = dict(groupindex)
         self._indexgroup = indexgroup
-        self._isbytes = isinstance(pattern, bytes) if pattern is not None else None
+        self._isbytes = not isinstance(pattern, str) if pattern is not None else None
     @property
     def pattern(self):
         return self._pattern
@@ -176,18 +181,21 @@ class Pattern:
         from re import _compile
         return _compile, (self.pattern, self.flags)
     def __repr__(self):
-        from re._flags import _NAMES
+        # CPython pattern_repr lists flags by bit value, independently of enum declaration order.
+        names = ((2, 'IGNORECASE'), (4, 'LOCALE'), (8, 'MULTILINE'),
+                 (16, 'DOTALL'), (32, 'UNICODE'), (64, 'VERBOSE'),
+                 (128, 'DEBUG'), (256, 'ASCII'))
         remaining = self.flags
-        if isinstance(self.pattern, str) and remaining & 32 and not remaining & 256:
+        if isinstance(self.pattern, str) and remaining & 292 == 32:
             remaining &= ~32
         parts = []
-        for n, name in _NAMES:
+        for n, name in names:
             if remaining & n:
                 parts.append('re.' + name)
                 remaining &= ~n
         if remaining:
-            parts.append(hex(remaining))
-        return 're.compile(' + (repr(self.pattern)[:200] + '...' if len(repr(self.pattern)) > 200 else repr(self.pattern)) + (', ' + '|'.join(parts) if parts else '') + ')'
+            parts.append(hex(remaining & 0xffffffff))
+        return 're.compile(' + repr(self.pattern)[:200] + (', ' + '|'.join(parts) if parts else '') + ')'
     def __eq__(self, other):
         if not isinstance(other, Pattern):
             return NotImplemented
@@ -350,18 +358,21 @@ def template(pattern, items):
     return _Template(items)
 
 def compile(pattern, flags, code, groups, groupindex, indexgroup):
-    if not isinstance(code, list):
-        raise TypeError('compile() argument 3 must be list, not ' + type(code).__name__)
-    if not isinstance(groupindex, dict):
-        raise TypeError('compile() argument 5 must be dict, not ' + type(groupindex).__name__)
-    if not isinstance(indexgroup, tuple):
-        raise TypeError('compile() argument 6 must be tuple, not ' + type(indexgroup).__name__)
     flags = _index(flags)
     if not -2147483648 <= flags <= 2147483647:
         raise OverflowError('Python int too large to convert to C int')
+    if not isinstance(code, list):
+        actual = 'None' if code is None else type(code).__name__
+        raise TypeError("compile() argument 'code' must be list, not " + actual)
     groups = _index(groups)
     if not -9223372036854775808 <= groups <= 9223372036854775807:
         raise OverflowError('Python int too large to convert to C ssize_t')
+    if not isinstance(groupindex, dict):
+        actual = 'None' if groupindex is None else type(groupindex).__name__
+        raise TypeError("compile() argument 'groupindex' must be dict, not " + actual)
+    if not isinstance(indexgroup, tuple):
+        actual = 'None' if indexgroup is None else type(indexgroup).__name__
+        raise TypeError("compile() argument 'indexgroup' must be tuple, not " + actual)
     converted = []
     for op in code:
         if not isinstance(op, int):
