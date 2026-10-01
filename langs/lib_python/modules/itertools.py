@@ -34,8 +34,10 @@ class count(_Iterator):
     def _initialize(self, start=0, step=1):
         for value in (start, step):
             kind = type(value)
-            if not isinstance(value, (int, float, complex)) and not any(
-                hasattr(kind, name) for name in ('__index__', '__int__', '__float__')
+            if not issubclass(kind, (int, float, complex)) and not any(
+                name in base.__dict__
+                for base in kind.__mro__
+                for name in ('__index__', '__int__', '__float__')
             ):
                 raise TypeError('a number is required')
         self.current = start
