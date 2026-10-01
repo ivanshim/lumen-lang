@@ -796,6 +796,7 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
   ],

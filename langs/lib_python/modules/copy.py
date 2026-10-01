@@ -331,6 +331,8 @@ def replace(obj, /, **changes):
 
 # The root object reduction hooks are supplied by the pickle bridge.
 def _reduce_native(value):
+    if type(value) is slice:
+        return (slice, (value.start, value.stop, value.step))
     if type(value) in (set, frozenset):
         return (type(value), (list(value),))
     if getattr(value, "__reduce_ex__", None) is None and getattr(value, "__reduce__", None) is None:

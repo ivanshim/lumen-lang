@@ -7440,7 +7440,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn assignment_expression(&mut self) -> Res<()> {
-        if Lang::spells(&self.lang.reserved_names, &self.look().lexeme) && self.look_ahead(1).shape == Shape::Sign
+        if Lang::spells(&self.lang.reserved_names, &self.look().lexeme)
+            && ![&self.lang.true_words, &self.lang.false_words, &self.lang.null_words, &self.lang.yield_words].iter().any(|words| Lang::spells(words, &self.look().lexeme))
+            && self.look_ahead(1).shape == Shape::Sign
             && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
             return Err("SyntaxError: invalid syntax".into());
         }
