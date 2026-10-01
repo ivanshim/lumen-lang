@@ -87,6 +87,11 @@ def is_resource_enabled(resource):
 def requires_resource(resource):
     return unittest.skipUnless(is_resource_enabled(resource), 'resource ' + resource + ' is not enabled')
 
+# No run here is a profile-guided-optimisation task, so a test standing
+# aside from one has nothing to stand aside from and simply runs.
+def skip_if_pgo_task(test):
+    return test
+
 # A note for a runner that would put tests in threads at once. Nothing
 # here does, so the note is kept and the test runs.
 def thread_unsafe(reason=''):

@@ -16,6 +16,15 @@ def import_module(name, deprecated=False, required_on=None):
 # makes. As the reference does, None is handed back for a module that
 # cannot be imported at all.
 def import_fresh_module(name, fresh=(), blocked=(), deprecated=False, usefrozen=False):
+    # A module asked for fresh, that cannot be imported at all, means
+    # the fresh variant the caller asks for does not exist here, and
+    # None is the answer, as the reference answers for its own missing
+    # accelerators.
+    for module in fresh:
+        try:
+            __load_module(module)
+        except ImportError:
+            return None
     try:
         return __load_module(name)
     except ImportError:
