@@ -31,7 +31,14 @@ impl Value {
             // A generator the program wrote is a generator; a walk this
             // kernel made of its own, such as a map walked backwards,
             // carries the word the reference gives that walk instead.
-            Self::Generator(state) => return state.try_borrow().ok().and_then(|g| g.walked).map_or_else(|| "generator".to_owned(), |w| w.to_owned()),
+            Self::Generator(state) => return state.try_borrow().map_or_else(|_| "generator".to_owned(), |g| {
+                if let Some(walked) = g.walked { return walked.to_owned(); }
+                match g.of.as_ref().map(|p| p.flags & (128 | 512)) {
+                    Some(512) => "async_generator".to_owned(),
+                    Some(128) => "coroutine".to_owned(),
+                    _ => "generator".to_owned(),
+                }
+            }),
             Self::Window(_, portion) => crate::data::window_kind(*portion),
             // An iterator takes the name CPython gives what it walks:
             // the making of the walk where that says enough, and else
@@ -57,10 +64,13 @@ impl Value {
             // method of a thing the program laid out is not.
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
+            Self::Wrapped(120, _) => "wrapper_descriptor",
+            Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",
             Self::Wrapped(7, _) => "code",
+            Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a

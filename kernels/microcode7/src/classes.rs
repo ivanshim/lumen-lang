@@ -44,9 +44,13 @@ impl<'a> Machine<'a> {
     pub(super) fn native_kind(&mut self,word:&str)->Rc<Blueprint> {
         if let Some((_,kind))=self.native_kinds.iter().find(|(w,_)|w==word){return kind.clone();}
         let root=self.common_ancestor();
+        let protocols = if matches!(self.table.prims.get(word), Some(Prim::Zipped | Prim::Mapped | Prim::Filtered)) {
+            let names = self.table.strings("ext.stmt.class.special");
+            [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
+        } else { Vec::new() };
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{word}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(Vec::new()),weak_slot:Cell::new(None),sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
+            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
         self.native_kinds.push((word.to_owned(),kind.clone()));
         kind
     }
@@ -55,6 +59,81 @@ impl<'a> Machine<'a> {
     /// member write of the program's can reach it: the class takes no
     /// member writes and stands as no base.
     pub(super) fn sealed(b:&Blueprint)->bool {b.sealed.get()}
+    // The root method gathers the same names as the ordinary builtin
+    // path; an appointed directory hook is called by the caller instead.
+    pub(super) fn ordinary_directory(&self, item: &Value) -> Value {
+        // A routine lists the members it can honestly answer for,
+        // alongside any it was given of its own.
+        let routine=match item {
+            Value::Method(code,_)=>Some(Value::Routine(code.clone())),
+            Value::Wrapped(3,items) if matches!(items.first(),Some(Value::Routine(_)|Value::Bound(..)))=>Some(items[0].clone()),
+            Value::Routine(_)|Value::Bound(..)=>Some(item.clone()),
+            _=>None,
+        };
+        if let Some(routine)=routine {
+            let mut names:Vec<String>=Vec::new();
+            for part in ["name","qualified","doc","module","defaults","call"] {
+                let word=self.detail(part);
+                if !word.is_empty() { names.push(word.to_string()); }
+            }
+            names.extend(self.routine_holding_names(&routine));
+            names.sort();names.dedup();
+            return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()));
+        }
+            if matches!(item, Value::Wrapped(62, _)) {
+                let mut names = Vec::new();
+                names.extend(self.table.strings("ext.stmt.async.generator.methods").iter().skip(3).cloned());
+                names.extend([15, 16].iter().filter_map(|index| self.table.strings("ext.stmt.class.special").get(*index).cloned()));
+                for label in ["ext.stmt.yield.send", "ext.stmt.yield.throw", "ext.stmt.yield.close"] {
+                    names.extend(self.table.strings(label).iter().cloned());
+                }
+                names.sort(); names.dedup();
+                return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|name| Value::text(name)).collect()));
+            }
+        // A walk over a routine's own body lists the walking pair it
+        // answers to (through the mark below) and the few names a
+        // language gives it for stepping it by hand.
+        if let Value::Generator(_)=item {
+            let mut names=self.native_directory(item);
+                if self.is_async_generator(item) {
+                    names.extend(self.table.strings("ext.stmt.async.generator.methods").iter().take(3).cloned());
+                    names.extend(self.table.strings("ext.stmt.async.generator.fields").iter().cloned());
+                    names.sort(); names.dedup();
+                    return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()));
+                }
+            for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
+                if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
+            }
+            for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
+                if !word.is_empty() { names.push(word); }
+            }
+            names.sort();names.dedup();
+            return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()));
+        }
+        // A native kind, named as the kind itself or held as a value
+        // of one, answers the members a value of that kind has: the
+        // methods of the kind and the special names its mark answers.
+        if let Some(sample)=self.directory_stand_in(item) {
+            let named=self.native_directory(&sample);
+            return Value::Vector(crate::tuples::Sequence::plain(named.iter().map(|word|Value::text(word)).collect()));
+        }
+        let mut names=Vec::new();
+        let class=match item{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.blueprint())},Value::Blueprint(b)=>Some(b),_=>None};
+        if let Some(b)=class {
+            for c in std::iter::once(b).chain(b.ancestry.iter()) {
+                names.extend(c.shared.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));
+                if let Some(word) = Self::native_word(c) {
+                    if let Some(example) = self.kind_stand_in(&word) { names.extend(self.native_directory(&example)); }
+                }
+            }
+        }
+        else{names.extend(self.routine_holding_names(item));}
+        if matches!(item, Value::Thing(_)) && !names.iter().any(|entry| entry == self.detail("kind")) {
+            names.extend(self.table.strings("ext.stmt.class.detail.root.members").iter().cloned());
+        }
+        names.sort_unstable();names.dedup();Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()))
+    }
+
     /// The value whose kind a directory should describe: an empty value
     /// of the kind a native kind word names, or the value itself where
     /// it is one of a native kind. Nothing for a blueprint of a class's
@@ -693,6 +772,13 @@ impl<'a> Machine<'a> {
                         if self.table.prims.get(&word) == Some(&Prim::Uniques) { values.clear(); }
                         self.thing_over_native(c,&word,values)
                     }
+                    120 if values.len() == 1 => {
+                        let operation = match kept[0] { Value::Small(n) => n, _ => return Err(self.class_unready()) };
+                        match self.recipe_advance(operation, &values[0])? {
+                            Some(answer) => Ok(answer),
+                            None => Err(self.core_complaint("core.exhausted", "").into()),
+                        }
+                    }
                     3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
                     // An entry a native kind carries, standing loose:
                     // the first value handed to it is the one it works
@@ -901,6 +987,7 @@ impl<'a> Machine<'a> {
                         self.open_arguments(given.clone())?.0.into_iter().take(1).collect()
                     },
                     Some(Prim::Listed) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
+                    Some(Prim::Filtered) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     Some(Prim::Unchanging | Prim::Tupling) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     _ => given.clone(),
                 };
@@ -926,7 +1013,10 @@ impl<'a> Machine<'a> {
                     let (positional, named) = self.open_arguments(given)?;
                     let key = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
                     self.value_member(&under, &key, positional, named)?;
-                }else if !given.is_empty()&&native.is_none()&&self.inherited_entry(&class,self.detail("allocate")).is_none(){self.root_turns_away(&class,'n')?;}
+                }else if native.is_none()&&self.inherited_entry(&class,self.detail("allocate")).is_none(){
+                    let (positional, keywords) = self.open_arguments(given)?;
+                    if !positional.is_empty() || !keywords.is_empty() { self.root_turns_away(&class,'n')?; }
+                }
             }
         }
         Ok(created)
@@ -999,6 +1089,7 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         match &entry {
+            Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -1273,6 +1364,7 @@ impl<'a> Machine<'a> {
     /// answers about coming first.
     fn root_answers(&mut self,named:&str,values:Vec<Value>)->Res {
         let which=self.table.strings("ext.stmt.class.detail.root.members").iter().position(|word|word==named);
+        if which == Some(9) && values.len() != 1 { return Err(self.method_fault("arguments").into()); }
         let not_mine=Value::Refusal(Rc::from(self.table.single("ext.stmt.class.special.declined").unwrap_or("NotImplemented")));
         let Some(first)=values.first().cloned() else{return Err(self.class_unready())};
         let second=values.get(1).cloned();
@@ -1303,15 +1395,7 @@ impl<'a> Machine<'a> {
                 other=>self.prim(Prim::Quoted,"",&[other.clone()])?,
             },
             Some(8)=>self.prim(Prim::Quoted,"",&[first])?,
-            Some(9)=>{
-                let mut names:Vec<String>=Vec::new();
-                if let Value::Thing(t)=&first {
-                    names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));
-                    for c in std::iter::once(&t.blueprint()).chain(t.blueprint().ancestry.iter()){names.extend(c.shared.borrow().iter().map(|(k,_)|k.clone()));}
-                }
-                names.sort_unstable();names.dedup();
-                Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect::<Vec<_>>()))
-            }
+            Some(9)=>self.ordinary_directory(&first),
             Some(10)=>Self::held_as_state(&first),
             Some(11|12)=>{
                 if which == Some(12) {
@@ -1527,6 +1611,9 @@ impl<'a> Machine<'a> {
         self.apply_class_member(bound,vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key))
     }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if matches!(&value, Value::Wrapped(62, _)) {
+            if let Some(method) = self.attribute(&value, key) { return Ok(method); }
+        }
         if let Value::Wrapped(60, parts) = &value {
             if let [Value::Text(kind), Value::Text(word)] = parts.as_slice() {
                 if key==self.detail("qualified") { return Ok(Value::text(&format!("{}.{}", kind, word))); }
@@ -1537,11 +1624,15 @@ impl<'a> Machine<'a> {
             }
         }
         if let Some(member) = self.activation_member(&value, key) { return Ok(member); }
+        if matches!(&value, Value::Backtrace(_)) {
+            if let Some(directory) = self.directory_attribute(&value, key) { return Ok(directory); }
+        }
         if let Value::Backtrace(link) = &value {
             let names = self.table.strings("ext.builtin.exceptions.traceback");
             if names.get(1).map_or(false, |n| n == key) { return Ok(Value::Small(link.location as i64)); }
             if names.get(2).map_or(false, |n| n == key) { return Ok(link.following.clone()); }
             if names.get(3).map_or(false, |n| n == key) { return Ok(Value::Thing(link.activation.clone())); }
+            if names.get(26).map_or(false, |n| n == key) { return Ok(Value::Small(link.instruction)); }
             for (index, offset) in [(16, link.extent.map_or(Some(link.location), |x| Some(x.2))), (17, link.extent.map(|x| x.1)), (18, link.extent.map(|x| x.3))] {
                 if names.get(index).map_or(false, |word| word == key) { return Ok(offset.map(|n| Value::Small(n as i64)).unwrap_or(Value::Nil)); }
             }
@@ -1734,7 +1825,12 @@ impl<'a> Machine<'a> {
             if let Some(root)=self.from_the_root(key,false){return Ok(root);}
         }else if let Value::Thing(t)=&value {
             if !direct {if let Some(reader)=self.inherited_entry(&t.blueprint(),self.detail("get")){return self.apply_class_member(reader,vec![value.clone(),Value::text(key)]);}}
-            if key==self.detail("kind"){return Ok(Value::Blueprint(t.blueprint().clone()));}
+            if key == self.detail("kind") {
+                match self.inherited_entry(&t.blueprint(), key) {
+                    Some(entry) => return self.member_binding(entry, Some(value.clone()), t.blueprint().clone()),
+                    None => return Ok(Value::Blueprint(t.blueprint().clone())),
+                }
+            }
             if key==self.detail("namespace"){
                 if let Some(descriptor)=self.inherited_entry(&t.blueprint(),key) {
                     return self.member_binding(descriptor,Some(value.clone()),t.blueprint().clone());
@@ -1767,6 +1863,10 @@ impl<'a> Machine<'a> {
             if let Some(v)=own{return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.blueprint().clone());}
             if self.is_fault_kind(&t.blueprint()) && self.fault_method_word(key) { return Ok(Value::Member(Rc::new(value.clone()), key.to_owned())); }
+            if self.table.strings("ext.stmt.class.detail.root.members").get(9).is_some_and(|word| word == key) {
+                let root = Self::wrap(36, vec![Value::text(key)]);
+                return Ok(Self::wrap(3, vec![root, value.clone()]));
+            }
             // The worth a thing keeps answers for the methods of its kind.
             let native=Self::underlying(&value);
             if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
@@ -1896,8 +1996,21 @@ impl<'a> Machine<'a> {
             // calling it does what calling the routine directly does.
             if key==self.detail("call"){return Ok(value.clone());}
         }else if let Value::Generator(state)=&value {
+            if self.is_async_generator(&value) {
+                if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == key) {
+                    if index == 2 { return Ok(Value::Flag(self.async_running(&value))); }
+                    let held = state.try_borrow().map_err(|_| self.class_unready())?;
+                    return Ok(match index {
+                        0 => held.of.as_ref().map_or(Value::Nil, |body| self.code_handle(body)),
+                        1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
+                        2 => Value::Flag(false),
+                        _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
+                    });
+                }
+                if let Some(method) = self.attribute(&value, key) { return Ok(method); }
+            }
             let running=self.table.strings("ext.stmt.yield.running");
-            if running.first().map_or(false,|w|w==key) {
+            if !self.is_async_generator(&value) && running.first().map_or(false,|w|w==key) {
                 // Running exactly while its own frame is on the way
                 // through the machine, which is exactly when the cell
                 // that holds it cannot be borrowed a second time.
@@ -2019,6 +2132,12 @@ impl<'a> Machine<'a> {
             if let Some(kind) = self.kind_word_of(&subject.settled()) {
                 return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{kind}'").into());
             }
+        }
+        if matches!(&subject, Value::Wrapped(62, _)) {
+            let known = self.attribute(&subject, key).is_some() || ["__class__", "__doc__"].contains(&key);
+            let message = if known { format!("AttributeError: '{}' object attribute '{}' is read-only", subject.kind_word(), key) }
+                else { format!("AttributeError: '{}' object has no attribute '{}' and no __dict__ for setting new attributes", subject.kind_word(), key) };
+            return Err(message.into());
         }
         if let Value::Generator(g) = &subject {
             if self.table.single("ext.stmt.yield.running") == Some(key) {
@@ -2368,13 +2487,14 @@ impl<'a> Machine<'a> {
         // not by the name that namespace goes by.
         if values.len()==1 && self.namespace_holding(&values[0]).is_some() {return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 {if let Value::Thing(t)=&values[0]{return Ok(Value::Blueprint(t.blueprint().clone()));}}
+        if values.len()==1 && self.is_async_generator(&values[0]) { return Ok(Value::Blueprint(self.native_kind("async_generator"))); }
         // A routine and a method are of kinds the table does not name,
         // so each takes the word the reference gives its kind; an
         // intrinsic word read as a class is of the kind builder's kind.
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         // A method or a data member read off a native kind's own word
         // is of the descriptor kind CPython gives it.
-        if let [Value::Wrapped(7|35|60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(3|7|14|35|60|62|120,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind
@@ -2455,7 +2575,7 @@ impl<'a> Machine<'a> {
     /// own for, named as the reference names that kind. It is built
     /// once and kept, so two askings answer with the very same one.
     pub(super) fn kind_named_after(&mut self,value:&Value)->Value{
-        let word=match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()};
+        let word=if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
         // A table spelling that very kind answers with its intrinsic
         // word, so that the kind asked for and the kind answered with
         // are one value: `type(enumerate(r)) is enumerate`.
@@ -2692,53 +2812,7 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
                 }
             }
-            // A routine lists the members it can honestly answer for,
-            // alongside any it was given of its own.
-            let routine=match &values[0] {
-                Value::Method(code,_)=>Some(Value::Routine(code.clone())),
-                Value::Wrapped(3,items) if matches!(items.first(),Some(Value::Routine(_)|Value::Bound(..)))=>Some(items[0].clone()),
-                Value::Routine(_)|Value::Bound(..)=>Some(values[0].clone()),
-                _=>None,
-            };
-            if let Some(routine)=routine {
-                let mut names:Vec<String>=Vec::new();
-                for part in ["name","qualified","doc","module","defaults","call"] {
-                    let word=self.detail(part);
-                    if !word.is_empty() { names.push(word.to_string()); }
-                }
-                names.extend(self.routine_holding_names(&routine));
-                names.sort();names.dedup();
-                return Ok(Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect::<Vec<_>>())));
-            }
-            // A walk over a routine's own body lists the walking pair it
-            // answers to (through the mark below) and the few names a
-            // language gives it for stepping it by hand.
-            if let Value::Generator(_)=&values[0] {
-                let mut names=self.native_directory(&values[0]);
-                for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
-                    if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
-                }
-                for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
-                    if !word.is_empty() { names.push(word); }
-                }
-                names.sort();names.dedup();
-                return Ok(Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect::<Vec<_>>())));
-            }
-            // A native kind, named as the kind itself or held as a value
-            // of one, answers the members a value of that kind has: the
-            // methods of the kind and the special names its mark answers.
-            if let Some(sample)=self.directory_stand_in(&values[0]) {
-                let named=self.native_directory(&sample);
-                return Ok(Value::Vector(crate::tuples::Sequence::plain(named.iter().map(|word|Value::text(word)).collect())));
-            }
-            let mut names=Vec::new();
-            let class=match &values[0]{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.blueprint())},Value::Blueprint(b)=>Some(b),_=>None};
-            if let Some(b)=class{for c in std::iter::once(b).chain(b.ancestry.iter()){names.extend(c.shared.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));}}
-            else{names.extend(self.routine_holding_names(&values[0]));}
-            if matches!(&values[0], Value::Thing(_)) && !names.iter().any(|entry| entry == self.detail("kind")) {
-                names.extend(self.table.strings("ext.stmt.class.detail.root.members").iter().cloned());
-            }
-            names.sort_unstable();names.dedup();return Ok(Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect::<Vec<_>>())));
+            return Ok(self.ordinary_directory(&values[0]));
         }
         if op==8 {return Err(self.wrong_count(&self.class_tool_word(8),1,values.len()));}
         // With the protocol spelled, a property is a thing of the

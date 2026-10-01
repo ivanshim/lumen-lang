@@ -2354,3 +2354,27 @@ except one MathTests part past the 870-second limit on both kernels, whose 83/88
 machine. No pass is lost anywhere; 1180 scratch programs agree; every gate passes.
 
 Merged, the fifty-five files count 2961 of 3390 on both kernels (2620 of 2802 on fifty files before).
+
+### 1ax. Batch 20v merged as #529; batch 20w: builtins, four small modules and itertools
+
+Batch 20w folds eight reviewed branches, integrated by a GPT-6.1 Sol worker. fix/python-floor-final's ord continuation
+(GPT-6.1 Sol) keeps ord_chr.py genuine Python and gains one builtin pass; fix/builtins-mapping (DeepSeek V4 Pro) two,
+from mapping globals and from-import resolution through custom import hooks; fix/async-code-flags (GPT-6.1 Sol) one, from
+coroutine code flags; fix/dir-traceback (GPT-6.1 Sol) one, from interpreter positions recorded in tracebacks;
+fix/math-sumprod (GPT-6.1 Sol) one test_math pass, from a native sumprod and package-relative imports.
+fix/stdlib-small (GPT-6.1 Sol) adds CPython's test_bisect, test_copy, test_heapq and test_keyword with their library;
+fix/stdlib-itertools (GPT-6.1 Sol) adds test_itertools with a faithful itertools; fix/perf-startup (DeepSeek V4 Pro)
+caches the language definition's extension roster, making stack8's debug start-up about five times faster with no
+change in behaviour.
+
+Measured on both kernels: test_builtin 112 → 117, test_functools 152 → 156, test_math 83 → 84; new files test_bisect
+46/46, test_copy 83/83, test_heapq 69/69, test_itertools 111/136, test_keyword 11/11. The merged full check agrees on
+1180 scratch programs and passes every gate; no pass is lost. One MathTests part still exceeds Lambda's 870-second
+limit on both kernels, and microcode7 needs more than 870 seconds for test_heapq whole: both were counted whole on the
+build machine.
+
+A correction to §1aw: the reference suite's pinned CPython commit, 3b564385e4c9 (2026-09-07), is the development
+branch — version 3.16.0a0 — not CPython 3.14 as §1aw said. The next batch re-pins the suite and every copied library
+file to the CPython 3.14.8 release (tag v3.14.8, commit 8e6e75d9102e).
+
+Merged, the sixty files count 3291 of 3735 on both kernels (2961 of 3390 on fifty-five files before).

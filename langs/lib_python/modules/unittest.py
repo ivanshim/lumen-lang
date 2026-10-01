@@ -426,6 +426,9 @@ class TestSuite:
     def addTest(self, test):
         self.tests = [*self.tests, test]
 
+    def __iter__(self):
+        return iter(self.tests)
+
     def addTests(self, tests):
         for test in tests:
             self.addTest(test)
@@ -805,6 +808,8 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
         # in parts. A plain class name selects every method in that class.
         selected = []
         for tests in suite.tests:
+            if tests.class_ is None:
+                continue
             name = tests.class_.__name__
             if name in only:
                 selected.append(tests)

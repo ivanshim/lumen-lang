@@ -606,8 +606,12 @@ fn run_all() {
         let modules = root.join("langs/lib_python/modules");
         request.push(("SELF".to_string(), "library_root".to_string(), modules.to_string_lossy().into_owned(), false));
     }
-    for (name, source) in embedded_modules::MODULES {
+    for (name, source, file) in embedded_modules::MODULES {
         request.push(("MODULE".to_string(), name.to_string(), source.to_string(), false));
+        request.push(("MODULE_FILE".to_string(), name.to_string(), file.to_string(), false));
+    }
+    for (name, member) in embedded_modules::MODULE_ALIASES {
+        request.push(("MODULE_ALIAS".to_string(), name.to_string(), member.to_string(), false));
     }
     // Where the program itself lies. A definition may give names to
     // these, and only the full kernels read those labels.

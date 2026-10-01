@@ -1836,16 +1836,25 @@ def write_mirror(lang, d, files, reasons):
     # Modules stay apart from the mirror and are read only when wanted.
     modules = out / "modules"
     if modules.is_dir():
+        layout_path = modules / "manifest-layout.json"
+        layout = json.loads(layout_path.read_text(encoding="utf-8")) if layout_path.is_file() else {}
+        locations = layout.get("files", {})
+        aliases = layout.get("aliases", {})
         packed = []
         for source in sorted(modules.rglob(f"*.{ext}")):
             relative = source.relative_to(modules).as_posix()
             name = relative[:-(len(ext) + 1)].replace("/", ".")
             if name.endswith(".__init__"):
                 name = name[:-9]
-            packed.append(f'    ({json.dumps(name)}, include_str!({json.dumps(relative)})),\n')
+            location = locations.get(name, relative)
+            packed.append(f'    ({json.dumps(name)}, include_str!({json.dumps(relative)}), {json.dumps(location)}),\n')
         (modules / "manifest.rs").write_text(
             "// Modules kept as source until a program asks for them.\n"
-            "pub static MODULES: &[(&str, &str)] = &[\n" + "".join(packed) + "];\n", encoding="utf-8")
+            "pub static MODULES: &[(&str, &str, &str)] = &[\n" + "".join(packed) + "];\n\n"
+            "// Non-package aliases initialize real source with their embedded parent.\n"
+            "pub static MODULE_ALIASES: &[(&str, &str)] = &[\n"
+            + "".join(f'    ({json.dumps(name)}, {json.dumps(member)}),\n' for name, member in sorted(aliases.items()))
+            + "];\n", encoding="utf-8")
     # A language may carry hand-written source of its own under native/,
     # for what it has and Lumen has not: PHP's exception classes. The
     # porter never writes there; it only puts those files first.
@@ -1908,12 +1917,14 @@ def write_library_report(lib, defs, coverage):
     LIBRARY_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-# These Python examples are maintained by hand: Python floors quotients and
-# rounds ties to even, while their Lumen originals use the shared core rules.
+# These Python examples are maintained by hand: Python floors quotients,
+# rounds ties to even, and requires one character for ord(). Their Lumen
+# originals use the shared core rules.
 PYTHON_EXCLUSIONS = frozenset({
     "constructs/integer_quotient.py",
     "constructs/integer_quotient_minimal.py",
     "constructs/round_function.py",
+    "constructs/ord_chr.py",
 })
 
 

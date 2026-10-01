@@ -287,6 +287,8 @@ pub enum CursorSource {
 
 #[derive(Debug)]
 pub struct Traceback {
+    /// Position in the executing routine's native instruction array.
+    pub instruction: i64,
     pub location: Option<(u32, u32, u32, u32)>,
     pub line: u32,
     pub frame: Rc<Instance>,

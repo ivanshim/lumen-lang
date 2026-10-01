@@ -156,6 +156,7 @@
   "ext.op.index.slice.amiss": [
     "SyntaxError: invalid syntax"
   ],
+  "ext.lexical.identifier.reserved": ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"],
   "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
@@ -746,6 +747,12 @@
     "TypeError: '",
     "' object is not reversible"
   ],
+  "ext.builtin.core.ord": [
+    "TypeError: ord() expected a character, but string of length ",
+    " found",
+    "TypeError: ord() expected string of length 1, but ",
+    " found"
+  ],
   "ext.builtin.core.chr.range": [
     "ValueError: chr() arg not in range(0x110000)"
   ],
@@ -798,6 +805,7 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
   ],
@@ -941,7 +949,7 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "gi_state"
+    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "gi_state", "tb_lasti"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -1028,6 +1036,8 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin.math.sumprod": true,
+  "ext.system.module.path": ["__path__"],
   "ext.builtin.max": [
     "max"
   ],
@@ -1376,6 +1386,9 @@
   ],
   "ext.builtin.print.separator": [
     "sep"
+  ],
+  "ext.builtin.itertools.product_step": [
+    "__itertools_product_step"
   ],
   "ext.builtin.program.namespace": [
     "__program_namespace"
@@ -2540,6 +2553,25 @@
   "ext.stmt.async.stop": [
     "StopAsyncIteration"
   ],
+  "ext.stmt.async.generator.escaped": [
+    "RuntimeError: async generator raised StopIteration",
+    "RuntimeError: async generator raised StopAsyncIteration"
+  ],
+  "ext.stmt.async.generator.close.ignored": [
+    "RuntimeError: async generator ignored GeneratorExit"
+  ],
+  "ext.stmt.async.generator.fields": [
+    "ag_code",
+    "ag_frame",
+    "ag_running",
+    "ag_await"
+  ],
+  "ext.stmt.async.generator.methods": [
+    "asend",
+    "athrow",
+    "aclose",
+    "__await__"
+  ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
   ],
@@ -2586,7 +2618,10 @@
     "bytes",
     "bytearray",
     "complex",
-    "enumerate"
+    "enumerate",
+    "zip",
+    "map",
+    "filter"
   ],
   "ext.stmt.class.layout": [
     "TypeError: multiple bases have instance lay-out conflict"
@@ -3083,6 +3118,7 @@
     "' from '",
     "'"
   ],
+  "ext.stmt.import.nonpackage": ["; '", "' is not a package"],
   "ext.stmt.import.missing": [
     "ModuleNotFoundError: No module named '",
     "'"
