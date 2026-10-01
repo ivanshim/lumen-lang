@@ -155,7 +155,7 @@ class _deque_iterator:
         return self._remaining
 
     def __reduce__(self):
-        return (type(self), (self._owner, len(self.__deque_field(owner, '_data')) - self._remaining))
+        return (type(self), (self._owner, len(_deque_field(self._owner, '_data')) - self._remaining))
 
 
 class _deque_reverse_iterator:
