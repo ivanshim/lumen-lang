@@ -40,7 +40,6 @@ __all__ = [
     "has_fork_support", "requires_fork",
     "has_subprocess_support", "requires_subprocess",
     "has_socket_support", "requires_working_socket",
-    "has_remote_subprocess_debugging", "requires_remote_subprocess_debugging",
     "anticipate_failure", "load_package_tests", "detect_api_mismatch",
     "check__all__", "skip_if_buggy_ucrt_strfptime",
     "check_disallow_instantiation", "check_sanitizer", "skip_if_sanitizer",
@@ -72,9 +71,7 @@ __all__ = [
     "BrokenIter",
     "in_systemd_nspawn_sync_suppressed",
     "run_no_yield_async_fn", "run_yielding_async_fn", "async_yield",
-    "reset_code", "on_github_actions",
-    "requires_root_user", "requires_non_root_user",
-    "skip_if_double_rounding", "built_with_c_assertions",
+    "reset_code", "on_github_actions"
     ]
 
 
@@ -237,41 +234,20 @@ def _is_gui_available():
         # if Python is running as a service (such as the buildbot service),
         # gui interaction may be disallowed
         import ctypes
-        import ctypes.util
         import ctypes.wintypes
-
         UOI_FLAGS = 1
         WSF_VISIBLE = 0x0001
-
-        @ctypes.util.struct
-        class USEROBJECTFLAGS:
-            fInherit: ctypes.wintypes.BOOL
-            fReserved: ctypes.wintypes.BOOL
-            dwFlags: ctypes.wintypes.DWORD
-
-        user32 = ctypes.windll.user32
-
-        @ctypes.util.wrap_dll_function(user32)
-        def GetProcessWindowStation() -> ctypes.wintypes.HANDLE:
-            ...
-
-        h = GetProcessWindowStation()
+        class USEROBJECTFLAGS(ctypes.Structure):
+            _fields_ = [("fInherit", ctypes.wintypes.BOOL),
+                        ("fReserved", ctypes.wintypes.BOOL),
+                        ("dwFlags", ctypes.wintypes.DWORD)]
+        dll = ctypes.windll.user32
+        h = dll.GetProcessWindowStation()
         if not h:
             raise ctypes.WinError()
-
-        @ctypes.util.wrap_dll_function(user32)
-        def GetUserObjectInformationW(
-            hObj: ctypes.wintypes.HANDLE,
-            nIndex: ctypes.c_int,
-            pvInfo: ctypes.c_void_p,
-            nLength: ctypes.wintypes.DWORD,
-            lpnLengthNeeded: ctypes.POINTER(ctypes.wintypes.DWORD),
-        ) -> ctypes.wintypes.BOOL:
-            ...
-
         uof = USEROBJECTFLAGS()
         needed = ctypes.wintypes.DWORD()
-        res = GetUserObjectInformationW(h,
+        res = dll.GetUserObjectInformationW(h,
             UOI_FLAGS,
             ctypes.byref(uof),
             ctypes.sizeof(uof),
@@ -346,6 +322,16 @@ def requires(resource, msg=None):
         raise ResourceDenied("No socket support")
     if resource == 'gui' and not _is_gui_available():
         raise ResourceDenied(_is_gui_available.reason)
+
+def _get_kernel_version(sysname="Linux"):
+    import platform
+    if platform.system() != sysname:
+        return None
+    version_txt = platform.release().split('-', 1)[0]
+    try:
+        return tuple(map(int, version_txt.split('.')))
+    except ValueError:
+        return None
 
 def _requires_unix_version(sysname, min_version):
     """Decorator raising SkipTest if the OS is `sysname` and the version is less
@@ -537,15 +523,6 @@ requires_IEEE_754 = unittest.skipUnless(
     float.__getformat__("double").startswith("IEEE"),
     "test requires IEEE 754 doubles")
 
-# detect evidence of double-rounding:
-x, y = 1e16, 2.9999 # use temporary values to defeat peephole optimizer
-HAVE_DOUBLE_ROUNDING = (x + y == 1e16 + 4)
-skip_if_double_rounding = unittest.skipIf(HAVE_DOUBLE_ROUNDING,
-                                          "accuracy not guaranteed on "
-                                          "machines with double rounding")
-del x, y, HAVE_DOUBLE_ROUNDING
-
-
 def requires_zlib(reason='requires zlib'):
     try:
         import zlib
@@ -679,93 +656,6 @@ def requires_working_socket(*, module=False):
     else:
         return unittest.skipUnless(has_socket_support, msg)
 
-
-@functools.cache
-def has_remote_subprocess_debugging():
-    """Check if we have permissions to debug subprocesses remotely.
-
-    Returns True if we have permissions, False if we don't.
-    Checks for:
-    - Platform support (Linux, macOS, Windows only)
-    - On Linux: process_vm_readv support
-    - _remote_debugging module availability
-    - Actual subprocess debugging permissions (e.g., macOS entitlements)
-    Result is cached.
-    """
-    # Check platform support
-    if sys.platform not in ("linux", "darwin", "win32"):
-        return False
-
-    try:
-        import _remote_debugging
-    except ImportError:
-        return False
-
-    # On Linux, check for process_vm_readv support
-    if sys.platform == "linux":
-        if not getattr(_remote_debugging, "PROCESS_VM_READV_SUPPORTED", False):
-            return False
-
-    # First check if we can read our own process
-    if not _remote_debugging.is_python_process(os.getpid()):
-        return False
-
-    # Check subprocess access - debugging child processes may require
-    # additional permissions depending on platform security settings
-    import socket
-    import subprocess
-
-    # Create a socket for child to signal readiness
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(("127.0.0.1", 0))
-    server.listen(1)
-    port = server.getsockname()[1]
-
-    # Child connects to signal it's ready, then waits for parent to close
-    child_code = f"""
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect(("127.0.0.1", {port}))
-s.recv(1)  # Wait for parent to signal done
-"""
-    proc = subprocess.Popen(
-        [sys.executable, "-c", child_code],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        server.settimeout(5.0)
-        conn, _ = server.accept()
-        # Child is ready, test if we can probe it
-        result = _remote_debugging.is_python_process(proc.pid)
-        # Check if subprocess is still alive after probing
-        if proc.poll() is not None:
-            return False
-        conn.close()  # Signal child to exit
-        return result
-    except (socket.timeout, OSError):
-        return False
-    finally:
-        server.close()
-        proc.kill()
-        proc.wait()
-
-
-def requires_remote_subprocess_debugging():
-    """Skip tests that require remote subprocess debugging permissions.
-
-    This also implies subprocess support, so no need to use both
-    @requires_subprocess() and @requires_remote_subprocess_debugging().
-    """
-    if not has_subprocess_support:
-        return unittest.skip("requires subprocess support")
-    return unittest.skipUnless(
-        has_remote_subprocess_debugging(),
-        "requires remote subprocess debugging permissions"
-    )
-
-
 # Does strftime() support glibc extension like '%4Y'?
 has_strftime_extensions = False
 if sys.platform != "win32":
@@ -868,7 +758,7 @@ def open_urlresource(url, *args, **kw):
 
     check = kw.pop('check', None)
 
-    filename = urllib.parse.urlparse(url).path.split('/')[-1] # '/': it's URL!
+    filename = urllib.parse.urlparse(url)[2].split('/')[-1] # '/': it's URL!
 
     fn = os.path.join(TEST_DATA_DIR, filename)
 
@@ -1270,22 +1160,36 @@ def set_memlimit(limit: str) -> None:
     max_memuse = memlimit
 
 
-def _memory_watchdog(pid):
-    """Return a function printing the memory usage of process *pid*.
-
-    The largest value it saw is kept in its ``peak`` attribute.
+class _MemoryWatchdog:
+    """An object which periodically watches the process' memory consumption
+    and prints it out.
     """
-    # Imported here: test.support does not depend on test.libregrtest.
-    from test.libregrtest.utils import get_process_memory_usage
 
-    def watch():
-        mem = get_process_memory_usage(pid)
-        if mem is not None:
-            watch.peak = max(watch.peak, mem)
-            print(f" ... process data size: {mem / (1024 ** 3):.1f} GiB",
-                  flush=True)
-    watch.peak = 0
-    return watch
+    def __init__(self):
+        self.procfile = '/proc/{pid}/statm'.format(pid=os.getpid())
+        self.started = False
+
+    def start(self):
+        import warnings
+        try:
+            f = open(self.procfile, 'r')
+        except OSError as e:
+            logging.getLogger(__name__).warning('/proc not available for stats: %s', e, exc_info=e)
+            sys.stderr.flush()
+            return
+
+        import subprocess
+        with f:
+            watchdog_script = findfile("memory_watchdog.py")
+            self.mem_watchdog = subprocess.Popen([sys.executable, watchdog_script],
+                                                 stdin=f,
+                                                 stderr=subprocess.DEVNULL)
+        self.started = True
+
+    def stop(self):
+        if self.started:
+            self.mem_watchdog.terminate()
+            self.mem_watchdog.wait()
 
 
 def bigmemtest(size, memuse, dry_run=True):
@@ -1300,14 +1204,8 @@ def bigmemtest(size, memuse, dry_run=True):
     extra argument. If 'dry_run' is true, the value passed to the test method
     may be less than the requested value. If 'dry_run' is false, it means the
     test doesn't support dummy runs when -M is not specified.
-
-    A test that actually allocates the requested memory (that is, one run with
-    -M) runs in a subprocess, so that the memory it uses and the address space
-    it fragments are released when it ends.  A dummy run stays in the process.
     """
     def decorator(f):
-        from test.support import isolation
-
         @functools.wraps(f)
         def wrapper(self):
             size = wrapper.size
@@ -1323,41 +1221,20 @@ def bigmemtest(size, memuse, dry_run=True):
                     "not enough memory: %.1fG minimum needed"
                     % (size * memuse / (1024 ** 3)))
 
-            if (real_max_memuse and verbose
-                    and not isolation.runningInSubprocess):
+            if real_max_memuse and verbose:
                 print()
-                peak = (size * memuse) / (1024 ** 3)
-                # Flushed, so that it precedes the memory usage below.
-                print(f" ... expected peak memory use: {peak:.1f} GiB",
-                      flush=True)
+                print(" ... expected peak memory use: {peak:.1f}G"
+                      .format(peak=size * memuse / (1024 ** 3)))
+                watchdog = _MemoryWatchdog()
+                watchdog.start()
+            else:
+                watchdog = None
 
-            if (real_max_memuse and has_subprocess_support
-                    and not isolation.runningInSubprocess):
-                # Watch it from here: the output of the subprocess is captured.
-                cls = type(self)
-                qualname = f'{cls.__qualname__}.{f.__name__}'
-                proc = isolation._start_test(cls.__module__, qualname)
-                watchdog = _memory_watchdog(proc.pid) if verbose else None
-                payload, output, returncode = proc.wait(tick=watchdog)
+            try:
+                return f(self, maxsize)
+            finally:
                 if watchdog:
-                    # The subprocess measures its own peak exactly.  What the
-                    # parent sampled is only a lower bound.
-                    maxrss = payload and payload.get('maxrss')
-                    peak = maxrss or watchdog.peak
-                    if peak:
-                        print(f" ... peak memory use: "
-                              f"{peak / (1024 ** 3):.1f} GiB"
-                              f"{'' if maxrss else ' or more'}", flush=True)
-                    majflt = payload and payload.get('majflt')
-                    if majflt:
-                        # The test did not fit in memory, so its timing means
-                        # little.
-                        print(f" ... {majflt} major page faults: the test "
-                              f"waited for the disk", flush=True)
-                isolation._replay_test(self, payload, output, returncode)
-                return
-
-            return f(self, maxsize)
+                    watchdog.stop()
 
         wrapper.size = size
         wrapper.memuse = memuse
@@ -1464,7 +1341,7 @@ def no_tracing(func):
                 sys.settrace(original_trace)
 
     coverage_wrapper = trace_wrapper
-    if 'test.cov' in sys.modules:  # -Xpresite=test.cov:enable used
+    if 'test.cov' in sys.modules:  # -Xpresite=test.cov used
         cov = sys.monitoring.COVERAGE_ID
         @functools.wraps(func)
         def coverage_wrapper(*args, **kwargs):
@@ -1526,6 +1403,11 @@ TEST_MODULES_ENABLED = (sysconfig.get_config_var('TEST_MODULES') or 'yes') == 'y
 def requires_specialization(test):
     return unittest.skipUnless(
         _opcode.ENABLE_SPECIALIZATION, "requires specialization")(test)
+
+
+def requires_specialization_ft(test):
+    return unittest.skipUnless(
+        _opcode.ENABLE_SPECIALIZATION_FT, "requires specialization")(test)
 
 
 def reset_code(f: types.FunctionType) -> types.FunctionType:
@@ -1796,10 +1678,9 @@ class PythonSymlink:
                 ))
 
             self._env = {k.upper(): os.getenv(k) for k in os.environ}
-            home = os.path.dirname(self.real)
+            self._env["PYTHONHOME"] = os.path.dirname(self.real)
             if sysconfig.is_python_build():
-                home = os.path.join(home, sysconfig.get_config_var('VPATH'))
-            self._env["PYTHONHOME"] = home
+                self._env["PYTHONPATH"] = STDLIB_DIR
     else:
         def _platform_specific(self):
             pass
@@ -1987,8 +1868,7 @@ class SuppressCrashReport:
 
             self.old_value = msvcrt.GetErrorMode()
 
-            msvcrt.SetErrorMode(self.old_value | msvcrt.SEM_NOGPFAULTERRORBOX
-                                               | msvcrt.SEM_FAILCRITICALERRORS)
+            msvcrt.SetErrorMode(self.old_value | msvcrt.SEM_NOGPFAULTERRORBOX)
 
             # bpo-23314: Suppress assert dialogs in debug builds.
             # CrtSetReportMode() is only available in debug build.
@@ -2362,10 +2242,10 @@ class _SMALLEST:
 
 SMALLEST = _SMALLEST()
 
-def maybe_get_event_loop():
-    """Return the event loop set for the current thread, else return None."""
+def maybe_get_event_loop_policy():
+    """Return the global event loop policy if one is set, else return None."""
     import asyncio.events
-    return asyncio.events._local._loop
+    return asyncio.events._event_loop_policy
 
 # Helpers for testing hashing.
 NHASHBITS = sys.hash_info.width # number of bits in hash() result
@@ -2985,10 +2865,6 @@ def run_with_limited_c_stack(depth=150_000, size=C_STACK_SIZE):
 is_s390x = hasattr(os, 'uname') and os.uname().machine == 's390x'
 skip_on_s390x = unittest.skipIf(is_s390x, 'skipped on s390x')
 
-# Cygwin uses the newlib C library
-skip_on_newlib = unittest.skipIf(sys.platform == 'cygwin',
-                                 'the test fails on newlib C library')
-
 Py_TRACE_REFS = hasattr(sys, 'getobjects')
 
 _JIT_ENABLED = sys._jit.is_enabled()
@@ -3062,7 +2938,7 @@ def iter_builtin_types():
     # Fall back to making a best-effort guess.
     if hasattr(object, '__flags__'):
         # Look for any type object with the Py_TPFLAGS_STATIC_BUILTIN flag set.
-        import datetime  # noqa: F401
+        import datetime
         seen = set()
         for cls, subs in walk_class_hierarchy(object):
             if cls in seen:
@@ -3197,13 +3073,6 @@ def iter_slot_wrappers(cls):
 def force_color(color: bool):
     import _colorize
     from .os_helper import EnvironmentVarGuard
-
-    if color:
-        try:
-            import _pyrepl  # noqa: F401
-        except ModuleNotFoundError:
-            # Can't force enable color without _pyrepl, so just skip.
-            raise unittest.SkipTest("_pyrepl is missing")
 
     with (
         swap_attr(_colorize, "can_colorize", lambda *, file=None: color),
@@ -3494,11 +3363,6 @@ def control_characters_c0() -> list[str]:
     return [chr(c) for c in range(0x00, 0x20)] + ["\x7F"]
 
 
-_ROOT_IN_POSIX = hasattr(os, 'geteuid') and os.geteuid() == 0
-requires_root_user = unittest.skipUnless(_ROOT_IN_POSIX, "test needs root privilege")
-requires_non_root_user = unittest.skipIf(_ROOT_IN_POSIX, "test needs non-root account")
-
-
 STATUS_DLL_INIT_FAILED = 0xC0000142
 def skip_on_low_desktop_heap_memory_subprocess(returncode):
     if sys.platform not in ('win32', 'cygwin'):
@@ -3512,32 +3376,3 @@ def skip_on_low_desktop_heap_memory_subprocess(returncode):
     if returncode == STATUS_DLL_INIT_FAILED:
         raise unittest.SkipTest('gh-150436: DLL init failed, likely because '
                                 'of low desktop heap memory')
-
-
-def check_immutable_type(testcase, type):
-    regex = r'cannot set .* attribute of immutable type'
-    with testcase.assertRaisesRegex(TypeError, regex):
-        setattr(type, 'custom_attr', 123)
-
-    try:
-        from _testlimitedcapi import type_getflags, Py_TPFLAGS_IMMUTABLETYPE
-    except ImportError:
-        pass
-    else:
-        flags = type_getflags(type)
-        testcase.assertTrue(flags & Py_TPFLAGS_IMMUTABLETYPE)
-
-
-def built_with_c_assertions():
-    """Check if Python was built with C assertions (assert())."""
-
-    if MS_WINDOWS:
-        # On Windows, rely on the Py_DEBUG macro to check for assertions
-        return Py_DEBUG
-
-    # Check if the NDEBUG macro is defined in C compiler flags
-    PY_CFLAGS = (sysconfig.get_config_var('PY_CFLAGS') or '')
-    if '-DNDEBUG' in PY_CFLAGS:
-        return False
-
-    return True
