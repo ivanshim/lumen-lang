@@ -2561,6 +2561,11 @@ impl<'a> Engine<'a> {
                 self.write_booked(kept, &slot.ident, None);
                 if let Some(fled) = self.carried.take() { return Err(fled); }
             }
+            if !self.lang.module_cache.is_empty() {
+                if let Value::Bond(cell) = &self.world[slot.far] {
+                    if matches!(cell.borrow().contents(), Value::Class(_)) { *cell.borrow_mut() = Value::Blank; }
+                }
+            }
             self.world[slot.far] = Value::Blank;
         }
         Ok(())
@@ -18749,6 +18754,16 @@ impl Engine<'_> {
             if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
                 let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
                 if !matches!(value, Value::Blank) { return Ok(value); }
+            }
+        }
+        let hook = if let Value::Object(space) = module {
+            space.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, held)| held.contents())
+        } else { None };
+        if let Some(callable) = hook {
+            match self.class_apply(callable, vec![Value::text(name)]) {
+                Ok(value) => return Ok(value),
+                Err(fault) if self.attribute_fault(&fault) => {},
+                Err(fault) => return Err(fault),
             }
         }
         let child = format!("{path}.{name}");

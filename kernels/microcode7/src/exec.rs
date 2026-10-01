@@ -2924,15 +2924,18 @@ impl<'a> Machine<'a> {
     }
 
     fn fetch(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
-        let f = ascend(frame, slot.up);
-        if Rc::ptr_eq(f, &self.outermost) {
+        let imported_global = slot.up != 0 && self.idents.get(slot.at).is_some_and(|key| {
+            key.starts_with("\0import/") && key.rsplit('/').next() == Some(slot.ident.as_ref())
+        });
+        let f = if imported_global { self.outermost.clone() } else { ascend(frame, slot.up).clone() };
+        if Rc::ptr_eq(&f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) {
                 return found.map(|v| match v.settled() { object @ (Value::Thing(_) | Value::Blueprint(_)) => object, _ => v });
             }
         }
         let mut v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = &v {
-            if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
+            if self.names_in_calls && !(Rc::ptr_eq(&f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
             let held = cell.borrow().clone();
             if !self.table.flag("ext.stmt.function.closes_over") { return Ok(held); }
             v = held;
@@ -4666,7 +4669,7 @@ impl<'a> Machine<'a> {
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
-                    Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") && !self.names_in_calls => *cell.borrow_mut() = Value::Unset,
+                    Value::Shared(cell) if (self.table.flag("ext.stmt.function.closes_over") && !self.names_in_calls) || (self.table.has_any("ext.system.module.cache") && matches!(cell.borrow().settled(), Value::Blueprint(_))) => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }
                 Ok(Value::Nil)
@@ -18504,6 +18507,17 @@ impl Machine<'_> {
                 if name != wanted { continue; }
                 let read = match cell { Value::Shared(link) => link.borrow().clone(), worth => worth.clone() };
                 if !matches!(read, Value::Unset) { return Ok(read); }
+            }
+        }
+        let fallback = match value {
+            Value::Thing(space) => space.holds.borrow().iter().find(|entry| entry.0 == "__getattr__").map(|entry| entry.1.settled()),
+            _ => None,
+        };
+        if let Some(f) = fallback {
+            match self.apply_class_member(f, vec![Value::text(wanted)]) {
+                Ok(found) => return Ok(found),
+                Err(escape) if self.missing_member_escape(&escape) => (),
+                Err(escape) => return Err(self.suspension_fault(escape)),
             }
         }
         let full = format!("{path}.{wanted}");

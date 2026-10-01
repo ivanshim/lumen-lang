@@ -247,6 +247,13 @@ impl<'a> Machine<'a> {
         // unwritten. Nothing stands in it, and the class is given no
         // entry for it: a name a conditional never bound is no member.
         entries.retain(|(_,v)|!matches!(v,Value::Unset));
+        if self.table.has_any("ext.system.module.cache") {
+            for (key, value) in &entries {
+                if key == "__abc_tpflags__" && matches!(value.settled(), Value::Small(bits) if bits & 96 == 96) {
+                    return Err(format!("TypeError: type {title} has both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING set").into());
+                }
+            }
+        }
         let mut queues=Vec::new();
         for base in &parents {
             let mut queue=Vec::with_capacity(base.ancestry.len()+1);
@@ -1625,6 +1632,7 @@ impl<'a> Machine<'a> {
                     bits |= 16;
                     if Self::native_beneath(b).is_none() { bits |= 4; }
                 }
+                if let Some(Value::Small(protocol)) = self.inherited_entry(b, "__abc_tpflags__").map(|v| v.settled()) { bits |= protocol & 96; }
                 return Ok(Value::Small(bits));
             }
             if (Self::native_word(b).as_deref() == Some("float") || Self::native_beneath(b).as_deref() == Some("float")) && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
@@ -1689,6 +1697,7 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+            if key == self.detail("allocate") { return Ok(Self::wrap(1, vec![])); }
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
             // method is bound to the thing.
