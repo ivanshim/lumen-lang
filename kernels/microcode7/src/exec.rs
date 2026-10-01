@@ -14869,8 +14869,22 @@ impl<'a> Machine<'a> {
                     _ => None,
                 };
                 let mut gathered: Vec<String> = Vec::new();
-                let mut here = of;
-                while let Some(class) = here {
+                let mut ordered = match of {
+                    Some(class) if !class.ancestry.is_empty() => {
+                        std::iter::once(class.clone()).chain(class.ancestry.iter().cloned()).collect::<Vec<_>>()
+                    }
+                    root => {
+                        let mut chain = Vec::new();
+                        let mut cursor = root;
+                        loop {
+                            let Some(entry) = cursor else { break; };
+                            cursor = entry.under.clone();
+                            chain.push(entry);
+                        }
+                        chain
+                    }
+                };
+                for class in ordered.drain(..) {
                     let names: Vec<String> = match op {
                         Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).chain(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Bound(..) | Value::Adorned(_) | Value::Wrapped(..) | Value::Method(..))).map(|(n,_)| n.clone())).collect(),
                         _ => class.fields.iter().map(|(called, _)| crate::data::holder_of(called).0.to_string()).collect(),
@@ -14880,7 +14894,6 @@ impl<'a> Machine<'a> {
                             gathered.push(called);
                         }
                     }
-                    here = class.under.clone();
                 }
                 Value::Vector(crate::tuples::Sequence::plain(gathered.iter().map(|called| Value::text(called)).collect()))
             }

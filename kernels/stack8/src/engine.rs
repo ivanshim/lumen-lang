@@ -15578,13 +15578,24 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let mut named = Vec::new();
-                let mut here = of;
-                while let Some(class) = here {
+                let mut hierarchy = Vec::new();
+                if let Some(class) = of {
+                    if class.lineage.is_empty() {
+                        let mut next = Some(class);
+                        while let Some(parent) = next {
+                            next = parent.base.clone();
+                            hierarchy.push(parent);
+                        }
+                    } else {
+                        hierarchy.push(class.clone());
+                        hierarchy.extend(class.lineage.iter().cloned());
+                    }
+                }
+                for class in hierarchy {
                     match builtin {
                         Builtin::ClassMethods => { named.extend(class.methods.iter().map(|(n, _)| n.clone())); named.extend(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Descriptor(_) | Value::Adapter(_) | Value::Method(..))).map(|(n,_)| n.clone())); },
                         _ => named.extend(class.fields.iter().map(|(n, _)| crate::value::who_keeps(n).0.to_string())),
                     }
-                    here = class.base.clone();
                 }
                 let mut seen = Vec::new();
                 for name in named {
