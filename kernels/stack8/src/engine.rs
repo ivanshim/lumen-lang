@@ -18568,12 +18568,19 @@ impl Engine<'_> {
         // that empties a name out of it means the next import to run
         // the module afresh, as a name written into a directory on
         // `sys.path` under a name used before this run needs to.
-        if let Some(held) = self.modules.get(path) {
-            if self.module_cache_names(path) { return Ok(held.clone()); }
+        if self.importing.contains(path) {
+            if let Some(module) = self.modules.get(path) { return Ok(module.clone()); }
+        }
+        if let Some(cached) = self.module_cache_value(path) {
+            if matches!(cached, Value::Null) {
+                return Err(format!("ImportError: import of {path} halted; None in sys.modules").into());
+            }
+            return Ok(cached);
         }
         // A directory the program itself put on `sys.path` is looked
         // in, in the order it stands there, ahead of the library: a
         // name found there is read straight off the disk instead.
+        if let Some((owner, _)) = path.rsplit_once('.') { self.import_module(owner)?; }
         let from_disk = self.sys_path_source(path);
         let source = match &from_disk {
             Some((_, source)) => source.clone(),
@@ -18646,6 +18653,15 @@ impl Engine<'_> {
                 fields.push((word.clone(), own_file.as_deref().map_or(Value::Null, Value::text)));
             }
         }
+        if !self.lang.module_names.is_empty() {
+            let is_package = filename.ends_with("/__init__.py");
+            let owner = if is_package { path } else { path.rsplit_once('.').map_or("", |(parent, _)| parent) };
+            fields.push(("__package__".into(), Value::text(owner)));
+            if is_package {
+                let directory = std::path::Path::new(filename).parent().unwrap_or_else(|| std::path::Path::new("."));
+                fields.push(("__path__".into(), Value::Array(Rc::new(vec![Value::text(&directory.to_string_lossy())]).into())));
+            }
+        }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) }),
@@ -18659,7 +18675,7 @@ impl Engine<'_> {
         let result = self.invoke(&program, Vec::new());
         self.data.truncate(saved_depth);
         self.importing.remove(path);
-        if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(); return Err(fault); }
+        if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(path); return Err(fault); }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 let mut fields = parent.fields.borrow_mut();
@@ -18670,32 +18686,29 @@ impl Engine<'_> {
                 }
             }
         }
-        self.refresh_module_cache();
+        self.refresh_module_cache(path);
         Ok(module)
     }
 
-    /// A module written into a directory `sys.path` names, found there
-    /// ahead of the library. Only a plain, undotted name is looked for
-    /// this way, since a directory a program builds for itself holds no
-    /// packages of its own; the file and what it holds come back
-    /// together, the file's place made absolute first, since a name on
-    /// `sys.path` may be relative to a working directory `__file__`
-    /// must not depend on later changing.
+    /// Read a module or package from the parent's search path, or sys.path
+    /// for a top-level import. Package paths can be changed by Python code.
     fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
-        if path.contains('.') { return None; }
-        let Value::Object(sys) = self.modules.get("sys")? else { return None };
-        let held = sys.fields.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
-        let mut value = held;
-        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value {
-            value = cell.borrow().clone();
-        }
-        let Value::Array(items) = value else { return None };
-        for item in items.iter() {
-            let Value::Text(dir) = item else { continue };
-            if dir.is_empty() { continue; }
-            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
-            if let Ok(source) = std::fs::read_to_string(&file) {
-                return Some((made_absolute(&file), source));
+        let (owner, member, leaf) = match path.rsplit_once('.') {
+            Some((parent, tail)) => (parent, "__path__", tail),
+            None => ("sys", "path", path),
+        };
+        let Value::Object(namespace) = self.modules.get(owner)? else { return None };
+        let mut search = namespace.fields.borrow().iter().find(|(key, _)| key == member)?.1.clone();
+        while let Value::Bond(place) | Value::Binding(place) | Value::Collection(place, _) = search { search = place.borrow().clone(); }
+        let Value::Array(directories) = search else { return None };
+        for entry in directories.iter() {
+            if let Value::Text(directory) = entry {
+                let base = std::path::Path::new(directory.as_ref());
+                for candidate in [base.join(leaf).join("__init__.py"), base.join(format!("{leaf}.py"))] {
+                    if let Ok(source) = std::fs::read_to_string(&candidate) {
+                        return Some((made_absolute(&candidate.to_string_lossy()), source));
+                    }
+                }
             }
         }
         None
@@ -18711,12 +18724,6 @@ impl Engine<'_> {
         if std::path::Path::new(&flat).is_file() { return Some(made_absolute(&flat)); }
         let package = format!("{root}/{stem}/__init__.py");
         if std::path::Path::new(&package).is_file() { return Some(made_absolute(&package)); }
-        if let Some(test_name) = path.strip_prefix("test.") {
-            let tests = format!("{root}/../../../tests/python/{}", test_name.replace('.', "/"));
-            for file in [format!("{tests}.py"), format!("{tests}/__init__.py")] {
-                if std::path::Path::new(&file).is_file() { return Some(made_absolute(&file)); }
-            }
-        }
         None
     }
 
@@ -20029,32 +20036,38 @@ fn duplicate_value(value: &Value, deep: bool, seen: &mut HashMap<usize, Value>, 
 }
 
 impl Engine<'_> {
-    /// Whether the language's own cache of modules still names this
-    /// one: true wherever that cache has yet to be written at all (an
-    /// import too soon for it to hold anything, or a language with no
-    /// such name), so an ordinary run is never slowed by looking.
-    fn module_cache_names(&self, path: &str) -> bool {
-        if self.importing.contains(path) { return true; }
-        let [owner, member] = self.lang.module_cache.as_slice() else { return true };
-        let Some(Value::Object(module)) = self.modules.get(owner) else { return true };
-        let Some((_, held)) = module.fields.borrow().iter().find(|(name, _)| name == member).cloned() else { return true };
-        let cache = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
-        match cache {
-            Value::Map(pairs) => pairs.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
-            _ => true,
+    /// Python's sys.modules is authoritative, including entries supplied by
+    /// callers and None entries which deliberately prohibit an import.
+    fn module_cache_value(&self, path: &str) -> Option<Value> {
+        let fallback = || self.modules.get(path).cloned();
+        let [owner, member] = self.lang.module_cache.as_slice() else { return fallback() };
+        let Some(Value::Object(module)) = self.modules.get(owner) else { return fallback() };
+        let fields = module.fields.borrow();
+        let Some((_, held)) = fields.iter().find(|(name, _)| name == member) else { return fallback() };
+        let cache = held.contents();
+        if let Value::Map(pairs) = cache {
+            return pairs.iter().find(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)).map(|(_, value)| value.clone());
         }
+        fallback()
     }
 
-    fn refresh_module_cache(&self) {
+    /// Publish only the namespace whose import just ended. Replacing the
+    /// entire dictionary would resurrect removed entries and erase blockers.
+    fn refresh_module_cache(&self, path: &str) {
         let [owner, member] = self.lang.module_cache.as_slice() else { return };
         let Some(Value::Object(module)) = self.modules.get(owner) else { return };
-        let values = self.modules.iter().map(|(name, value)| (Value::text(name), value.clone())).collect();
-        let map = Value::Map(Rc::new(values));
         let mut fields = module.fields.borrow_mut();
-        if let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) {
-            match place { Value::Bond(cell) => *cell.borrow_mut() = map, _ => *place = map }
-        }
+        let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) else { return };
+        let held = place.contents();
+        let mut values: Vec<(Value, Value)> = if path == owner {
+            self.modules.iter().map(|(key, value)| (Value::text(key), value.clone())).collect()
+        } else if let Value::Map(entries) = held { entries.iter().cloned().collect() } else { Vec::new() };
+        values.retain(|(key, _)| !matches!(key, Value::Text(word) if word.as_ref() == path));
+        if let Some(module) = self.modules.get(path) { values.push((Value::text(path), module.clone())); }
+        let dictionary = Value::Map(Rc::new(values.into()));
+        if let Value::Bond(cell) = place { *cell.borrow_mut() = dictionary; } else { *place = dictionary; }
     }
+
 }
 #[path = "classes.rs"]
 mod classes;

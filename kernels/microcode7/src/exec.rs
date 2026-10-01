@@ -18510,8 +18510,14 @@ impl Machine<'_> {
         // a name out of it means the next import to run the module
         // afresh, as a name written under a name used before this run
         // into a directory on `sys.path` needs to.
-        if let Some(value) = self.imported.get(path) {
-            if self.import_cache_names(path) { return Ok(value.clone()); }
+        if self.importing.contains(path) {
+            if let Some(active) = self.imported.get(path) { return Ok(active.clone()); }
+        }
+        if let Some(namespace) = self.import_cache_value(path) {
+            match namespace {
+                Value::Nil => return Err(format!("ImportError: import of {path} halted; None in sys.modules")),
+                other => return Ok(other),
+            }
         }
         if path.starts_with('.') {
             let Some(owner) = self.loaded_spaces.get(&self.written_in) else {
@@ -18531,6 +18537,8 @@ impl Machine<'_> {
         }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
+        let parent_name = path.rsplit_once('.').map(|entry| entry.0);
+        if let Some(parent_name) = parent_name { self.load_namespace(parent_name)?; }
         let from_disk = self.sys_path_source(path);
         let text = match &from_disk {
             Some((_, text)) => text.clone(),
@@ -18605,6 +18613,21 @@ impl Machine<'_> {
                 members.push((word.to_string(), own_file.as_deref().map_or(Value::Nil, Value::text)));
             }
         }
+        if !module_names.is_empty() {
+            let package_initializer = filename.ends_with("/__init__.py");
+            let package_name = match (package_initializer, path.rsplit_once('.')) {
+                (true, _) => path,
+                (false, Some((prefix, _))) => prefix,
+                _ => "",
+            };
+            members.push((String::from("__package__"), Value::text(package_name)));
+            if package_initializer {
+                if let Some(folder) = std::path::Path::new(filename).parent() {
+                    let locations = vec![Value::text(&folder.to_string_lossy())];
+                    members.push((String::from("__path__"), Value::Vector(crate::tuples::Sequence::plain(locations))));
+                }
+            }
+        }
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), sealed: Cell::new(false),
@@ -18627,7 +18650,7 @@ impl Machine<'_> {
         self.importing.remove(path);
         if let Err(stopped) = stopped {
             self.imported.remove(path);
-            self.refresh_import_table();
+            self.refresh_import_table(path);
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
         }
         if let Some((owner, name)) = split {
@@ -18639,31 +18662,31 @@ impl Machine<'_> {
                 } else { holdings.push((name.into(), value.clone())); }
             }
         }
-        self.refresh_import_table();
+        self.refresh_import_table(path);
         Ok(value)
     }
 
-    /// A module written into a directory `sys.path` names, found there
-    /// ahead of the library. Only a plain, undotted name is looked for
-    /// this way, since a directory a program builds for itself holds no
-    /// packages of its own; the file's place is made absolute before it
-    /// comes back, since a name on `sys.path` may be relative to a
-    /// working directory `__file__` must not depend on later changing.
+    /// Each dotted child is sought in its parent's __path__; a root name
+    /// instead uses sys.path. Both lists are ordinary mutable Python values.
     fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
-        if path.contains('.') { return None; }
-        let Value::Thing(sys) = self.imported.get("sys")? else { return None };
-        let held = sys.holds.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
-        let mut value = held;
-        while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
-            value = cell.borrow().clone();
-        }
-        let Value::Vector(items) = value else { return None };
-        for item in items.iter() {
-            let Value::Text(dir) = item else { continue };
-            if dir.is_empty() { continue; }
-            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
-            if let Ok(text) = std::fs::read_to_string(&file) {
-                return Some((made_absolute(&file), text));
+        let pieces = path.rsplit_once('.');
+        let namespace_name = pieces.map_or("sys", |(prefix, _)| prefix);
+        let attribute = if pieces.is_some() { "__path__" } else { "path" };
+        let basename = pieces.map_or(path, |(_, suffix)| suffix);
+        let Value::Thing(space) = self.imported.get(namespace_name)? else { return None };
+        let held = space.holds.borrow().iter().find(|item| item.0 == attribute)?.1.settled();
+        if let Value::Vector(folders) = held {
+            for folder in folders.iter() {
+                let Value::Text(folder) = folder else { continue };
+                let prefix = if folder.is_empty() { "." } else { folder.as_ref() };
+                let initializer = format!("{prefix}/{basename}/__init__.py");
+                let ordinary = format!("{prefix}/{basename}.py");
+                for file in [initializer, ordinary] {
+                    match std::fs::read_to_string(&file) {
+                        Ok(text) => return Some((made_absolute(&file), text)),
+                        Err(_) => continue,
+                    }
+                }
             }
         }
         None
@@ -18680,14 +18703,6 @@ impl Machine<'_> {
             let candidate = directory.join(relative);
             if candidate.is_file() {
                 return Some(made_absolute(&candidate.to_string_lossy()));
-            }
-        }
-        if path.starts_with("test.") {
-            let suffix = path[5..].replace('.', "/");
-            let test_root = directory.join("../../../tests/python");
-            let possibilities = [test_root.join(format!("{suffix}.py")), test_root.join(suffix).join("__init__.py")];
-            for location in possibilities {
-                if location.is_file() { return Some(made_absolute(&location.to_string_lossy())); }
             }
         }
         None
@@ -21400,37 +21415,46 @@ impl Machine<'_> {
 }
 
 impl Machine<'_> {
-    /// Whether the language's own cache of modules still names this
-    /// one: true wherever that cache has yet to be written at all (an
-    /// import too soon for it to hold anything, or a language with no
-    /// such name), so an ordinary run is never slowed by looking.
-    fn import_cache_names(&self, path: &str) -> bool {
-        if self.importing.contains(path) { return true; }
+    /// Once sys.modules exists its entries, rather than the private map,
+    /// decide what an import returns. An absent entry means a fresh load.
+    fn import_cache_value(&self, path: &str) -> Option<Value> {
         let names = self.table.strings("ext.system.module.cache");
-        if names.len() != 2 { return true; }
-        let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) else { return true };
-        let Some((_, held)) = namespace.holds.borrow().iter().find(|(key, _)| key == &names[1]).cloned() else { return true };
-        let cache = match held { Value::Shared(cell) => cell.borrow().clone(), other => other };
-        match cache {
-            Value::Dict(entries) => entries.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
-            _ => true,
-        }
-    }
-
-    fn refresh_import_table(&self) {
-        let names = self.table.strings("ext.system.module.cache");
-        if names.len() != 2 { return; }
-        if let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) {
-            let dictionary = Value::Dict(Rc::new(self.imported.iter().map(|(key, worth)| (Value::text(key), worth.clone())).collect()));
-            for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
-                if key == &names[1] {
-                    if let Value::Shared(cell) = worth { *cell.borrow_mut() = dictionary; }
-                    else { *worth = dictionary; }
-                    break;
+        if names.len() == 2 {
+            if let Some(Value::Thing(space)) = self.imported.get(&names[0]) {
+                let holdings = space.holds.borrow();
+                if let Some((_, cell)) = holdings.iter().find(|entry| entry.0 == names[1]) {
+                    if let Value::Dict(book) = cell.settled() {
+                        return book.iter().find_map(|(key, item)| {
+                            if matches!(key, Value::Text(text) if text.as_ref() == path) { Some(item.settled()) } else { None }
+                        });
+                    }
                 }
             }
         }
+        self.imported.get(path).cloned()
     }
+
+    /// Keep user modifications to the cache when another import completes.
+    /// The initial sys import alone seeds entries loaded before the cache.
+    fn refresh_import_table(&self, path: &str) {
+        let names = self.table.strings("ext.system.module.cache");
+        if names.len() != 2 { return; }
+        if let Some(Value::Thing(space)) = self.imported.get(&names[0]) {
+            let mut holdings = space.holds.borrow_mut();
+            if let Some((_, cell)) = holdings.iter_mut().find(|entry| entry.0 == names[1]) {
+                let mut book: Vec<(Value, Value)> = match (path == names[0], cell.settled()) {
+                    (true, _) => self.imported.iter().map(|(key, item)| (Value::text(key), item.clone())).collect(),
+                    (false, Value::Dict(existing)) => existing.iter().cloned().collect(),
+                    _ => Vec::new(),
+                };
+                if let Some(position) = book.iter().position(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == path)) { book.remove(position); }
+                if let Some(item) = self.imported.get(path) { book.push((Value::text(path), item.clone())); }
+                let replacement = Value::Dict(Rc::new(book.into()));
+                match cell { Value::Shared(link) => *link.borrow_mut() = replacement, slot => *slot = replacement }
+            }
+        }
+    }
+
 }
 /// The marks of a pattern read off a row of bytes. A mark that shows a
 /// value is handed a row of bytes and nothing else, whichever of its

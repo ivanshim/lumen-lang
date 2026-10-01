@@ -49,6 +49,9 @@ class TestResult:
         return len(self.failures) == 0 and len(self.errors) == 0 and len(self.unexpectedSuccesses) == 0
 
 class TestCase:
+    def countTestCases(self):
+        return 1
+
     _test_case = True
     failureException = AssertionError
     maxDiff = 640
@@ -426,6 +429,9 @@ class TestSuite:
     def __iter__(self):
         return iter(self.tests)
 
+    def countTestCases(self):
+        return sum(test.countTestCases() for test in self.tests)
+
     def addTest(self, test):
         self.tests = [*self.tests, test]
 
@@ -500,14 +506,23 @@ class TestLoader:
         import os
         import re
         suite = TestSuite()
-        # Reference packages live under the same test namespace as
-        # CPython's Lib/test. Other directories use their relative package.
-        package = os.path.basename(start_dir)
-        if '/tests/python/' in start_dir or '/modules/test/' in start_dir:
-            package = 'test.' + package
-        elif top_level_dir is not None:
+        # A loaded package supplies its name through its search-path metadata.
+        import sys
+        package = None
+        absolute = os.path.abspath(start_dir)
+        for name in list(sys.modules):
+            module = sys.modules[name]
+            for directory in getattr(module, '__path__', ()):
+                if os.path.abspath(directory) == absolute:
+                    package = name
+                    break
+            if package is not None:
+                break
+        if package is None and top_level_dir is not None:
             relative = os.path.relpath(start_dir, top_level_dir)
             package = relative.replace(os.sep, '.')
+        if package is None:
+            package = os.path.basename(start_dir)
         expression = re.escape(pattern).replace(r'\*', '.*').replace(r'\?', '.')
         for filename in sorted(os.listdir(start_dir)):
             if not filename.endswith('.py') or re.fullmatch(expression, filename) is None:
