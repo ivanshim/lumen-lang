@@ -5546,7 +5546,8 @@ impl<'a> Engine<'a> {
         let underlying = Self::worth_of(original).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
         let receiver = underlying.as_ref().unwrap_or(original);
         if place == usize::MAX - 1 {
-            if !named.is_empty() || args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let custom_allocation = matches!(original, Value::Object(instance) if self.allocation_is_custom(&instance.class_now()));
+            if (!named.is_empty() && !custom_allocation) || args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
             let destination = Self::holding_cell(receiver);
             let same = match (args.first(), &destination) {
                 (Some(source), Some(cell)) => {

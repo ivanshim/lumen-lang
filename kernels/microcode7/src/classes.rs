@@ -627,6 +627,15 @@ impl<'a> Machine<'a> {
         self.table.strings("ext.stmt.class.detail.native.protocols").chunks_exact(2)
             .any(|pair| pair[0] == spelling && pair[1].split_whitespace().any(|entry| entry == key))
     }
+    pub(super) fn allocation_changed(&self, class: &Blueprint) -> bool {
+        if self.table.strings("ext.stmt.class.detail.native.protocols").is_empty() { return false; }
+        let key = self.detail("allocate");
+        for parent in std::iter::once(class).chain(class.ancestry.iter().map(Rc::as_ref)) {
+            if let Some(value) = Self::own_entry(parent, key) { return !matches!(value, Value::Wrapped(14, _)); }
+            if Self::native_word(parent).is_some_and(|word| self.native_declares_protocol(&word, key)) { return false; }
+        }
+        false
+    }
     pub(super) fn inherited_entry(&self,b:&Blueprint,key:&str)->Option<Value> {
         std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(|parent| {
             Self::own_entry(parent, key).or_else(|| {

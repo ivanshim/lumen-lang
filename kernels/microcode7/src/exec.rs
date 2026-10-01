@@ -6597,7 +6597,8 @@ impl<'a> Machine<'a> {
         let underlying = Self::underlying(original).filter(|_| !self.table.strings("ext.stmt.class.detail.native.protocols").is_empty());
         let receiver = underlying.as_ref().unwrap_or(original);
         if at == usize::MAX - 1 {
-            if !keywords.is_empty() || arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
+            let changed_allocator = matches!(original, Value::Thing(instance) if self.allocation_changed(&instance.blueprint()));
+            if (!keywords.is_empty() && !changed_allocator) || arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
             let holder = Self::native_cell(receiver);
             let source_is_self = arguments.first().map_or(false, |input| {
                 holder.as_ref().map_or(false, |cell| Self::native_cell(input).map_or(false, |other| Rc::ptr_eq(cell, &other)))

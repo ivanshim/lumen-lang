@@ -615,6 +615,15 @@ impl<'a> Engine<'a> {
             entries.chunks_exact(2).any(|entry| entry[0] == kind && entry[1].split_whitespace().any(|word| word == name))
         })
     }
+    pub(super) fn allocation_is_custom(&self, c: &Class) -> bool {
+        if !self.lang.class_details.get("native.protocols").is_some_and(|entries| !entries.is_empty()) { return false; }
+        let name = self.class_word("allocate");
+        for base in std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)) {
+            if let Some(value) = Self::own_class_value(base, name) { return !matches!(value, Value::Adapter(hook) if hook.0 == 14); }
+            if Self::own_kind(base).is_some_and(|kind| self.kind_owns_protocol(&kind, name)) { return false; }
+        }
+        false
+    }
     pub(super) fn class_value(&self, c: &Class, name: &str) -> Option<Value> {
         std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(|base| {
             Self::own_class_value(base, name).or_else(|| {
