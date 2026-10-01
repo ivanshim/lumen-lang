@@ -549,6 +549,27 @@ def _position(value):
     return value
 
 
+def _single_node(tree):
+    while tree[0] in ('or', 'seq'):
+        if len(tree[1]) != 1:
+            return None
+        tree = tree[1][0]
+    return tree
+
+
+def _atom_matches(node, letter, opts):
+    if node[0] == 'dot':
+        return opts[2] or letter != '\n'
+    if node[0] == 'class':
+        matched = False
+        for entry in node[2]:
+            if _accept(entry, letter, opts[0]):
+                matched = True
+                break
+        return not matched if node[1] else matched
+    return _accept(node, letter, opts[0])
+
+
 class Pattern:
     def __init__(self, pattern, flags=0):
         self.flags = flags
@@ -567,6 +588,27 @@ class Pattern:
         self.groupindex = reader.names
         self.pattern = pattern
         self._opts = (self.ignorecase, self.multiline, self.dotall)
+        # A complete pattern containing one repeated atom needs no
+        # alternative states for match(), which selects its first answer.
+        atom = _single_node(self.tree)
+        self._simple = None
+        if atom is not None:
+            if atom[0] in ('lit', 'kind', 'class', 'dot'):
+                self._simple = (atom, 1, 1, True)
+            elif atom[0] == 'repeat' and atom[1][0] in ('lit', 'kind', 'class', 'dot'):
+                self._simple = (atom[1], atom[2], atom[3], atom[4])
+        # A lazy captured span followed by one captured character can
+        # scan directly until the second atom accepts a character.
+        self._chunk = None
+        arms = self.tree[1] if self.tree[0] == 'or' else []
+        if len(arms) == 1 and arms[0][0] == 'seq' and len(arms[0][1]) == 2:
+            left, right = arms[0][1]
+            if left[0] == 'group' and right[0] == 'group':
+                span = _single_node(left[2])
+                end = _single_node(right[2])
+                if span is not None and end is not None:
+                    if span[0] == 'repeat' and span[1][0] == 'dot' and span[2:] == [0, -1, False] and end[0] in ('lit', 'kind', 'class', 'dot'):
+                        self._chunk = (left[1], right[1], end)
         # Whether the text a match runs against must be checked for
         # non-ASCII letters, computed once here rather than rescanning
         # the pattern's own text on every position a search tries.
@@ -596,7 +638,28 @@ class Pattern:
         pos = max(0, min(_position(pos), len(string)))
         if endpos is not None:
             string = string[:max(0, _position(endpos))]
-        state = next(iter(_walk(self.tree, string.decode('latin-1') if self._bytes else string, pos, {}, self._opts)), None)
+        text = string.decode('latin-1') if self._bytes else string
+        if self._simple is not None:
+            atom, minimum, maximum, greedy = self._simple
+            end = pos
+            limit = len(text) if maximum < 0 else min(len(text), pos + maximum)
+            while end < limit and (greedy or end - pos < minimum):
+                if not _atom_matches(atom, text[end], self._opts):
+                    break
+                end += 1
+            return Match(self, string, pos, [end, {}]) if end - pos >= minimum else None
+        if self._chunk is not None:
+            left, right, delimiter = self._chunk
+            end = pos
+            while end < len(text):
+                letter = text[end]
+                if _atom_matches(delimiter, letter, self._opts):
+                    return Match(self, string, pos, [end + 1, {left: [pos, end], right: [end, end + 1]}])
+                if not self.dotall and letter == '\n':
+                    break
+                end += 1
+            return None
+        state = next(iter(_walk(self.tree, text, pos, {}, self._opts)), None)
         return Match(self, string, pos, state) if state is not None else None
 
     def fullmatch(self, string, pos=0, endpos=None):
