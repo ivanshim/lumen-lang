@@ -17918,7 +17918,8 @@ impl Engine<'_> {
             if let Value::Class(actual) = value {
                 return Ok(Self::maker_beneath(actual).map_or(false, |m| Rc::ptr_eq(&m, class) || m.lineage.iter().any(|base| Rc::ptr_eq(base, class))));
             }
-            return Ok(matches!(value, Value::Object(o) if o.class_now().named(&class.name, false)));
+            return Ok(matches!(value, Value::Object(instance) if Rc::ptr_eq(&instance.class_now(), class)
+                || instance.class_now().lineage.iter().any(|ancestor| Rc::ptr_eq(ancestor, class))));
         }
         // A thing of a class standing on a builtin kind is of that kind.
         if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {

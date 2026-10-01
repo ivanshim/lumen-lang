@@ -20730,7 +20730,8 @@ impl Machine<'_> {
                     let metaclass = Self::builder_over(instance);
                     return Ok(metaclass.is_some_and(|b| std::iter::once(&b).chain(b.ancestry.iter()).any(|parent| Rc::ptr_eq(parent, class))));
                 }
-                Ok(matches!(item, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)))
+                let family = match item { Value::Thing(object) => Some(object.blueprint()), _ => None };
+                Ok(family.is_some_and(|actual| std::iter::once(&actual).chain(actual.ancestry.iter()).any(|base| Rc::ptr_eq(base, class))))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
             // A byte kind may stand inside a tuple of kinds, so it is
