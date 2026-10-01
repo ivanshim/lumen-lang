@@ -8969,6 +8969,8 @@ impl<'a> Engine<'a> {
                     Value::Native(op, _) if Self::kind_builtin(op) => name.as_ref() == self.class_word("module")
                         || name.as_ref() == self.class_word("qualified")
                         || (name.as_ref() == "__getformat__" && *op == Builtin::AsReal),
+                    Value::ByteKind(..) => name.as_ref() == self.class_word("module")
+                        || name.as_ref() == self.class_word("qualified"),
                     _ => false,
                 };
                 // A builtin kind also carries the members its own values answer to.
@@ -9051,6 +9053,11 @@ impl<'a> Engine<'a> {
                 // Either bytes kind stands as a value of its own rather
                 // than as a builtin word, so it answers for its name here.
                 Value::ByteKind(mutable, _) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(self.byte_kind_word(mutable)),
+                // The same bytes kind answers for its qualified name and
+                // its module as well, which the builtin kinds hand back
+                // in the class reader.
+                Value::ByteKind(mutable, _) if name.as_ref() == self.class_word("qualified") => Value::text(self.byte_kind_word(mutable)),
+                Value::ByteKind(_, _) if name.as_ref() == self.class_word("module") => Value::text(self.home_module_word()),
                 // The member that fills a template is handed over bound
                 // to the text it was read from, as the other members of
                 // a text are, and fills the template when it is called.
@@ -13027,6 +13034,11 @@ impl<'a> Engine<'a> {
                 // An error policy given by itself leaves the encoding to
                 // be the wide one.
                 if args.len() == 1 { args.push(Value::text(&self.byte_codec_name(Self::CODEC_WIDE))); }
+                2
+            } else if builtin == Builtin::Bytes(39) && key == "delete" {
+                // bytes.translate(table, /, delete=b'') keeps the dropped
+                // row after the table, read only by name; the receiver
+                // sits first, so the keyword fills the third place.
                 2
             } else {
                 let words = &self.lang.call_builtin_amiss;
