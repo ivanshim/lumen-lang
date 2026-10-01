@@ -6639,10 +6639,18 @@ impl<'a> Compiler<'a> {
             // A spare's own value is read outside the routine's
             // parameters: a default naming what a parameter also names
             // finds the one outside, where the reference reads every
-            // default before the routine it belongs to exists.
-            let around = std::mem::take(&mut self.pieces.last_mut().expect("an open piece").idents);
+            // default before the routine it belongs to exists. The
+            // parameters stand aside under names nothing can spell, so
+            // every cell and mark the routine keeps stays where it was.
+            let standing: Vec<String> = (0..formals.len())
+                .map(|at| format!("\0default aside {}", formals[at])).collect();
+            let kept: Vec<String> = standing.iter().enumerate()
+                .map(|(at, away)| std::mem::replace(&mut self.pieces.last_mut().expect("an open piece").idents[at], away.clone()))
+                .collect();
             let outcome = self.expr(0);
-            self.pieces.last_mut().expect("an open piece").idents = around;
+            for (at, back) in kept.into_iter().enumerate() {
+                self.pieces.last_mut().expect("an open piece").idents[at] = back;
+            }
             outcome?;
             self.write(&formals[*at]);
             self.land(past);

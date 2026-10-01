@@ -6582,10 +6582,18 @@ impl<'a> Builder<'a> {
             // A spare's own value is read outside the routine's own
             // names: a default naming what a parameter also names finds
             // the one outside, the reference reading every default
-            // before the routine it belongs to exists.
-            let around = std::mem::take(&mut self.layers.last_mut().expect("a layer").idents);
+            // before the routine it belongs to exists. The parameters
+            // stand aside under names nothing can spell, so every place
+            // and mark the routine keeps stays where it was.
+            let standing: Vec<String> = (0..formals.len())
+                .map(|at| format!("\0default aside {}", formals[at])).collect();
+            let kept: Vec<String> = standing.iter().enumerate()
+                .map(|(at, away)| std::mem::replace(&mut self.layers.last_mut().expect("a layer").idents[at], away.clone()))
+                .collect();
             let built = self.expr(0);
-            self.layers.last_mut().expect("a layer").idents = around;
+            for (at, back) in kept.into_iter().enumerate() {
+                self.layers.last_mut().expect("a layer").idents[at] = back;
+            }
             let value = built?;
             let slot = self.address_to_write(&formals[at]);
             let written = Form::Write(slot.clone(), Box::new(value));
