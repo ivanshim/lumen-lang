@@ -3062,7 +3062,7 @@ impl<'a> Engine<'a> {
 
     fn iterator_operation(&mut self, args: &[Value]) -> Res<Value> {
         if let [Value::Text(word)] = args {
-            let mode = match word.as_ref() { "repeat" => 0, "product" => 1, "tee" => 2, _ => return Err("TypeError: unknown iterator operation".into()) };
+            let mode = match word.as_ref() { "repeat" => 0, "product" => 1, "tee" => 2, "combinations" => 5, _ => return Err("TypeError: unknown iterator operation".into()) };
             return Ok(Self::adapter(119, vec![Value::Small(mode)]));
         }
         if let [Value::Text(word), source] = args {
@@ -3101,6 +3101,7 @@ impl<'a> Engine<'a> {
 
     pub(super) fn iterator_recipe_next(&mut self, mode: i64, value: &Value) -> Res<Option<Value>> {
         let Value::Object(object) = value else { return Err("TypeError: invalid iterator receiver".into()); };
+        if mode == 5 { return self.combination_next(object); }
         if mode == 4 { return Ok(Some(value.clone())); }
         if mode == 3 {
             let underlying = Self::worth_of(value).ok_or("TypeError: invalid native iterator")?;
@@ -3167,6 +3168,34 @@ impl<'a> Engine<'a> {
             saved.1 = earliest;
         }
         Ok(Some(answer))
+    }
+
+    fn combination_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+        let invalid = || String::from("TypeError: invalid combinations state");
+        if self.truth(&Self::iterator_state_field(object, "done")?) { return Ok(None); }
+        let Value::Tuple(pool) = Self::iterator_state_field(object, "pool")?.contents() else { return Err(invalid()); };
+        let Value::Array(positions) = Self::iterator_state_field(object, "indices")?.contents() else { return Err(invalid()); };
+        if positions.len() > pool.len() { return Err(invalid()); }
+        let mut indices = Vec::with_capacity(positions.len());
+        for position in positions.iter() {
+            indices.push(position.as_big()?.to_usize().ok_or_else(invalid)?);
+        }
+        if !self.truth(&Self::iterator_state_field(object, "first")?) {
+            let width = indices.len();
+            let mut place = width;
+            while place > 0 && indices[place - 1] == pool.len() - width + place - 1 { place -= 1; }
+            if place == 0 {
+                Self::iterator_state_store(object, "done", Value::Flag(true));
+                return Ok(None);
+            }
+            indices[place - 1] += 1;
+            while place < width { indices[place] = indices[place - 1] + 1; place += 1; }
+        }
+        let mut row = Vec::with_capacity(indices.len());
+        for &index in &indices { row.push(pool.get(index).ok_or_else(invalid)?.clone()); }
+        Self::iterator_state_store(object, "indices", Value::array(indices.into_iter().map(|index| Value::Small(index as i64)).collect()));
+        Self::iterator_state_store(object, "first", Value::Flag(false));
+        Ok(Some(Value::tuple(row)))
     }
 
     fn product_step(&self, given: &[Value]) -> Res<Value> {

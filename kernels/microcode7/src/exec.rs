@@ -8055,6 +8055,9 @@ impl<'a> Machine<'a> {
     fn recipe_factory(&mut self, operands: &[Value]) -> Result<Value, String> {
         if operands.len() == 1 {
             if let Value::Text(name) = &operands[0] {
+                if name.as_ref() == "combinations" {
+                    return Ok(Value::Wrapped(120, crate::tuples::Sequence::plain(vec![Value::Small(5)])));
+                }
                 let operation = ["repeat", "product", "tee"].iter().position(|candidate| *candidate == name.as_ref())
                     .ok_or_else(|| "TypeError: unknown iterator operation".to_owned())?;
                 return Ok(Value::Wrapped(120, crate::tuples::Sequence::plain(vec![Value::Small(operation as i64)])));
@@ -8103,6 +8106,7 @@ impl<'a> Machine<'a> {
     pub(super) fn recipe_advance(&mut self, operation: i64, receiver: &Value) -> Result<Option<Value>, String> {
         let Value::Thing(thing) = receiver else { return Err("TypeError: invalid iterator receiver".to_owned()); };
         match operation {
+            5 => return self.recipe_combinations(thing),
             4 => return Ok(Some(receiver.clone())),
             3 => {
                 let native = Self::underlying(receiver).ok_or_else(|| "TypeError: invalid native iterator".to_owned())?;
@@ -8173,6 +8177,36 @@ impl<'a> Machine<'a> {
         { let mut entries = queue.borrow_mut(); for _ in released..floor { entries.pop_front(); } }
         *first.borrow_mut() = Value::Small(floor as i64);
         Ok(Some(item))
+    }
+
+    fn recipe_combinations(&mut self, owner: &Rc<Thing>) -> Result<Option<Value>, String> {
+        if self.stands_true(&Self::recipe_member(owner, "done")?) { return Ok(None); }
+        let domain = match Self::recipe_member(owner, "pool")?.settled() {
+            Value::Tuple(entries) => entries,
+            _ => return Err("TypeError: invalid combinations pool".to_owned()),
+        };
+        let stored = match Self::recipe_member(owner, "indices")?.settled() {
+            Value::Vector(entries) => entries,
+            _ => return Err("TypeError: invalid combinations indices".to_owned()),
+        };
+        let mut digits: Vec<usize> = stored.iter().map(|entry| entry.as_big()?.to_usize()
+            .ok_or_else(|| "TypeError: invalid combinations index".to_owned())).collect::<Result<_, _>>()?;
+        let count = digits.len();
+        if count > domain.len() { return Err("TypeError: combinations indices exceed pool".to_owned()); }
+        if !self.stands_true(&Self::recipe_member(owner, "first")?) {
+            let moving = (0..count).rev().find(|&slot| digits[slot] < domain.len() - count + slot);
+            let Some(slot) = moving else {
+                Self::recipe_replace(owner, "done", Value::Flag(true));
+                return Ok(None);
+            };
+            digits[slot] += 1;
+            for following in slot + 1..count { digits[following] = digits[following - 1] + 1; }
+        }
+        let answer = digits.iter().map(|&slot| domain.get(slot).cloned()
+            .ok_or_else(|| "TypeError: combinations index outside pool".to_owned())).collect::<Result<Vec<_>, _>>()?;
+        Self::recipe_replace(owner, "first", Value::Flag(false));
+        Self::recipe_replace(owner, "indices", Value::Vector(crate::tuples::Sequence::plain(digits.into_iter().map(|slot| Value::Small(slot as i64)).collect())));
+        Ok(Some(Value::tuple(answer)))
     }
 
     fn cartesian_step(&self, operands: &[Value]) -> Result<Value, String> {

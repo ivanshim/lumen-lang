@@ -3550,7 +3550,7 @@ only. The extension labels so far, all from PHP:
   whether to copy the things held within it too. Deep copies remember
   objects already copied, so cycles and shared members keep their shape.
 - `ext.builtin.itertools.product_step`: supports native iterator method
-  descriptors for repeat, Cartesian product, and tee, plus shared tee
+  descriptors for repeat, Cartesian product, combinations, and tee, plus shared tee
   storage and its pickle snapshots. Cartesian indices advance in mixed
   radix; tee retains values until its independent readers pass them.
   The Python library owns constructors, validation and reconstruction.

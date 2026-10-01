@@ -312,22 +312,7 @@ class combinations(_Iterator):
         self.indices = list(range(self.r))
         self.first = True
         self.done = self.r > len(self.pool)
-    def __next__(self):
-        if self.done:
-            raise StopIteration
-        if self.first:
-            self.first = False
-        else:
-            i = self.r - 1
-            while i >= 0 and self.indices[i] == i + len(self.pool) - self.r:
-                i -= 1
-            if i < 0:
-                self.done = True
-                raise StopIteration
-            self.indices[i] += 1
-            for j in range(i + 1, self.r):
-                self.indices[j] = self.indices[j - 1] + 1
-        return tuple(self.pool[i] for i in self.indices)
+    __next__ = _product_step("combinations")
 
 class combinations_with_replacement(_Iterator):
     _keyword_constructor = True
