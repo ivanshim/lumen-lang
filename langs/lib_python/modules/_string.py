@@ -3,6 +3,16 @@
 # tuples they hand back and the errors they raise match character for
 # character.
 
+# Behaviour follows CPython 3b564385e4c9, Objects/stringlib/unicode_format.h
+# (PSF License); the public helpers have the same single-argument C call contract.
+def _single_argument(args, keywords, name):
+    if keywords:
+        raise TypeError('_string.' + name + '() takes no keyword arguments')
+    if len(args) != 1:
+        raise TypeError('_string.' + name + '() takes exactly one argument ('
+                        + str(len(args)) + ' given)')
+    return args[0]
+
 def _require_str(value, name):
     if not isinstance(value, str):
         raise TypeError('expected str, got ' + type(value).__name__)
@@ -61,7 +71,8 @@ def _parse_field(text, start):
                 return (field_name, text[spec_start:i - 1], conversion, i)
     raise "ValueError: unmatched '{' in format spec"
 
-def formatter_parser(format_string):
+def formatter_parser(*args, **keywords):
+    format_string = _single_argument(args, keywords, 'formatter_parser')
     _require_str(format_string, 'formatter_parser')
     return _formatter_parser(format_string)
 
@@ -122,7 +133,8 @@ def _as_index(name):
             raise ValueError('Too many decimal digits in format string')
     return answer
 
-def formatter_field_name_split(field_name):
+def formatter_field_name_split(*args, **keywords):
+    field_name = _single_argument(args, keywords, 'formatter_field_name_split')
     _require_str(field_name, 'formatter_field_name_split')
     n = len(field_name)
     i = 0
