@@ -18555,8 +18555,12 @@ impl Engine<'_> {
         if path.starts_with('.') {
             let current = self.module_slots.get(&self.source).map(|(_, name)| name.clone());
             let Some(current) = current else { return Err(self.lang.import_relative_unready.clone().into()) };
+            let metadata = self.modules.get(&current).and_then(|module| match module {
+                Value::Object(namespace) => namespace.fields.borrow().iter().find(|(key, _)| key == "__package__").and_then(|(_, value)| match value.contents() { Value::Text(name) => Some(name.to_string()), _ => None }),
+                _ => None,
+            });
             let is_package = self.source.ends_with("/__init__.py");
-            let mut base = if is_package { current } else { current.rsplit_once('.').map(|(owner, _)| owner.to_owned()).unwrap_or_default() };
+            let mut base = metadata.unwrap_or_else(|| if is_package { current.clone() } else { current.rsplit_once('.').map(|(owner, _)| owner.to_owned()).unwrap_or_default() });
             let levels = path.chars().take_while(|c| *c == '.').count();
             for _ in 1..levels {
                 base = base.rsplit_once('.').map(|(owner, _)| owner.to_owned()).ok_or_else(|| "ImportError: attempted relative import beyond top-level package".to_string())?;
@@ -18637,8 +18641,13 @@ impl Engine<'_> {
         // to, carried here for a module read in besides it.
         let file_word = self.lang.source_bindings.iter().find(|(part, _)| part == "file").map(|(_, w)| w.clone());
         let mut fields = Vec::new();
+        let is_package = filename.ends_with("/__init__.py");
+        let package_owner = if is_package { path } else { path.rsplit_once('.').map_or("", |(owner, _)| owner) };
+        let folder = std::path::Path::new(filename).parent().unwrap_or_else(|| std::path::Path::new("."));
         for (index, name) in names.iter().enumerate() {
-            let initial = if self.lang.module_names.contains(name) { Value::text(path) }
+            let initial = if name == "__package__" && !self.lang.module_names.is_empty() { Value::text(package_owner) }
+                else if name == "__path__" && is_package && !self.lang.module_names.is_empty() { Value::array(vec![Value::text(&folder.to_string_lossy())]) }
+                else if self.lang.module_names.contains(name) { Value::text(path) }
                 else if file_word.as_ref() == Some(name) { own_file.as_deref().map_or(Value::Null, Value::text) }
                 else if let Some(value) = self.native_exceptions.get(name) { value.clone() }
                 else if self.lang.explicit_this && Lang::spells(&self.lang.parent_words, name) { Self::adapter(9, Vec::new()) }
@@ -18650,7 +18659,7 @@ impl Engine<'_> {
             // write actually bound at the module's own outermost scope
             // is one the module carries: the rest never left the frame
             // that held them.
-            if local.globals.contains(name) {
+            if local.globals.contains(name) || (!self.lang.module_names.is_empty() && (name == "__package__" || (name == "__path__" && is_package))) {
                 fields.push((name.clone(), shared));
             }
         }
@@ -18670,8 +18679,8 @@ impl Engine<'_> {
         if !self.lang.module_names.is_empty() {
             let is_package = filename.ends_with("/__init__.py");
             let owner = if is_package { path } else { path.rsplit_once('.').map_or("", |(parent, _)| parent) };
-            fields.push(("__package__".into(), Value::text(owner)));
-            if is_package {
+            if !fields.iter().any(|(name, _)| name == "__package__") { fields.push(("__package__".into(), Value::text(owner))); }
+            if is_package && !fields.iter().any(|(name, _)| name == "__path__") {
                 let directory = std::path::Path::new(filename).parent().unwrap_or_else(|| std::path::Path::new("."));
                 fields.push(("__path__".into(), Value::Array(Rc::new(vec![Value::text(&directory.to_string_lossy())]).into())));
             }

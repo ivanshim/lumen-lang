@@ -18529,8 +18529,17 @@ impl Machine<'_> {
             let Some(owner) = self.loaded_spaces.get(&self.written_in) else {
                 return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().into());
             };
-            let mut parts: Vec<&str> = owner.split('.').collect();
-            if !self.written_in.ends_with("/__init__.py") { parts.pop(); }
+            let package = self.imported.get(owner).and_then(|value| {
+                if let Value::Thing(space) = value {
+                    space.holds.borrow().iter().find_map(|(key, item)| {
+                        if key == "__package__" { if let Value::Text(text) = item.settled() { return Some(text.to_string()); } }
+                        None
+                    })
+                } else { None }
+            });
+            let fallback = if self.written_in.ends_with("/__init__.py") { owner.to_string() } else { owner.rsplit_once('.').map_or(String::new(), |(prefix, _)| prefix.to_string()) };
+            let package = package.unwrap_or(fallback);
+            let mut parts: Vec<&str> = if package.is_empty() { Vec::new() } else { package.split('.').collect() };
             let dots = path.len() - path.trim_start_matches('.').len();
             for _ in 1..dots {
                 if parts.len() < 2 { return Err("ImportError: attempted relative import beyond top-level package".into()); }
@@ -18600,19 +18609,28 @@ impl Machine<'_> {
         // to, carried here for a module read in besides it.
         let file_word = self.table.single("ext.system.source.file");
         let mut members = Vec::with_capacity(exported.len());
+        let package_initializer = filename.ends_with("/__init__.py");
+        let enclosing_name = if package_initializer { path } else { path.rsplit_once('.').map_or("", |entry| entry.0) };
         {
             let mut world = self.outermost.cells.borrow_mut();
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let is_module_name = module_names.contains(name);
-                let initial = if is_module_name { Value::text(path) }
+                let package_binding = !module_names.is_empty() && name == "__package__";
+                let path_binding = !module_names.is_empty() && package_initializer && name == "__path__";
+                let initial = if package_binding { Value::text(enclosing_name) }
+                    else if path_binding {
+                        let folder = std::path::Path::new(filename).parent().unwrap_or_else(|| std::path::Path::new("."));
+                        Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(&folder.to_string_lossy())]))
+                    }
+                    else if is_module_name { Value::text(path) }
                     else if file_word == Some(name.as_str()) { own_file.as_deref().map_or(Value::Nil, Value::text) }
                     else if self.rules.explicit_receiver && self.table.spells("ext.stmt.class.parent", name) {
                         Value::Wrapped(9, Rc::new(Vec::new()).into())
                     }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
-                if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
+                if package_binding || path_binding || is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
             }
         }
@@ -18636,8 +18654,8 @@ impl Machine<'_> {
                 (false, Some((prefix, _))) => prefix,
                 _ => "",
             };
-            members.push((String::from("__package__"), Value::text(package_name)));
-            if package_initializer {
+            if !members.iter().any(|entry| entry.0 == "__package__") { members.push((String::from("__package__"), Value::text(package_name))); }
+            if package_initializer && !members.iter().any(|entry| entry.0 == "__path__") {
                 if let Some(folder) = std::path::Path::new(filename).parent() {
                     let locations = vec![Value::text(&folder.to_string_lossy())];
                     members.push((String::from("__path__"), Value::Vector(crate::tuples::Sequence::plain(locations))));
