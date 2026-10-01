@@ -2668,6 +2668,21 @@ only. The extension labels so far, all from PHP:
   `langs/lib_python/modules/subprocess.py` on it. Only the full kernels
   read it.
 
+- `ext.builtin.signal`: one builtin that minds the host's signals, in
+  steps, so a language whose library writes a `signal` module may name
+  the handler a signal answers with, ask which handler it was given,
+  and leave a signal pending. What is left pending is taken up where
+  one statement gives way to the next, never in the middle of one: a
+  handler of the program's own runs with the number and nothing for a
+  frame, one paid no mind goes by, and one left to go its own way
+  rises as the interrupt where that way is the interrupt signal's own
+  (any other number left to its own way is let go, which is as far as
+  this goes from the reference, whose way for several is to end the
+  run). The host's own arriving interrupt is noted the same way, as
+  one more signal left pending. Python's library binds this word as
+  `__signal` and writes `langs/lib_python/modules/signal.py` on it.
+  Only the full kernels read it.
+
 - `ext.op.hush`: a mark written before a piece of a program, keeping
   quiet whatever that piece has to say about itself while its value is
   found. The value is the one the piece would have come to anyway; only
@@ -4753,6 +4768,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.setattr` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
+| `ext.builtin.signal` | - | - | `__signal` | - | - | - | - | - | - | - |
 | `ext.builtin.slice` | - | - | `slice` | - | - | - | - | - | - | - |
 | `ext.builtin.slice.arity` | - | - | `TypeError: slice expected 1 to 3 arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.slice.length` | - | - | `ValueError: length should not be negative` | - | - | - | - | - | - | - |

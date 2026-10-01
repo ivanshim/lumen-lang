@@ -602,6 +602,9 @@ pub struct Lang {
     /// Whether each statement of the program is marked with its line as
     /// the run goes, so that a call may be told where it was made from.
     pub marks_lines: bool,
+    /// Whether a signal left pending is taken up where one of the
+    /// program's statements gives way to the next (ext.builtin.signal).
+    pub signals_between_statements: bool,
     pub fault_name: Option<String>,
     pub fault_attribute: Option<String>,
     pub fault_stop: Option<String>,
@@ -1380,7 +1383,7 @@ w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
  | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.power.overflow | w ext.builtin.complex.power.modulo | w ext.builtin.complex.integer.overflow | w ext.builtin.complex.unready
 w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long | w ext.builtin.map.short | w ext.builtin.map.long
-w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.syntax.place | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | w ext.system.names.module | w ext.system.syntax_warnings | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign  | w ext.builtin.ascii  | w ext.text.format.complex.zero | w ext.text.format.complex.align  | w ext.op.rem.format.byte  | w ext.builtin.iter.stop_value | w ext.builtin.iter.stop_exception";
+w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.syntax.place | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | w ext.system.names.module | w ext.system.syntax_warnings | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign  | w ext.builtin.ascii  | w ext.text.format.complex.zero | w ext.text.format.complex.align  | w ext.op.rem.format.byte  | w ext.builtin.iter.stop_value | w ext.builtin.iter.stop_exception | w ext.builtin.signal";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -2137,6 +2140,7 @@ impl Lang {
             ("ext.builtin.shell", Builtin::ShellSaid),
             ("ext.builtin.net.ask", Builtin::NetAsk), ("ext.builtin.wait", Builtin::Waited),
             ("ext.builtin.run.begin", Builtin::RunBegin), ("ext.builtin.run.end", Builtin::RunEnd), ("ext.builtin.subprocess", Builtin::Subprocess),
+            ("ext.builtin.signal", Builtin::Signal),
         ] {
             for lex in r.strings(tag)? {
                 // A method spelled with its class before it (float.fromhex)
@@ -2579,6 +2583,7 @@ impl Lang {
             fault_index: r.head("ext.system.fault.class.index")?,
             fault_key: r.head("ext.system.fault.class.key")?,
             marks_lines: r.flag("ext.system.source.marked")?,
+            signals_between_statements: !r.strings("ext.builtin.signal")?.is_empty(),
             fault_name: r.head("ext.system.fault.class.name")?,
             fault_attribute: r.head("ext.system.fault.class.attribute")?,
             fault_stop: r.head("ext.system.fault.class.stop")?,

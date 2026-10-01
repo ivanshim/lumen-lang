@@ -197,7 +197,7 @@ ext.op.sequence.subscript:L ext.op.sequence.missing:L ext.op.sequence.assign:L e
 ext.builtin.exec:L ext.builtin.compile:L ext.builtin.compile.modes:L ext.builtin.compile.parameters:L \
 ext.builtin.compile.kind:L ext.builtin.source.syntax:L ext.builtin.source.syntax.place:L ext.builtin.source.unready:L ext.builtin.source.builtins_immutable:L \
 ext.builtin.import:L ext.system.module.doc:L ext.system.module.builtins:L ext.system.names.module:L ext.system.syntax_warnings:L ext.builtin.ascii:L \
-ext.text.format.complex.zero:L ext.text.format.complex.align:L ext.op.rem.format.byte:L ext.builtin.frozenset:L  ext.builtin.iter.stop_value:L ext.builtin.iter.stop_exception:L";
+ext.text.format.complex.zero:L ext.text.format.complex.align:L ext.op.rem.format.byte:L ext.builtin.frozenset:L  ext.builtin.iter.stop_value:L ext.builtin.iter.stop_exception:L ext.builtin.signal:L";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
     table.split_whitespace().map(|e| {
@@ -228,7 +228,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 295] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 296] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -465,6 +465,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 295] = [
     ("ext.builtin.dir.make_one", Prim::DirOne), ("ext.builtin.dir.change", Prim::DirStep),
     ("ext.builtin.shell", Prim::Shelled), ("ext.builtin.net.ask", Prim::Reached), ("ext.builtin.wait", Prim::Bided),
     ("ext.builtin.run.begin", Prim::Raised), ("ext.builtin.run.end", Prim::Laid), ("ext.builtin.subprocess", Prim::Subprocess),
+    ("ext.builtin.signal", Prim::Signal),
 ];
 
 const BINARY_LABELS: [(&str, Prim); 27] = [
