@@ -675,6 +675,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                 if let Form::Const(Value::Text(said)) = first {
                     for name in table.strings("ext.system.module.doc") {
                         let slot = r.global_address(name);
+                        if !r.named_in_program.contains(name) { r.named_in_program.push(name.clone()); }
                         stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
                     }
                 }
