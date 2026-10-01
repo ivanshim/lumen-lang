@@ -117,6 +117,9 @@
   "ext.builtin.method.fromhex": [
     "float.fromhex"
   ],
+  "ext.builtin.method.getformat": [
+    "float.__getformat__"
+  ],
   "ext.builtin.method.from_number": [
     "float.from_number"
   ],

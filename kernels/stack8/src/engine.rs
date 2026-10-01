@@ -12715,6 +12715,10 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        if builtin == Builtin::ValueMethod && self.lang.float_getformat.iter().any(|word| word == name) {
+            let class = Value::Native(Builtin::AsReal, Rc::from("float"));
+            return self.value_method(&class, "float_getformat", args, named);
+        }
         if self.fuller_classes() && builtin == Builtin::ClassTool(11) {
             args.extend(named.into_iter().map(|(key, value)| Value::Tie(Rc::new((Value::text(&key), value)))));
             return self.class_work(11, args).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
@@ -13025,6 +13029,19 @@ impl<'a> Engine<'a> {
                 Value::Native(Builtin::Complex, _) => Ok(converted),
                 _ => Err(self.lang.method_errors["arguments"].clone()),
             };
+        }
+        if operation == "float_getformat" {
+            if !named.is_empty() { return Err("TypeError: float.__getformat__() takes no keyword arguments".to_string()); }
+            if args.len() != 1 { return Err(format!("TypeError: float.__getformat__() takes exactly one argument ({} given)", args.len())); }
+            let argument = Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents());
+            let Value::Text(word) = argument else {
+                return Err(format!("TypeError: __getformat__() argument must be str, not {}", Self::format_given_kind(&args[0])));
+            };
+            if word.contains('\0') { return Err("ValueError: embedded null character".to_string()); }
+            if !matches!(word.as_ref(), "float" | "double") {
+                return Err("ValueError: __getformat__() argument 1 must be 'double' or 'float'".to_string());
+            }
+            return Ok(Value::text(if cfg!(target_endian = "little") { "IEEE, little-endian" } else { "IEEE, big-endian" }));
         }
         if operation == "float_fromhex" {
             if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -14775,6 +14792,10 @@ impl<'a> Engine<'a> {
             // int.__truediv__) is called on its first argument, as the
             // method would be on a value of that class.
             Builtin::ValueMethod => {
+                if self.lang.float_getformat.iter().any(|word| word == name) {
+                    let receiver = Value::Native(Builtin::AsReal, Rc::from("float"));
+                    return self.value_method(&receiver, "float_getformat", std::mem::take(args), Vec::new());
+                }
                 if args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
                 let Some((_, operation)) = name.rsplit_once('.') else { return Err(self.member_amiss(&args[0], name)) };
                 let receiver = args.remove(0);

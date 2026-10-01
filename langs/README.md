@@ -2224,6 +2224,8 @@ only. The extension labels so far, all from PHP:
   own, called on its first argument. `ext.builtin.method.error.hex` and
   `.hex_overflow` give the complaints for a spelling that is no
   hexadecimal real and for one too large to hold.
+- `ext.builtin.method.getformat` spells the Python float class method that
+  reports the native IEEE floating-point byte order and checks its argument.
 - `ext.builtin.method.from_number` spells `float.from_number`; it takes a
   number or the float/index protocols, omits text conversion, and makes
   an instance of a float subclass when read through that subclass.
@@ -4616,6 +4618,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.fromhex` | - | - | `float.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.fromkeys` | - | - | `dict.fromkeys` `fromkeys` | - | - | - | - | - | - | - |
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
+| `ext.builtin.method.getformat` | - | - | `float.__getformat__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.imag` | - | - | `imag` | - | - | - | - | - | - | - |
 | `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |

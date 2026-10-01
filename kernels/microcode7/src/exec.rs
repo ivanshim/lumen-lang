@@ -7084,6 +7084,9 @@ impl<'a> Machine<'a> {
             && self.table.spells("ext.builtin.bytes.from_int", name) {
             return Some(Value::Member(Rc::new(value.clone()), "integer_bytes".into()));
         }
+        if matches!(value, Value::Intrinsic(Prim::AsReal, _)) && name == "__getformat__" {
+            return Some(Value::Member(Rc::new(value.clone()), "float_getformat".to_owned()));
+        }
         if matches!(value, Value::Intrinsic(Prim::AsReal, _)) && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
             return Some(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
         }
@@ -7672,6 +7675,32 @@ impl<'a> Machine<'a> {
                 Value::Intrinsic(Prim::ComplexMade, _) => Ok(converted),
                 _ => Err(self.method_fault("arguments").into()),
             };
+        }
+        if name == "__getformat__" && (matches!(receiver, Value::Intrinsic(Prim::AsReal, _) | Value::Frac(_))
+            || matches!(receiver, Value::Blueprint(class) if Self::native_beneath(class).as_deref() == Some("float"))) {
+            return self.value_member(receiver, "float_getformat", arguments, keywords);
+        }
+        if name == "float_getformat" {
+            let error = if !keywords.is_empty() {
+                Some("TypeError: float.__getformat__() takes no keyword arguments".to_owned())
+            } else if arguments.len() != 1 {
+                Some(format!("TypeError: float.__getformat__() takes exactly one argument ({} given)", arguments.len()))
+            } else { None };
+            if let Some(words) = error { return Err(words.into()); }
+            match Self::underlying(&arguments[0]).unwrap_or_else(|| arguments[0].settled()) {
+                Value::Text(text) if text.as_ref() == "double" || text.as_ref() == "float" => {
+                    let endian = if cfg!(target_endian = "big") { "big" } else { "little" };
+                    return Ok(Value::text(&format!("IEEE, {}-endian", endian)));
+                }
+                Value::Text(text) => {
+                    let problem = if text.contains('\0') { "embedded null character" } else { "__getformat__() argument 1 must be 'double' or 'float'" };
+                    return Err(format!("ValueError: {problem}").into());
+                }
+                other => {
+                    let kind = if matches!(other, Value::Nil) { "None".to_owned() } else { other.kind_word() };
+                    return Err(format!("TypeError: __getformat__() argument must be str, not {kind}").into());
+                }
+            }
         }
         if name == "float_fromhex" {
             if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
@@ -8285,6 +8314,10 @@ impl<'a> Machine<'a> {
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
+        }
+        if op == Prim::ValueMethod && table.spells("ext.builtin.method.getformat", name) {
+            let class = Value::Intrinsic(Prim::AsReal, Rc::from("float"));
+            return self.value_member(&class, "float_getformat", std::mem::take(positional), keywords).map(Some);
         }
         if self.has_class_order() && op == Prim::SortOf && positional.len() == 3 {
             let mut supplied = positional.clone();
@@ -13607,6 +13640,10 @@ impl<'a> Machine<'a> {
             // A method spelled with its class in front is asked of its
             // first argument, as it would be of a value of that class.
             Prim::ValueMethod if name.contains('.') => {
+                if self.table.spells("ext.builtin.method.getformat", name) {
+                    let kind = Value::Intrinsic(Prim::AsReal, Rc::from("float"));
+                    return self.value_member(&kind, "float_getformat", v.to_vec(), Vec::new()).map_err(|away| self.suspension_fault(away));
+                }
                 let operation = name.rsplit('.').next().unwrap_or(name).to_owned();
                 if v.is_empty() { return Err(self.method_fault("arguments")); }
                 // `dict.fromkeys` written with its class in front is the

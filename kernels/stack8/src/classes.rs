@@ -1221,7 +1221,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "complex_from_number".to_string()))));
                 }
                 if *op == Builtin::AsReal && name == "__getformat__" {
-                    return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_getformat".to_string()))));
                 }
                 if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                 if name==self.class_word("qualified") { return Ok(Value::text(word)); }
@@ -1263,7 +1263,7 @@ impl<'a> Engine<'a> {
                     if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                     if name==self.class_word("qualified") { return Ok(Value::text(&word)); }
                     if name == "__getformat__" && word == "float" {
-                        return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_getformat".to_string()))));
                     }
                 }
                 if name == self.class_word("flags") {
@@ -1274,6 +1274,9 @@ impl<'a> Engine<'a> {
                 }
                 if (Self::own_kind(c).as_deref() == Some("complex") || Self::kind_beneath(c).as_deref() == Some("complex")) && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name)) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "complex_from_number".to_string()))));
+                }
+                if Self::kind_beneath(c).as_deref() == Some("float") && name == "__getformat__" {
+                    return Ok(Value::ValueMethod(Rc::new((subject.clone(), String::from("float_getformat")))));
                 }
                 if Self::kind_beneath(c).as_deref() == Some("float") && name == "fromhex" {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), "float_fromhex".to_string()))));
@@ -1292,6 +1295,7 @@ impl<'a> Engine<'a> {
                     // value of the kind answers to.
                     if let Some(word)=Self::own_kind(c) {
                         let mut names = self.kind_special_names(&word);
+                        if word == "float" { names.push("__getformat__".to_string()); }
                         names.push(self.class_word("allocate").to_string());
                         let mut entries = Vec::new();
                         for key in names {

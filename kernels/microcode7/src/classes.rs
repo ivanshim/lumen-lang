@@ -1562,7 +1562,7 @@ impl<'a> Machine<'a> {
                 if key==self.detail("module") { return Ok(Value::text(self.builtin_module())); }
                 if key==self.detail("qualified") { return Ok(Value::text(word)); }
                 if key=="__getformat__" && word.as_ref()=="float" {
-                    return Ok(Value::Intrinsic(Prim::ValueMethod, Rc::from("float.__getformat__")));
+                    return Ok(Value::Member(Rc::new(value.clone()), "float_getformat".to_owned()));
                 }
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
@@ -1632,6 +1632,9 @@ impl<'a> Machine<'a> {
             if (Self::native_word(b).as_deref() == Some("complex") || Self::native_beneath(b).as_deref() == Some("complex")) && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("complex_from_number")));
             }
+            if Self::native_beneath(b).as_deref() == Some("float") && key == "__getformat__" {
+                return Ok(Value::Member(Rc::new(value.clone()), String::from("float_getformat")));
+            }
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
             }
@@ -1640,7 +1643,7 @@ impl<'a> Machine<'a> {
                 if key==self.detail("module") { return Ok(Value::text(self.builtin_module())); }
                 if key==self.detail("qualified") { return Ok(Value::text(&word)); }
                 if key=="__getformat__" && word=="float" {
-                    return Ok(Value::Intrinsic(Prim::ValueMethod, Rc::from("float.__getformat__")));
+                    return Ok(Value::Member(Rc::new(value.clone()), "float_getformat".to_owned()));
                 }
             }
             if key==self.detail("name"){return Ok(Value::text(&b.name));}
@@ -1657,6 +1660,7 @@ impl<'a> Machine<'a> {
                 if let Some(word)=Self::native_word(b) {
                     let mut pairs = Vec::new();
                     let mut names = self.kind_member_names(&word);
+                    if word.as_str() == "float" { names.push(String::from("__getformat__")); }
                     names.push(self.detail("allocate").to_owned());
                     for name in names {
                         let member = self.read_class_member(value.clone(), &name, true)?;
