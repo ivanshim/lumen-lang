@@ -11351,6 +11351,28 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        // The binary working already converts both operands and
+        // produces an exact binary result. Plain float operations need
+        // no intermediate real allocations or second result rounding.
+        let plain=|value:&Value|matches!(value,Value::Small(_))
+            || matches!(value,Value::Real(r) if !r.q.is_zero());
+        let zero=|value:&Value|matches!(value,Value::Small(0))
+            || matches!(value,Value::Real(r) if r.p.is_zero());
+        if self.lang.math_floating && self.lang.arithmetic_binary
+            && self.lang.real_bits==Some(64) && self.lang.shortest_reals
+            && plain(a) && plain(b) && matches!((a,b),(Value::Real(_),_)|(_,Value::Real(_))) {
+            if matches!(op,Action::Div|Action::DivReal) && zero(b) {
+                return Err("ZeroDivisionError: float division by zero".into());
+            }
+            let operation=match op {
+                Action::Add=>Some(Operation::Plus),Action::Sub=>Some(Operation::Minus),
+                Action::Mul=>Some(Operation::Times),Action::Div=>Some(Operation::Over),
+                Action::DivReal=>Some(Operation::OverReal),_=>None,
+            };
+            if let Some(operation)=operation {
+                if let Some(answer)=arith::binary_work(operation,a,b) {return answer.map_err(Into::into);}
+            }
+        }
         if self.lang.power_real && matches!(op, Action::Power) {
             if let Some(answer) = self.real_power(a, b)? { return Ok(answer); }
         }

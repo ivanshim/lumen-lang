@@ -13205,6 +13205,9 @@ impl<'a> Machine<'a> {
             };
             if zero {
                 let reals = v.iter().any(|x| matches!(x, Value::Frac(r) if r.places.is_some()));
+                if reals && matches!(op, Prim::Over | Prim::OverReal) && self.table.flag("ext.builtin.math.floating") {
+                    return Err(String::from("ZeroDivisionError: float division by zero"));
+                }
                 let label = match op {
                     Prim::IntDiv if reals => "ext.op.quot.real_zero",
                     Prim::IntDiv => "ext.op.quot.zero",
@@ -15964,6 +15967,23 @@ impl<'a> Machine<'a> {
                     Prim::Mod => Calc::Remainder,
                     _ => Calc::Power,
                 };
+                let simple=|number:&Value|match number {
+                    Value::Small(_)=>true,
+                    Value::Frac(r)=>r.places.is_some() && !r.beneath.is_zero(),
+                    _=>false,
+                };
+                let float_present=v.iter().any(|number|matches!(number,Value::Frac(r) if r.places.is_some()));
+                // The width's binary arithmetic converts its own inputs.
+                // For plain floats, avoid building real carriers around
+                // those inputs and rounding the binary answer again.
+                if simple(&v[0]) && simple(&v[1]) && float_present
+                    && matches!(sum,Calc::Plus|Calc::Minus|Calc::Times|Calc::Over|Calc::OverReal)
+                    && self.table.flag("ext.builtin.math.floating")
+                    && self.table.flag("ext.op.arithmetic.binary")
+                    && self.table.count("ext.system.real.bits")==Some(64)
+                    && self.table.lone("system.real.render")==Some("shortest") {
+                    if let Some(result)=math::binary_work(sum,&v[0],&v[1]) {return result;}
+                }
                 // Where a language holds its reals to a width of bits,
                 // a whole number meeting a real is brought to that
                 // width first, so the two are worked as it works them.
