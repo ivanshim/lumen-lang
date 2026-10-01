@@ -18,6 +18,12 @@ _claimed = []
 # does not send the same question round for ever.
 _asking = []
 
+# Subclass caches follow CPython Lib/_py_abc.py at 3b564385e4c9
+# (PSF licence). Weak keys keep the cache out of the class namespace.
+_subclass_cache = None
+_native_cache = None
+_cache_version = 0
+
 
 def _claims_for(kind):
     for entry in _claimed:
@@ -82,6 +88,7 @@ class ABCMeta(type):
         return super().__call__(*args, **kwargs)
 
     def register(cls, subclass):
+        global _cache_version
         claimed = _claims_for(cls)
         if claimed is None:
             claimed = []
@@ -90,18 +97,54 @@ class ABCMeta(type):
             if already is subclass:
                 return subclass
         claimed.append(subclass)
+        _cache_version += 1
         return subclass
 
     def __instancecheck__(cls, instance):
         return cls.__subclasscheck__(type(instance))
 
     def __subclasscheck__(cls, subclass):
+        global _subclass_cache, _native_cache
+        if not isinstance(subclass, type):
+            raise TypeError('issubclass() arg 1 must be a class')
+        if _subclass_cache is None:
+            from weakref import WeakKeyDictionary
+            _subclass_cache = WeakKeyDictionary()
+            _native_cache = WeakKeyDictionary()
+        native = _native_cache.get(cls)
+        if native is not None:
+            remembered = native.get(subclass)
+            if remembered is not None and (remembered[0] or remembered[1] == _cache_version):
+                return remembered[0]
+        version = _cache_version
+        cache = _subclass_cache.get(cls)
+        if cache is not None:
+            try:
+                remembered = cache.get(subclass)
+            except TypeError:
+                remembered = None
+            if remembered is not None and (remembered[0] or remembered[1] == version):
+                return remembered[0]
         for pair in _asking:
             if pair[0] is cls and pair[1] is subclass:
                 return False
         _asking.append((cls, subclass))
         try:
-            return _counts_as(cls, subclass)
+            answer = _counts_as(cls, subclass)
+            if cache is None:
+                from weakref import WeakKeyDictionary
+                cache = WeakKeyDictionary()
+                _subclass_cache[cls] = cache
+            try:
+                cache[subclass] = (answer, version)
+            except TypeError:
+                # Builtin type tokens are immortal. Registration invalidates
+                # their negative results just like the weak class cache.
+                if native is None:
+                    native = {}
+                    _native_cache[cls] = native
+                native[subclass] = (answer, version)
+            return answer
         finally:
             _asking.pop()
 

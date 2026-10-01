@@ -11193,7 +11193,6 @@ impl<'a> Machine<'a> {
         holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
         let mut extra: Vec<(Value, Value)> = Vec::new();
         for (key, held) in entries {
-            let key = if let Value::Keyed(value, _) = key { value.as_ref().clone() } else { key };
             match key {
                 Value::Text(text) => holds.push((text.to_string(), held)),
                 other => extra.push((other, held)),
@@ -12283,12 +12282,13 @@ impl<'a> Machine<'a> {
                     if self.keys_agree(&stored, &wanted)? {
                         // Reading a namespace must not lend its binding cell
                         // to a dictionary that can consume its own entries.
+                        let original = value.clone();
                         let mut detached = value;
                         while let Value::Shared(cell) = &detached {
                             let inner = cell.borrow().clone();
                             detached = inner;
                         }
-                        found = Some(detached);
+                        found = Some(if matches!(detached, Value::Blueprint(_)) { detached } else { original });
                         break;
                     }
                 }

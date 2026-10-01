@@ -6659,7 +6659,8 @@ impl<'a> Engine<'a> {
         }
         if !matches!(op, Action::Same | Action::Unsame) || self.lang.identity_not.is_empty() {
             if let Value::Fields(o) = a {
-                let mut answer = self.special_dyad(op, &Value::Map(Rc::new(Self::fields_entries(o).into())), b)?;
+                let original = self.special_dyad(op, &Value::Map(Rc::new(Self::fields_entries(o).into())), b)?;
+                let mut answer = original.clone();
                 if matches!(op, Action::At) {
                     // A dictionary exposes the held object, not the binding
                     // whose lifetime belongs to the original namespace.
@@ -6671,7 +6672,7 @@ impl<'a> Engine<'a> {
                         answer = cell.borrow().clone();
                     }
                 }
-                return Ok(answer);
+                return Ok(if matches!(answer, Value::Class(_)) { answer } else { original });
             }
             // The view standing on the right is also a dictionary for
             // operations that inspect its members.
@@ -7634,8 +7635,7 @@ impl<'a> Engine<'a> {
         fields.retain(|(key, _)| key.starts_with('\0') && key != "\0keys");
         let mut extra: Vec<(Value, Value)> = Vec::new();
         for (key, held) in entries {
-            let bare = match key { Value::Hashed(pair) => pair.0.clone(), other => other };
-            match bare {
+            match key {
                 Value::Text(text) => fields.push((text.to_string(), held)),
                 other => extra.push((other, held)),
             }
