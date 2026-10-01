@@ -3188,6 +3188,8 @@ impl<'a> Machine<'a> {
                     Some(_)=>return None,
                     None=>{}
                 }
+                if Self::native_word(blueprint).and_then(|word| self.kind_stand_in(&word))
+                    .map_or(false, |sample| names.iter().any(|name| self.native_member(&sample, name))) { return None; }
             }
             return None;
         }
@@ -10750,6 +10752,13 @@ impl<'a> Machine<'a> {
             for blueprint in std::iter::once(actual.as_ref()).chain(actual.ancestry.iter().map(Rc::as_ref)) {
                 if let Some(entry)=blueprint.shared.borrow().iter().find(|(key,_)|key==word).map(|(_,v)|v.clone()){return Some(entry);}
                 if let Some((_,body))=blueprint.methods.iter().find(|(key,_)|key==word){return Some(Value::Routine(body.clone()));}
+                // The primitive slot is an entry at this C3 position.
+                // Its existing native dispatch uses the retained underlying
+                // value, before any entry of a later mixin can be considered.
+                if let Some(sample) = Self::native_word(blueprint).and_then(|spelling| self.kind_stand_in(&spelling)) {
+                    if self.native_member(&sample, word) { return None; }
+                    if index == 8 && names.get(2).is_some_and(|eq| self.native_member(&sample, eq)) { return Some(Value::Nil); }
+                }
                 if index==8&&names.get(2).is_some_and(|equal|blueprint.methods.iter().any(|(key,_)|key==equal)||blueprint.shared.borrow().iter().any(|(key,_)|key==equal)){return Some(Value::Nil);}
             }
             return None;

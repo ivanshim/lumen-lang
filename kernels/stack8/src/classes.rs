@@ -611,7 +611,18 @@ impl<'a> Engine<'a> {
             .or_else(|| c.constants.iter().find(|(n,_)| n == name).map(|(_,v)| v.clone()))
     }
     pub(super) fn class_value(&self, c: &Class, name: &str) -> Option<Value> {
-        Self::own_class_value(c,name).or_else(|| c.lineage.iter().find_map(|b| Self::own_class_value(b,name)))
+        std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(|base| {
+            Self::own_class_value(base, name).or_else(|| {
+                if !self.lang.fuller_classes { return None; }
+                let word = Self::own_kind(base)?;
+                let sample = self.kind_sample(&word)?;
+                if self.lang.class_special.get(8).is_some_and(|hash| hash == name)
+                    && self.lang.class_special.get(2).is_some_and(|eq| self.native_special(&sample, eq))
+                    && !self.native_special(&sample, name) { return Some(Value::Null); }
+                if !self.native_special(&sample, name) { return None; }
+                Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
+            })
+        })
     }
     pub(super) fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
@@ -742,7 +753,9 @@ impl<'a> Engine<'a> {
                     // still reaches the member as before.
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
                         .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
-                    let found = if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
+                    let found = if of_own_kind && self.native_special(&receiver, &member) {
+                        Some(Value::ValueMethod(Rc::new((receiver.clone(), member.clone()))))
+                    } else if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
                     match found {
                         Some(bound) => self.class_apply(bound,args),
                         None => {
@@ -1122,6 +1135,7 @@ impl<'a> Engine<'a> {
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
                 16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
+                29 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
                 20..=27 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),

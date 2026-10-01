@@ -5599,3 +5599,10 @@ edits to `__slots__` do not change base selection or layout conflicts.
 Metaclass descriptors take precedence when reading or writing `__base__`.
 Python special-method lookup follows C3 order, separately from the primary
 allocation parent, so native layout does not bypass namespace mixins.
+
+Native protocol descriptors occupy their native class position in C3 lookup;
+a namespace mixin overrides them only when it precedes that native class.
+Native unhashability remains an explicit `__hash__ = None` entry. These lookup
+changes retain the metaclass descriptor precedence above. The parallel
+class-doc-name work also touches these lookup functions, so integration must
+reconcile these paths; this branch does not merge or copy that work.

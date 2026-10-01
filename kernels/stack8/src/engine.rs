@@ -3818,6 +3818,8 @@ impl<'a> Engine<'a> {
             for current in std::iter::once(actual.as_ref()).chain(actual.lineage.iter().map(Rc::as_ref)) {
                 if let Some((_, Value::Routine(routine))) = current.shared.borrow().iter().find(|(n, _)| named(n)) { return Some(routine.clone()); }
                 if let Some((_, routine)) = current.methods.iter().find(|(n, _)| named(n)) { return Some(routine.clone()); }
+                if Self::own_kind(current).and_then(|word| self.kind_sample(&word))
+                    .map_or(false, |sample| names.iter().any(|name| self.native_special(&sample, name))) { return None; }
             }
             return None;
         }
@@ -4999,6 +5001,13 @@ impl<'a> Engine<'a> {
             for current in std::iter::once(actual.as_ref()).chain(actual.lineage.iter().map(Rc::as_ref)) {
                 if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) { return Some(value.clone()); }
                 if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
+                // Native slots participate here in C3 order. The ordinary
+                // native dispatch below executes them on the retained worth;
+                // a later mixin cannot override a slot already found.
+                if let Some(sample) = Self::own_kind(current).and_then(|word| self.kind_sample(&word)) {
+                    if self.native_special(&sample, named) { return None; }
+                    if place == 8 && self.lang.class_special.get(2).is_some_and(|eq| self.native_special(&sample, eq)) { return Some(Value::Null); }
+                }
                 if place == 8 && self.lang.class_special.get(2).is_some_and(|eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.borrow().iter().any(|(n, _)| n == eq)) { return Some(Value::Null); }
             }
             return None;

@@ -624,7 +624,19 @@ impl<'a> Machine<'a> {
             .or_else(||b.constants.iter().find(|(n,_)|n==key).map(|(_,v)|v.clone()))
     }
     pub(super) fn inherited_entry(&self,b:&Blueprint,key:&str)->Option<Value> {
-        std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(|c|Self::own_entry(c,key))
+        std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(|parent| {
+            Self::own_entry(parent, key).or_else(|| {
+                if !self.table.has_class_order { return None; }
+                let spelling = Self::native_word(parent)?;
+                let sample = self.kind_stand_in(&spelling)?;
+                let protocols = self.table.strings("ext.stmt.class.special");
+                if protocols.get(8).is_some_and(|hash| hash == key)
+                    && protocols.get(2).is_some_and(|eq| self.native_member(&sample, eq))
+                    && !self.native_member(&sample, key) { return Some(Value::Nil); }
+                if !self.native_member(&sample, key) { return None; }
+                Some(Self::wrap(60, vec![Value::text(&spelling), Value::text(key)]))
+            })
+        })
     }
     fn wrap(tag:u8,items:Vec<Value>)->Value {Value::Wrapped(tag,Rc::new(items))}
     pub(super) fn apply_class_member(&mut self,f:Value,mut values:Vec<Value>)->Res {
@@ -759,7 +771,9 @@ impl<'a> Machine<'a> {
                         // the entry as before.
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
                             .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
-                        let found=if of_own_kind{self.attribute(&receiver,&entry)}else{None};
+                        let found=if of_own_kind && self.native_member(&receiver, &entry) {
+                            Some(Value::Member(Rc::new(receiver.clone()), entry.clone()))
+                        } else if of_own_kind{self.attribute(&receiver,&entry)}else{None};
                         match found {
                             Some(bound)=>self.apply_class_member(bound,values),
                             None=>{
@@ -1049,6 +1063,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(32,items) if receiver.is_some()=>return self.slot_value(&receiver.unwrap(),items),
             // A working of the property blueprint, reached through a
             // property, is tied to it; a kept accessor reads at once.
+            Value::Wrapped(60, _) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(50..=57,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(58,items)=>return Ok(match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>entry}),
             _=>{}
