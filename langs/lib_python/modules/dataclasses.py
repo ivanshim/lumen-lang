@@ -39,6 +39,13 @@ class _Record:
                     raise 'TypeError: missing dataclass argument'
             setattr(self, name, value)
 
+    def __replace__(self, /, **changes):
+        for name in changes:
+            if name not in self._fields:
+                raise TypeError(type(self).__name__ + ".__init__() got an unexpected keyword argument '" + name + "'")
+        values = {name: changes.get(name, getattr(self, name)) for name in self._fields}
+        return type(self)(**values)
+
     def __repr__(self):
         result = self._record_name + '('
         for i in range(len(self._fields)):

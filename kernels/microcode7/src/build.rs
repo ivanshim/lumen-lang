@@ -1115,6 +1115,9 @@ impl<'a> Builder<'a> {
     }
 
     fn need_word(&mut self, why: &str) -> Res<String> {
+        if self.table.spells("ext.lexical.identifier.reserved", &self.look().lexeme) {
+            return Err(String::from("SyntaxError: invalid syntax"));
+        }
         if self.table.has_any("ext.builtin.exceptions.syntax") && ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.key(label)) {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
@@ -7396,6 +7399,11 @@ impl<'a> Builder<'a> {
     }
 
     fn binding_or_value(&mut self) -> Res<Form> {
+        let forbidden = self.table.spells("ext.lexical.identifier.reserved", &self.look().lexeme);
+        let literal = ["literal.true", "literal.false", "literal.null", "ext.stmt.yield"].iter().any(|tag| self.key(tag));
+        if forbidden && !literal && self.table.spells("stmt.assign", &self.glance(1).lexeme) {
+            return Err(String::from("SyntaxError: invalid syntax"));
+        }
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             if let Some(&equal) = self.divided_at(self.pos, self.tokens.len(), "stmt.assign").first() {
                 let word = self.look();

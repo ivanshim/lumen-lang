@@ -426,6 +426,9 @@ class TestSuite:
     def addTest(self, test):
         self.tests = [*self.tests, test]
 
+    def __iter__(self):
+        return iter(self.tests)
+
     def addTests(self, tests):
         for test in tests:
             self.addTest(test)
