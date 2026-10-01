@@ -19149,18 +19149,6 @@ impl Engine<'_> {
                 self.drop_top()
             }
             Value::Object(_) => self.special_call(work, 17, args)?.ok_or_else(|| self.core_fault("core.uncallable", &work.core_kind())),
-            // A method bound to a thing runs with the thing standing
-            // first among what it is given, as a call of it in the
-            // program hands it over.
-            Value::Method(object, method) => {
-                let mut given = vec![Value::Object(object.clone())];
-                given.extend(args);
-                if let Err(f) = self.invoke(method, given) {
-                    self.carried = Some(f);
-                    return Err(self.core_fault("core.unready", &method.ident));
-                }
-                self.drop_top()
-            }
             _ => Err(self.core_fault("core.uncallable", &work.core_kind())),
         }
     }

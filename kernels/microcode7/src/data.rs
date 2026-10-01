@@ -711,7 +711,6 @@ impl Value {
             // A prim and the two octet kinds are addressed by what makes
             // them equal: the name a prim is known by, and which of the
             // pair of octet kinds it is.
-            Value::Intrinsic(_, name) => Ok(format!("prim:{}", name)),
             Value::OctetKind { changeable, .. } => Ok(format!("octets-kind:{}", changeable)),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };

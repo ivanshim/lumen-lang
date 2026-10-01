@@ -22219,8 +22219,8 @@ impl Machine<'_> {
 
     fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
         match callable {
-            Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::Method(..) => self.apply_class_member(callable.clone(), values).map_err(|escape| self.suspension_fault(escape)),
+            Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),
             Value::Bound(program, frame) => match self.invoke(program.clone(), frame.clone(), values) {
@@ -22234,17 +22234,6 @@ impl Machine<'_> {
                 Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &class.name)) }
             },
             Value::Thing(_) => self.ask_special(callable, 17, &values)?.ok_or_else(|| self.core_complaint("core.uncallable", &callable.kind_word())),
-            // A method bound to a thing runs with the thing standing
-            // first among what it is given, as a call of it in the
-            // program hands it over.
-            Value::Method(code, receiver) => {
-                let mut given = values;
-                given.insert(0, Value::Thing(receiver.clone()));
-                match self.invoke(code.clone(), self.outermost.clone(), given) {
-                    Ok(answer) => Ok(answer),
-                    Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &code.ident)) }
-                }
-            }
             other => Err(self.core_complaint("core.uncallable", &other.kind_word())),
         }
     }
