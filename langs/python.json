@@ -1374,6 +1374,9 @@
   "ext.builtin.print.separator": [
     "sep"
   ],
+  "ext.builtin.itertools.product_step": [
+    "__itertools_product_step"
+  ],
   "ext.builtin.program.namespace": [
     "__program_namespace"
   ],
@@ -2582,7 +2585,10 @@
     "bytes",
     "bytearray",
     "complex",
-    "enumerate"
+    "enumerate",
+    "zip",
+    "map",
+    "filter"
   ],
   "ext.stmt.class.layout": [
     "TypeError: multiple bases have instance lay-out conflict"

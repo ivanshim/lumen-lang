@@ -3449,6 +3449,7 @@ impl<'a> Builder<'a> {
             let name = stored.ident.to_string();
             steps.push(Form::Write(stored, Box::new(part)));
             steps.extend(self.with_target(&name)?);
+            if self.table.has_any("ext.builtin.exceptions.syntax") { steps.push(Form::Forget(self.address_to_write(&name))); }
             if self.on_any("syntax.call.separator") { self.advance(); }
         }
         Ok(steps)
@@ -3489,6 +3490,7 @@ impl<'a> Builder<'a> {
                 let item = prim_call(Prim::At, vec![value, constant(Value::Small(position))]);
                 forms.push(Form::Write(part, Box::new(item)));
                 forms.extend(self.with_target(&part_name)?);
+                if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&part_name))); }
                 position += 1;
                 if !self.on_any("syntax.call.separator") { break; }
                 self.advance();
@@ -7179,7 +7181,11 @@ impl<'a> Builder<'a> {
             let item = self.gensym("part").ident.to_string();
             writes.push(self.write(&item, value));
             writes.push(self.distribute(part, &item)?);
+            if self.table.has_any("ext.builtin.exceptions.syntax") {
+                writes.push(Form::Forget(self.address_to_write(&item)));
+            }
         }
+        if self.table.has_any("ext.builtin.exceptions.syntax") { writes.push(Form::Forget(self.address_to_write(&held))); }
         Ok(sequence(writes))
     }
     fn chained_places(&mut self) -> Res<Option<Form>> {
@@ -7205,6 +7211,7 @@ impl<'a> Builder<'a> {
             forms.push(self.distribute(left..sign, &name)?);
             left = sign + 1;
         }
+        if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&name))); }
         self.pos = resume;
         Ok(Some(sequence(forms)))
     }
@@ -9826,17 +9833,23 @@ impl<'a> Builder<'a> {
     fn ahead_in_item(&self, label: &str) -> Option<usize> {
         let table = self.table;
         let mut nesting = Vec::new();
+        let mut awaiting_body = 0usize;
         let pairs = [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close")];
         for index in self.pos..self.tokens.len() {
             let token = &self.tokens[index];
             if !matches!(token.shape, Shape::Bare | Shape::Sign) { continue; }
             let text = token.lexeme.as_str();
             if nesting.is_empty() {
+                match text {
+                    ":" => awaiting_body = awaiting_body.saturating_sub(1),
+                    _ if table.spells("ext.op.lambda", text) => awaiting_body += 1,
+                    _ => (),
+                }
                 if table.spells(label, text) {
                     let begins = if label == "ext.op.comprehension.for" && index > self.pos && table.spells("ext.op.comprehension.async", &self.tokens[index - 1].lexeme) { index - 1 } else { index };
                     return Some(begins);
                 }
-                if table.spells("syntax.call.separator", text) { return None; }
+                if awaiting_body == 0 && table.spells("syntax.call.separator", text) { return None; }
             }
             if let Some((_, end)) = pairs.iter().find(|(start, _)| table.spells(start, text)) {
                 nesting.push(*end);
@@ -9858,10 +9871,16 @@ impl<'a> Builder<'a> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
+            let mut parameter_lists = 0usize;
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
                 if inner.is_empty() {
-                    if part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
+                    match (part.shape, part.lexeme.as_str()) {
+                        (Shape::Sign, ":") => parameter_lists = parameter_lists.saturating_sub(1),
+                        (Shape::Bare, text) if self.table.spells("ext.op.lambda", text) => parameter_lists += 1,
+                        _ => (),
+                    }
+                    if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
                     if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
                         return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
                     }

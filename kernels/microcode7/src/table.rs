@@ -143,7 +143,7 @@ const EXT_TAGS: &str = "ext.builtin.inline_values:L ext.stmt.class.detail.flags:
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.import.value:B ext.stmt.import.missing:L ext.stmt.import.member.missing:L ext.stmt.import.relative.unready:L \
-ext.builtin.program.namespace:L \
+ext.builtin.program.namespace:L ext.builtin.itertools.product_step:L \
 ext.builtin.frame.module:L \
 ext.builtin.class.seal:L \
 ext.builtin.member.get:L \
@@ -228,7 +228,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 295] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 296] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -255,6 +255,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 295] = [
             ("ext.builtin.reversed", Prim::Backwards),
             ("ext.builtin.enumerate", Prim::Numbered),
             ("ext.builtin.reduce_native", Prim::ReduceNative),
+            ("ext.builtin.itertools.product_step", Prim::ProductStep),
             ("ext.builtin.rebuild_native", Prim::RebuildNative),
             ("ext.builtin.zip", Prim::Zipped),
             ("ext.builtin.map", Prim::Mapped),

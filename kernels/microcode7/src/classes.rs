@@ -25,9 +25,13 @@ impl<'a> Machine<'a> {
     pub(super) fn native_kind(&mut self,word:&str)->Rc<Blueprint> {
         if let Some((_,kind))=self.native_kinds.iter().find(|(w,_)|w==word){return kind.clone();}
         let root=self.common_ancestor();
+        let protocols = if matches!(self.table.prims.get(word), Some(Prim::Zipped | Prim::Mapped | Prim::Filtered)) {
+            let names = self.table.strings("ext.stmt.class.special");
+            [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
+        } else { Vec::new() };
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{word}'>")),name:word.to_owned(),
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
-            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(Vec::new()),weak_slot:Cell::new(None),sealed:Cell::new(false)});
+            reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),sealed:Cell::new(false)});
         self.native_kinds.push((word.to_owned(),kind.clone()));
         kind
     }
@@ -630,6 +634,13 @@ impl<'a> Machine<'a> {
                         if self.table.prims.get(&word) == Some(&Prim::Uniques) { values.clear(); }
                         self.thing_over_native(c,&word,values)
                     }
+                    120 if values.len() == 1 => {
+                        let operation = match kept[0] { Value::Small(n) => n, _ => return Err(self.class_unready()) };
+                        match self.recipe_advance(operation, &values[0])? {
+                            Some(answer) => Ok(answer),
+                            None => Err(self.core_complaint("core.exhausted", "").into()),
+                        }
+                    }
                     3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
                     // An entry a native kind carries, standing loose:
                     // the first value handed to it is the one it works
@@ -838,6 +849,7 @@ impl<'a> Machine<'a> {
                         self.open_arguments(given.clone())?.0.into_iter().take(1).collect()
                     },
                     Some(Prim::Listed) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
+                    Some(Prim::Filtered) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     Some(Prim::Unchanging | Prim::Tupling) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     _ => given.clone(),
                 };
@@ -932,6 +944,7 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         match &entry {
+            Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -1653,7 +1666,12 @@ impl<'a> Machine<'a> {
             if let Some(root)=self.from_the_root(key,false){return Ok(root);}
         }else if let Value::Thing(t)=&value {
             if !direct {if let Some(reader)=self.inherited_entry(&t.blueprint(),self.detail("get")){return self.apply_class_member(reader,vec![value.clone(),Value::text(key)]);}}
-            if key==self.detail("kind"){return Ok(Value::Blueprint(t.blueprint().clone()));}
+            if key == self.detail("kind") {
+                match self.inherited_entry(&t.blueprint(), key) {
+                    Some(entry) => return self.member_binding(entry, Some(value.clone()), t.blueprint().clone()),
+                    None => return Ok(Value::Blueprint(t.blueprint().clone())),
+                }
+            }
             if key==self.detail("namespace"){
                 if let Some(descriptor)=self.inherited_entry(&t.blueprint(),key) {
                     return self.member_binding(descriptor,Some(value.clone()),t.blueprint().clone());
@@ -2261,7 +2279,7 @@ impl<'a> Machine<'a> {
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         // A method or a data member read off a native kind's own word
         // is of the descriptor kind CPython gives it.
-        if let [Value::Wrapped(7|35|60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(7|14|35|60|120,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind

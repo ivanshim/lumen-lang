@@ -1306,6 +1306,7 @@ w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc 
  | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 b ext.stmt.import.value | w ext.stmt.import.missing | w ext.stmt.import.member.missing | w ext.stmt.import.relative.unready
 w ext.builtin.program.namespace
+w ext.builtin.itertools.product_step
 w ext.builtin.frame.module
 w ext.builtin.class.seal
 w ext.builtin.member.get
@@ -2118,6 +2119,7 @@ impl Lang {
             ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound), ("ext.builtin.spelled", Builtin::Spelled), ("ext.builtin.class.methods", Builtin::ClassMethods), ("ext.builtin.class.properties", Builtin::ClassProperties),
             ("ext.builtin.class.beneath", Builtin::ClassBeneath), ("ext.builtin.math", Builtin::Math),
             ("ext.builtin.program.namespace", Builtin::ProgramNamespace),
+            ("ext.builtin.itertools.product_step", Builtin::ProductStep),
             ("ext.builtin.frame.module", Builtin::FrameModule), ("ext.builtin.class.seal", Builtin::ClassSeal),
             ("ext.builtin.member.get", Builtin::GetAttr),
             ("ext.builtin.member.set", Builtin::SetAttr),

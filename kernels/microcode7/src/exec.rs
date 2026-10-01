@@ -1499,6 +1499,9 @@ impl<'a> Machine<'a> {
                 // up front, so a loop that leaves early leaves the rest.
                 if self.table.flag("ext.stmt.yield.suspends") && !matches!(v[0], Value::Thing(_)) {
                     if let Value::Iterator(_) = v[0] { return Ok(v[0].clone()); }
+                    if let Value::Cursor(_) = v[0] {
+                        return Ok(Self::cursor_value(IteratorKind::Handed(v[0].clone())));
+                    }
                     return self.make_iterator(v[0].clone());
                 }
                 let mut walking = v[0].clone();
@@ -8027,6 +8030,190 @@ impl<'a> Machine<'a> {
     }
 
     /// The namespace a builtin is routed through, loaded if it is not yet.
+    fn recipe_member(thing: &Rc<Thing>, wanted: &str) -> Result<Value, String> {
+        for (key, value) in thing.holds.borrow().iter() {
+            if key == wanted { return Ok(value.clone()); }
+        }
+        Err(format!("TypeError: iterator state lacks {wanted}"))
+    }
+
+    fn recipe_replace(thing: &Rc<Thing>, wanted: &str, replacement: Value) {
+        let mut book = thing.holds.borrow_mut();
+        match book.iter_mut().find(|(key, _)| key == wanted) {
+            Some((_, value)) => *value = replacement,
+            None => book.push((wanted.to_owned(), replacement)),
+        }
+    }
+
+    fn recipe_tee_storage(thing: &Rc<Thing>) -> Result<Value, String> {
+        match Self::recipe_member(thing, "data")? {
+            Value::Thing(holder) => Self::recipe_member(&holder, "state"),
+            storage => Ok(storage),
+        }
+    }
+
+    fn recipe_factory(&mut self, operands: &[Value]) -> Result<Value, String> {
+        if operands.len() == 1 {
+            if let Value::Text(name) = &operands[0] {
+                let operation = ["repeat", "product", "tee"].iter().position(|candidate| *candidate == name.as_ref())
+                    .ok_or_else(|| "TypeError: unknown iterator operation".to_owned())?;
+                return Ok(Value::Wrapped(120, crate::tuples::Sequence::plain(vec![Value::Small(operation as i64)])));
+            }
+        }
+        if operands.len() == 2 {
+            if let Value::Text(name) = &operands[0] {
+                match name.as_ref() {
+                    "tee_data" => {
+                        let mutable = |value| Value::Shared(Rc::new(RefCell::new(value)));
+                        let queue = Value::Cursor(Rc::new(RefCell::new(std::collections::VecDeque::new())));
+                        return Ok(Value::Wrapped(121, crate::tuples::Sequence::plain(vec![operands[1].clone(), queue, mutable(Value::Small(0)),
+                            mutable(Value::Flag(false)), mutable(Value::Vector(crate::tuples::Sequence::plain(Vec::new())))])));
+                    }
+                    "tee_snapshot" => {
+                        let Value::Wrapped(121, fields) = &operands[1] else { return Err("TypeError: invalid tee storage".to_owned()); };
+                        let entries = match &fields[1] { Value::Cursor(queue) => queue.borrow().iter().cloned().collect(), _ => return Err("TypeError: invalid tee storage".to_owned()) };
+                        let start = match &fields[2] { Value::Shared(cell) => cell.borrow().clone(), _ => return Err("TypeError: invalid tee storage".to_owned()) };
+                        return Ok(Value::tuple(vec![fields[0].clone(), Value::Vector(crate::tuples::Sequence::plain(entries)), start]));
+                    }
+                    "tee_restore" => {
+                        let Value::Tuple(state) = operands[1].settled() else { return Err("TypeError: invalid tee state".to_owned()); };
+                        let Value::Vector(cached) = state[1].settled() else { return Err("TypeError: invalid tee state".to_owned()); };
+                        let offset = state[2].as_big()?.to_usize().ok_or_else(|| "TypeError: invalid tee offset".to_owned())?;
+                        let entries = cached.iter().cloned().collect();
+                        let cell = |value| Value::Shared(Rc::new(RefCell::new(value)));
+                        return Ok(Value::Wrapped(121, crate::tuples::Sequence::plain(vec![state[0].clone(), Value::Cursor(Rc::new(RefCell::new(entries))),
+                            cell(Value::Small(offset as i64)), cell(Value::Flag(false)), cell(Value::Vector(crate::tuples::Sequence::plain(Vec::new())))])));
+                    }
+                    "tee_register" => {
+                        let Value::Thing(thing) = &operands[1] else { return Err("TypeError: invalid tee iterator".to_owned()); };
+                        let Value::Wrapped(121, parts) = Self::recipe_tee_storage(thing)? else { return Err("TypeError: invalid tee data".to_owned()); };
+                        let Value::Shared(cell) = &parts[4] else { return Err("TypeError: invalid tee readers".to_owned()); };
+                        let mut values = match cell.borrow().settled() { Value::Vector(entries) => entries.to_vec(), _ => return Err("TypeError: invalid tee readers".to_owned()) };
+                        values.push(Value::Dim(Rc::new(crate::ghost::Dim { ghost: crate::ghost::Ghost::Thing(Rc::downgrade(thing)), bearer: std::rc::Weak::new(), notify: None })));
+                        *cell.borrow_mut() = Value::Vector(crate::tuples::Sequence::plain(values));
+                        return Ok(Value::Nil);
+                    }
+                    _ => (),
+                }
+            }
+        }
+        self.cartesian_step(operands)
+    }
+
+    pub(super) fn recipe_advance(&mut self, operation: i64, receiver: &Value) -> Result<Option<Value>, String> {
+        let Value::Thing(thing) = receiver else { return Err("TypeError: invalid iterator receiver".to_owned()); };
+        match operation {
+            4 => return Ok(Some(receiver.clone())),
+            3 => {
+                let native = Self::underlying(receiver).ok_or_else(|| "TypeError: invalid native iterator".to_owned())?;
+                return self.next_value(&native);
+            }
+            0 => {
+                let count = Self::recipe_member(thing, "remaining")?;
+                if !matches!(count, Value::Nil) {
+                    let left = count.as_big()?;
+                    if left == BigInt::from(0) { return Ok(None); }
+                    Self::recipe_replace(thing, "remaining", Value::from_big(left - BigInt::from(1)));
+                }
+                return Self::recipe_member(thing, "value").map(Some);
+            }
+            1 => {
+                if self.stands_true(&Self::recipe_member(thing, "done")?) { return Ok(None); }
+                let inputs = [Self::recipe_member(thing, "pools")?, Self::recipe_member(thing, "indices")?, Self::recipe_member(thing, "first")?];
+                match self.cartesian_step(&inputs)? {
+                    Value::Tuple(pair) => {
+                        Self::recipe_replace(thing, "first", Value::Flag(false));
+                        Self::recipe_replace(thing, "indices", pair[1].clone());
+                        return Ok(Some(pair[0].clone()));
+                    }
+                    _ => { Self::recipe_replace(thing, "done", Value::Flag(true)); return Ok(None); }
+                }
+            }
+            2 => (),
+            _ => return Err("TypeError: unknown iterator operation".to_owned()),
+        }
+        let Value::Wrapped(121, parts) = Self::recipe_tee_storage(thing)? else { return Err("TypeError: invalid tee data".to_owned()); };
+        let (source, queue, first, busy, watchers) = match parts.to_vec().as_slice() {
+            [source, Value::Cursor(queue), Value::Shared(first), Value::Shared(busy), Value::Shared(watchers)] => (source.clone(), queue.clone(), first.clone(), busy.clone(), watchers.clone()),
+            _ => return Err("TypeError: invalid tee data".to_owned()),
+        };
+        let at = Self::recipe_member(thing, "position")?.as_big()?.to_usize().ok_or_else(|| "TypeError: invalid tee offset".to_owned())?;
+        let base = first.borrow().as_big()?.to_usize().ok_or_else(|| "TypeError: invalid tee offset".to_owned())?;
+        let relative = at.checked_sub(base).ok_or_else(|| "TypeError: invalid tee offset".to_owned())?;
+        if relative > queue.borrow().len() { return Err("TypeError: invalid tee offset".to_owned()); }
+        let remembered = queue.borrow().get(relative).cloned();
+        let item = match remembered {
+            Some(item) => item,
+            None => {
+                if self.stands_true(&busy.borrow()) { return Err("RuntimeError: cannot re-enter the tee iterator".to_owned()); }
+                *busy.borrow_mut() = Value::Flag(true);
+                let fetched = self.advance_object(&source);
+                *busy.borrow_mut() = Value::Flag(false);
+                match fetched? {
+                    Some(item) => { queue.borrow_mut().push_back(item.clone()); item }
+                    None => return Ok(None),
+                }
+            }
+        };
+        Self::recipe_replace(thing, "position", Value::Small((at + 1) as i64));
+        let mut floor = at + 1;
+        if let Value::Vector(readers) = watchers.borrow().settled() {
+            for reader in readers.iter() {
+                let live = match reader { Value::Dim(weak) => weak.ghost.revive(), _ => None };
+                if let Some(Value::Thing(peer)) = live {
+                    if let Ok(position) = Self::recipe_member(&peer, "position") {
+                        if let Some(position) = position.as_big().ok().and_then(|n| n.to_usize()) { floor = floor.min(position); }
+                    }
+                }
+            }
+        }
+        { let mut entries = queue.borrow_mut(); for _ in base..floor { entries.pop_front(); } }
+        *first.borrow_mut() = Value::Small(floor as i64);
+        Ok(Some(item))
+    }
+
+    fn cartesian_step(&self, operands: &[Value]) -> Result<Value, String> {
+        let bad = "TypeError: invalid product state";
+        let [pool_arg, index_arg, first_arg] = operands else { return Err(bad.to_owned()); };
+        let groups = match pool_arg.settled() {
+            Value::Vector(groups) => groups,
+            _ => return Err(bad.to_owned()),
+        };
+        let numbers = match index_arg.settled() {
+            Value::Vector(numbers) if numbers.len() == groups.len() => numbers,
+            _ => return Err(bad.to_owned()),
+        };
+        let initial = matches!(first_arg.settled(), Value::Flag(true));
+        if !matches!(first_arg.settled(), Value::Flag(_)) { return Err(bad.to_owned()); }
+        let mut digits: Vec<usize> = numbers.iter().map(|entry| match entry.settled() {
+            Value::Small(x) if x >= 0 => Ok(x as usize),
+            _ => Err(bad.to_owned()),
+        }).collect::<Result<_, _>>()?;
+        let domains = groups.iter().map(|entry| match entry.settled() {
+            Value::Tuple(domain) => Ok(domain),
+            _ => Err(bad.to_owned()),
+        }).collect::<Result<Vec<_>, _>>()?;
+        if domains.iter().any(|domain| domain.len() == 0) { return Ok(Value::Nil); }
+        if !initial {
+            let mut place = digits.len();
+            loop {
+                if place == 0 { return Ok(Value::Nil); }
+                place -= 1;
+                let incremented = digits[place] + 1;
+                if incremented < domains[place].len() {
+                    digits[place] = incremented;
+                    break;
+                }
+                digits[place] = 0;
+            }
+        }
+        let result = domains.iter().enumerate().map(|(i, domain)| {
+            domain.get(digits[i]).cloned().ok_or_else(|| bad.to_owned())
+        }).collect::<Result<Vec<_>, _>>()?;
+        let next = digits.into_iter().map(|digit| Value::Small(digit as i64)).collect();
+        Ok(Value::tuple(vec![Value::tuple(result), Value::Vector(crate::tuples::Sequence::plain(next))]))
+    }
+
     fn namespace_for(&mut self, path: &str) -> Result<Value, String> {
         self.load_namespace(path)
     }
@@ -11163,6 +11350,9 @@ impl<'a> Machine<'a> {
 
     fn advance_object(&mut self, source: &Value) -> Result<Option<Value>, String> {
         if matches!(source, Value::Iterator(_) | Value::Generator(_)) { return self.next_value(source); }
+        if let Some(Value::Wrapped(120, fields)) = self.appointment(source, 16) {
+            if let Value::Small(operation) = fields[0] { return self.recipe_advance(operation, source); }
+        }
         match source {
             Value::Cursor(c) => Ok(c.borrow_mut().pop_front()),
             Value::Wrapped(61, parts) => self.awaited_step(&parts[0]),
@@ -12335,14 +12525,14 @@ impl<'a> Machine<'a> {
             (Prim::Iterator, [one]) => match self.ask_special(one, 15, &[])? {
                 Some(iterator) => {
                     if !matches!(iterator, Value::Iterator(_) | Value::Generator(_) | Value::Cursor(_))
-                        && self.appointed(&iterator, 16).is_none() {
+                        && self.appointment(&iterator, 16).is_none() {
                         return Err(format!("TypeError: iter() returned non-iterator of type '{}'", iterator.kind_word()));
                     }
                     iterator
                 },
                 None => match self.placed_walk(one) {
                     Some(places) => places,
-                    None => Value::Cursor(Rc::new(RefCell::new(self.gathered_members(one)?.into_iter().collect()))),
+                    None => self.iterated_value(one)?,
                 },
             },
             (Prim::Iterator, [_, _]) => return Ok(None),
@@ -13530,6 +13720,7 @@ impl<'a> Machine<'a> {
             // step raised stands said, and a loop broken off leaves the rest.
             Prim::Iterated => match self.begin_set_walk(&v[0]) {
                 None if matches!(v[0], Value::Iterator(_) | Value::Generator(_)) => v[0].clone(),
+                None if matches!(v[0], Value::Cursor(_)) => Self::cursor_value(IteratorKind::Handed(v[0].clone())),
                 None => Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)),
                 Some(walk) => walk,
             },
@@ -16005,6 +16196,7 @@ impl<'a> Machine<'a> {
                 Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), turn: self.made,
                     holds: RefCell::new(vec![("\0walked".into(), source), ("\0walk-step".into(), Value::Small(0))]) }))
             }
+            Prim::ProductStep => self.recipe_factory(v)?,
             Prim::NextOne => {
                 if !(1..=2).contains(&v.len()) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None)); }
                 let refuse = || self.argument_fault("ext.builtin.exceptions.unready", None);
@@ -19976,7 +20168,7 @@ impl Machine<'_> {
                     return match handed {
                         Value::Iterator(_) | Value::Generator(_) => Ok(handed),
                         Value::Cursor(_) => Ok(Self::cursor_value(IteratorKind::Handed(handed))),
-                        other if self.appointed(&other, 16).is_some() => Ok(Self::cursor_value(IteratorKind::Handed(other))),
+                        other if self.appointment(&other, 16).is_some() => Ok(Self::cursor_value(IteratorKind::Handed(other))),
                         _ => Err(self.bad_answer()),
                     };
                 }
@@ -19991,6 +20183,34 @@ impl Machine<'_> {
                 if let (Value::Iterator(state), Some(word)) = (&walk, Self::walk_named(source)) { state.borrow_mut().walks = Some(word); }
                 Ok(walk)
             }
+        }
+    }
+
+    fn parallel_item(&mut self, inputs: &[Value], mapper: &Option<Value>, exact: &bool) -> Result<Option<Value>, String> {
+        if inputs.is_empty() { return Ok(None); }
+        let mut parts = Vec::with_capacity(inputs.len());
+        for (which, input) in inputs.iter().enumerate() {
+            let Some(part) = self.next_value(input)? else {
+                // Demanded to end together, a later input
+                // ending first is short, and any input still
+                // giving once the first has ended is long.
+                if *exact {
+                    let (short, long) = if mapper.is_some() { ("map.short", "map.long") } else { ("zip.short", "zip.long") };
+                    if which > 0 { return Err(self.unequal_zip(short, which)); }
+                    for (later, other) in inputs.iter().enumerate().skip(1) {
+                        if self.next_value(other)?.is_some() { return Err(self.unequal_zip(long, later)); }
+                    }
+                }
+                return Ok(None);
+            };
+            parts.push(part);
+        }
+        match mapper {
+            None => Ok(Some(Value::tuple(parts))),
+            Some(work) => match self.core_run(work, parts) {
+                Ok(made) => Ok(Some(made)),
+                Err(complaint) => if self.walk_halted() { Ok(None) } else { Err(complaint) },
+            },
         }
     }
 
@@ -20041,6 +20261,27 @@ impl Machine<'_> {
             if held.done { return Ok(None); }
             if contained_equal(&stop, &answer) { held.done = true; return Ok(None); }
             return Ok(Some(answer));
+        }
+        let independent = {
+            let held = cell.borrow();
+            match &held.kind {
+                IteratorKind::Parallel { inputs, mapper, exact } => Some((inputs.clone(), mapper.clone(), *exact)),
+                _ => None,
+            }
+        };
+        match independent {
+            Some((inputs, mapper, exact)) => {
+                let pending = {
+                    let mut held = cell.borrow_mut();
+                    if held.done { return Ok(None); }
+                    held.peek.take()
+                };
+                if pending.is_some() { return Ok(pending); }
+                let item = self.parallel_item(&inputs, &mapper, &exact);
+                cell.borrow_mut().done = matches!(item, Ok(None));
+                return item;
+            }
+            None => (),
         }
         let mut kind = {
             let mut held = cell.borrow_mut();
@@ -20163,33 +20404,7 @@ impl Machine<'_> {
                         Ok(Some(Value::tuple(pair)))
                     }
                 },
-                IteratorKind::Parallel { inputs, mapper, exact } => {
-                    if inputs.is_empty() { return Ok(None); }
-                    let mut parts = Vec::with_capacity(inputs.len());
-                    for (which, input) in inputs.iter().enumerate() {
-                        let Some(part) = self.next_value(input)? else {
-                            // Demanded to end together, a later input
-                            // ending first is short, and any input still
-                            // giving once the first has ended is long.
-                            if *exact {
-                                let (short, long) = if mapper.is_some() { ("map.short", "map.long") } else { ("zip.short", "zip.long") };
-                                if which > 0 { return Err(self.unequal_zip(short, which)); }
-                                for (later, other) in inputs.iter().enumerate().skip(1) {
-                                    if self.next_value(other)?.is_some() { return Err(self.unequal_zip(long, later)); }
-                                }
-                            }
-                            return Ok(None);
-                        };
-                        parts.push(part);
-                    }
-                    match mapper {
-                        None => Ok(Some(Value::tuple(parts))),
-                        Some(work) => match self.core_run(work, parts) {
-                            Ok(made) => Ok(Some(made)),
-                            Err(complaint) => if self.walk_halted() { Ok(None) } else { Err(complaint) },
-                        },
-                    }
-                }
+                IteratorKind::Parallel { inputs, mapper, exact } => self.parallel_item(inputs, mapper, exact),
                 IteratorKind::Select(inner, test) => loop {
                     let Some(part) = self.next_value(inner)? else { break Ok(None); };
                     let yes = if matches!(test, Value::Nil) { self.stands_true(&part) } else {
