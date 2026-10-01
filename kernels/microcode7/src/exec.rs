@@ -446,6 +446,9 @@ pub struct Machine<'a> {
     code_handles: HashMap<usize, (Rc<Routine>, Value)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
+    pub library_files: HashMap<String, String>,
+    pub library_aliases: HashMap<String, String>,
+    library_origins: std::collections::HashSet<String>,
     imported: HashMap<String, Value>,
     wildcard_names: Vec<(Rc<str>, String, usize)>,
     loaded_spaces: HashMap<Rc<str>, String>,
@@ -670,6 +673,52 @@ pub struct Machine<'a> {
 /// losing `__file__` altogether.
 fn made_absolute(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
+}
+
+/// Virtual library directories remain usable when host sources are absent.
+/// Resolve existing links before parent components, and admit missing traversal
+/// directories only when the manifest declares that logical directory.
+fn library_location(input: &std::path::Path, virtual_dirs: Option<&std::collections::HashSet<std::path::PathBuf>>) -> Option<std::path::PathBuf> {
+    use std::path::{Component, Path, PathBuf};
+    let starting = if input.is_absolute() { input.to_owned() } else { std::env::current_dir().ok()?.join(input) };
+    let mut remaining: Vec<_> = starting.components().rev().map(|component| component.as_os_str().to_os_string()).collect();
+    let mut location = PathBuf::new();
+    let mut followed = 0;
+    while let Some(component) = remaining.pop() {
+        match Path::new(&component).components().next()? {
+            Component::Prefix(prefix) => location.push(prefix.as_os_str()),
+            Component::RootDir => location.push(std::path::MAIN_SEPARATOR.to_string()),
+            part => {
+                let directory = match std::fs::metadata(&location) {
+                    Ok(stat) => stat.is_dir(),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => virtual_dirs.is_none_or(|declared| declared.contains(&location)),
+                    Err(_) => false,
+                };
+                if !directory { return None; }
+                match part {
+                    Component::CurDir => {},
+                    Component::ParentDir => { location.pop(); },
+                    Component::Normal(filename) => {
+                        location.push(filename);
+                        match std::fs::symlink_metadata(&location) {
+                            Ok(stat) if stat.file_type().is_symlink() => {
+                                followed += 1;
+                                if followed > 40 { return None; }
+                                let destination = std::fs::read_link(&location).ok()?;
+                                location.pop();
+                                remaining.extend(destination.components().rev().map(|part| part.as_os_str().to_os_string()));
+                            },
+                            Ok(_) => {},
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                            Err(_) => return None,
+                        }
+                    },
+                    _ => unreachable!(),
+                }
+            },
+        }
+    }
+    Some(location)
 }
 
 /// Letters this run has a fair chance of never having spelled before,
@@ -1470,6 +1519,9 @@ impl<'a> Machine<'a> {
             fault_kinds,
             library_sources: HashMap::new(),
             library_directory: None,
+            library_files: HashMap::new(),
+            library_aliases: HashMap::new(),
+            library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
             imported: HashMap::new(),
             wildcard_names: Vec::new(),
@@ -2726,7 +2778,11 @@ impl<'a> Machine<'a> {
                 if self.stands_under(&object.blueprint(), 42) {
                     let edges = self.table.strings("ext.stmt.import.missing");
                     if edges.len() == 2 {
-                        if let Some(module) = told.strip_prefix(edges[0].as_str()).and_then(|rest| rest.strip_suffix(edges[1].as_str())) {
+                        let mut message = told;
+                        if let [begin, end] = self.table.strings("ext.stmt.import.nonpackage") {
+                            if let Some((body, _)) = told.strip_suffix(end.as_str()).and_then(|rest| rest.rsplit_once(begin.as_str())) { message = body; }
+                        }
+                        if let Some(module) = message.strip_prefix(edges[0].as_str()).and_then(|rest| rest.strip_suffix(edges[1].as_str())) {
                             written.push((self.table.single("ext.builtin.exceptions.name"), Value::text(module)));
                         }
                     }
@@ -13620,6 +13676,116 @@ impl<'a> Machine<'a> {
         }
     }
 
+    // The three-component dot-product expansion uses error-free transforms
+    // from Ogita/Rump/Oishi (3.1, 3.5, 5.10), including fused product error.
+    fn dot_add(one: f64, two: f64) -> (f64, f64) {
+        let combined = one + two;
+        let recovered = combined - one;
+        let residue = (two - recovered) + (one - (combined - recovered));
+        (combined, residue)
+    }
+
+    fn dot_coordinate(number: &Value) -> Option<f64> {
+        match number {
+            Value::Small(integer) => Some(*integer as f64),
+            Value::Flag(flag) => Some(f64::from(u8::from(*flag))),
+            Value::Huge(integer) => integer.to_f64().filter(|n| n.is_finite()),
+            Value::Frac(ratio) if ratio.places.is_some() => {
+                let coordinate = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+                Some(if ratio.under && ratio.above.is_zero() && !ratio.beneath.is_zero() { -0.0 } else { coordinate })
+            },
+            _ => None,
+        }
+    }
+
+    fn dot_binary(&self, x: &Value, y: &Value, product: bool) -> Option<Result<Value, String>> {
+        let floating = |item: &Value| matches!(item, Value::Frac(r) if r.places.is_some());
+        if !floating(x) && !floating(y) { return None; }
+        let accepts = |item: &Value| floating(item) || matches!(item, Value::Flag(_) | Value::Small(_) | Value::Huge(_));
+        if !accepts(x) || !accepts(y) { return None; }
+        let converted = Self::dot_coordinate(x).zip(Self::dot_coordinate(y));
+        Some(converted.map(|(a, b)| crate::data::worth_of_binary(if product { a * b } else { a + b }, self.real_figures()))
+            .ok_or_else(|| "OverflowError: int too large to convert to float".to_owned()))
+    }
+
+    fn dot_accumulate(&mut self, x: &Value, y: &Value) -> Result<Value, String> {
+        if let Some(result) = self.dot_binary(x, y, false) { result }
+        else { self.sum_added(x, y) }
+    }
+
+    fn dot_product(&mut self, first: &Value, second: &Value) -> Result<Value, String> {
+        let mut begin = |offered: &Value| match Self::live_walk(offered) {
+            Some(kind) => Ok(Self::cursor_value(kind)),
+            None => self.iterated_value(&offered.settled()),
+        };
+        let walks = (begin(first)?, begin(second)?);
+        let mut answer = Value::Small(0);
+        let mut whole = Some(0_i64);
+        let mut whole_present = false;
+        let mut expansion = Some([0.0_f64; 3]);
+        let mut binary_present = false;
+        loop {
+            let first_item = self.next_value(&walks.0)?;
+            let second_item = self.next_value(&walks.1)?;
+            let terms = match (first_item, second_item) {
+                (None, None) => None,
+                (Some(x), Some(y)) => Some((x.settled(), y.settled())),
+                _ => return Err("ValueError: Inputs are not the same length".to_owned()),
+            };
+            if let Some(previous) = whole {
+                let updated = match &terms {
+                    Some((Value::Small(x), Value::Small(y))) => x.checked_mul(*y).and_then(|z| previous.checked_add(z)),
+                    _ => None,
+                };
+                if let Some(updated) = updated {
+                    whole = Some(updated);
+                    whole_present = true;
+                    continue;
+                }
+                whole = None;
+                if whole_present { answer = self.dot_accumulate(&answer, &Value::Small(previous))?; }
+            }
+            if let Some(mut parts) = expansion {
+                let inputs = terms.as_ref().and_then(|(x, y)| {
+                    let floating = |v: &Value| matches!(v, Value::Frac(r) if r.places.is_some());
+                    if !floating(x) && !floating(y) { return None; }
+                    Self::dot_coordinate(x).zip(Self::dot_coordinate(y))
+                });
+                if let Some((x, y)) = inputs {
+                    let rounded_product = x * y;
+                    let product_tail = x.mul_add(y, -rounded_product);
+                    let upper = Self::dot_add(parts[0], rounded_product);
+                    if upper.0.is_finite() {
+                        let lower = Self::dot_add(parts[1], product_tail);
+                        let joined = Self::dot_add(lower.0, upper.1);
+                        parts[0] = upper.0;
+                        parts[1] = joined.0;
+                        parts[2] = (parts[2] + lower.1) + joined.1;
+                        expansion = Some(parts);
+                        binary_present = true;
+                        continue;
+                    }
+                }
+                expansion = None;
+                if binary_present {
+                    let merged = Self::dot_add(parts[1], parts[0]);
+                    let result = crate::data::worth_of_binary((parts[2] + merged.1) + merged.0, self.real_figures());
+                    answer = self.dot_accumulate(&answer, &result)?;
+                }
+            }
+            match terms {
+                None => return Ok(answer),
+                Some((x, y)) => {
+                    let term = match self.dot_binary(&x, &y, true) {
+                        Some(result) => result?,
+                        None => self.prim(Prim::Times, "*", &[x, y])?,
+                    };
+                    answer = self.dot_accumulate(&answer, &term)?;
+                }
+            }
+        }
+    }
+
     /// One member added into `sum`'s running total: the exact reckoning
     /// where the two are numbers, and the plain working of `+`
     /// otherwise, so a member `+` itself refuses is refused in the
@@ -13688,6 +13854,11 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::Reckon && self.table.flag("ext.builtin.math.sumprod")
+            && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
+            if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
+            return self.dot_product(&v[1], &v[2]);
+        }
         if matches!(op, Prim::Contains | Prim::Absent) {
             if let [needle, Value::Mutable(cell, _) | Value::Shared(cell)] = v {
                 let current = cell.borrow().clone();
@@ -15993,6 +16164,10 @@ impl<'a> Machine<'a> {
                 let Some(working) = v.first().map(|x| x.render(w)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "sumprod" && self.table.flag("ext.builtin.math.sumprod") {
+                    if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
+                    return self.dot_product(&v[1], &v[2]);
+                }
                 let takes = math::worked_takes(&working);
                 if v.len() != takes + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
@@ -19380,10 +19555,35 @@ impl Machine<'_> {
         }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
+        let split = path.rsplit_once('.');
+        let mut initializing_alias = false;
+        if let Some(attribute) = self.table.single("ext.system.module.path").map(str::to_owned) {
+            if let Some((parent_name, _)) = split {
+                let parent_value = self.load_namespace(parent_name)?;
+                let has_directories = if let Value::Thing(parent) = &parent_value {
+                    parent.holds.borrow().iter().any(|entry| entry.0 == attribute)
+                } else { false };
+                if let Some(cached) = self.imported.get(path) {
+                    if self.import_cache_names(path) { return Ok(cached.clone()); }
+                }
+                initializing_alias = self.library_origins.contains(parent_name) && self.importing.contains(parent_name)
+                    && self.library_aliases.get(path).is_some_and(|member| matches!(&parent_value, Value::Thing(parent) if parent.holds.borrow().iter().any(|entry| &entry.0 == member)));
+                if !has_directories && !initializing_alias {
+                    let missing = self.table.strings("ext.stmt.import.missing");
+                    let suffix = self.table.strings("ext.stmt.import.nonpackage");
+                    if let ([head, tail], [before, after]) = (missing, suffix) {
+                        return Err(format!("{head}{path}{tail}{before}{parent_name}{after}"));
+                    }
+                }
+            }
+        }
         let from_disk = self.sys_path_source(path);
         let text = match &from_disk {
-            Some((_, text)) => text.clone(),
-            None => self.library_sources.get(path).cloned().ok_or_else(|| {
+            Some((location, text)) => match self.library_module_file(path) {
+                Some(embedded) if self.table.single("ext.system.module.path").is_some() && embedded == *location => self.library_sources.get(path).cloned().unwrap_or_else(|| text.clone()),
+                _ => text.clone(),
+            },
+            None => self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned().ok_or_else(|| {
                 let (before, after) = self.table.around("ext.stmt.import.missing").unwrap_or(("", ""));
                 format!("{before}{path}{after}")
             })?,
@@ -19392,8 +19592,9 @@ impl Machine<'_> {
             Some((file, _)) => Some(file.clone()),
             None => self.library_module_file(path),
         };
-        let split = path.rsplit_once('.');
-        if let Some((owner, _)) = split { self.load_namespace(owner)?; }
+        if self.table.single("ext.system.module.path").is_none() {
+            if let Some((owner, _)) = split { self.load_namespace(owner)?; }
+        }
         let beginning = self.idents.len();
         let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
         let filename = own_file.as_deref().unwrap_or(path);
@@ -19420,20 +19621,27 @@ impl Machine<'_> {
         // any: the same word the running program's own file is bound
         // to, carried here for a module read in besides it.
         let file_word = self.table.single("ext.system.source.file");
+        let path_word = self.table.single("ext.system.module.path");
+        let search = own_file.as_deref().and_then(|file| {
+            let location = std::path::Path::new(file);
+            if location.file_name()?.to_str()? != "__init__.py" { return None; }
+            Some(Value::Mutable(Rc::new(RefCell::new(Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(&location.parent()?.to_string_lossy())])))), false))
+        });
         let mut members = Vec::with_capacity(exported.len());
         {
             let mut world = self.outermost.cells.borrow_mut();
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let is_module_name = module_names.contains(name);
-                let initial = if is_module_name { Value::text(path) }
+                let initial = if path_word == Some(name.as_str()) && search.is_some() { search.clone().unwrap() }
+                    else if is_module_name { Value::text(path) }
                     else if file_word == Some(name.as_str()) { own_file.as_deref().map_or(Value::Nil, Value::text) }
                     else if self.rules.explicit_receiver && self.table.spells("ext.stmt.class.parent", name) {
                         Value::Wrapped(9, Rc::new(Vec::new()).into())
                     }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
-                if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
+                if is_module_name || bound.contains(name.as_str()) || (path_word == Some(name.as_str()) && search.is_some()) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
             }
         }
@@ -19450,6 +19658,9 @@ impl Machine<'_> {
                 members.push((word.to_string(), own_file.as_deref().map_or(Value::Nil, Value::text)));
             }
         }
+        if let (Some(word), Some(directories)) = (path_word, search) {
+            if !members.iter().any(|entry| entry.0 == word) { members.push((word.to_owned(), directories)); }
+        }
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
@@ -19457,6 +19668,9 @@ impl Machine<'_> {
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
         self.imported.insert(path.into(), value.clone());
+        let from_library = self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
+        self.library_origins.remove(path);
+        if from_library { self.library_origins.insert(path.to_owned()); }
         self.loaded_spaces.insert(Rc::from(filename), path.to_owned());
         self.importing.insert(path.into());
         let scope = self.outermost.clone();
@@ -19469,8 +19683,8 @@ impl Machine<'_> {
         self.frames_named.pop();
         self.active_trace = caller_activation;
         (self.written_in, self.row) = caller_location;
-        self.importing.remove(path);
         if let Err(stopped) = stopped {
+            self.importing.remove(path); self.library_origins.remove(path);
             self.imported.remove(path);
             self.refresh_import_table();
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
@@ -19484,42 +19698,106 @@ impl Machine<'_> {
                 } else { holdings.push((name.into(), value.clone())); }
             }
         }
+        // These are source-backed module aliases, initialized with their
+        // genuine library parent rather than borrowed helper instances.
+        if from_library {
+            let aliases: Vec<(String, String)> = self.library_aliases.iter().filter_map(|(full, member)| {
+                let (owner, _) = full.rsplit_once('.')?;
+                if owner != path { return None; }
+                if let Value::Thing(parent) = &value {
+                    if parent.holds.borrow().iter().any(|entry| &entry.0 == member) { return Some((full.clone(), member.clone())); }
+                }
+                None
+            }).collect();
+            for (full, member) in aliases {
+                let namespace = match self.load_namespace(&full) {
+                    Ok(namespace) => namespace,
+                    Err(message) => {
+                        self.importing.remove(path); self.library_origins.remove(path);
+                        self.imported.remove(path); self.refresh_import_table(); return Err(message);
+                    },
+                };
+                // Loading may return a retained child of the previous parent.
+                if let Value::Thing(parent) = &value {
+                    let mut entries = parent.holds.borrow_mut();
+                    if let Some(entry) = entries.iter_mut().find(|entry| entry.0 == member) {
+                        if let Value::Shared(cell) = &entry.1 { *cell.borrow_mut() = namespace; }
+                        else { entry.1 = namespace; }
+                    } else { entries.push((member, namespace)); }
+                }
+            }
+        }
+        self.importing.remove(path);
         self.refresh_import_table();
         Ok(value)
     }
 
-    /// A module written into a directory `sys.path` names, found there
-    /// ahead of the library. Only a plain, undotted name is looked for
-    /// this way, since a directory a program builds for itself holds no
-    /// packages of its own; the file's place is made absolute before it
-    /// comes back, since a name on `sys.path` may be relative to a
-    /// working directory `__file__` must not depend on later changing.
+    /// A dotted name uses its owner's current search directories. Ordinary
+    /// names use sys.path; regular packages precede files in each directory.
     fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
-        if path.contains('.') { return None; }
-        let Value::Thing(sys) = self.imported.get("sys")? else { return None };
-        let held = sys.holds.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
+        let (space_name, attribute, filename) = if let Some((head, tail)) = path.rsplit_once('.') {
+            (head, self.table.single("ext.system.module.path")?, tail)
+        } else { ("sys", "path", path) };
+        let Value::Thing(namespace) = self.imported.get(space_name)? else { return None };
+        let held = namespace.holds.borrow().iter().find(|entry| entry.0 == attribute).map(|entry| entry.1.clone())?;
         let mut value = held;
         while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
             value = cell.borrow().clone();
         }
-        let Value::Vector(items) = value else { return None };
+        let items = match value {
+            Value::Vector(items) => items,
+            Value::Tuple(items) if self.table.single("ext.system.module.path").is_some() => items,
+            _ => return None,
+        };
+        let mut sources = std::collections::HashMap::new();
+        let mut virtual_dirs = std::collections::HashSet::new();
+        if self.table.single("ext.system.module.path").is_some() {
+            for name in self.library_files.keys() {
+                if let Some(file) = self.library_module_file(name) {
+                    let location = std::path::PathBuf::from(file);
+                    let mut parent = location.parent();
+                    while let Some(directory) = parent {
+                        virtual_dirs.insert(directory.to_path_buf());
+                        parent = directory.parent();
+                    }
+                    sources.insert(location, name);
+                }
+            }
+        }
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
-            if dir.is_empty() { continue; }
-            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
-            if let Ok(text) = std::fs::read_to_string(&file) {
-                return Some((made_absolute(&file), text));
+            if dir.is_empty() && self.table.single("ext.system.module.path").is_none() { continue; }
+            let folder = std::path::Path::new(if dir.is_empty() { "." } else { dir.as_ref() });
+            let ordinary = folder.join(format!("{filename}.py"));
+            let package = folder.join(filename).join("__init__.py");
+            let choices = if self.table.single("ext.system.module.path").is_some() { vec![package, ordinary] } else { vec![ordinary] };
+            for location in choices {
+                if self.table.single("ext.system.module.path").is_some() {
+                    if let Some(resolved) = library_location(&location, Some(&virtual_dirs)) {
+                        if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(*name)) {
+                            return Some((resolved.to_string_lossy().into_owned(), text.clone()));
+                        }
+                    }
+                }
+                if let Ok(text) = std::fs::read_to_string(&location) {
+                    return Some((made_absolute(&location.to_string_lossy()), text));
+                }
             }
         }
         None
     }
 
-    /// An explicit directory from the host replaces the build-time location.
-    /// Both ordinary modules and package initializers still need a real file.
+    /// Manifest locations describe the embedded library even when its files
+    /// are absent. A host directory replaces the root of those locations.
     fn library_module_file(&self, path: &str) -> Option<String> {
         let directory = self.library_directory.as_deref().unwrap_or_else(|| {
             std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules"))
         });
+        if self.table.single("ext.system.module.path").is_some() {
+            if let Some(file) = self.library_files.get(path) {
+                return library_location(&directory.join(file), None).map(|file| file.to_string_lossy().into_owned());
+            }
+        }
         let name = path.replace('.', "/");
         for relative in [format!("{name}.py"), format!("{name}/__init__.py")] {
             let candidate = directory.join(relative);
@@ -19549,7 +19827,7 @@ impl Machine<'_> {
             }
         }
         let full = format!("{path}.{wanted}");
-        if self.library_sources.contains_key(&full) { return self.load_namespace(&full); }
+        if (self.table.single("ext.system.module.path").is_none() && self.library_sources.contains_key(&full)) || self.sys_path_source(&full).is_some() || (self.imported.contains_key(&full) && self.import_cache_names(&full)) { return self.load_namespace(&full); }
         Err(self.import_member_fault(path, wanted))
     }
 
@@ -19595,6 +19873,13 @@ impl Machine<'_> {
     /// the library keeps it under, so the words naming it point at
     /// the file honestly.
     fn namespace_file_path(&self, path: &str) -> Option<String> {
+        if self.table.single("ext.system.module.path").is_some() {
+            let word = self.table.single("ext.system.source.file")?;
+            let Value::Thing(module) = self.imported.get(path)? else { return None; };
+            let held = module.holds.borrow().iter().find(|entry| entry.0 == word)?.1.clone();
+            let value = match held { Value::Shared(link) => link.borrow().clone(), other => other };
+            return match value { Value::Text(file) => Some(file.to_string()), _ => None };
+        }
         if !self.library_sources.contains_key(path) { return None; }
         Some(format!("langs/lib_python/modules/{}.py", path.replace('.', "/")))
     }

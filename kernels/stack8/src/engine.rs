@@ -142,6 +142,9 @@ pub struct Engine<'a> {
     fresh_routines: bool,
     pub module_sources: HashMap<String, String>,
     pub library_root: Option<String>,
+    pub module_files: HashMap<String, String>,
+    pub module_aliases: HashMap<String, String>,
+    embedded_names: std::collections::HashSet<String>,
     modules: HashMap<String, Value>,
     // Only names actually supplied by an import need a runtime check;
     // an empty table leaves ordinary builtin calls on their fast path.
@@ -443,6 +446,51 @@ const SET_STILL_LABELS: &[&str] = &[
 /// losing `__file__` altogether.
 fn made_absolute(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
+}
+
+/// Resolve a declared virtual location without requiring its source file on disk.
+/// Search paths may traverse only real directories or declared virtual ones.
+/// Existing symlinks are expanded before `..`; files and unknown missing
+/// directories cannot be traversed, even when a later `..` would erase them.
+fn module_location(path: &std::path::Path, directories: Option<&std::collections::HashSet<std::path::PathBuf>>) -> Option<std::path::PathBuf> {
+    use std::path::{Component, Path, PathBuf};
+    let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().ok()?.join(path) };
+    let mut pending: std::collections::VecDeque<_> = absolute.components().map(|part| part.as_os_str().to_os_string()).collect();
+    let mut resolved = PathBuf::new();
+    let mut links = 0;
+    while let Some(piece) = pending.pop_front() {
+        let part = Path::new(&piece).components().next()?;
+        if matches!(part, Component::Normal(_) | Component::ParentDir | Component::CurDir) {
+            match std::fs::metadata(&resolved) {
+                Ok(info) if info.is_dir() => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                    && directories.is_none_or(|known| known.contains(&resolved)) => {},
+                _ => return None,
+            }
+        }
+        match part {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(part.as_os_str()),
+            Component::CurDir => {},
+            Component::ParentDir => { resolved.pop(); },
+            Component::Normal(name) => {
+                resolved.push(name);
+                match std::fs::symlink_metadata(&resolved) {
+                    Ok(info) if info.file_type().is_symlink() => {
+                        links += 1;
+                        if links > 40 { return None; }
+                        let target = std::fs::read_link(&resolved).ok()?;
+                        resolved.pop();
+                        for component in target.components().rev() { pending.push_front(component.as_os_str().to_os_string()); }
+                    },
+                    Ok(_) => {},
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(_) => return None,
+                }
+            },
+        }
+    }
+    Some(resolved)
 }
 
 /// A number written in base 36, lowercase, with no leading zeroes kept
@@ -1242,6 +1290,9 @@ impl<'a> Engine<'a> {
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
             library_root: None,
+            module_files: HashMap::new(),
+            module_aliases: HashMap::new(),
+            embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
             wildcard_slots: HashMap::new(),
             module_slots: HashMap::new(),
@@ -2110,7 +2161,11 @@ impl<'a> Engine<'a> {
                 }
                 if self.stands_on(&object.class_now(), 42) {
                     if let [head, tail] = self.lang.import_missing.as_slice() {
-                        if let Some(module) = told.strip_prefix(head.as_str()).and_then(|s| s.strip_suffix(tail.as_str())) {
+                        let diagnostic = match self.lang.import_nonpackage.as_slice() {
+                            [before, after] => told.strip_suffix(after.as_str()).and_then(|rest| rest.rsplit_once(before.as_str())).map_or(told, |(message, _)| message),
+                            _ => told,
+                        };
+                        if let Some(module) = diagnostic.strip_prefix(head.as_str()).and_then(|s| s.strip_suffix(tail.as_str())) {
                             filled.push((&self.lang.absent_name_member, Value::text(module)));
                         }
                     }
@@ -11996,6 +12051,113 @@ impl<'a> Engine<'a> {
         }
     }
 
+    // Error-free sum and product transforms (Ogita, Rump and Oishi,
+    // algorithms 3.1, 3.5 and 5.10), retaining three binary components.
+    fn product_sum_pair(a: f64, b: f64) -> (f64, f64) {
+        let high = a + b;
+        let moved = high - a;
+        (high, (a - (high - moved)) + (b - moved))
+    }
+
+    fn product_sum_push(total: (f64, f64, f64), a: f64, b: f64) -> (f64, f64, f64) {
+        let product = a * b;
+        let error = a.mul_add(b, -product);
+        let leading = Self::product_sum_pair(total.0, product);
+        let trailing = Self::product_sum_pair(total.1, error);
+        let middle = Self::product_sum_pair(trailing.0, leading.1);
+        (leading.0, middle.0, (total.2 + trailing.1) + middle.1)
+    }
+
+    fn product_sum_float(value: &Value) -> Option<f64> {
+        match value {
+            Value::Real(real) if real.places > 0 => {
+                if real.below && real.p.is_zero() && !real.q.is_zero() { Some(-0.0) }
+                else { Some(crate::value::as_binary(&real.p, &real.q)) }
+            },
+            Value::Small(n) => Some(*n as f64),
+            Value::Huge(n) => n.to_f64().filter(|v| v.is_finite()),
+            Value::Flag(b) => Some(if *b { 1.0 } else { 0.0 }),
+            _ => None,
+        }
+    }
+
+    fn product_sum_binary(&self, a: &Value, b: &Value, multiply: bool) -> Option<Res<Value>> {
+        if !matches!(a, Value::Real(r) if r.places > 0) && !matches!(b, Value::Real(r) if r.places > 0) { return None; }
+        let builtin = |v: &Value| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) || matches!(v, Value::Real(r) if r.places > 0);
+        if !builtin(a) || !builtin(b) { return None; }
+        Some(match Self::product_sum_float(a).zip(Self::product_sum_float(b)) {
+            Some((x, y)) => Ok(crate::value::real_of(if multiply { x * y } else { x + y }, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES))),
+            None => Err("OverflowError: int too large to convert to float".into()),
+        })
+    }
+
+    fn product_sum_added(&mut self, a: &Value, b: &Value) -> Res<Value> {
+        match self.product_sum_binary(a, b, false) {
+            Some(result) => result,
+            None => self.sum_added(a, b),
+        }
+    }
+
+    fn product_sum(&mut self, p: &Value, q: &Value) -> Res<Value> {
+        let mut iterator = |source: &Value| match Self::living_source(source) {
+            Some(live) => Ok(Self::core_cursor(live)),
+            None => self.core_iterator(&source.contents()),
+        };
+        let left = iterator(p)?;
+        let right = iterator(q)?;
+        let mut total = Value::Small(0);
+        let (mut int_enabled, mut float_enabled) = (true, true);
+        let (mut integer, mut integer_used) = (0_i64, false);
+        let (mut triple, mut float_used) = ((0.0, 0.0, 0.0), false);
+        loop {
+            // Both iterators are advanced even when the left is exhausted;
+            // an exception from the right precedes a length mismatch.
+            let a = self.core_step(&left)?;
+            let b = self.core_step(&right)?;
+            if a.is_some() != b.is_some() { return Err("ValueError: Inputs are not the same length".into()); }
+            let pair = a.zip(b).map(|(a, b)| (a.contents(), b.contents()));
+            if int_enabled {
+                if let Some((Value::Small(a), Value::Small(b))) = &pair {
+                    if let Some(next) = a.checked_mul(*b).and_then(|product| integer.checked_add(product)) {
+                        integer = next;
+                        integer_used = true;
+                        continue;
+                    }
+                }
+                int_enabled = false;
+                if integer_used { total = self.product_sum_added(&total, &Value::Small(integer))?; }
+            }
+            if float_enabled {
+                if let Some((a, b)) = &pair {
+                    let real = matches!(a, Value::Real(r) if r.places > 0) || matches!(b, Value::Real(r) if r.places > 0);
+                    if real {
+                        if let Some((a, b)) = Self::product_sum_float(a).zip(Self::product_sum_float(b)) {
+                            let next = Self::product_sum_push(triple, a, b);
+                            if next.0.is_finite() {
+                                triple = next;
+                                float_used = true;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                float_enabled = false;
+                if float_used {
+                    let last = Self::product_sum_pair(triple.1, triple.0);
+                    let rounded = (triple.2 + last.1) + last.0;
+                    let value = crate::value::real_of(rounded, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    total = self.product_sum_added(&total, &value)?;
+                }
+            }
+            let Some((a, b)) = pair else { return Ok(total) };
+            let product = match self.product_sum_binary(&a, &b, true).or_else(|| arith::calculate(Operation::Times, &a, &b)) {
+                Some(result) => result?,
+                None => self.special_dyad(&Action::Mul, &a, &b)?,
+            };
+            total = self.product_sum_added(&total, &product)?;
+        }
+    }
+
     /// One member added into `sum`'s running total: the exact reckoning
     /// where the two are numbers, and the plain working of `+`
     /// otherwise — the very working a bare `total + item` already
@@ -15316,6 +15478,11 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::Math && self.lang.math_sumprod
+            && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
+            if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
+            return self.product_sum(&args[1], &args[2]);
+        }
         // A place written back into what held it after something within
         // it changed. Where the very thing being written already stands
         // there, nothing about the container is to change, and it is
@@ -16482,6 +16649,10 @@ impl<'a> Engine<'a> {
                 let Some(working) = args.first().map(|v| v.display(&sp)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "sumprod" && self.lang.math_sumprod {
+                    if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
+                    return self.product_sum(&args[1], &args[2]);
+                }
                 let wants = match working.as_str() {
                     "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
                     "fma" => 3,
@@ -19416,10 +19587,32 @@ impl Engine<'_> {
         // A directory the program itself put on `sys.path` is looked
         // in, in the order it stands there, ahead of the library: a
         // name found there is read straight off the disk instead.
+        let parent = path.rsplit_once('.');
+        let mut registering_alias = false;
+        if let Some(word) = self.lang.module_path.clone() {
+            if let Some((above, _)) = parent {
+                let owner = self.import_module(above)?;
+                let package = matches!(owner, Value::Object(ref module) if module.fields.borrow().iter().any(|(name, _)| name == &word));
+                if let Some(held) = self.modules.get(path) {
+                    if self.module_cache_names(path) { return Ok(held.clone()); }
+                }
+                registering_alias = self.importing.contains(above) && self.embedded_names.contains(above)
+                    && self.module_aliases.get(path).is_some_and(|member| matches!(&owner, Value::Object(module) if module.fields.borrow().iter().any(|(name, _)| name == member)));
+                if !package && !registering_alias {
+                    if let [opening, closing] = self.lang.import_nonpackage.as_slice() {
+                        return Err(format!("{}{opening}{above}{closing}", Self::named_fault(&self.lang.import_missing, path)).into());
+                    }
+                }
+            }
+        }
         let from_disk = self.sys_path_source(path);
         let source = match &from_disk {
-            Some((_, source)) => source.clone(),
-            None => match self.module_sources.get(path).cloned() {
+            Some((file, source)) => {
+                if self.lang.module_path.is_some() && self.library_module_file(path).as_ref() == Some(file) {
+                    self.module_sources.get(path).cloned().unwrap_or_else(|| source.clone())
+                } else { source.clone() }
+            },
+            None => match self.module_sources.get(path).filter(|_| parent.is_none() || registering_alias || self.lang.module_path.is_none()).cloned() {
                 Some(source) => source,
                 None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
             },
@@ -19428,8 +19621,9 @@ impl Engine<'_> {
             Some((file, _)) => Some(file.clone()),
             None => self.library_module_file(path),
         };
-        let parent = path.rsplit_once('.');
-        if let Some((above, _)) = parent { self.import_module(above)?; }
+        if self.lang.module_path.is_none() {
+            if let Some((above, _)) = parent { self.import_module(above)?; }
+        }
         let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
@@ -19455,9 +19649,13 @@ impl Engine<'_> {
         // any: the same word the running program's own file is bound
         // to, carried here for a module read in besides it.
         let file_word = self.lang.source_bindings.iter().find(|(part, _)| part == "file").map(|(_, w)| w.clone());
+        let package_dir = own_file.as_deref().filter(|file| file.ends_with("/__init__.py"))
+            .and_then(|file| std::path::Path::new(file).parent()).map(|dir| dir.to_string_lossy().into_owned());
+        let package_path = package_dir.as_deref().map(|dir| Value::array(vec![Value::text(dir)]).held(false));
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
-            let initial = if self.lang.module_names.contains(name) { Value::text(path) }
+            let initial = if self.lang.module_path.as_ref() == Some(name) && package_path.is_some() { package_path.clone().unwrap() }
+                else if self.lang.module_names.contains(name) { Value::text(path) }
                 else if file_word.as_ref() == Some(name) { own_file.as_deref().map_or(Value::Null, Value::text) }
                 else if let Some(value) = self.native_exceptions.get(name) { value.clone() }
                 else if self.lang.explicit_this && Lang::spells(&self.lang.parent_words, name) { Self::adapter(9, Vec::new()) }
@@ -19469,7 +19667,7 @@ impl Engine<'_> {
             // write actually bound at the module's own outermost scope
             // is one the module carries: the rest never left the frame
             // that held them.
-            if local.globals.contains(name) {
+            if local.globals.contains(name) || (self.lang.module_path.as_ref() == Some(name) && package_path.is_some()) {
                 fields.push((name.clone(), shared));
             }
         }
@@ -19486,6 +19684,9 @@ impl Engine<'_> {
                 fields.push((word.clone(), own_file.as_deref().map_or(Value::Null, Value::text)));
             }
         }
+        if let (Some(word), Some(search)) = (&self.lang.module_path, package_path) {
+            if !fields.iter().any(|(name, _)| name == word) { fields.push((word.clone(), search)); }
+        }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),
@@ -19493,13 +19694,18 @@ impl Engine<'_> {
         });
         let module = Value::Object(object);
         self.modules.insert(path.to_string(), module.clone());
+        let embedded = self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
+        self.embedded_names.remove(path);
+        if embedded { self.embedded_names.insert(path.to_string()); }
         self.module_slots.insert(Rc::from(filename), (offset, path.to_string()));
         self.importing.insert(path.to_string());
         let saved_depth = self.data.len();
         let result = self.invoke(&program, Vec::new());
         self.data.truncate(saved_depth);
-        self.importing.remove(path);
-        if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(); return Err(fault); }
+        if let Err(fault) = result {
+            self.importing.remove(path); self.embedded_names.remove(path);
+            self.modules.remove(path); self.refresh_module_cache(); return Err(fault);
+        }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 let mut fields = parent.fields.borrow_mut();
@@ -19510,42 +19716,102 @@ impl Engine<'_> {
                 }
             }
         }
+        // Register real source modules while their embedded parent initializes.
+        // The temporary registration privilege is gone after initialization.
+        if embedded {
+            let aliases: Vec<(String, String)> = self.module_aliases.iter().filter(|(child, member)| {
+                child.rsplit_once('.').map(|(owner, _)| owner) == Some(path)
+                    && matches!(&module, Value::Object(parent) if parent.fields.borrow().iter().any(|(name, _)| name == *member))
+            }).map(|(child, member)| (child.clone(), member.clone())).collect();
+            for (child, member) in aliases {
+                let loaded = match self.import_module(&child) {
+                    Ok(loaded) => loaded,
+                    Err(fault) => {
+                        self.importing.remove(path); self.embedded_names.remove(path);
+                        self.modules.remove(path); self.refresh_module_cache(); return Err(fault);
+                    },
+                };
+                // A cached alias must also be bound on this newly initialized parent.
+                if let Value::Object(parent) = &module {
+                    let mut fields = parent.fields.borrow_mut();
+                    match fields.iter_mut().find(|(name, _)| name == &member) {
+                        Some((_, Value::Bond(cell))) => *cell.borrow_mut() = loaded,
+                        Some((_, value)) => *value = loaded,
+                        None => fields.push((member, loaded)),
+                    }
+                }
+            }
+        }
+        self.importing.remove(path);
         self.refresh_module_cache();
         Ok(module)
     }
 
-    /// A module written into a directory `sys.path` names, found there
-    /// ahead of the library. Only a plain, undotted name is looked for
-    /// this way, since a directory a program builds for itself holds no
-    /// packages of its own; the file and what it holds come back
-    /// together, the file's place made absolute first, since a name on
-    /// `sys.path` may be relative to a working directory `__file__`
-    /// must not depend on later changing.
+    /// Search sys.path for a root module, or the parent package path for
+    /// a child. Initializer directories and file names are made absolute.
     fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
-        if path.contains('.') { return None; }
-        let Value::Object(sys) = self.modules.get("sys")? else { return None };
-        let held = sys.fields.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
+        let (owner, word, leaf) = match path.rsplit_once('.') {
+            Some((parent, child)) => (parent, self.lang.module_path.as_deref()?, child),
+            None => ("sys", "path", path),
+        };
+        let Value::Object(space) = self.modules.get(owner)? else { return None };
+        let held = space.fields.borrow().iter().find(|(name, _)| name == word).map(|(_, v)| v.clone())?;
         let mut value = held;
         while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value {
             value = cell.borrow().clone();
         }
-        let Value::Array(items) = value else { return None };
+        let items = match value {
+            Value::Array(items) => items,
+            Value::Tuple(items) if self.lang.module_path.is_some() => items,
+            _ => return None,
+        };
+        let mut locations = std::collections::HashMap::new();
+        let mut directories = std::collections::HashSet::new();
+        if self.lang.module_path.is_some() {
+            for name in self.module_files.keys() {
+                if let Some(file) = self.library_module_file(name) {
+                    let location = std::path::PathBuf::from(file);
+                    for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
+                    locations.insert(location, name);
+                }
+            }
+        }
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
-            if dir.is_empty() { continue; }
-            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
-            if let Ok(source) = std::fs::read_to_string(&file) {
-                return Some((made_absolute(&file), source));
+            if dir.is_empty() && self.lang.module_path.is_none() { continue; }
+            let directory = if dir.is_empty() { "." } else { dir.as_ref() };
+            let flat = format!("{}/{leaf}.py", directory.trim_end_matches('/'));
+            let candidates = if self.lang.module_path.is_some() {
+                vec![format!("{}/{leaf}/__init__.py", directory.trim_end_matches('/')), flat]
+            } else { vec![flat] };
+            for file in candidates {
+                // Embedded text has a location, just like disk text. It is
+                // eligible only at a directory in the actual search list.
+                if self.lang.module_path.is_some() {
+                    if let Some(location) = module_location(std::path::Path::new(&file), Some(&directories)) {
+                        if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(*name)) {
+                            return Some((location.to_string_lossy().into_owned(), source.clone()));
+                        }
+                    }
+                }
+                if let Ok(source) = std::fs::read_to_string(&file) {
+                    return Some((made_absolute(&file), source));
+                }
             }
         }
         None
     }
 
-    /// Locate embedded source on disk, using the host's override when given.
-    /// Without one, keep looking in the checkout that built this kernel.
+    /// An embedded source has a manifest location even without a disk file.
+    /// The host may replace its root; older language layouts still use disk.
     fn library_module_file(&self, path: &str) -> Option<String> {
         const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
         let root = self.library_root.as_deref().unwrap_or(ROOT);
+        if self.lang.module_path.is_some() {
+            if let Some(relative) = self.module_files.get(path) {
+                return module_location(&std::path::Path::new(root).join(relative), None).map(|location| location.to_string_lossy().into_owned());
+            }
+        }
         let stem = path.replace('.', "/");
         let flat = format!("{root}/{stem}.py");
         if std::path::Path::new(&flat).is_file() { return Some(made_absolute(&flat)); }
@@ -19572,7 +19838,7 @@ impl Engine<'_> {
             }
         }
         let child = format!("{path}.{name}");
-        if self.module_sources.contains_key(&child) { return self.import_module(&child); }
+        if (self.lang.module_path.is_none() && self.module_sources.contains_key(&child)) || self.sys_path_source(&child).is_some() || (self.modules.contains_key(&child) && self.module_cache_names(&child)) { return self.import_module(&child); }
         Err(self.import_member_fault(path, name).into())
     }
 
@@ -19616,6 +19882,13 @@ impl Engine<'_> {
     /// the library keeps it under, so the words naming it point at
     /// the file honestly.
     fn module_file_path(&self, path: &str) -> Option<String> {
+        if self.lang.module_path.is_some() {
+            let word = self.lang.source_bindings.iter().find(|(part, _)| part == "file")?.1.as_str();
+            let Value::Object(module) = self.modules.get(path)? else { return None; };
+            let held = module.fields.borrow().iter().find(|(name, _)| name == word)?.1.clone();
+            let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
+            return match value { Value::Text(file) => Some(file.to_string()), _ => None };
+        }
         if !self.module_sources.contains_key(path) { return None; }
         Some(format!("langs/lib_python/modules/{}.py", path.replace('.', "/")))
     }

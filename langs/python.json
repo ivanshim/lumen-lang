@@ -1034,6 +1034,8 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin.math.sumprod": true,
+  "ext.system.module.path": ["__path__"],
   "ext.builtin.max": [
     "max"
   ],
@@ -3108,6 +3110,7 @@
     "' from '",
     "'"
   ],
+  "ext.stmt.import.nonpackage": ["; '", "' is not a package"],
   "ext.stmt.import.missing": [
     "ModuleNotFoundError: No module named '",
     "'"
