@@ -1,5 +1,5 @@
 import sys
-# Ported from examples/lumen/constructs/integer_quotient_minimal.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+# Python numeric example, maintained by hand: floor division and ties to even.
 sys.stdout.write("=== MINIMAL // OPERATOR VALIDATION ===\n\n")
 sys.stdout.write("1. Integer // Integer (positive): 17 // 5 = ")
 q = 17 // 5

@@ -1,5 +1,5 @@
 import sys
-# Ported from examples/lumen/constructs/integer_quotient.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+# Python numeric example, maintained by hand: floor division and ties to even.
 sys.stdout.write("=== INTEGER QUOTIENT (//) OPERATOR TESTS ===\n")
 sys.stdout.write("\n")
 sys.stdout.write("=== SECTION 1: Integer // Integer = Integer ===\n")

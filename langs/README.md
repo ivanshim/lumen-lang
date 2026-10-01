@@ -1260,7 +1260,10 @@ only. The extension labels so far, all from PHP:
   signed zero. `round()` chooses the even neighbour at a tie and accepts
   omitted or negative `ndigits`; float ties use the exact binary value.
   With this switch off, the shared core retains truncating quotient and
-  half-away rounding for the other languages.
+  half-away rounding for the other languages. Python example gates require
+  successful, identical output from stack8 and microcode7 only: the four
+  reference kernels ignore extension labels. PHP and Lumen examples keep
+  their six-kernel comparison against stream35.
   Python retains 64-bit real arithmetic but uses the existing kernel
   rendering, not CPython's shortest round-trip spelling: whole reals
   omit `.0`, powers of ten remain expanded, and negative zero is `-0`.
