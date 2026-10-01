@@ -1525,6 +1525,7 @@ impl<'a> Machine<'a> {
             if names.get(1).map_or(false, |n| n == key) { return Ok(Value::Small(link.location as i64)); }
             if names.get(2).map_or(false, |n| n == key) { return Ok(link.following.clone()); }
             if names.get(3).map_or(false, |n| n == key) { return Ok(Value::Thing(link.activation.clone())); }
+            if names.get(26).map_or(false, |n| n == key) { return Ok(Value::Small(link.instruction)); }
             for (index, offset) in [(16, link.extent.map_or(Some(link.location), |x| Some(x.2))), (17, link.extent.map(|x| x.1)), (18, link.extent.map(|x| x.3))] {
                 if names.get(index).map_or(false, |word| word == key) { return Ok(offset.map(|n| Value::Small(n as i64)).unwrap_or(Value::Nil)); }
             }

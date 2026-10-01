@@ -671,7 +671,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).
             if opening && own_line && within.is_none() {
-                let first = match &stmt { Form::OnLine(_, inner) => inner.as_ref(), other => other };
+                let first = match &stmt { Form::OnLine(_, _, inner) => inner.as_ref(), other => other };
                 if let Form::Const(Value::Text(said)) = first {
                     for name in table.strings("ext.system.module.doc") {
                         let slot = r.global_address(name);
@@ -715,6 +715,8 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
+    let mut body = body;
+    if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
     let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
@@ -1787,6 +1789,7 @@ impl<'a> Builder<'a> {
         let mut literals = vec![doc.as_ref().map_or(Value::Nil, |s| Value::text(s))];
         let mut referenced = Vec::new();
         let mut suspension = false;
+        if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
         inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
         if scope.permits_async && suspension { flags = (flags & !128) | 512; }
         Ok(constant(Value::Routine(Rc::new(Routine { annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
@@ -2508,7 +2511,7 @@ impl<'a> Builder<'a> {
         if self.tells_place && self.look().row > self.before {
             let row = self.look().row - self.before;
             let made = self.plain_or_kind()?;
-            return Ok(Form::OnLine(row, Box::new(made)));
+            return Ok(Form::OnLine(row, 0, Box::new(made)));
         }
         self.plain_or_kind()
     }
@@ -6125,7 +6128,7 @@ impl<'a> Builder<'a> {
     }
 
     fn located(&self, bounds: (u32, u32, u32, u32), expression: Form) -> Form {
-        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(bounds, Box::new(expression)) }
+        if self.table.has_any("ext.builtin.exceptions.traceback") { Form::Located(bounds, 0, Box::new(expression)) }
         else { expression }
     }
 
@@ -6952,7 +6955,7 @@ impl<'a> Builder<'a> {
             // call was made from.
             let row = (r.look().row as u32).saturating_sub(r.before);
             let body = r.expr(0)?;
-            items.push(Form::OnLine(row, Box::new(body)));
+            items.push(Form::OnLine(row, 0, Box::new(body)));
             Ok(sequence(items))
         })?;
         let program = match carried.is_empty() {
@@ -10901,7 +10904,9 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let mut body = sequence(s);
+            if table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
+            let program = Routine { annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
@@ -11241,7 +11246,7 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
     let uses = |address: &Address| names.contains(&address.ident.as_ref());
     match form {
         Form::Read(place) | Form::Glance(place) | Form::Share(place) => uses(place),
-        Form::Write(_, value) | Form::OnLine(_, value) | Form::Located(_, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
+        Form::Write(_, value) | Form::OnLine(_, _, value) | Form::Located(_, _, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
         Form::Apply(Callee::Code(target), args) => borrows_enclosing(target, names) || args.iter().any(|arg| borrows_enclosing(arg, names)),
         Form::Apply(_, args) => args.iter().any(|arg| borrows_enclosing(arg, names)),
         Form::Const(Value::Routine(arm)) if arm.frameless => borrows_enclosing(&arm.body, names),
@@ -11274,7 +11279,7 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         Form::Const(Value::Routine(p)) if p.frameless => children.push(&p.body),
         Form::Const(v) => literal(v, constants),
         Form::Read(a) | Form::Take(a) | Form::Glance(a) => { if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); } },
-        Form::Write(_, child) | Form::OnLine(_, child) | Form::Located(_, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
+        Form::Write(_, child) | Form::OnLine(_, _, child) | Form::Located(_, _, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
         Form::Apply(callee, args) => {
             if matches!(callee, Callee::Prim(Prim::Suspend, _)) { *suspension = true; }
             match callee {

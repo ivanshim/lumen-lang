@@ -140,6 +140,7 @@ enum Next {
 /// The forms still owed by a yielding routine, innermost work last.
 enum Owed {
     Find(Form),
+    At(i64),
     Store(Address),
     Drop,
     Apply(Callee, usize),
@@ -3742,12 +3743,14 @@ impl<'a> Machine<'a> {
         {
             match work {
                 Owed::Find(node) => match node {
-                    Form::Located(bounds, inner) => {
+                    Form::Located(bounds, at, inner) => {
+                        self.stand_at_instruction(at as i64);
                         self.row = bounds.0;
                         self.extent = Some(bounds);
                         state.owed.push(Owed::Find(*inner));
                     }
-                    Form::OnLine(row, body) => {
+                    Form::OnLine(row, at, body) => {
+                        self.stand_at_instruction(at as i64);
                         self.row = row;
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
                         state.owed.push(Owed::Find(*body));
@@ -3762,14 +3765,17 @@ impl<'a> Machine<'a> {
                     }
                     Form::Apply(Callee::Prim(Prim::Suspend, _), mut parts) => {
                         state.owed.push(Owed::HandOut);
+                        state.owed.push(Owed::At(self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1)));
                         state.owed.push(Owed::Find(parts.remove(0)));
                     }
                     Form::Apply(Callee::Prim(Prim::Delegate, _), mut parts) => {
                         state.owed.push(Owed::From);
+                        state.owed.push(Owed::At(self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1)));
                         state.owed.push(Owed::Find(parts.remove(0)));
                     }
                     Form::Apply(Callee::Prim(Prim::Yield, _), mut parts) => {
                         state.owed.push(Owed::Finish);
+                        state.owed.push(Owed::At(self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1)));
                         state.owed.push(Owed::Find(if parts.is_empty() { Form::Const(Value::Nil) } else { parts.remove(0) }));
                     }
                     Form::Apply(Callee::Prim(Prim::Leave | Prim::Resume, _), _) => {
@@ -3789,6 +3795,7 @@ impl<'a> Machine<'a> {
                     }
                     Form::Apply(Callee::Code(target), args) => {
                         state.owed.push(Owed::Call(args.len()));
+                        state.owed.push(Owed::At(self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1)));
                         for arg in args.into_iter().rev() { state.owed.push(Owed::Find(arg)); }
                         state.owed.push(Owed::Find(*target));
                     }
@@ -3804,10 +3811,12 @@ impl<'a> Machine<'a> {
                     {
                         let place = args.remove(0);
                         state.owed.push(Owed::Into(Callee::Prim(op, called), place, args.len()));
+                        state.owed.push(Owed::At(self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1)));
                         for arg in args.into_iter().rev() { state.owed.push(Owed::Find(arg)); }
                     }
                     Form::Apply(callee, args) => {
                         state.owed.push(Owed::Apply(callee, args.len()));
+                        state.owed.push(Owed::At(self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1)));
                         for arg in args.into_iter().rev() { state.owed.push(Owed::Find(arg)); }
                     }
                     Form::Cycle { after: false, .. } => state.owed.push(Owed::Test(Rc::new(node))),
@@ -3843,6 +3852,7 @@ impl<'a> Machine<'a> {
                         state.found.push(self.value_of(&other, &frame)?);
                     }
                 },
+                Owed::At(at) => self.stand_at_instruction(at),
                 Owed::Store(place) => self.store(&place, &frame, state.found.last().cloned().unwrap_or(Value::Nil))?,
                 Owed::Drop => { state.found.pop(); }
                 Owed::Apply(callee, count) => {
@@ -4197,6 +4207,7 @@ impl<'a> Machine<'a> {
         entries.push((words[13].to_string(), Value::Nil));
         entries.push((String::from("\0environment"), body));
         entries.push((String::from("\0observed"), Value::Nil));
+        entries.push((String::from("\0instruction"), Value::Small(-1)));
         self.made += 1;
         Some(Rc::new(Thing { reclassified: RefCell::new(None), of: self.activation_kind.as_ref().unwrap().clone(), turn: self.made, holds: RefCell::new(entries) }))
     }
@@ -4313,6 +4324,21 @@ impl<'a> Machine<'a> {
         outcome
     }
 
+    fn activation_instruction(activation: &Rc<Thing>) -> i64 {
+        activation.holds.borrow().iter().find_map(|(word, value)| match (word.as_str(), value) {
+            ("\0instruction", Value::Small(at)) => Some(*at),
+            _ => None,
+        }).unwrap_or(-1)
+    }
+
+    fn stand_at_instruction(&self, at: i64) {
+        if let Some(activation) = &self.active_trace {
+            if let Some((_, value)) = activation.holds.borrow_mut().iter_mut().find(|(word, _)| word == "\0instruction") {
+                *value = Value::Small(at);
+            }
+        }
+    }
+
     fn save_traceback(&mut self, value: &Value, repeat: bool) {
         let Value::Thing(raised) = value else { return };
         let keys = self.table.strings("ext.builtin.exceptions.traceback").to_vec();
@@ -4330,7 +4356,7 @@ impl<'a> Machine<'a> {
         if matches!(following, Value::Nil) {
             crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(raised)));
         }
-        let link = crate::data::TraceLink { extent: self.extent, location: self.row, activation, following };
+        let link = crate::data::TraceLink { instruction: Self::activation_instruction(&activation), extent: self.extent, location: self.row, activation, following };
         let mut fields = raised.holds.borrow_mut();
         if let Some((_, field)) = fields.iter_mut().find(|(key, _)| key == &slot) { *field = Value::Backtrace(Rc::new(link)); }
     }
@@ -4849,16 +4875,20 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Located(position, inner) => {
+            Form::Located(position, at, inner) => {
+                let previous = self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1);
+                self.stand_at_instruction(*at as i64);
                 let saved = (self.row, self.extent);
                 self.row = position.0;
                 self.extent = Some(*position);
                 let result = self.value_of(inner, frame);
                 let result = self.traced_result(result);
                 (self.row, self.extent) = saved;
+                self.stand_at_instruction(previous);
                 result
             }
-            Form::OnLine(row, inner) => {
+            Form::OnLine(row, at, inner) => {
+                self.stand_at_instruction(*at as i64);
                 self.extent = None;
                 self.row = *row;
                 if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(*row as i64); }
@@ -6354,6 +6384,7 @@ impl<'a> Machine<'a> {
         if matches!(sample.settled(), Value::Backtrace(_)) {
             let words = self.table.strings("ext.builtin.exceptions.traceback");
             let mut fields = words.get(1..4).unwrap_or(&[]).to_vec();
+            fields.extend(words.get(26).cloned());
             fields.sort_unstable();
             return fields;
         }
@@ -11898,12 +11929,13 @@ impl<'a> Machine<'a> {
                 let at = roster.iter().position(|key| key == member.as_ref());
                 let trace = Value::Backtrace(link.clone());
                 let hook = self.directory_attribute(&trace, member);
-                if operation == Prim::HasMember { return Ok(Some(Value::Flag(hook.is_some() || matches!(at, Some(1..=3 | 16..=18))))); }
+                if operation == Prim::HasMember { return Ok(Some(Value::Flag(hook.is_some() || matches!(at, Some(1..=3 | 16..=18 | 26))))); }
                 if let Some(hook) = hook { return Ok(Some(hook)); }
                 return match at {
                     Some(1) => Ok(Some(Value::Small(link.location as i64))),
                     Some(2) => Ok(Some(link.following.clone())),
                     Some(3) => Ok(Some(Value::Thing(link.activation.clone()))),
+                    Some(26) => Ok(Some(Value::Small(link.instruction))),
                     Some(16) => Ok(Some(Value::Small(link.extent.map_or(link.location, |x| x.2) as i64))),
                     Some(17) => Ok(Some(link.extent.map(|x| Value::Small(x.1 as i64)).unwrap_or(Value::Nil))),
                     Some(18) => Ok(Some(link.extent.map(|x| Value::Small(x.3 as i64)).unwrap_or(Value::Nil))),
@@ -18237,7 +18269,7 @@ fn suspension_within(form: &Form) -> bool {
         Form::Apply(Callee::Prim(_, _), args) => args.iter().any(suspension_within),
         Form::Apply(Callee::Code(target), args) => suspension_within(target) || args.iter().any(suspension_within),
         Form::Const(Value::Routine(body)) if body.frameless => suspension_within(&body.body),
-        Form::Write(_, inner) | Form::OnLine(_, inner) | Form::Located(_, inner) | Form::Muted(inner) | Form::Silenced(inner) => suspension_within(inner),
+        Form::Write(_, inner) | Form::OnLine(_, _, inner) | Form::Located(_, _, inner) | Form::Muted(inner) | Form::Silenced(inner) => suspension_within(inner),
         Form::Cycle { test, body, step, otherwise, .. } => suspension_within(test) || suspension_within(body)
             || step.as_deref().map_or(false, suspension_within) || otherwise.as_deref().map_or(false, suspension_within),
         Form::Attempt { body, clauses, last, otherwise, .. } => suspension_within(body)

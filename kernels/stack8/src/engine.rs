@@ -4059,6 +4059,7 @@ impl<'a> Engine<'a> {
             ("\0slots".into(), Value::Tuple(Rc::new(locals.to_vec()))),
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
+            ("\0instruction".into(), Value::Small(-1)),
         ]) }))
     }
 
@@ -4121,6 +4122,13 @@ impl<'a> Engine<'a> {
         Value::Null
     }
 
+    fn frame_instruction(frame: &Rc<Instance>) -> i64 {
+        frame.fields.borrow().iter().find_map(|(name, value)| match (name.as_str(), value) {
+            ("\0instruction", Value::Small(position)) => Some(*position),
+            _ => None,
+        }).unwrap_or(-1)
+    }
+
     fn record_trace(&mut self, raised: &Value, _program: &Routine) {
         let Value::Object(object) = raised else { return };
         if !self.exception_class(&object.class_now()) || self.lang.trace_fields.len() < 11 { return; }
@@ -4134,7 +4142,7 @@ impl<'a> Engine<'a> {
         if matches!(prior, Value::Null) {
             crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object)));
         }
-        let trace = Value::Trace(Rc::new(crate::value::Traceback { location: self.location, line: self.line, frame, next: prior }));
+        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame, next: prior }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
     }
 
@@ -4222,6 +4230,11 @@ impl<'a> Engine<'a> {
                 }
                 if let Some(over) = self.out_of_room() {
                     return Err(over);
+                }
+            }
+            if let Some(active) = &self.trace_frame {
+                if let Some((_, position)) = active.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") {
+                    *position = Value::Small(pc as i64);
                 }
             }
             match &instrs[pc] {
@@ -5057,7 +5070,7 @@ impl<'a> Engine<'a> {
     pub(super) fn kind_member_names(&self, sample: &Value) -> Vec<String> {
         let held = sample.contents();
         if matches!(held, Value::Trace(_)) {
-            let mut names: Vec<_> = self.lang.trace_fields.iter().skip(1).take(3).cloned().collect();
+            let mut names: Vec<_> = self.lang.trace_fields.iter().enumerate().filter(|(i, _)| matches!(i, 1..=3 | 26)).map(|(_, name)| name.clone()).collect();
             names.sort();
             return names;
         }
@@ -8807,7 +8820,7 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let field = match &held {
-                    Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18)),
+                    Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18 | 26)),
                     Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=25)),
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
@@ -8908,6 +8921,7 @@ impl<'a> Engine<'a> {
                         Some(1) => Value::Small(trace.line as i64),
                         Some(2) => trace.next.clone(),
                         Some(3) => Value::Object(trace.frame.clone()),
+                        Some(26) => Value::Small(trace.instruction),
                         Some(16) => Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64),
                         Some(17) => trace.location.map_or(Value::Null, |p| Value::Small(p.1 as i64)),
                         Some(18) => trace.location.map_or(Value::Null, |p| Value::Small(p.3 as i64)),
@@ -9479,7 +9493,7 @@ impl<'a> Engine<'a> {
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
                     if Rc::ptr_eq(&prior.frame, frame) {
-                        let trace = Value::Trace(Rc::new(crate::value::Traceback { location: self.location, line: self.line, frame: frame.clone(), next: Value::Trace(prior) }));
+                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame), location: self.location, line: self.line, frame: frame.clone(), next: Value::Trace(prior) }));
                         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
                 }

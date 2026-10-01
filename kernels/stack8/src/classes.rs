@@ -1129,6 +1129,7 @@ impl<'a> Engine<'a> {
                 Some(1) => Ok(Value::Small(trace.line as i64)),
                 Some(2) => Ok(trace.next.clone()),
                 Some(3) => Ok(Value::Object(trace.frame.clone())),
+                Some(26) => Ok(Value::Small(trace.instruction)),
                 Some(16) => Ok(Value::Small(trace.location.map_or(trace.line, |p| p.2) as i64)),
                 Some(17) => Ok(trace.location.map_or(Value::Null, |p| Value::Small(p.1 as i64))),
                 Some(18) => Ok(trace.location.map_or(Value::Null, |p| Value::Small(p.3 as i64))),
