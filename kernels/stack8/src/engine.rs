@@ -961,6 +961,14 @@ impl<'a> Engine<'a> {
     /// own words: what `ImportError.name` is CPython's own module.
     fn absent_import(&self, told: &str) -> Option<String> {
         let told = told.trim_start_matches('\0');
+        if let Some(module) = told.strip_prefix("ModuleNotFoundError: import of ").and_then(|rest| rest.strip_suffix(" halted; None in sys.modules")) {
+            return Some(module.to_owned());
+        }
+        if let [opening, ending] = self.lang.import_missing.as_slice() {
+            if let Some(rest) = told.strip_prefix(opening.as_str()) {
+                if let Some(last) = rest.find(ending.as_str()) { return Some(rest[..last].to_owned()); }
+            }
+        }
         let [head, mid, close] = self.lang.import_member_missing.as_slice() else { return None };
         let after_head = told.strip_prefix(head.as_str())?;
         let at = after_head.find(mid.as_str())?;
@@ -2044,11 +2052,7 @@ impl<'a> Engine<'a> {
                     if let Some(module) = self.absent_import(told) { filled.push((&self.lang.absent_name_member, Value::text(&module))); }
                 }
                 if self.stands_on(&object.class_now(), 42) {
-                    if let [head, tail] = self.lang.import_missing.as_slice() {
-                        if let Some(module) = told.strip_prefix(head.as_str()).and_then(|s| s.strip_suffix(tail.as_str())) {
-                            filled.push((&self.lang.absent_name_member, Value::text(module)));
-                        }
-                    }
+                    if let Some(module) = self.absent_import(told) { filled.push((&self.lang.absent_name_member, Value::text(&module))); }
                 }
                 let mut fields = object.fields.borrow_mut();
                 for (key, held) in filled {
@@ -18573,7 +18577,7 @@ impl Engine<'_> {
         }
         if let Some(cached) = self.module_cache_value(path) {
             if matches!(cached, Value::Null) {
-                return Err(format!("ImportError: import of {path} halted; None in sys.modules").into());
+                return Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules").into());
             }
             return Ok(cached);
         }

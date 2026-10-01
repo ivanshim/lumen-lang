@@ -1259,6 +1259,16 @@ impl<'a> Machine<'a> {
     /// module.
     fn import_source_not_there(&self, told: &str) -> Option<String> {
         let told = told.trim_start_matches('\0');
+        let halted = "ModuleNotFoundError: import of ";
+        if told.starts_with(halted) && told.ends_with(" halted; None in sys.modules") {
+            return Some(told[halted.len()..told.len() - " halted; None in sys.modules".len()].into());
+        }
+        let missing = self.table.strings("ext.stmt.import.missing");
+        if missing.len() == 2 {
+            if let Some(remaining) = told.strip_prefix(missing[0].as_str()) {
+                return remaining.split_once(missing[1].as_str()).map(|pair| pair.0.into());
+            }
+        }
         let [head, mid, close] = self.table.strings("ext.stmt.import.member.missing") else { return None };
         let after_head = told.strip_prefix(head.as_str())?;
         let at = after_head.find(mid.as_str())?;
@@ -2661,12 +2671,8 @@ impl<'a> Machine<'a> {
                     if let Some(source) = self.import_source_not_there(told) { written.push((self.table.single("ext.builtin.exceptions.name"), Value::text(&source))); }
                 }
                 if self.stands_under(&object.blueprint(), 42) {
-                    let edges = self.table.strings("ext.stmt.import.missing");
-                    if edges.len() == 2 {
-                        if let Some(module) = told.strip_prefix(edges[0].as_str()).and_then(|rest| rest.strip_suffix(edges[1].as_str())) {
-                            written.push((self.table.single("ext.builtin.exceptions.name"), Value::text(module)));
-                        }
-                    }
+                    let absent = self.import_source_not_there(told).map(|module| Value::text(&module));
+                    if let Some(absent) = absent { written.push((self.table.single("ext.builtin.exceptions.name"), absent)); }
                 }
                 let mut holds = object.holds.borrow_mut();
                 for (key, value) in written {
@@ -18515,7 +18521,7 @@ impl Machine<'_> {
         }
         if let Some(namespace) = self.import_cache_value(path) {
             match namespace {
-                Value::Nil => return Err(format!("ImportError: import of {path} halted; None in sys.modules")),
+                Value::Nil => return Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules")),
                 other => return Ok(other),
             }
         }
