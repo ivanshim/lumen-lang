@@ -263,13 +263,13 @@ impl Suspension {
     /// finalisation the language asks for when it is let go.
     pub(crate) fn asleep(&self) -> bool {
         self.begun && !self.ended && self.of.is_some()
-            && self.owed.iter().any(|owed| matches!(owed, Owed::Warding(..) | Owed::Lastly(..)))
     }
 
     /// Every knot the sleeping body holds: its frame first.
     pub(crate) fn reaches(&self, out: &mut Vec<crate::ghost::Knot>) {
         use crate::ghost::Knot;
         out.push(Knot::Frame(self.frame.clone()));
+        if let Some(body) = &self.of { out.push(Knot::Held(Value::Routine(body.clone()))); }
         if let Some(thing) = &self.trace_state { out.push(Knot::Held(Value::Thing(thing.clone()))); }
         for v in &self.found { out.push(Knot::Held(v.clone())); }
         out.push(Knot::Held(self.result.clone()));
@@ -281,12 +281,43 @@ impl Suspension {
         if let Some((cell, _)) = &self.overseen { out.push(Knot::Held(Value::Shared(cell.clone()))); }
         for v in &self.holding { out.push(Knot::Held(v.clone())); }
         if let Some(v) = &self.stepping_through { out.push(Knot::Held(v.clone())); }
+        let mut plans = std::collections::HashSet::new();
+        let mut shared_forms = std::collections::HashSet::new();
         for owed in &self.owed {
-            if let Owed::Restore(outcome, _) = owed {
-                match &**outcome {
+            match owed {
+                Owed::Find(form) => crate::ghost::form_holds(form, out),
+                Owed::Apply(Callee::Code(target), _) => crate::ghost::form_holds(target, out),
+                Owed::Into(callee, form, _) => {
+                    if let Callee::Code(target) = callee { crate::ghost::form_holds(target, out); }
+                    crate::ghost::form_holds(form, out);
+                }
+                Owed::Select(a, b) => {
+                    crate::ghost::form_holds(a, out);
+                    crate::ghost::form_holds(b, out);
+                }
+                Owed::Test(form) | Owed::Decide(form) | Owed::Turn(form, _) => {
+                    if shared_forms.insert(Rc::as_ptr(form) as usize) { crate::ghost::form_holds(form, out); }
+                }
+                Owed::Truth(_, form) => crate::ghost::form_holds(form, out),
+                Owed::Warding(plan, ..) | Owed::Lastly(plan, ..) => {
+                    if plans.insert(Rc::as_ptr(plan) as usize) {
+                        for clause in &plan.clauses {
+                            if let Some(choices) = &clause.choices {
+                                for choice in choices { crate::ghost::form_holds(choice, out); }
+                            }
+                            crate::ghost::form_holds(&clause.body, out);
+                        }
+                        if let Some(last) = &plan.last { crate::ghost::form_holds(last, out); }
+                        if let Some(otherwise) = &plan.otherwise { crate::ghost::form_holds(otherwise, out); }
+                    }
+                }
+                Owed::Restore(outcome, _) => match &**outcome {
                     Ok(v) | Err(Escape::Thrown(v)) | Err(Escape::Yield(v)) => out.push(Knot::Held(v.clone())),
                     Err(_) => {}
-                }
+                },
+                Owed::Store(_) | Owed::Drop | Owed::Apply(Callee::Prim(..), _)
+                | Owed::Call(_) | Owed::HandOut | Owed::From | Owed::Finish
+                | Owed::Unhold(..) | Owed::Stop => {}
             }
         }
     }
@@ -443,7 +474,7 @@ pub struct Machine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize>,
-    code_handles: HashMap<usize, (Rc<Routine>, Value)>,
+    code_handles: HashMap<usize, Weak<Vec<Value>>>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     pub library_files: HashMap<String, String>,
@@ -489,6 +520,7 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    reaping: bool,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
     /// routine was, kept so the pair stays its own, what calls of it now
@@ -1535,7 +1567,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), reaping: false, written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -2280,6 +2312,7 @@ impl<'a> Machine<'a> {
             if !crate::ghost::first_farewell(&thing) { continue; }
             self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
         }
+        crate::ghost::release_all_anchors();
     }
 
     /// Whatever is still being kept when the run ends is let go,
@@ -2354,18 +2387,37 @@ impl<'a> Machine<'a> {
         loop {
             let (farewells, walks, notices) = crate::ghost::gather();
             if farewells.is_empty() && walks.is_empty() && notices.is_empty() { return; }
-            for (thing, farewell) in farewells {
-                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
-            }
             for (notify, bearer) in notices {
                 self.call_unheard(notify, vec![bearer], "callback");
             }
+            for (thing, farewell) in farewells {
+                self.call_unheard(farewell, vec![Value::Thing(thing)], "deallocator");
+            }
             for walk in walks {
-                if let Err(away) = self.shut_generator(&walk) {
+                if let Err(away) = self.shut_departed_generator(&walk) {
                     self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
                 }
             }
         }
+    }
+
+    /// The globals that made a discarded Python generator remain in
+    /// force while it is shut, including one made by an exec namespace
+    /// that is being collected in this round.
+    fn shut_departed_generator(&mut self, walk: &Rc<RefCell<Suspension>>) -> Res<Value> {
+        let book = if self.table.single("ext.builtin.exceptions.traceback").is_none() { None } else {
+            walk.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| {
+                self.constructor_world(body).or_else(|| match body.globe.as_ref() {
+                    Some(Value::Shared(cell) | Value::Mutable(cell, _)) => Some(cell.clone()),
+                    _ => None,
+                })
+            }))
+        };
+        let saved = self.world_book.clone();
+        if let Some(book) = book { self.world_book = Some(book); }
+        let outcome = self.shut_generator(walk);
+        self.world_book = saved;
+        outcome
     }
 
     /// A call the run makes on its own account, whose raised value no
@@ -2392,44 +2444,73 @@ impl<'a> Machine<'a> {
         let _ = self.apply_held(report, vec![raised, traceback, about.clone(), Value::text(reason)]);
     }
 
-    /// The program asked for the rounds nothing reaches to be found and
-    /// cut. Their things bid farewell first and the web is woven again,
-    /// since a farewell may keep a thing about; then every knot still
-    /// unreachable is emptied, counting frees the rest, and the
-    /// listeners are told.
+    /// Weave the ownership web, leaving the reaper's retained knots out
+    /// of the program's outside holds.
+    fn round_web(&self, retained: &[crate::ghost::Knot]) -> crate::ghost::Web {
+        use crate::ghost::{Knot, Web};
+        let books = self.readings.iter().flat_map(|book| {
+            std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
+                .chain(book.outer.iter().cloned().map(|outer| Knot::Held(Value::Shared(outer))))
+        });
+        let original = retained.iter().map(|knot| match knot {
+            Knot::Held(value) => Knot::Held(value.clone()),
+            Knot::Frame(frame) => Knot::Frame(frame.clone()),
+        });
+        let bookkeeping = self.routine_members.iter().flat_map(|(function, holder)| [Knot::Held(function.clone()), Knot::Held(Value::Thing(holder.clone()))])
+            .chain(books).chain(crate::ghost::anchored_values()).chain(original).collect();
+        let live = self.imported.values().chain(self.memo.values()).chain(self.fault_kinds.values())
+            .chain(&self.holding_fault).cloned().map(Knot::Held)
+            .chain(std::iter::once(Knot::Frame(self.outermost.clone())))
+            .chain(self.world_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
+            .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
+            .collect();
+        Web::from_notable(bookkeeping, live)
+    }
+
+    /// Silence the whole lost group before its notices and farewells.
+    /// Keep the group intact while those run, then weave ownership again
+    /// and cut only its still-lost knots. Reentrant requests do no work;
+    /// knots first made during these calls wait for the next collection.
     fn reap_rounds(&mut self) -> usize {
         use crate::ghost::{Knot, Web};
-        loop {
-            let mut web = Web::from_notable();
-            let lost = web.unreachable();
-            let mut bade = false;
-            for knot in &lost {
-                match knot {
-                    Knot::Held(Value::Thing(thing)) => {
-                        let Some(farewell) = crate::ghost::farewell_of(&thing.of) else { continue };
-                        if crate::ghost::first_farewell(thing) {
-                            bade = true;
-                            self.call_unheard(farewell, vec![Value::Thing(thing.clone())], "deallocator");
-                        }
-                    }
-                    Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |w| w.asleep()) => {
-                        bade = true;
-                        if let Err(away) = self.shut_generator(walk) {
-                            self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if bade { continue; }
-            let found = lost.len();
-            let taken = Web::cut(&lost);
-            drop(lost);
-            drop(web);
-            drop(taken);
-            self.attend_to_gone();
-            return found;
+        if self.reaping { return 0; }
+        self.reaping = true;
+        let mut web = self.round_web(&[]);
+        let original = web.unreachable();
+        let notices = crate::ghost::silence_group(&original);
+        for (notify, bearer) in notices {
+            self.call_unheard(notify, vec![bearer], "callback");
         }
+        for knot in &original {
+            match knot {
+                Knot::Held(Value::Thing(thing)) => {
+                    if let Some(farewell) = crate::ghost::farewell_of(&thing.of) {
+                        if crate::ghost::first_farewell(thing) {
+                            self.call_unheard(farewell, vec![Value::Thing(thing.clone())], "deallocator");
+                            crate::ghost::release_anchor(thing);
+                        }
+                    }
+                }
+                Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |state| state.asleep()) => {
+                    if let Err(away) = self.shut_departed_generator(walk) {
+                        self.report_unraisable(away, &Value::Generator(walk.clone()), "generator");
+                    }
+                }
+                _ => {}
+            }
+        }
+        drop(web);
+        let mut checked = self.round_web(&original);
+        let lost = checked.remaining(original);
+        let found = lost.len();
+        self.routine_members.retain(|(function, _)| !checked.unowned(function));
+        let taken = Web::cut(&lost);
+        drop(lost);
+        drop(checked);
+        drop(taken);
+        self.attend_to_gone();
+        self.reaping = false;
+        found
     }
 
     fn hand_over_unheard(&mut self) -> Res<()> {
@@ -2948,20 +3029,25 @@ impl<'a> Machine<'a> {
         // sees afterwards, as the reference has it. A name the text
         // binds anew is still the text's alone, since binding writes the
         // frame's slot rather than anything the slot holds.
-        let apart = |held: &Value| held.clone();
+        let apart = |source: &Rc<Env>, at: usize| {
+            let held = source.cells.borrow()[at].clone();
+            if source.capture_slots.borrow().contains(&at) {
+                let Value::Shared(cell) = held else { unreachable!() };
+                let copied = cell.borrow().clone();
+                copied
+            } else { held }
+        };
         let mut names = program.idents.clone();
-        let mut cells: Vec<Value> = frame.cells.borrow().iter().map(apart).collect();
+        let mut cells: Vec<Value> = (0..frame.cells.borrow().len()).map(|at| apart(frame, at)).collect();
         cells.resize(names.len(), Value::Unset);
         for slot in &program.reaching {
             if names.iter().any(|word| word == slot.ident.as_ref()) { continue; }
-            let held = match ascend(frame, slot.up).cells.borrow().get(slot.at) {
-                Some(held) => apart(held),
-                None => continue,
-            };
+            let source = ascend(frame, slot.up);
+            if slot.at >= source.cells.borrow().len() { continue; }
             names.push(slot.ident.to_string());
-            cells.push(held);
+            cells.push(apart(source, slot.at));
         }
-        (names, Rc::new(Env { cells: RefCell::new(cells), outer: under }))
+        (names, Rc::new(Env { cells: RefCell::new(cells), capture_slots: RefCell::new(Default::default()), outer: under }))
     }
 
     /// Build source against the globals this run already has and run it
@@ -3225,6 +3311,11 @@ impl<'a> Machine<'a> {
         // binding may hold the very same cell; only a plain local's
         // own value, or the value a closed-over one keeps, is this
         // read's alone to move out.
+        if f.capture_slots.borrow().contains(&slot.at) {
+            let Value::Shared(cell) = &f.cells.borrow()[slot.at] else { unreachable!() };
+            let held = cell.borrow().clone();
+            return if matches!(held, Value::Unset) { self.fetch(slot, frame) } else { Ok(held) };
+        }
         if let Value::Shared(cell) = &f.cells.borrow()[slot.at] {
             if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) {
                 return Ok(Value::Shared(cell.clone()));
@@ -3244,6 +3335,11 @@ impl<'a> Machine<'a> {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
         }
         let mut v = f.cells.borrow()[slot.at].clone();
+        if f.capture_slots.borrow().contains(&slot.at) {
+            let Value::Shared(cell) = &v else { unreachable!() };
+            let captured = cell.borrow().clone();
+            v = captured;
+        }
         if let Value::Shared(cell) = &v {
             if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
             let held = cell.borrow().clone();
@@ -3312,6 +3408,11 @@ impl<'a> Machine<'a> {
         if self.names_in_calls {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
+            if destination.capture_slots.borrow().contains(&slot.at) {
+                let Value::Shared(cell) = &destination.cells.borrow()[slot.at] else { unreachable!() };
+                *cell.borrow_mut() = stored;
+                return Ok(());
+            }
             if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
                 if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
             }
@@ -3357,6 +3458,22 @@ impl<'a> Machine<'a> {
         }));
         f.cells.borrow_mut()[slot.at] = Value::Shared(cell.clone());
         cell
+    }
+
+    /// The mutable value behind a name. A captured binding can itself
+    /// hold a collection cell; writes to places in that collection must
+    /// reach the collection, while rebinding the name reaches its outer
+    /// capture cell.
+    fn value_cell(&self, frame: &Rc<Env>, at: usize) -> Option<Rc<RefCell<Value>>> {
+        let Value::Shared(binding) = &frame.cells.borrow()[at] else { return None };
+        if frame.capture_slots.borrow().contains(&at) {
+            let nested = match &*binding.borrow() {
+                Value::Shared(value) => Some(value.clone()),
+                _ => None,
+            };
+            if nested.is_some() { return nested; }
+        }
+        Some(binding.clone())
     }
 
     /// The frame and index an array lives in, for writing it in place.
@@ -3890,7 +4007,9 @@ impl<'a> Machine<'a> {
     // throw, so cleanup may await; synchronous close ends the delegate first.
     fn step_into_mode(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Res<Option<Value>> {
         let previous_reading = self.reading_now;
-        if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) { self.reading_now = Some(book); }
+        if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) {
+            if book < self.readings.len() { self.reading_now = Some(book); }
+        }
         let chosen = generator.try_borrow().ok().and_then(|state| state.of.as_ref().and_then(|body| self.constructor_world(body)));
         let previous_world = chosen.map(|book| self.world_book.replace(book));
         let result = self.step_into_body(generator, sent, hurled, given, close_on_exit);
@@ -4711,14 +4830,18 @@ impl<'a> Machine<'a> {
 
     pub(super) fn code_handle(&mut self, body: &Rc<Routine>) -> Value {
         let address = Rc::as_ptr(body) as usize;
-        if let Some((_, handle)) = self.code_handles.get(&address) { return handle.clone(); }
+        if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
+            return Value::Wrapped(7, parts.into());
+        }
         let origin = self.written_over.values().find(|entry| Rc::ptr_eq(&entry.2, body))
             .map(|entry| entry.4.clone()).filter(|source| !Rc::ptr_eq(source, body));
         let handle = match origin {
             Some(source) => self.code_handle(&source),
             None => Value::Wrapped(7, Rc::new(vec![Value::Routine(body.clone())]).into()),
         };
-        self.code_handles.insert(address, (body.clone(), handle.clone()));
+        if let Value::Wrapped(7, parts) = &handle {
+            self.code_handles.insert(address, Rc::downgrade(parts));
+        }
         handle
     }
 
@@ -4894,6 +5017,51 @@ impl<'a> Machine<'a> {
         if let Some((_, field)) = fields.iter_mut().find(|(key, _)| key == &slot) { *field = Value::Backtrace(Rc::new(link)); }
     }
 
+    /// A Python closure owns only the bindings it reaches. Each captured
+    /// binding has one cell shared with the defining frame, so later writes
+    /// and closures made before a binding is set see the same value. The
+    /// shadow frames retain lexical address depths without retaining other
+    /// locals (notably the finalizer's self).
+    fn closure_environment(&self, program: &Routine, defining: &Rc<Env>) -> Rc<Env> {
+        if program.frameless || !self.table.flag("ext.stmt.function.closes_over") {
+            return defining.clone();
+        }
+        let mut frames = Vec::new();
+        let mut root = defining.clone();
+        while !Rc::ptr_eq(&root, &self.outermost) {
+            let Some(parent) = &root.outer else { break };
+            frames.push(root.clone());
+            root = parent.clone();
+        }
+        let mut outer = root;
+        for (depth, source) in frames.into_iter().enumerate().rev() {
+            let projected = Env::make(source.cells.borrow().len(), Some(outer));
+            // Deferred annotations run from the same defining scopes,
+            // but keep their own capture list and function metadata.
+            // Preserve those cells as well without retaining other locals.
+            let wanted = program.reaching.iter().chain(
+                program.annotator.iter().flat_map(|annotation| annotation.reaching.iter())
+            );
+            for address in wanted {
+                if address.up != depth + 1 { continue; }
+                let cell = if source.capture_slots.borrow().contains(&address.at) {
+                    let Value::Shared(cell) = &source.cells.borrow()[address.at] else { unreachable!() };
+                    cell.clone()
+                } else {
+                    let held = source.cells.borrow()[address.at].clone();
+                    let cell = Rc::new(RefCell::new(held));
+                    source.cells.borrow_mut()[address.at] = Value::Shared(cell.clone());
+                    source.capture_slots.borrow_mut().insert(address.at);
+                    cell
+                };
+                projected.cells.borrow_mut()[address.at] = Value::Shared(cell);
+                projected.capture_slots.borrow_mut().insert(address.at);
+            }
+            outer = projected;
+        }
+        outer
+    }
+
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
         if self.active_trace.is_none() {
             if let Some(body) = self.frames_named.last().cloned() { self.active_trace = self.activation(&body, frame, None); }
@@ -4910,13 +5078,14 @@ impl<'a> Machine<'a> {
         }
         match node {
             Form::Const(Value::Routine(p)) => {
-                // A closure can keep its defining frame, which in turn keeps
-                // the closure. Remember the frame so collection can find and
-                // break that otherwise invisible cycle (and run finalizers).
+                // A closure can keep captured cells, which can in turn
+                // keep the closure. Note the environment it actually owns
+                // so collection can find and break that round.
+                let environment = self.closure_environment(p, frame);
                 if crate::ghost::bidding() {
-                    crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(p), Rc::downgrade(frame)));
+                    crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(p), Rc::downgrade(&environment)));
                 }
-                Ok(Value::Bound(p.clone(), frame.clone()))
+                Ok(Value::Bound(p.clone(), environment))
             }
             Form::Const(Value::OctetKind { changeable, .. }) if !self.wildcard_names.is_empty() => {
                 let held = self.spread_value(self.octet_kind_word(*changeable));
@@ -4929,12 +5098,23 @@ impl<'a> Machine<'a> {
                 let value = self.fetch(slot, frame)?;
                 // Only the private slot goes away, not the shared value
                 // it may contain (a frame's locals dictionary, for example).
-                ascend(frame, slot.up).cells.borrow_mut()[slot.at] = Value::Unset;
+                let f = ascend(frame, slot.up);
+                if f.capture_slots.borrow().contains(&slot.at) {
+                    let Value::Shared(cell) = &f.cells.borrow()[slot.at] else { unreachable!() };
+                    *cell.borrow_mut() = Value::Unset;
+                } else {
+                    f.cells.borrow_mut()[slot.at] = Value::Unset;
+                }
                 Ok(value)
             }
             Form::Glance(slot) => {
                 let f = ascend(frame, slot.up);
-                let held = f.cells.borrow()[slot.at].clone();
+                let mut held = f.cells.borrow()[slot.at].clone();
+                if f.capture_slots.borrow().contains(&slot.at) {
+                    let Value::Shared(cell) = &held else { unreachable!() };
+                    let captured = cell.borrow().clone();
+                    held = captured;
+                }
                 let held = match (&held, slot.fallback) {
                     (Value::Unset, Some(g)) => self.outermost.cells.borrow()[g].clone(),
                     _ => held,
@@ -5306,16 +5486,11 @@ impl<'a> Machine<'a> {
             Form::ShareItem(slot, place) => {
                 let at = self.value_of(place, frame)?;
                 let f = ascend(frame, slot.up);
-                let mut cells = f.cells.borrow_mut();
-                let held = &mut cells[slot.at];
-                // Through the shared cell when the name stands for one.
-                if let Value::Shared(cell) = held {
-                    let cell = cell.clone();
-                    drop(cells);
+                if let Some(cell) = self.value_cell(f, slot.at) {
                     let mut inside = cell.borrow_mut();
                     return Ok(Value::Shared(shared_item(&mut inside, &at)?));
                 }
-                Ok(Value::Shared(shared_item(held, &at)?))
+                Ok(Value::Shared(shared_item(&mut f.cells.borrow_mut()[slot.at], &at)?))
             }
             Form::SharePlace(slot, places) => {
                 let mut keys = Vec::with_capacity(places.len());
@@ -5325,22 +5500,20 @@ impl<'a> Machine<'a> {
                 }
                 let makes = self.builds_places;
                 let f = ascend(frame, slot.up);
-                let mut cells = f.cells.borrow_mut();
-                let held = &mut cells[slot.at];
-                // Through the shared cell where the name stands for one.
-                if let Value::Shared(cell) = held {
-                    let cell = cell.clone();
-                    drop(cells);
+                if let Some(cell) = self.value_cell(f, slot.at) {
                     let mut inside = cell.borrow_mut();
                     return Ok(Value::Shared(shared_deep(&mut inside, &keys, makes)?));
                 }
-                Ok(Value::Shared(shared_deep(held, &keys, makes)?))
+                Ok(Value::Shared(shared_deep(&mut f.cells.borrow_mut()[slot.at], &keys, makes)?))
             }
             Form::Ready(slot) => {
                 let f = ascend(frame, slot.up);
-                let mut cells = f.cells.borrow_mut();
-                if matches!(cells[slot.at], Value::Unset) {
-                    cells[slot.at] = Value::Nil;
+                if f.capture_slots.borrow().contains(&slot.at) {
+                    let Value::Shared(cell) = &f.cells.borrow()[slot.at] else { unreachable!() };
+                    if matches!(*cell.borrow(), Value::Unset) { *cell.borrow_mut() = Value::Nil; }
+                } else {
+                    let mut cells = f.cells.borrow_mut();
+                    if matches!(cells[slot.at], Value::Unset) { cells[slot.at] = Value::Nil; }
                 }
                 Ok(Value::Nil)
             }
@@ -5349,6 +5522,7 @@ impl<'a> Machine<'a> {
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
+                    Value::Shared(cell) if f.capture_slots.borrow().contains(&slot.at) => *cell.borrow_mut() = Value::Unset,
                     Value::Shared(cell) if self.rules.closes_over && (!self.names_in_calls || Rc::ptr_eq(f, &self.outermost) && self.loaded_spaces.contains_key(&self.written_in)) => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }
@@ -6202,6 +6376,7 @@ impl<'a> Machine<'a> {
                     let thing = Rc::new(Thing {reclassified: RefCell::new(None), of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
                     if crate::ghost::bidding() && crate::ghost::farewell_of(&class).is_some() {
                         crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(&thing)));
+                        if self.table.single("ext.builtin.exceptions.traceback").is_some() { crate::ghost::anchor(&thing); }
                     }
                     if self.table.single("ext.stmt.class.destructor").is_some()
                         || self.table.single("ext.stmt.class.finaliser").is_some() {
@@ -6534,13 +6709,12 @@ impl<'a> Machine<'a> {
                             })?;
                             value = Value::Vector(crate::tuples::Sequence::plain(members));
                         }
-                        let old = f.cells.borrow()[i].clone();
-                        match old {
-                            Value::Shared(cell) => {
+                        match self.value_cell(&f, i) {
+                            Some(cell) => {
                                 let mut row = cell.borrow_mut();
                                 self.span_written(&mut row, bounds, &value)?;
                             }
-                            _ => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
+                            None => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
                         }
                         if booked_here { self.booked_write(i, &slot.ident, Some(f.cells.borrow()[i].clone())); }
                         return Ok(Value::Nil);
@@ -6560,11 +6734,7 @@ impl<'a> Machine<'a> {
                     // reaching it holds the frame the name lives in.
                     let letter = self.letter_places.then(|| value.render(self.wording()));
                     // Through the shared cell when the name stands for one.
-                    let shared = match &f.cells.borrow()[i] {
-                        Value::Shared(cell) => Some(cell.clone()),
-                        _ => None,
-                    };
-                    let over = match shared {
+                    let over = match self.value_cell(&f, i) {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
                             written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?
@@ -6610,11 +6780,7 @@ impl<'a> Machine<'a> {
                     }
                     let Form::Read(slot) = first else { unreachable!("a name read in place") };
                     let (f, i) = self.locate(slot, frame)?;
-                    let shared = match &f.cells.borrow()[i] {
-                        Value::Shared(cell) => Some(cell.clone()),
-                        _ => None,
-                    };
-                    let many = match shared {
+                    let many = match self.value_cell(&f, i) {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
                             put_before(&mut held, coming, name)?
@@ -7671,7 +7837,7 @@ impl<'a> Machine<'a> {
                     if index == 2 { return Some(Value::Flag(self.async_running(value))); }
                     let held = state.try_borrow().ok()?;
                     return Some(match index {
-                        0 => held.of.as_ref().and_then(|body| self.code_handles.get(&(Rc::as_ptr(body) as usize)).map(|(_, handle)| handle.clone())).unwrap_or(Value::Nil),
+                        0 => held.of.as_ref().and_then(|body| self.code_handles.get(&(Rc::as_ptr(body) as usize)).and_then(Weak::upgrade).map(|parts| Value::Wrapped(7, parts.into()))).unwrap_or(Value::Nil),
                         1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
                         2 => Value::Flag(false),
                         _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
@@ -16215,7 +16381,7 @@ impl<'a> Machine<'a> {
             Prim::WeakGet => {
                 n(1)?;
                 match &v[0] {
-                    Value::Dim(dim) => dim.ghost.revive().unwrap_or(Value::Nil),
+                    Value::Dim(dim) => dim.revive().unwrap_or(Value::Nil),
                     _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                 }
             }
@@ -21665,6 +21831,7 @@ impl<'a> Machine<'a> {
                         let Some(linked) = linked else { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); };
                         let slot = &program.reaching[indices[position]];
                         levels[slot.up].cells.borrow_mut()[slot.at] = Value::Shared(linked);
+                        levels[slot.up].capture_slots.borrow_mut().insert(slot.at);
                     }
                     return self.invoke(program.clone(), outer, Vec::new())
                         .map(|_| Value::Nil).map_err(|escape| self.suspension_fault(escape));
