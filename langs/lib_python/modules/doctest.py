@@ -388,7 +388,7 @@ def _namespace_of(obj):
         obj = __load_module(obj)
     if isinstance(obj, dict):
         return obj
-    return __program_namespace(obj)
+    return vars(obj)
 
 
 def _module_name_of(obj):

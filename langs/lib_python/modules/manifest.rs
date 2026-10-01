@@ -20,6 +20,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("collections", include_str!("collections.py")),
     ("contextlib", include_str!("contextlib.py")),
     ("copy", include_str!("copy.py")),
+    ("copyreg", include_str!("copyreg.py")),
     ("ctypes", include_str!("ctypes.py")),
     ("dataclasses", include_str!("dataclasses.py")),
     ("datetime", include_str!("datetime.py")),

@@ -84,6 +84,10 @@ class ProxyType:
             raise ReferenceError("weakly-referenced object no longer exists")
         return ob
 
+    @property
+    def __class__(self):
+        return type(self._object())
+
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)

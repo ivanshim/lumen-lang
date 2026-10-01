@@ -209,7 +209,7 @@ def length_hint(value, default=0):
         pass
     try:
         hint = value.__length_hint__()
-    except AttributeError:
+    except (AttributeError, TypeError):
         return default
     if hint is NotImplemented:
         return default
