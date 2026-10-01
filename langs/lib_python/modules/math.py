@@ -16,12 +16,12 @@ def sqrt(x):
     if type(x) == type(1.0):
         # A real of the width needs nothing asked around it.
         if x < 0:
-            raise ValueError('math domain error')
+            raise ValueError('expected a nonnegative input, got ' + str(float(x)))
         return __math('sqrt', x)
     _check_real(x)
     x = float(x)
     if x < 0:
-        raise ValueError('math domain error')
+        raise ValueError('expected a nonnegative input, got ' + str(float(x)))
     return __math('sqrt', x)
 
 def fabs(x):
@@ -149,7 +149,7 @@ def _int_frexp(n):
 
 def _log_int(xi, working, per_bit):
     if xi <= 0:
-        raise ValueError('math domain error')
+        raise ValueError('expected a positive input')
     m, e = _int_frexp(xi)
     return __math(working, m) + e * per_bit
 
@@ -163,7 +163,7 @@ def _log_value(x, working, per_bit):
     if type(x) == type(1.0):
         # A real of the width needs nothing asked around it.
         if x <= 0:
-            raise ValueError('math domain error')
+            raise ValueError('expected a positive input, got ' + str(x))
         return __math(working, x)
     if _is_integral(x):
         return _log_int(int(x), working, per_bit)
@@ -176,7 +176,7 @@ def _log_value(x, working, per_bit):
                 raise
             return _log_int(xi, working, per_bit)
         if real <= 0:
-            raise ValueError('math domain error')
+            raise ValueError('expected a positive input, got ' + str(real))
         return __math(working, real)
     xi = _index_or_none(x)
     if xi is not None:
@@ -184,7 +184,7 @@ def _log_value(x, working, per_bit):
     _check_real(x)
     real = float(x)
     if real <= 0:
-        raise ValueError('math domain error')
+        raise ValueError('expected a positive input, got ' + str(real))
     return __math(working, real)
 
 def log(x, base=None):
