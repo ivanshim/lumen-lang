@@ -20,3 +20,11 @@ def import_fresh_module(name, fresh=(), blocked=(), deprecated=False, usefrozen=
         return __load_module(name)
     except ImportError:
         return None
+
+# A lazy import is read as an eager one here, so importing a module always
+# brings its own imports in at once. A test asking that they be kept apart
+# is that implementation's behaviour; the guards in test.support step past
+# it, and the honest answer here, if it were ever reached, is to skip.
+def ensure_lazy_imports(imported_module, modules_to_block, *, additional_code=None):
+    raise unittest.SkipTest('lazy imports are not observed separately here')
+

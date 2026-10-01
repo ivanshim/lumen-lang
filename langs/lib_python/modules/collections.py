@@ -29,14 +29,68 @@ def namedtuple(typename, field_names, rename=False, defaults=None, module=None):
         names = list(field_names)
     return __derive_class(typename, _Record, {'_fields': names, '__name__': typename})
 
-# Named records bear fields of their own. Tuple indexing, immutability
-# and the remaining tuple methods await the object protocol.
+# Named records bear fields of their own. The tuple behaviour CPython
+# gives them is written out here: iteration, indexing and length walk the
+# fields in order, _make builds one from a row, and the representation and
+# equality read like the tuple they stand for. They stay writable in the
+# way any record is, since immutable tuple storage awaits the object
+# protocol.
 class _Record:
     def __init__(self, *values):
         if len(values) != len(self._fields):
             raise 'TypeError: wrong number of namedtuple fields'
         for i in range(len(values)):
             setattr(self, self._fields[i], values[i])
+
+    def __iter__(self):
+        for name in self._fields:
+            yield getattr(self, name)
+
+    def __getitem__(self, index):
+        if type(index) == type(''):
+            return getattr(self, index)
+        return getattr(self, self._fields[index])
+
+    def __len__(self):
+        return len(self._fields)
+
+    def __repr__(self):
+        parts = [name + '=' + repr(getattr(self, name)) for name in self._fields]
+        return self.__class__.__name__ + '(' + ', '.join(parts) + ')'
+
+    def __eq__(self, other):
+        if not isinstance(other, _Record) or type(other) is not type(self):
+            return False
+        return list(self) == list(other)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __lt__(self, other):
+        return list(self) < list(other)
+
+    def __le__(self, other):
+        return list(self) <= list(other)
+
+    def __gt__(self, other):
+        return list(self) > list(other)
+
+    def __ge__(self, other):
+        return list(self) >= list(other)
+
+    def __hash__(self):
+        return hash(tuple(self))
+
+    @classmethod
+    def _make(cls, iterable):
+        return cls(*iterable)
+
+    def _replace(self, **changed):
+        values = [getattr(self, name) for name in self._fields]
+        for name in self._fields:
+            if name in changed:
+                values[self._fields.index(name)] = changed[name]
+        return type(self)(*values)
 
 class deque:
     def __init__(self, iterable=None, maxlen=None):

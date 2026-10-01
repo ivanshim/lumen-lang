@@ -388,7 +388,10 @@ def _namespace_of(obj):
         obj = __load_module(obj)
     if isinstance(obj, dict):
         return obj
-    return __program_namespace(obj)
+    namespace = {}
+    for key in getattr(obj, '__dict__', {}):
+        namespace[key] = getattr(obj, key)
+    return namespace
 
 
 def _module_name_of(obj):

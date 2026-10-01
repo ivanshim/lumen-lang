@@ -212,6 +212,21 @@ ALWAYS_EQ = _AlwaysEqual()
 # These entry points can be imported, but their absent machinery must
 # be named before a test can mistake it for a successful check.
 force_not_colorized = _identity
+# Colour is asked for by putting FORCE_COLOR in the environment, as the
+# reference's force_color does, and clearing the two variables that would
+# otherwise overrule it. The reference also swaps _colorize.can_colorize,
+# which this run's eager import would not see, so the environment alone is
+# used, and no _pyrepl is needed to answer it.
+def force_colorized(func):
+    from test.support.os_helper import EnvironmentVarGuard
+    def wrapper(*args, **kwargs):
+        with EnvironmentVarGuard() as env:
+            env.unset('FORCE_COLOR')
+            env.unset('NO_COLOR')
+            env.unset('PYTHON_COLORS')
+            env.set('FORCE_COLOR', '1')
+            return func(*args, **kwargs)
+    return wrapper
 skip_if_double_rounding = _identity
 _1G = 1073741824
 _2G = 2147483648
