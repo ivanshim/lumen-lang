@@ -33,8 +33,20 @@ def getpid():
     return 1
 
 def urandom(size):
-    # Stub: byte storage is not yet available; no text masquerades as bytes.
-    raise 'NotImplementedError: os.urandom needs byte values'
+    # The system's own disorder, lent by the kernel (ext.builtin._random)
+    # as so many bytes. The size is asked for as an index, as the
+    # reference asks for it; one outside what a place's count can hold is
+    # refused before the kernel is asked, as the reference refuses it.
+    if type(size) is not int:
+        take = getattr(type(size), '__index__', None)
+        if take is None:
+            raise TypeError("'{}' object cannot be interpreted as an integer".format(type(size).__name__))
+        size = take(size)
+    if size > 9223372036854775807 or size < -9223372036854775808:
+        raise OverflowError('Python int too large to convert to C ssize_t')
+    if size < 0:
+        raise ValueError('negative argument not allowed')
+    return __random('bytes', size)
 
 def listdir(path='.'):
     if _host_file_kind(path) == 1:

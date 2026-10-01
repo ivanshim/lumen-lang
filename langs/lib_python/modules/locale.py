@@ -15,6 +15,25 @@ def setlocale(category, locale=None):
         raise 'NotImplementedError: locale.setlocale supports only C'
     return 'C'
 
+def normalize(name):
+    # The reference's own normalizing goes by a table of the codes it
+    # knows, mapping each to the form it is installed under; the table
+    # is not carried here. What is left of the working is the shape
+    # every code is brought to: the modifier taken off, the language
+    # lower and the country upper, the encoding kept as it was.
+    name = name.split('@')[0]
+    if '.' in name:
+        head, encoding = name.split('.', 1)
+    else:
+        head, encoding = name, None
+    parts = head.split('_')
+    whole = parts[0].lower()
+    if len(parts) > 1:
+        whole = whole + '_' + parts[1].upper()
+    if encoding is not None:
+        whole = whole + '.' + encoding
+    return whole
+
 def getlocale(category=0):
     if category == LC_ALL:
         raise 'TypeError: category LC_ALL is not supported'

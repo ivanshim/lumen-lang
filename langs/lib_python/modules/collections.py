@@ -151,9 +151,119 @@ class defaultdict(dict):
         args = (self.default_factory,)
         return type(self), args, None, None, iter(self.items())
 
+# A counter of hashable things: the times each was met with. It keeps
+# its counts in an ordinary map under data, as the reference's own keeps
+# them in its dictionary kind, and answers by the same face: asking
+# after a thing never met with says nought without writing it down.
 class Counter:
-    def __init__(self, iterable=None, **kwargs):
-        raise 'NotImplementedError: Counter needs object indexing methods'
+    def __init__(self, iterable=None, **keywords):
+        self.data = {}
+        self.update(iterable, **keywords)
+
+    def __missing__(self, key):
+        # Asking after a thing not counted yet says nought; the asking
+        # itself counts nothing.
+        return 0
+
+    def __getitem__(self, key):
+        if key in self.data:
+            return self.data[key]
+        return 0
+
+    def __setitem__(self, key, value):
+        self.data[key] = value
+
+    def __delitem__(self, key):
+        del self.data[key]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __iter__(self):
+        return iter(self.data)
+
+    def __contains__(self, key):
+        return key in self.data
+
+    def __eq__(self, other):
+        if isinstance(other, Counter):
+            return self.data == other.data
+        return self.data == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __repr__(self):
+        pairs = ', '.join([repr(key) + ': ' + str(value)
+                           for key, value in self.data.items()])
+        return 'Counter({' + pairs + '})'
+
+    def copy(self):
+        return Counter(self.data)
+
+    def clear(self):
+        self.data.clear()
+
+    def keys(self):
+        return self.data.keys()
+
+    def values(self):
+        return self.data.values()
+
+    def items(self):
+        return self.data.items()
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+    def update(self, iterable=None, **words):
+        # Counted from a mapping by its own counts, from anything else
+        # one each time a thing comes round again.
+        if iterable is not None:
+            if hasattr(iterable, 'keys'):
+                for key in iterable.keys():
+                    self.data[key] = self.data.get(key, 0) + iterable[key]
+            else:
+                for item in iterable:
+                    self.data[item] = self.data.get(item, 0) + 1
+        for key, count in words.items():
+            self.data[key] = self.data.get(key, 0) + count
+        return None
+
+    def subtract(self, iterable=None, **words):
+        # Taken off rather than added up, so a count may drop below
+        # nought and stand there.
+        if iterable is not None:
+            if hasattr(iterable, 'keys'):
+                for key in iterable.keys():
+                    self.data[key] = self.data.get(key, 0) - iterable[key]
+            else:
+                for item in iterable:
+                    self.data[item] = self.data.get(item, 0) - 1
+        for key, count in words.items():
+            self.data[key] = self.data.get(key, 0) - count
+        return None
+
+    def elements(self):
+        # Each thing as many times as it was met with, in the order the
+        # things were first met; a count at or below nought gives none.
+        out = []
+        for key, count in self.data.items():
+            if count > 0:
+                out.extend([key] * count)
+        return iter(out)
+
+    def most_common(self, n=None):
+        # The things with their counts, most met with first.
+        ranked = sorted(self.data.items(), key=lambda pair: pair[1], reverse=True)
+        if n is None:
+            return ranked
+        return ranked[:n]
+
+    def total(self):
+        # Everything met with together, counts below nought counted as
+        # they stand.
+        return sum(self.data.values())
 
 
 # A list and a dictionary written out in Python, for a program that

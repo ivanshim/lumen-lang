@@ -63,6 +63,11 @@ def cpython_only(test):
 # with the rest of its internals.
 refcount_test = cpython_only
 
+# Nothing stands behind os.fork in this library yet; a test that needs
+# a forked process says so by stepping aside.
+def requires_fork():
+    return unittest.skipUnless(hasattr(os, 'fork'), 'requires working os.fork()')
+
 # The memory-exhaustion tests turn off that implementation's allocator
 # through its own C test module, so they are its internals too.
 nomemtest = cpython_only

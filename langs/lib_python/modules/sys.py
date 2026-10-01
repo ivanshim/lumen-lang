@@ -12,6 +12,13 @@ path = [argv[0].rsplit('/', 1)[0] if '/' in argv[0] else '']
 maxsize = 9223372036854775807
 version_info = (3, 14, 0, 'final', 0)
 platform = 'linux'
+# Where the library this run carries would sit were it installed as the
+# reference's own is: a prefix of its usual place, named for the tests
+# that ask where its pieces would be.
+base_prefix = '/usr/local'
+prefix = base_prefix
+base_exec_prefix = base_prefix
+exec_prefix = base_prefix
 # Which Python this is. A test that reaches for the internals of the
 # reference implementation asks the name here first, and the honest
 # answer -- not cpython -- is what lets such a test step aside instead
