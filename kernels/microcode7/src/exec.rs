@@ -15333,12 +15333,21 @@ impl<'a> Machine<'a> {
                     // A module naming its __all__ is read out by exactly
                     // those names, the way the reference reads a
                     // wildcard import; what else it keeps stays its own.
-                    let chosen = names.iter().find(|(name, _)| name == "__all__").map(|(_, entry)| {
-                        let entry = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry.clone() };
-                        self.core_collect(&entry).unwrap_or_default().iter()
-                            .filter_map(|item| match item { Value::Text(word) => Some(word.to_string()), _ => None })
-                            .collect::<Vec<String>>()
-                    });
+                    let chosen = match names.iter().find(|(name, _)| name == "__all__") {
+                        Some((_, entry)) => {
+                            let entry = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry.clone() };
+                            let mut wanted = Vec::new();
+                            for item in self.core_collect(&entry)? {
+                                match item {
+                                    Value::Text(word) => wanted.push(word.to_string()),
+                                    other => return Err(format!("TypeError: Item in {}.__all__ must be str, not {}", namespace.of.name, other.kind_word()).into()),
+                                }
+                            }
+                            Some(wanted)
+                        }
+                        None => None,
+                    };
+                    let explicit = chosen.is_some();
                     let names: Vec<(String, Value)> = match &chosen {
                         Some(wanted) => {
                             let mut kept = Vec::new();
@@ -15353,7 +15362,7 @@ impl<'a> Machine<'a> {
                         None => names.into_iter().filter(|(name, _)| !name.starts_with('_')).collect(),
                     };
                     for (name, entry) in names {
-                        if name.starts_with('_') || !self.table.name_like(&name) { continue; }
+                        if (!explicit && name.starts_with('_')) || !self.table.name_like(&name) { continue; }
                         let worth = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry };
                         if matches!(worth, Value::Unset) { continue; }
                         let owner = self.loaded_spaces.get(&self.written_in).and_then(|path| self.imported.get(path)).cloned();

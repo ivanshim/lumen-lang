@@ -9814,12 +9814,23 @@ impl<'a> Engine<'a> {
                     // A module naming its __all__ is read out by exactly
                     // those names, the way the reference reads a
                     // wildcard import; what else it keeps stays its own.
-                    let chosen = fields.iter().find(|(name, _)| name == "__all__").map(|(_, held)| {
-                        let held = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
-                        self.comprehension_items(&held).unwrap_or_default().iter()
-                            .filter_map(|item| match item { Value::Text(word) => Some(word.to_string()), _ => None })
-                            .collect::<Vec<String>>()
-                    });
+                    // A name it names that is no text, or a row that is
+                    // no row, is told of the way the reference tells of it.
+                    let chosen = match fields.iter().find(|(name, _)| name == "__all__") {
+                        Some((_, held)) => {
+                            let held = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                            let mut names = Vec::new();
+                            for item in self.comprehension_items(&held)? {
+                                match item {
+                                    Value::Text(word) => names.push(word.to_string()),
+                                    other => return Err(format!("TypeError: Item in {}.__all__ must be str, not {}", object.class.name, other.core_kind()).into()),
+                                }
+                            }
+                            Some(names)
+                        }
+                        None => None,
+                    };
+                    let explicit = chosen.is_some();
                     let fields: Vec<(String, Value)> = match &chosen {
                         Some(names) => {
                             let mut kept = Vec::new();
@@ -9834,7 +9845,7 @@ impl<'a> Engine<'a> {
                         None => fields.into_iter().filter(|(name, _)| !name.starts_with('_')).collect(),
                     };
                     for (name, held) in fields {
-                        if name.starts_with('_') || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
+                        if (!explicit && name.starts_with('_')) || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
                         let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
                         if matches!(value, Value::Blank) { continue; }
                         let destination = self.module_slots.get(&self.source).and_then(|(base, path)| self.modules.get(path).cloned().map(|module| (*base, module)));
