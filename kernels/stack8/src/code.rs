@@ -149,6 +149,16 @@ impl Pattern {
 /// they are asked for; a name no program can spell.
 pub const ANNOTATE_WORD: &str = "\0annotate";
 
+/// What a Python `import` asks of `__import__` as its fromlist: nothing
+/// for a plain or aliased import, the star for `from m import *`, or
+/// the names a from-import takes out together.
+#[derive(Debug, Clone)]
+pub enum ImportStyle {
+    Plain,
+    Star,
+    Names(Vec<String>),
+}
+
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -171,7 +181,8 @@ pub enum Action {
     ContextEnter,
     AsyncContextEnter,
     SettleObjects,
-    Import(String, Option<String>, bool),
+    Import(String, ImportStyle),
+    ImportFrom(String, String),
     ImportAll,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
@@ -494,6 +505,7 @@ pub enum Builtin {
     MemberSet,
     MemberGet,
     ProgramNamespace,
+    ProductStep,
     FrameModule,
     ClassSeal,
     Bytes(u8),
@@ -722,6 +734,7 @@ pub enum Builtin {
     /// built-in writing for out to bytes and read it back: `None`
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
+    HeapNative,
     ReduceNative,
     RebuildNative,
     CharAtIndex,

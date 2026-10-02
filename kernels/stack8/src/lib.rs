@@ -322,6 +322,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if lang.import_values {
         machine.module_sources = request.iter().filter(|(kind, ..)| kind == "MODULE").map(|(_, name, source, _)| (name.clone(), source.clone())).collect();
     }
+    machine.module_files = request.iter().filter(|(kind, ..)| kind == "MODULE_FILE").map(|(_, name, file, _)| (name.clone(), file.clone())).collect();
+    machine.module_aliases = request.iter().filter(|(kind, ..)| kind == "MODULE_ALIAS").map(|(_, name, member, _)| (name.clone(), member.clone())).collect();
     for name in &lang.module_names {
         machine.define(name, Value::text("__main__"));
     }

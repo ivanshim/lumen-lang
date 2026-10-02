@@ -15,9 +15,24 @@ def import_module(name, deprecated=False, required_on=None):
 # CPython, an unavailable accelerator makes a fresh import return None.
 # Blocking an absent accelerator needs no change to the module cache.
 def import_fresh_module(name, fresh=(), blocked=(), deprecated=False, usefrozen=False):
+    import sys
+    missing = object()
+    requested = (name, *fresh, *blocked)
+    saved = {key: sys.modules.get(key, missing) for key in requested}
+    for key in requested:
+        if key in sys.modules:
+            del sys.modules[key]
+    for key in blocked:
+        sys.modules[key] = None
     try:
         for dependency in fresh:
             __load_module(dependency)
         return __load_module(name)
     except ImportError:
         return None
+    finally:
+        for key in requested:
+            if key in sys.modules:
+                del sys.modules[key]
+            if saved[key] is not missing:
+                sys.modules[key] = saved[key]

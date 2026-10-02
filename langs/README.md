@@ -98,6 +98,8 @@ starred subscript, after the entire subscript has been read.
   remainder and divmod refuse complex operands using the shared binary
   complaint, which includes the actual operation requested.
 
+- `ext.builtin.core.ord` gives Python’s length and operand-type complaints for `ord()`; its presence also enables bytes, bytearray, and native subclasses.
+
 ## Format rules
 
 1. A file is one flat JSON object. Every file carries the same labels in the
@@ -629,6 +631,8 @@ only. The extension labels so far, all from PHP:
   binary, octal and hexadecimal integer formats are supported. Reals
   retain a decimal point or an exponent with at least two digits.
   Unsupported presentations are evaluated and then refused.
+- `ext.lexical.identifier.reserved`: words forbidden as identifier binding
+  targets, including the hard Python keywords. Soft keywords stay usable.
 - `ext.lexical.string.prefix.template`: letters before a quote that ask
   for text with expressions between braces, making a template rather
   than text. The letters read as format letters everywhere a prefix is
@@ -1636,6 +1640,13 @@ only. The extension labels so far, all from PHP:
   method declines an operation, leaving the other operand to answer.
   `ext.stmt.class.special.stop` names the fault which ends a walk, and
   `ext.stmt.async.stop` the fault which ends an asynchronous walk.
+  `ext.stmt.async.generator.methods` names the native async generator methods
+  for sending a value, throwing a fault and closing the suspended body;
+  `ext.stmt.async.generator.fields` names its code, live frame, running
+  state and current await target; `ext.stmt.async.generator.close.ignored`
+  reports a body that yields after `aclose` has thrown its exit fault.
+  `ext.stmt.async.generator.escaped` names the faults raised when a body
+  lets StopIteration or StopAsyncIteration escape, preserving the original cause.
   `ext.stmt.class.special.unready` gives the words for a special operation
   whose meaning the run cannot yet honour. A fault handed to a with
   exit carries an opaque traceback; looking within it stops with these
@@ -3399,7 +3410,12 @@ only. The extension labels so far, all from PHP:
   and `.traceback.with` sets it and returns the same exception. The roster
   also names frame line/code/back/locals/globals fields and generator
   frame/code members. Suspended generators detach their caller link;
-  completed generators expose no frame.
+  completed generators expose no frame. The optional 27th entry names
+  `tb_lasti`, a snapshot of the native executing instruction position:
+  stack8 uses the index in the routine's instruction array; microcode7 uses
+  the preorder index of the expression in its compiled form tree. These
+  are interpreter positions, not CPython bytecode offsets. A frame which
+  has not begun executing has position -1.
 - `ext.builtin.exceptions.note` and `.notes`: the method adding a text
   note to an exception and the list the notes stand in, which is absent
   until the first note is added; `.note.invalid` refuses a note that is
@@ -3583,6 +3599,11 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.copy`: a builtin copying a value; its second argument says
   whether to copy the things held within it too. Deep copies remember
   objects already copied, so cycles and shared members keep their shape.
+- `ext.builtin.itertools.product_step`: supports native iterator method
+  descriptors for repeat, Cartesian product, combinations, and tee, plus shared tee
+  storage and its pickle snapshots. Cartesian indices advance in mixed
+  radix; tee retains values until its independent readers pass them.
+  The Python library owns constructors, validation and reconstruction.
 - `ext.builtin.program.namespace`: a builtin handing out a map of the
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
@@ -4493,6 +4514,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.issubclass.subject` | - | - | `TypeError: issubclass() arg 1 must be a class` | - | - | - | - | - | - | - |
 | `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
 | `ext.builtin.core.not_iterator` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
+| `ext.builtin.core.ord` | - | - | `TypeError: ord() expected a character, but string of length ` ` found` `TypeError: ord() expected string of length 1, but ` ` found` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` `TypeError: unsupported operand type(s) for ** or pow(): '` `', '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
@@ -4548,7 +4570,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.setstate` | - | - | `__setstate__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `gi_state` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `gi_state` `tb_lasti` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
@@ -4570,6 +4592,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.globals` | - | - | `globals` | - | - | - | - | - | - | - |
 | `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
+| `ext.builtin.heap_native` | - | - | `__heap_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.host.info` | - | - | `__host_info` | - | - | - | - | - | - | - |
 | `ext.builtin.id` | - | - | `id` | - | - | - | - | - | - | - |
@@ -4589,6 +4612,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.iter.stop_exception` | - | - | `stop_exception` | - | - | - | - | - | - | - |
 | `ext.builtin.iter.stop_value` | - | - | `stop_value` | - | - | - | - | - | - | - |
 | `ext.builtin.iterable` | - | - | `iterable` | - | - | - | - | - | - | - |
+| `ext.builtin.itertools.product_step` | - | - | `__itertools_product_step` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
@@ -4599,6 +4623,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.short` | - | - | `ValueError: map() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.math.sumprod` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent.class` | - | - | `AttributeError: type object '` `' has no attribute '` `'` | - | - | - | - | - | - | - |
@@ -4938,6 +4963,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.warning` | - | - | `warnings` `warn_explicit` `SyntaxWarning` `"\{}" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\{}"? A raw string is also an option.` | - | - | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
+| `ext.lexical.identifier.reserved` | - | - | `False` `None` `True` `and` `as` `assert` `async` `await` `break` `class` `continue` `def` `del` `elif` `else` `except` `finally` `for` `from` `global` `if` `import` `in` `is` `lambda` `nonlocal` `not` `or` `pass` `raise` `return` `try` `while` `with` `yield` | - | - | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
 | `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
@@ -5160,6 +5186,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.names.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.close.ignored` | - | - | `RuntimeError: async generator ignored GeneratorExit` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.escaped` | - | - | `RuntimeError: async generator raised StopIteration` `RuntimeError: async generator raised StopAsyncIteration` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.fields` | - | - | `ag_code` `ag_frame` `ag_running` `ag_await` | - | - | - | - | - | - | - |
+| `ext.stmt.async.generator.methods` | - | - | `asend` `athrow` `aclose` `__await__` | - | - | - | - | - | - | - |
 | `ext.stmt.async.stop` | - | - | `StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unready` | - | - | `NotImplementedError: asynchronous execution is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.async.unrun` | - | - | `NotImplementedError: asynchronous functions cannot be run` | - | - | - | - | - | - | - |
@@ -5184,7 +5214,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.binary.amiss` | - | - | `TypeError: unsupported operand type(s) for ` `: '` `' and '` `'` | - | - | - | - | - | - | - |
-| `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` `frozenset` `bytes` `bytearray` `complex` `enumerate` | - | - | - | - | - | - | - |
+| `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` `frozenset` `bytes` `bytearray` `complex` `enumerate` `zip` `map` `filter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.called` | - | - | `__class_call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
@@ -5333,6 +5363,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.lazy` | - | - | `lazy` | - | - | - | - | - | - | - |
 | `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.import.nonpackage` | - | - | `; '` `' is not a package` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |
@@ -5498,6 +5529,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.module.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.system.module.path` | - | - | `__path__` | - | - | - | - | - | - | - |
 | `ext.system.names.module` | - | - | `builtins` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |
@@ -5634,3 +5666,48 @@ metadata or namespace entries; ordinary classes retain their default None doc.
 Rendering accepts genuine str-subclass modules and uses the current short name
 when the module is builtins or non-string. Percent-character complaints instead
 keep the public qualification, without changing the lexical declaration name.
+
+`ext.system.module.path` names the Python package search-path attribute.
+Regular filesystem packages expose their initializer directory there; dotted
+imports search their parent's path, including paths changed by Python code.
+`ext.builtin.math.sumprod` enables the Python-only native sum of products,
+with checked integer accumulation, three-part compensated binary products,
+and ordinary multiplication/addition for other numeric types.
+
+The embedded `test/test_iter.py` is byte-for-byte CPython `Lib/test/test_iter.py`
+from commit `3b564385e4c9` (the suite source recorded in `tests/README.md`),
+under the PSF license in `tests/python/LICENSE`. It supplies the original
+module for imports by the unchanged math tests.
+
+`ext.stmt.import.nonpackage` gives the two suffix pieces for a Python
+missing submodule whose parent has no package search path. Its exception
+keeps the missing submodule name independently of that explanation.
+
+Embedded Python module entries carry their logical source locations in the
+manifest, generated by `port_examples.py` from source paths and
+`modules/manifest-layout.json`. Package initializers provide search directories even when only the
+binary is installed; child sources are selected only through the loaded
+parent's current `__path__`. `collections.py` and `unittest.py` store the sources of their logical
+package initializers. Manifest aliases of non-package
+modules are loaded as real source modules while their genuine embedded
+parent initializes. The registration privilege ends with initialization;
+a shadowing module cannot inherit it, and evicting an alias from the cache
+restores ordinary non-package rejection. The path wrapper delegates all
+existing parent path operations, including `realpath`, without changing
+their implementations. Cached children remain
+available after a package changes its search path, as ordinary imports do.
+
+Recreating a genuine embedded parent binds each declared alias to the
+loader's returned module, including a retained cached child. Virtual source
+locations are absolute logical paths. Equivalent search-directory spellings
+resolve against those locations; traversal requires a real directory or a
+manifest-declared virtual directory. Existing filesystem symlinks are expanded
+before parent components, with a bounded link count. A missing unrelated
+directory, a file used as a directory, or an escaping link cannot gain access
+by lexical cancellation. This lookup does not change the path wrapper's
+inherited `realpath` implementation or provide namespace-package/importlib
+protocols.
+
+`ext.builtin.heap_native` exposes the Python-only heap accelerator. It operates
+on list storage directly, retaining aliases and catching size changes across
+user comparisons; the four reference kernels ignore this label.

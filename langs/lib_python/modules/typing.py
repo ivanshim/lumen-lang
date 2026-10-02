@@ -84,3 +84,38 @@ def get_type_hints(obj, globalns=None, localns=None, include_extras=False, *, fo
             value = type(None)
         resolved[name] = value
     return resolved
+
+# Adapted from CPython Lib/typing.py at 3b564385e4c9; PSF License.
+# Named tuple classes use the same tuple factory as their functional form.
+class _NamedTupleMeta(type):
+    def __call__(cls, typename, fields, /):
+        from collections import namedtuple
+        annotations = dict(fields)
+        result = namedtuple(typename, list(annotations))
+        result.__annotations__ = annotations
+        return result
+
+    def __new__(mcls, name, bases, namespace):
+        from collections import namedtuple
+        prototype = type.__new__(mcls, name, bases, namespace)
+        annotations = getattr(prototype, '__annotations__', {})
+        if name == 'NamedTuple' and not annotations:
+            return prototype
+        fields = list(annotations)
+        defaults = []
+        found_default = False
+        for field in fields:
+            if field in namespace:
+                found_default = True
+                defaults.append(namespace[field])
+            elif found_default:
+                raise TypeError("Non-default namedtuple field " + field + " cannot follow default fields")
+        result = namedtuple(name, fields, defaults=defaults, module=namespace.get('__module__'))
+        result.__annotations__ = annotations
+        for member, value in namespace.items():
+            if member not in fields and member not in ('__module__', '__annotations__', '__slots__'):
+                setattr(result, member, value)
+        return result
+
+class NamedTuple(metaclass=_NamedTupleMeta):
+    pass
