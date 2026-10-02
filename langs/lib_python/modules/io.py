@@ -144,11 +144,22 @@ class BytesIO:
         return self.data
 
     def read(self, size=-1):
-        self._check()
+        if self.closed:
+            raise ValueError('read from closed file')
+        if size is None:
+            size = -1
+        else:
+            try:
+                size = size.__index__()
+            except AttributeError:
+                raise TypeError('%r is not an integer' % (size,))
         if size < 0:
-            size = len(self.data) - self.position
-        value = self.data[self.position:self.position + size]
-        self.position += len(value)
+            size = len(self.data)
+        if len(self.data) <= self.position:
+            return b''
+        newpos = min(len(self.data), self.position + size)
+        value = self.data[self.position:newpos]
+        self.position = newpos
         return value
 
     def seek(self, offset, whence=0):
@@ -191,6 +202,13 @@ class BytesIO:
     def readline(self, size=-1):
         if self.closed:
             raise ValueError('I/O operation on closed file')
+        if size is None:
+            size = -1
+        else:
+            try:
+                size = size.__index__()
+            except AttributeError:
+                raise TypeError('%r is not an integer' % (size,))
         result = b''
         while self.position < len(self.data) and (size < 0 or len(result) < size):
             letter = self.read(1)

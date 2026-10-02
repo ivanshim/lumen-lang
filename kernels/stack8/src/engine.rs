@@ -9295,11 +9295,10 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?).contents();
-                // A thing of a builtin kind that says nothing itself of
-                // being walked is taken apart as the value it keeps of
-                // that kind, the very members a walk over it would hand
-                // over.
-                let source = if self.special_value(&source, 15).is_none() && self.indexed_walk(&source).is_none() {
+                // Python takes a builtin kind's subclass apart as the
+                // value it keeps of that kind; the other languages keep
+                // the thing itself, as they did before.
+                let source = if self.lang.python_numbers && self.special_value(&source, 15).is_none() && self.indexed_walk(&source).is_none() {
                     match Self::worth_of(&source) { Some(worth) => worth.contents(), None => source }
                 } else { source };
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));

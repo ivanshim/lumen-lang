@@ -14990,11 +14990,10 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                // A thing of a native kind that says nothing itself of
-                // being walked is taken apart as the worth it keeps of
-                // that kind, the very members a walk over it would hand
-                // over.
-                let subject = if self.appointment(&v[0], 15).is_none() && self.placed_walk(&v[0]).is_none() {
+                // Python takes a native kind's subclass apart as the
+                // worth it keeps of that kind; the other languages keep
+                // the thing itself, as they did before.
+                let subject = if self.table.flag("ext.op.arithmetic.python_numbers") && self.appointment(&v[0], 15).is_none() && self.placed_walk(&v[0]).is_none() {
                     Self::underlying(&v[0]).unwrap_or_else(|| v[0].clone())
                 } else { v[0].clone() };
                 let mut values: Vec<Value> = match &subject {
