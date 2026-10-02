@@ -10523,6 +10523,7 @@ impl<'a> Compiler<'a> {
         if !self.lang.syntax_members.is_empty() {
             let mut depth = 0usize;
             let mut separated = false;
+            let mut opening = false;
             let mut parameters = 0usize;
             for token in self.tokens.iter().skip(self.pos) {
                 let word = token.lexeme.as_str();
@@ -10530,8 +10531,14 @@ impl<'a> Compiler<'a> {
                 if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
                 if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
-                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") {
+                    // The first `for` begins the comprehension; a comma
+                    // before it among the items is the mistake, one in a
+                    // target or later clause is ordinary spelling.
+                    if separated && !opening {
+                        return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                    }
+                    opening = true;
                 }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }

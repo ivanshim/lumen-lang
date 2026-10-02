@@ -9913,6 +9913,7 @@ impl<'a> Builder<'a> {
         if self.table.has_any("ext.builtin.exceptions.syntax") {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
+            let mut comprehension_begun = false;
             let mut parameter_lists = 0usize;
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
@@ -9923,8 +9924,14 @@ impl<'a> Builder<'a> {
                         _ => (),
                     }
                     if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
-                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                        // A comma among the items ahead of any clause is the
+                        // stray-generator mistake; commas within the target
+                        // of the first clause or in later ones are normal.
+                        if comma_before_for && !comprehension_begun {
+                            return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                        }
+                        comprehension_begun = true;
                     }
                 }
                 if part.shape == Shape::Sign {
