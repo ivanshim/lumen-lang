@@ -1465,9 +1465,17 @@ impl<'a> Machine<'a> {
     /// names among the root's members, or, read off a thing, one of the
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting, left loose to be bound to it.
-    fn from_the_root(&self,key:&str,of_a_thing:bool)->Option<Value> {
+    fn from_the_root(&mut self,key:&str,of_a_thing:bool)->Option<Value> {
         if key.is_empty(){return None;}
-        if self.table.strings("ext.stmt.class.detail.root.members").iter().any(|word|word==key) {return Some(Self::wrap(36,vec![Value::text(key)]));}
+        if self.table.strings("ext.stmt.class.detail.root.members").iter().any(|word|word==key) {
+            let root = self.common_ancestor();
+            let cache_name = format!("\0root-descriptor/{key}");
+            let mut entries = root.shared.borrow_mut();
+            if let Some((_, descriptor)) = entries.iter().find(|(word, _)| word == &cache_name) { return Some(descriptor.clone()); }
+            let descriptor = Self::wrap(36, vec![Value::text(key)]);
+            entries.push((cache_name, descriptor.clone()));
+            return Some(descriptor);
+        }
         if !of_a_thing{return None;}
         let tag=if key==self.detail("allocate"){1}
             else if self.table.single("ext.stmt.class.constructor")==Some(key)||key==self.detail("subclass"){2}

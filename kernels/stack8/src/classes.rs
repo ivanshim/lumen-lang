@@ -1020,10 +1020,18 @@ impl<'a> Engine<'a> {
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting. Given the class of a thing, the hooks come bare, to
     /// be bound to the thing.
-    fn root_member(&self, name: &str, of: Option<&Rc<Class>>) -> Option<Value> {
+    fn root_member(&mut self, name: &str, of: Option<&Rc<Class>>) -> Option<Value> {
         if name.is_empty() { return None; }
         if self.lang.class_details.get("root.members").map_or(false,|names| names.iter().any(|n| n==name)) {
-            return Some(Self::adapter(30,vec![Value::text(name)]));
+            let holder = self.root_class();
+            let private = format!("\0descriptor:{name}");
+            {
+                let kept = holder.shared.borrow();
+                if let Some((_, found)) = kept.iter().find(|(key, _)| key == &private) { return Some(found.clone()); }
+            }
+            let made = Self::adapter(30, vec![Value::text(name)]);
+            holder.shared.borrow_mut().push((private, made.clone()));
+            return Some(made);
         }
         of?;
         let hook = if name==self.class_word("allocate") {1}
