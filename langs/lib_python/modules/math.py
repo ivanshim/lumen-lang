@@ -721,16 +721,15 @@ def modf(x):
     return (fraction, __math('fdiv', whole, 1.0))
 
 def frexp(x):
+    if type(x) == type(1.0):
+        return __math('frexp', x)
     return __math('frexp', _float_value(x))
 
 
 def ldexp(x, i):
     if type(i) != type(1) and type(i) != type(True):
         raise 'TypeError: ldexp exponent must be an integer'
-    result = __math('ldexp', x, i)
-    if isinf(result) and isfinite(x):
-        raise 'OverflowError: math range error'
-    return result
+    return __math('ldexp', x, i)
 
 
 def exp2(x):
