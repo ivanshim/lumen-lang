@@ -22,6 +22,10 @@ pub struct Env {
     pub weak_callback_frame: Cell<bool>,
 }
 
+impl Drop for Env {
+    fn drop(&mut self) { crate::ghost::anything_departing(); }
+}
+
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
         Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), outer: parent, retained: RefCell::new(HashSet::new()), weak_callback_frame: Cell::new(false) })

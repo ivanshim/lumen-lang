@@ -118,7 +118,7 @@ pub fn bidding() -> bool {
 
 /// Whether the machine has anything to attend to before its next step.
 pub fn stirred() -> bool {
-    let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| listener.departed()))).unwrap_or(false);
+    let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
     if gone_method { anything_departing(); }
     STIRRED.try_with(|s| s.get()).unwrap_or(false)
 }

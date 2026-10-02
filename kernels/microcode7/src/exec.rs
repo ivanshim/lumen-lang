@@ -10160,7 +10160,7 @@ impl<'a> Machine<'a> {
             }
             let release_locals = self.rules.closes_over && !program.generator && !program.frameless;
             let result = self.drive(program, frame.clone());
-            if release_locals && result.is_ok() {
+            if release_locals && result.is_ok() && Rc::strong_count(&frame) > 1 {
                 let retained = frame.retained.borrow();
                 for (index, slot) in frame.cells.borrow_mut().iter_mut().enumerate() {
                     if !retained.contains(&index) { *slot = Value::Unset; }
@@ -10198,7 +10198,7 @@ impl<'a> Machine<'a> {
         };
         let clear_frame = self.rules.closes_over && !program.generator && !program.frameless;
         let answer = self.drive(program, frame.clone());
-        if clear_frame && answer.is_ok() {
+        if clear_frame && answer.is_ok() && Rc::strong_count(&frame) > 1 {
             let keep = frame.retained.borrow();
             let count = frame.cells.borrow().len();
             for index in 0..count {
