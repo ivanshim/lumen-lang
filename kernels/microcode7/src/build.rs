@@ -4823,6 +4823,18 @@ impl<'a> Builder<'a> {
             setup.push(made);
         }
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
+        // The module a class statement is written in is the module's
+        // own `__name__`, read where the class is defined.
+        let module_word = table.single("ext.stmt.class.detail.module").map(str::to_string);
+        let name_word = table.single("ext.system.module.name").map(str::to_string);
+        if let (Some(word), Some(name_word)) = (module_word, name_word) {
+            let slot = self.gensym("module_of_class");
+            let load = self.read(&name_word);
+            setup.push(Form::Write(slot.clone(), Box::new(load)));
+            self.member_ranked(&word);
+            self.parts().attributes.push(word);
+            self.parts().held.push(Form::Read(slot));
+        }
         // What the class says about itself is text standing alone at the
         // head of the body, kept under the word the table gives
         // (ext.stmt.class.detail.doc). A class that says nothing keeps

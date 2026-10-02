@@ -6004,6 +6004,19 @@ impl<'a> Compiler<'a> {
         self.cell_to_write(&class_cell);
         self.gathered.push(ClassBody { bindings, class_cell, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        // The module a class statement is written in is the module's
+        // own `__name__`, read where the class is defined, as the
+        // reference reads it in the class body.
+        let module_word = lang.class_details.get("module").and_then(|v| v.first()).cloned();
+        let name_word = self.lang.module_names.first().cloned();
+        if let (Some(word), Some(name_word)) = (module_word, name_word) {
+            self.read(&name_word);
+            let slot = self.gensym("module_of_class");
+            self.write(&slot);
+            let body = self.gathering();
+            body.order.push(word.clone());
+            body.shared.push((word, slot));
+        }
         // A body that spells `locals` or `vars` anywhere in it is
         // given its own namespace before its first statement runs, so
         // a write through either as the body's first statement finds
