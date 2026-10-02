@@ -15403,9 +15403,48 @@ impl<'a> Machine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
-                if working == "fsum_partial" {
+                if working == "dist_float" {
+                    if !self.rules.binary_arithmetic || self.rules.lone_system_real_render != Some("shortest") || self.real_figures() != math::DEFAULT_PLACES { return Ok(Value::Nil); }
+                    let coordinates = |input: &Value| -> Option<Vec<f64>> {
+                        let sequence = match input.settled() { Value::Tuple(row) | Value::Vector(row) => row, _ => return None };
+                        sequence.iter().map(|value| {
+                            let Value::Frac(r) = value.settled() else { return None };
+                            if r.places != Some(math::DEFAULT_PLACES) { return None; }
+                            let small = r.above.bits() <= 53 && r.beneath.bits() <= 1075
+                                && r.beneath.trailing_zeros().is_some_and(|n| n + 1 == r.beneath.bits());
+                            let integer = r.beneath.is_one() && r.above.bits() <= 1024
+                                && r.above.bits().saturating_sub(r.above.trailing_zeros().unwrap_or(0)) <= 53;
+                            if !r.past_numbers() && !small && !integer { return None; }
+                            let raw = crate::data::nearest_binary(&r.above, &r.beneath);
+                            Some(if r.under && r.above.is_zero() { -raw } else { raw })
+                        }).collect()
+                    };
+                    let (Some(left), Some(right)) = (coordinates(&v[1]), coordinates(&v[2])) else { return Ok(Value::Nil) };
+                    if left.len() != right.len() { return Ok(Value::Nil); }
+                    let mut differences = Vec::with_capacity(left.len());
+                    let mut status = 0;
+                    for (x, y) in left.into_iter().zip(right) {
+                        let delta = x - y;
+                        if delta.is_infinite() { status = 1; }
+                        else if delta.is_nan() && status == 0 { status = 2; }
+                        differences.push(crate::data::worth_of_binary(delta, math::DEFAULT_PLACES));
+                    }
+                    return Ok(Value::tuple(vec![Value::Small(status), Value::Vector(crate::tuples::Sequence::plain(differences)).keep(true)]));
+                }
+                if matches!(working.as_str(), "frexp_plain" | "ldexp_plain") {
+                    let native = match v[1].settled() {
+                        Value::Frac(r) => r.places.is_some(),
+                        Value::Small(n) => working == "ldexp_plain" || n.unsigned_abs() <= 9007199254740992,
+                        Value::Huge(_) => working == "ldexp_plain",
+                        Value::Flag(_) => true,
+                        _ => false,
+                    };
+                    let exponent = working != "ldexp_plain" || matches!(v[2].settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_));
+                    if !native || !exponent { return Ok(Value::Nil); }
+                }
+                if matches!(working.as_str(), "fsum_partial" | "fsum_finite") {
                     if !self.rules.binary_arithmetic || self.real_figures() != math::DEFAULT_PLACES { return Ok(Value::Nil); }
-                    let first = self.worth_of(&v[1]);
+                    let first = if working == "fsum_finite" { v[1].settled() } else { self.worth_of(&v[1]) };
                     let Value::Vector(parts) = v[2].settled() else { return Ok(Value::Nil) };
                     let read = |item: &Value| -> Option<f64> {
                         let Value::Frac(ratio) = item else { return None };
@@ -15419,6 +15458,7 @@ impl<'a> Machine<'a> {
                         Some(if ratio.under && ratio.above.is_zero() { -raw } else { raw })
                     };
                     let Some(mut total) = read(&first) else { return Ok(Value::Nil) };
+                    if working == "fsum_finite" && !total.is_finite() { return Ok(Value::Nil); }
                     let Some(numbers) = parts.iter().map(read).collect::<Option<Vec<_>>>() else { return Ok(Value::Nil) };
                     let mut kept = Vec::with_capacity(numbers.len() + 1);
                     for mut next in numbers {
@@ -15445,7 +15485,7 @@ impl<'a> Machine<'a> {
                     return Ok(result);
                 }
                 let one = width(1)?;
-                if working == "frexp" {
+                if matches!(working.as_str(), "frexp" | "frexp_plain") {
                     let mut exponent = 0;
                     let mantissa = match one {
                         n if n == 0.0 || !n.is_finite() => n,
@@ -15462,7 +15502,7 @@ impl<'a> Machine<'a> {
                     if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = self.rules.floating_math; }
                     return Ok(Value::tuple(vec![worth, Value::Small(exponent)]));
                 }
-                match math::worked(&working, one, two) {
+                match math::worked(if working == "ldexp_plain" { "ldexp" } else { &working }, one, two) {
                     Some(got) => {
                         // A working handed only reals of the width
                         // already, and answering past every number of

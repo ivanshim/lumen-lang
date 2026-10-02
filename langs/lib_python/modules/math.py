@@ -261,6 +261,10 @@ def fsum(values):
     neg_inf = False
     saw_nan = False
     for x in values:
+        ready = __math('fsum_finite', x, partials)
+        if ready is not None:
+            partials, x = ready
+            continue
         if type(x) != type(1.0):
             _check_real(x)
             x = float(x)
@@ -443,6 +447,14 @@ def dist(p, q, /):
     p, q = _point_items(p), _point_items(q)
     if len(p) != len(q):
         raise 'ValueError: both points must have the same number of dimensions'
+    ready = __math('dist_float', p, q)
+    if ready is not None:
+        kind, differences = ready
+        if kind == 1:
+            return inf
+        if kind == 2:
+            return nan
+        return _hypot_values(differences)
     differences = []
     for i in range(len(p)):
         if type(p[i]) != type(1.0):
@@ -911,6 +923,9 @@ def modf(x):
     return (fraction, __math('fdiv', whole, 1.0))
 
 def frexp(x):
+    ready = __math('frexp_plain', x)
+    if ready is not None:
+        return ready
     _check_real(x)
     if _is_integral(x):
         n = int(x)
@@ -922,6 +937,9 @@ def frexp(x):
     return __math('frexp', x)
 
 def ldexp(x, i):
+    ready = __math('ldexp_plain', x, i)
+    if ready is not None:
+        return ready
     if type(i) != type(1) and type(i) != type(True):
         raise 'TypeError: ldexp exponent must be an integer'
     result = __math('ldexp', x, i)

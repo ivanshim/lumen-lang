@@ -15931,7 +15931,7 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 let wants = match working.as_str() {
-                    "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" | "fsum_partial" => 2,
+                    "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "ldexp_plain" | "nextafter" | "fmin" | "fmax" | "fsum_partial" | "fsum_finite" | "dist_float" => 2,
                     "fma" => 3,
                     _ => 1,
                 };
@@ -15964,7 +15964,60 @@ impl<'a> Engine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
-                if working == "fsum_partial" {
+                if working == "dist_float" {
+                    if !(self.lang.arithmetic_binary && self.lang.shortest_reals) || self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES) != arith::DEFAULT_PLACES {
+                        return Ok(Value::Null);
+                    }
+                    let read_point = |source: &Value| -> Option<Vec<f64>> {
+                        let items = match source.contents() { Value::Array(items) | Value::Tuple(items) => items, _ => return None };
+                        let mut point = Vec::with_capacity(items.len());
+                        for value in items.iter() {
+                            let Value::Real(number) = value.contents() else { return None };
+                            let pbits = number.p.bits();
+                            let denominator_bits = number.q.bits();
+                            let dyadic = pbits < 54 && (1..=1075).contains(&denominator_bits)
+                                && number.q.trailing_zeros() == Some(denominator_bits - 1);
+                            let whole = number.q.is_one() && pbits < 1025
+                                && pbits.saturating_sub(number.p.trailing_zeros().unwrap_or(0)) < 54;
+                            if number.places != arith::DEFAULT_PLACES || (!number.outside() && !dyadic && !whole) { return None; }
+                            let n = crate::value::as_binary(&number.p, &number.q);
+                            point.push(if number.below && number.p.is_zero() { -n } else { n });
+                        }
+                        Some(point)
+                    };
+                    let a = match read_point(&args[1]) { Some(point) => point, None => return Ok(Value::Null) };
+                    let b = match read_point(&args[2]) { Some(point) => point, None => return Ok(Value::Null) };
+                    if a.len() != b.len() { return Ok(Value::Null); }
+                    let mut deltas = Vec::new();
+                    let (mut infinite, mut undefined) = (false, false);
+                    for at in 0..a.len() {
+                        let difference = a[at] - b[at];
+                        infinite |= difference.is_infinite();
+                        undefined |= difference.is_nan();
+                        deltas.push(crate::value::real_of(difference, arith::DEFAULT_PLACES));
+                    }
+                    let category = if infinite { 1 } else if undefined { 2 } else { 0 };
+                    return Ok(Value::tuple(vec![Value::Small(category), Value::array(deltas).held(true)]));
+                }
+                match working.as_str() {
+                    "frexp_plain" | "ldexp_plain" => {
+                        let accepts = match args[1].contents() {
+                            Value::Real(_) | Value::Flag(_) => true,
+                            Value::Small(number) => wants == 2 || (-9007199254740992..=9007199254740992).contains(&number),
+                            Value::Huge(_) => wants == 2,
+                            _ => false,
+                        };
+                        if !accepts { return Ok(Value::Null); }
+                        if wants == 2 {
+                            match args[2].contents() {
+                                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {}
+                                _ => return Ok(Value::Null),
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                if working == "fsum_partial" || working == "fsum_finite" {
                     if !self.lang.arithmetic_binary || self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES) != arith::DEFAULT_PLACES {
                         return Ok(Value::Null);
                     }
@@ -15986,6 +16039,7 @@ impl<'a> Engine<'a> {
                         }
                     };
                     let Some(mut sum) = as_double(&original) else { return Ok(Value::Null) };
+                    if !sum.is_finite() && working != "fsum_partial" { return Ok(Value::Null); }
                     let mut doubles = Vec::new();
                     for value in sequence.iter() {
                         match as_double(value) { Some(n) => doubles.push(n), None => return Ok(Value::Null) }
@@ -16006,7 +16060,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::tuple(vec![Value::array(remaining).held(true), last]));
                 }
                 let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
-                if working == "frexp" {
+                if working == "frexp" || working == "frexp_plain" {
                     let (mantissa, exponent) = if x == 0.0 || !x.is_finite() {
                         (x, 0)
                     } else {
@@ -16064,7 +16118,7 @@ impl<'a> Engine<'a> {
                     // Scaled a thousand powers at a time, so that a result
                     // down among the smallest reals is reached rather than
                     // lost against a power that was nought on its own.
-                    "ldexp" => {
+                    "ldexp" | "ldexp_plain" => {
                         let (mut held, mut by) = (x, y as i64);
                         if held != 0.0 && held.is_finite() {
                             while by > 1000 && held.is_finite() { held *= 2f64.powi(1000); by -= 1000; }
