@@ -167,6 +167,7 @@
     "'"
   ],
   "ext.stmt.class.bases.resolve": ["__mro_entries__", "__orig_bases__"],
+  "ext.stmt.fn.defaults.enclosing": true,
   "ext.stmt.class.annotations": [
     "__annotations__"
   ],

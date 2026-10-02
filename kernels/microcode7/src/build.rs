@@ -6632,17 +6632,20 @@ impl<'a> Builder<'a> {
         let mut first = Vec::new();
         for (at, from) in spares {
             self.pos = from;
-            // A spare's own value is read outside the routine's own
+            // Where the table requests enclosing defaults, hide the routine's own
             // names: a default naming what a parameter also names finds
             // the one outside, the reference reading every default
             // before the routine it belongs to exists. The parameters
             // stand aside under names nothing can spell, so every place
             // and mark the routine keeps stays where it was.
-            let standing: Vec<String> = (0..formals.len())
-                .map(|at| format!("\0default aside {}", formals[at])).collect();
-            let kept: Vec<String> = standing.iter().enumerate()
-                .map(|(at, away)| std::mem::replace(&mut self.layers.last_mut().expect("a layer").idents[at], away.clone()))
-                .collect();
+            let mut kept = Vec::new();
+            if self.table.flag("ext.stmt.fn.defaults.enclosing") {
+                for (at, name) in formals.iter().enumerate() {
+                    let away = format!("\0default aside {}", name);
+                    let ids = &mut self.layers.last_mut().expect("a layer").idents;
+                    kept.push(std::mem::replace(&mut ids[at], away));
+                }
+            }
             let built = self.expr(0);
             for (at, back) in kept.into_iter().enumerate() {
                 self.layers.last_mut().expect("a layer").idents[at] = back;

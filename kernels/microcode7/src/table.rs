@@ -155,7 +155,7 @@ ext.stmt.with.enter:L ext.stmt.with.leave:L \
 ext.system.module.cache:L \
 ext.builtin.module.helper.amiss:L ext.builtin.member.absent:L ext.builtin.member.unwritable:L \
 ext.builtin.member.absent.class:L ext.builtin.member.absent.module:L \
-ext.builtin.math.sumprod:B ext.system.module.path:L ext.builtin.math.floating:B ext.builtin.math.frexp:B ext.builtin.math.fsum:B \
+ext.builtin.math.sumprod:B ext.system.module.path:L ext.builtin.math.floating:B ext.builtin.math.frexp:B ext.builtin.math.fsum:B ext.stmt.fn.defaults.enclosing:B \
 ext.builtin.class.derive:L \
 ext.builtin.call.outcome:L \
 ext.stmt.import:L ext.stmt.import.from:L ext.stmt.import.lazy:L ext.stmt.import.as:L ext.system.module.name:L \

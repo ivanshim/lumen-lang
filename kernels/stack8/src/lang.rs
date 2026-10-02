@@ -1096,6 +1096,7 @@ pub struct Lang {
     /// members, in the order written.
     pub class_annotations: Vec<String>,
     pub class_base_words: Vec<String>,
+    pub default_enclosing: bool,
     pub posix_words: Vec<String>,
     /// The words for a class's own method that answers a call of the
     /// class itself, and for one that hands over what walking the class
@@ -1339,7 +1340,7 @@ w ext.syntax.map.resized | w ext.syntax.map.unhashable | b ext.syntax.map.value_
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
 w ext.builtin.module.helper.amiss | w ext.builtin.member.absent | w ext.builtin.member.unwritable | w ext.builtin.member.absent.class | w ext.builtin.member.absent.module
-b ext.builtin.math.sumprod | w ext.system.module.path | b ext.builtin.math.floating | b ext.builtin.math.frexp | b ext.builtin.math.fsum
+b ext.builtin.math.sumprod | w ext.system.module.path | b ext.builtin.math.floating | b ext.builtin.math.frexp | b ext.builtin.math.fsum | b ext.stmt.fn.defaults.enclosing
 w ext.builtin.class.derive
 w ext.builtin.call.outcome
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.lazy | w ext.stmt.import.as | w ext.system.module.name
@@ -2930,6 +2931,7 @@ impl Lang {
             module_getattr: r.head("ext.system.module.getattr")?,
             class_annotations: r.strings("ext.stmt.class.annotations")?,
             class_base_words: r.strings("ext.stmt.class.bases.resolve")?,
+            default_enclosing: r.flag("ext.stmt.fn.defaults.enclosing")?,
             posix_words: r.strings("ext.builtin.posix")?,
             class_called: r.head("ext.stmt.class.called")?,
             text_ordered: r.flag("ext.op.order.text")?,
