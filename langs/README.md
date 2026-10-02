@@ -5657,7 +5657,7 @@ and ordinary multiplication/addition for other numeric types.
 
 The embedded `test/test_iter.py` is byte-for-byte CPython `Lib/test/test_iter.py`
 from tag `v3.14.8`, commit `8e6e75d9102e` (the suite source recorded in `tests/README.md`),
-under the PSF license in `tests/python/LICENSE`. It supplies the original
+under the PSF license in `tests/python-3.14.8/LICENSE`. It supplies the original
 module for imports by the unchanged math tests.
 
 `ext.stmt.import.nonpackage` gives the two suffix pieces for a Python
@@ -5716,3 +5716,50 @@ were introduced after 3.14. Integer math arguments use the index protocol,
 including int subclasses and objects implementing __index__.
 Percent-format type errors follow the release wording; successful ordered
 unittest assertions do not stringify their operands.
+
+## Python release selection
+
+[`python/versions.json`](python/versions.json) is metadata, kept below a
+subdirectory because top-level JSON files are language definitions. `window`
+is exactly 2; `versions` maps each supported two-number series to one full
+`release`, `tag`, `commit`, `release_date`, `tests`, `library_overlay`, and
+`label_overlay`. Registration currently contains only 3.14 → 3.14.8. The host
+and suite tools choose the highest series by default, never JSON entry order.
+
+Python programs can have a small language configuration beside their source:
+for `app.py`, write `app.py.lumen.json` containing
+`{"python": {"version": "3.14"}}`. This is read only for the Python language.
+`--python <version>` overrides `LUMEN_PYTHON`, which overrides `python.version`,
+which overrides the default. The host accepts `--python` before the source or
+directly after it, as it accepts `--lang`. Child interpreters inherit the
+resolved full pin through `LUMEN_PYTHON`.
+
+A series selects its exact pin silently. The exact full pin is also silent.
+Another micro release in a supported series warns on stderr, naming requested
+and actual releases and the CPython suite. Malformed or unsupported values
+fail before the source runs, with the supported releases listed. Runtime
+`sys.version`, `sys.version_info`, `sys.hexversion` and
+`platform.python_version()` report the resolved full pin.
+
+The host merges the selected `label_overlay` object over `python.json` before
+passing it to each kernel. Overlay keys replace existing `ext.*` labels;
+the 3.14 overlay is empty. `python/3.15/labels.json` restores explicit
+`lazy import`, already implemented by both full kernels. That directory is
+an unregistered demonstration: it enables nothing until a 3.15 suite and
+release pin are added to the table. It does not advertise 3.15 support.
+
+`build.rs` embeds each registered overlay's `.py` files with `include_str!`
+in a generated module manifest. Module names shadow shared
+`lib_python/modules` entries before import; other modules fall through to
+the shared 3.14 library. Overlays may carry the same `manifest-layout.json`
+`files`, `aliases` and `adapters` fields as the shared manifest. Selected
+sources retain logical shared-library locations so package `__path__` and
+embedded child lookup continue to work even without files on disk. The host
+sets release identity after loading sys/platform and gives doctest the suite
+path from the table. The shared library sources remain the 3.14 ones.
+
+Adding 3.15 requires the copied full-release suite, library/label overlay
+files, a provenance table in tests/README.md and one table entry; no Rust or
+suite-tool change. A third series replaces the oldest entry. Refresh a micro
+pin using `git mv` for the suite and update the single table entry. Rebuild
+after either kind of registration; Cargo tracks the table and overlay files.
