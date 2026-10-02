@@ -1,6 +1,4 @@
-# From CPython 3.14, Lib/datetime.py.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Source: CPython Lib/datetime.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Specific date/time and related types.
 
 See https://data.iana.org/time-zones/tz-link.html for
