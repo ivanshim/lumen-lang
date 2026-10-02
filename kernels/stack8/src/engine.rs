@@ -3356,16 +3356,48 @@ impl<'a> Engine<'a> {
         Ok(Some(answer))
     }
 
+    fn slice_source_step(&mut self, object: &Rc<Instance>, source: &Value) -> Res<Option<Value>> {
+        let answer=self.special_step(source);
+        if answer.is_err() { Self::iterator_state_store(object,"source",Value::Null); }
+        answer
+    }
+
     fn slice_recipe_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
         let source = Self::iterator_state_field(object, "source")?;
         if matches!(source.contents(), Value::Null) { return Ok(None); }
+        let small_state = match (Self::iterator_state_field(object,"target")?.contents(),Self::iterator_state_field(object,"position")?.contents(),Self::iterator_state_field(object,"stop")?.contents()) {
+            (Value::Small(target),Value::Small(position),Value::Null) => Some((target,position,None,target)),
+            (Value::Small(target),Value::Small(position),Value::Small(stop)) => match Self::iterator_state_field(object,"consume")?.contents() {
+                Value::Small(consume) => Some((target,position,Some(stop),target.min(consume))), _ => None,
+            },
+            _ => None,
+        };
+        if let Some((target,mut position,stop,limit))=small_state {
+            while position < limit {
+                if self.slice_source_step(object,&source)?.is_none() { Self::iterator_state_store(object,"source",Value::Null);return Ok(None); }
+                position+=1;
+                Self::iterator_state_store(object,"position",Value::Small(position));
+            }
+            if stop.is_some_and(|end|target>=end) { Self::iterator_state_store(object,"source",Value::Null);return Ok(None); }
+            let item=self.slice_source_step(object,&source)?;
+            if item.is_none() { Self::iterator_state_store(object,"source",Value::Null);return Ok(None); }
+            let stride=Self::iterator_state_field(object,"step")?.contents();
+            let next=match stride {
+                Value::Small(step) => Value::Small(target.checked_add(step).filter(|sum|stop.is_none_or(|end|*sum<=end)).unwrap_or(stop.unwrap_or(-1))),
+                other => Value::of_big(BigInt::from(target)+other.as_big()?),
+            };
+            let consumed=position.checked_add(1).map(Value::Small).unwrap_or_else(||Value::of_big(BigInt::from(position)+BigInt::from(1)));
+            Self::iterator_state_store(object,"position",consumed);
+            Self::iterator_state_store(object,"target",next);
+            return Ok(item);
+        }
         let target = Self::iterator_state_field(object, "target")?.as_big()?;
         let stop = Self::iterator_state_field(object, "stop")?;
         let stop = if matches!(stop.contents(), Value::Null) { None } else { Some(stop.as_big()?) };
         let mut position = Self::iterator_state_field(object, "position")?.as_big()?;
         let limit = if stop.is_some() { target.clone().min(Self::iterator_state_field(object, "consume")?.as_big()?) } else { target.clone() };
         while position < limit {
-            if self.special_step(&source)?.is_none() {
+            if self.slice_source_step(object,&source)?.is_none() {
                 Self::iterator_state_store(object, "source", Value::Null);
                 return Ok(None);
             }
@@ -3376,7 +3408,7 @@ impl<'a> Engine<'a> {
             Self::iterator_state_store(object, "source", Value::Null);
             return Ok(None);
         }
-        let answer = self.special_step(&source)?;
+        let answer = self.slice_source_step(object,&source)?;
         if answer.is_none() { Self::iterator_state_store(object, "source", Value::Null); return Ok(None); }
         let step = Self::iterator_state_field(object, "step")?.as_big()?;
         Self::iterator_state_store(object, "position", Value::of_big(position + BigInt::from(1)));
@@ -3385,8 +3417,8 @@ impl<'a> Engine<'a> {
     }
 
     fn zip_recipe_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
-        let mut active = Self::iterator_state_field(object, "active")?.as_big()?;
-        if active.is_zero() { return Ok(None); }
+        let mut active = Self::iterator_state_field(object, "active")?.contents();
+        if match &active {Value::Small(n)=>*n==0,other=>other.as_big()?.is_zero()} { return Ok(None); }
         let storage = Self::iterator_state_field(object, "sources")?;
         let Value::Array(sources) = storage.contents() else { return Err("TypeError: invalid zip iterator state".into()); };
         let fill = Self::iterator_state_field(object, "fillvalue")?;
@@ -3401,9 +3433,11 @@ impl<'a> Engine<'a> {
                     let next = Value::array(changed);
                     if let Some(cell) = Self::holding_cell(&storage) { *cell.borrow_mut() = next; }
                     else { Self::iterator_state_store(object, "sources", next); }
-                    active -= BigInt::from(1);
-                    Self::iterator_state_store(object, "active", Value::of_big(active.clone()));
-                    if active.is_zero() { return Ok(None); }
+                    let remaining=active.as_big()? - BigInt::from(1);
+                    let empty=remaining.is_zero();
+                    active=Value::of_big(remaining);
+                    Self::iterator_state_store(object, "active", active.clone());
+                    if empty { return Ok(None); }
                     row.push(fill.clone());
                 }
                 Err(fault) => { Self::iterator_state_store(object, "active", Value::Small(0)); return Err(fault); }

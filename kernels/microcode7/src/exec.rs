@@ -9215,16 +9215,57 @@ impl<'a> Machine<'a> {
         Ok(Some(item))
     }
 
+    fn slice_source_advance(&mut self, owner: &Rc<Thing>, input: &Value) -> Result<Option<Value>,String> {
+        match self.advance_object(input) {
+            Ok(item)=>Ok(item),
+            Err(error)=>{Self::recipe_replace(owner,"source",Value::Nil);Err(error)},
+        }
+    }
+
     fn recipe_slice(&mut self, thing: &Rc<Thing>) -> Result<Option<Value>, String> {
         let source = Self::recipe_member(thing, "source")?;
         if matches!(source.settled(), Value::Nil) { return Ok(None); }
-        let next_at = Self::recipe_member(thing, "target")?.as_big()?;
+        let index=Self::recipe_member(thing,"target")?.settled();
+        let offset=Self::recipe_member(thing,"position")?.settled();
+        let ending=Self::recipe_member(thing,"stop")?.settled();
+        let compact=if let (Value::Small(at),Value::Small(place))=(&index,&offset) {
+            match ending {
+                Value::Nil=>Some((*at,*place,None,*at)),
+                Value::Small(last)=>match Self::recipe_member(thing,"consume")?.settled() {
+                    Value::Small(bound)=>Some((*at,*place,Some(last),(*at).min(bound))),_=>None,
+                },
+                _=>None,
+            }
+        } else { None };
+        if let Some((at,mut place,last,bound))=compact {
+            while place<bound {
+                match self.slice_source_advance(thing,&source)? {
+                    None=>{Self::recipe_replace(thing,"source",Value::Nil);return Ok(None)},
+                    Some(_)=>{place+=1;Self::recipe_replace(thing,"position",Value::Small(place));},
+                }
+            }
+            if last.is_some_and(|last|at>=last) {Self::recipe_replace(thing,"source",Value::Nil);return Ok(None)}
+            match self.slice_source_advance(thing,&source)? {
+                None=>{Self::recipe_replace(thing,"source",Value::Nil);return Ok(None)},
+                Some(value)=>{
+                    let step=Self::recipe_member(thing,"step")?.settled();
+                    let target=if let Value::Small(by)=step {
+                        Value::Small(match at.checked_add(by) {Some(sum) if last.is_none_or(|end|sum<=end)=>sum,_=>last.unwrap_or(-1)})
+                    } else {Value::from_big(BigInt::from(at)+step.as_big()?)};
+                    let position=match place.checked_add(1) {Some(sum)=>Value::Small(sum),None=>Value::from_big(BigInt::from(place)+BigInt::from(1))};
+                    Self::recipe_replace(thing,"position",position);
+                    Self::recipe_replace(thing,"target",target);
+                    return Ok(Some(value));
+                }
+            }
+        }
+        let next_at = index.as_big()?;
         let stop_value = Self::recipe_member(thing, "stop")?;
         let end = if matches!(stop_value.settled(), Value::Nil) { None } else { Some(stop_value.as_big()?) };
         let mut cursor = Self::recipe_member(thing, "position")?.as_big()?;
         let boundary = if end.is_none() { next_at.clone() } else { next_at.clone().min(Self::recipe_member(thing, "consume")?.as_big()?) };
         while cursor < boundary {
-            if self.advance_object(&source)?.is_none() {
+            if self.slice_source_advance(thing,&source)?.is_none() {
                 Self::recipe_replace(thing, "source", Value::Nil);
                 return Ok(None);
             }
@@ -9235,7 +9276,7 @@ impl<'a> Machine<'a> {
             Self::recipe_replace(thing, "source", Value::Nil);
             return Ok(None);
         }
-        match self.advance_object(&source)? {
+        match self.slice_source_advance(thing,&source)? {
             None => { Self::recipe_replace(thing, "source", Value::Nil); Ok(None) }
             Some(value) => {
                 let stride = Self::recipe_member(thing, "step")?.as_big()?;
@@ -9247,8 +9288,9 @@ impl<'a> Machine<'a> {
     }
 
     fn recipe_zip(&mut self, thing: &Rc<Thing>) -> Result<Option<Value>, String> {
-        let mut left = Self::recipe_member(thing, "active")?.as_big()?;
-        if left == BigInt::from(0) { return Ok(None); }
+        let mut left = Self::recipe_member(thing, "active")?.settled();
+        let empty=match &left {Value::Small(count)=>*count==0,value=>value.as_big()?==BigInt::from(0)};
+        if empty { return Ok(None); }
         let held = Self::recipe_member(thing, "sources")?;
         let Value::Vector(walks) = held.settled() else { return Err(String::from("TypeError: invalid zip iterator state")); };
         let fill = Self::recipe_member(thing, "fillvalue")?;
@@ -9264,9 +9306,11 @@ impl<'a> Machine<'a> {
                     let value = Value::Vector(crate::tuples::Sequence::plain(changed));
                     if let Some(cell) = Self::native_cell(&held) { *cell.borrow_mut() = value; }
                     else { Self::recipe_replace(thing, "sources", value); }
-                    left -= BigInt::from(1);
-                    Self::recipe_replace(thing, "active", Value::from_big(left.clone()));
-                    if left == BigInt::from(0) { return Ok(None); }
+                    let count=left.as_big()? - BigInt::from(1);
+                    let empty=count==BigInt::from(0);
+                    left=Value::from_big(count);
+                    Self::recipe_replace(thing, "active", left.clone());
+                    if empty { return Ok(None); }
                     tuple.push(fill.clone());
                 }
             }
