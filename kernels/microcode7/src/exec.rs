@@ -14321,6 +14321,17 @@ impl<'a> Machine<'a> {
                     };
                     return Ok(Value::Flag(truth));
                 }
+                // Exact native strings cannot override Python comparison.
+                // Their Unicode order needs no general method dispatch.
+                if let (Value::Text(left), Value::Text(right)) = (&a[position], &b[position]) {
+                    let order = left.cmp(right);
+                    if order.is_eq() { position += 1; continue; }
+                    let answer = match operation {
+                        Prim::Eq => false, Prim::Ne => true,
+                        Prim::Lt | Prim::Le => order.is_lt(), _ => order.is_gt(),
+                    };
+                    return Ok(Value::Flag(answer));
+                }
                 if self.member_agrees(&a[position], &b[position])? { position += 1; continue; }
                 if operation == Prim::Eq { return Ok(Value::Flag(false)); }
                 if operation == Prim::Ne { return Ok(Value::Flag(true)); }
