@@ -900,7 +900,9 @@ impl<'a> Machine<'a> {
         let mut entries = vec![(String::from("__name__"), Value::text("_typing"))];
         for title in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let kind = self.native_kind(title);
-            kind.shared.borrow_mut().push((String::from("__module__"), Value::text("typing")));
+            if title != "NoDefaultType" {
+                kind.shared.borrow_mut().push((String::from("__module__"), Value::text("typing")));
+            }
             if self.table.has_any("ext.stmt.type_params.open") && title == "Generic" {
                 let method = Self::wrap(5, vec![Self::wrap(77, Vec::new())]);
                 kind.shared.borrow_mut().push((self.rules.detail_getitem.to_owned(), method));
@@ -1851,8 +1853,17 @@ impl<'a> Machine<'a> {
             if Self::native_beneath(b).as_deref() == Some("float") && key == "fromhex" {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
             }
+            if key == self.detail("module") && self.table.has_any("ext.stmt.class.detail.module") {
+                match Self::own_entry(b, key) {
+                    Some(metadata) => return Ok(metadata),
+                    None if Self::native_word(b).is_some() || self.builds_classes(b)
+                        || self.ancestor.as_ref().is_some_and(|base| Rc::ptr_eq(base, b)) => {
+                        return Ok(Value::text(self.builtin_module()));
+                    }
+                    None => {},
+                }
+            }
             if let Some(word)=Self::native_word(b) {
-                if key==self.detail("module") { return Ok(Value::text(self.builtin_module())); }
                 if key==self.detail("qualified") { return Ok(Value::text(&word)); }
                 if key=="__getformat__" && word=="float" {
                     return Ok(Value::Intrinsic(Prim::ValueMethod, Rc::from("float.__getformat__")));

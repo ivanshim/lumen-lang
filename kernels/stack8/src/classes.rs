@@ -856,7 +856,9 @@ impl<'a> Engine<'a> {
         let mut fields = vec![("__name__".into(), Value::text("_typing"))];
         for name in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let class = self.kind_class(name);
-            class.shared.borrow_mut().push(("__module__".into(), Value::text("typing")));
+            if name != "NoDefaultType" {
+                class.shared.borrow_mut().push(("__module__".into(), Value::text("typing")));
+            }
             if name == "Generic" && self.lang.type_parameters {
                 let item = Self::adapter(77, Vec::new());
                 class.shared.borrow_mut().push((self.class_word("getitem").into(), Self::adapter(5, vec![item])));
@@ -1454,8 +1456,14 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                if !self.class_word("module").is_empty() && name == self.class_word("module") {
+                    if let Some(stored) = Self::own_class_value(c, name) { return Ok(stored); }
+                    let is_root = self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, c));
+                    if is_root || self.is_metaclass_root(c) || Self::own_kind(c).is_some() {
+                        return Ok(Value::text(self.home_module_word()));
+                    }
+                }
                 if let Some(word) = Self::own_kind(c) {
-                    if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                     if name==self.class_word("qualified") { return Ok(Value::text(&word)); }
                     if name == "__getformat__" && word == "float" {
                         return Ok(Value::Native(Builtin::ValueMethod, Rc::from("float.__getformat__")));
