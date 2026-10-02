@@ -214,6 +214,10 @@ pub struct Engine<'a> {
     /// Every object made, held loosely, in the order they were made, so
     /// that those still standing when the run ends can be let go.
     things_made: RefCell<Vec<std::rc::Weak<Instance>>>,
+    /// The classes made beneath each class, keyed by where the forebear
+    /// stands and held loosely, so __subclasses__ names only those still
+    /// standing.
+    class_children: RefCell<HashMap<usize, Vec<Weak<Class>>>>,
     /// The files already read where the program asked for them to be
     /// read only once, by the whole name each stands under.
     read_already: RefCell<std::collections::HashSet<String>>,
@@ -1173,6 +1177,7 @@ impl<'a> Engine<'a> {
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
             things_made: RefCell::new(Vec::new()),
+            class_children: RefCell::new(HashMap::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
             absent_member: None,
@@ -14993,7 +14998,20 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.weak_layout(&o.class_now()),
                     _ => true,
                 };
-                let Some(hold) = eligible.then(|| crate::faint::hold_of(&args[0])).flatten() else {
+                let settled = args[0].contents();
+                let mut hold = eligible.then(|| crate::faint::hold_of(&settled)).flatten();
+                if hold.is_none() {
+                    // A word naming a kind stands for the kind itself,
+                    // which stands for the whole run: a weak hold on it
+                    // revives whenever it is asked.
+                    let lasting = match &settled {
+                        Value::Native(op, _) => Self::kind_builtin(op),
+                        Value::ByteKind(..) | Value::SortOf(_) => true,
+                        _ => false,
+                    };
+                    if lasting { hold = Some(crate::faint::Hold::Lasts(settled.clone())); }
+                }
+                let Some(hold) = hold else {
                     let kind = args[0].core_kind();
                     let head = self.lang.weak_refused.first().cloned().unwrap_or_default();
                     let tail = self.lang.weak_refused.get(1).cloned().unwrap_or_default();

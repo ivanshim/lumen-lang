@@ -29,6 +29,10 @@ pub enum Hold {
     Set(Weak<RefCell<Members>>),
     Routine(Weak<Routine>),
     Method(Weak<Instance>, Weak<Routine>),
+    /// A value that never goes: the words a language's kinds go by stand
+    /// for as long as the run stands, so a weak hold on one revives
+    /// whenever it is asked.
+    Lasts(Value),
 }
 
 impl Hold {
@@ -41,6 +45,7 @@ impl Hold {
             Hold::Set(w) => Value::Set(w.upgrade()?),
             Hold::Routine(w) => Value::Routine(w.upgrade()?),
             Hold::Method(o, r) => Value::Method(o.upgrade()?, r.upgrade()?),
+            Hold::Lasts(value) => value.clone(),
         })
     }
 
@@ -52,6 +57,7 @@ impl Hold {
             Hold::Set(w) => w.strong_count() == 0,
             Hold::Routine(w) => w.strong_count() == 0,
             Hold::Method(o, r) => o.strong_count() == 0 || r.strong_count() == 0,
+            Hold::Lasts(_) => false,
         }
     }
 }

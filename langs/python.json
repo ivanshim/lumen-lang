@@ -2698,6 +2698,12 @@
   "ext.stmt.class.detail.set": [
     "__setattr__"
   ],
+  "ext.stmt.class.detail.abstract": [
+    "__abstractmethods__",
+    "TypeError: Can't instantiate abstract class ",
+    " without an implementation for abstract method ",
+    " without an implementation for abstract methods "
+  ],
   "ext.stmt.class.detail.slots": [
     "__slots__"
   ],

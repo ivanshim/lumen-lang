@@ -8820,7 +8820,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
-            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len().saturating_sub(1));
+            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len());
             if self.forbids_await || !self.piece().asynchronous || class_expression {
                 let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {phrase}"));
@@ -9127,9 +9127,17 @@ impl<'a> Compiler<'a> {
                         let count = self.arguments(&call)?;
                         self.act(Action::Summon(named.as_str().into()), count + 2);
                     } else {
+                        // A member of the forebear read and not called:
+                        // the proxy is made and the member read off it,
+                        // as a member of any other value is read.
                         self.discard();
                         self.discard();
-                        self.class_cannot_run();
+                        let cell = self.gathering().class_cell.clone();
+                        self.read(&cell);
+                        self.read(&this);
+                        self.constant(PARENT_CALLABLE.with(Clone::clone));
+                        self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), 3);
+                        self.act(Action::Grab(Rc::from(named.as_str())), 1);
                     }
                 } else {
                     self.class_cannot_run();

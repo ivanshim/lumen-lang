@@ -381,6 +381,10 @@ pub struct Machine<'a> {
     loose_equals: bool,
     /// How many things have been made, so each carries its own turn.
     made: usize,
+    /// The classes built beneath each class, keyed by where the forebear
+    /// stands and held loosely, so __subclasses__ names only those still
+    /// standing.
+    class_children: RefCell<HashMap<usize, Vec<Weak<Blueprint>>>>,
     /// The line of the source now running and the file it is written
     /// in, which a complaint names, and the line the last value raised
     /// was raised on.
@@ -1272,6 +1276,7 @@ impl<'a> Machine<'a> {
             handed: Vec::new(),
             pending: Vec::new(),
             made: 0,
+            class_children: RefCell::new(HashMap::new()),
             row: 0,
             active_trace: None,
             gathering_locals: None,
@@ -14405,7 +14410,21 @@ impl<'a> Machine<'a> {
                     Value::Thing(t) => self.admits_weak(&t.blueprint()),
                     _ => true,
                 };
-                let Some(ghost) = (if allowed { crate::ghost::ghost_of(&v[0]) } else { None }) else {
+                let settled = v[0].settled();
+                let mut ghost = if allowed { crate::ghost::ghost_of(&settled) } else { None };
+                if ghost.is_none() {
+                    // A word naming a kind stands for the kind itself,
+                    // which stands for the whole run: a weak hold on it
+                    // revives whenever it is asked.
+                    let lasting = match &settled {
+                        Value::Intrinsic(op, _) => Self::names_a_kind(op),
+                        Value::OctetKind { .. } => true,
+                        Value::Wrapped(8, names) => matches!(names.first(), Some(Value::Text(word)) if self.table.prims.get(word.as_ref()).copied().map_or(false, |op| Self::names_a_kind(&op))),
+                        _ => false,
+                    };
+                    if lasting { ghost = Some(crate::ghost::Ghost::Lasting(settled.clone())); }
+                }
+                let Some(ghost) = ghost else {
                     let refusal = self.table.strings("ext.builtin.weak.refused");
                     let kind = v[0].settled().kind_word();
                     let (head, tail) = (refusal.first().map_or("", String::as_str), refusal.get(1).map_or("", String::as_str));

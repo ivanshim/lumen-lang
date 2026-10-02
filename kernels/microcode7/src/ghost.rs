@@ -30,6 +30,10 @@ pub enum Ghost {
     Bound(Weak<Routine>, Weak<Env>),
     Routine(Weak<Routine>),
     Method(Weak<Routine>, Weak<Thing>),
+    /// A value that never departs: the words a language's kinds go by
+    /// stand for as long as the run stands, so a weak hold on one
+    /// revives whenever it is asked.
+    Lasting(Value),
 }
 
 impl Ghost {
@@ -43,6 +47,7 @@ impl Ghost {
             Ghost::Bound(p, e) => Some(Value::Bound(p.upgrade()?, e.upgrade()?)),
             Ghost::Routine(w) => w.upgrade().map(Value::Routine),
             Ghost::Method(p, t) => Some(Value::Method(p.upgrade()?, t.upgrade()?)),
+            Ghost::Lasting(value) => Some(value.clone()),
         }
     }
 

@@ -183,6 +183,18 @@ impl Value {
             }
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
+            // A builtin word is the one same value wherever the word is
+            // read, so it folds by the word, the way it is equal by it.
+            Self::Intrinsic(_, word) => {
+                let mut state = std::collections::hash_map::DefaultHasher::new();
+                word.hash(&mut state);
+                state.finish() as i64
+            }
+            Self::Wrapped(8, names) => return names.first().and_then(|word| word.hash_number()),
+            Self::OctetKind { changeable, .. } => {
+                let word: &str = if *changeable { "bytearray" } else { "bytes" };
+                return Self::text(word).hash_number();
+            }
             // The bounds folded one after another, as a tuple's parts are,
             // with no length folded in after them.
             Self::Span(bounds) => {

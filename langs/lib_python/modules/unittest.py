@@ -232,6 +232,9 @@ class TestCase:
     def assertIsSubclass(self, cls, superclass, msg=None):
         self._check(issubclass(cls, superclass), _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
 
+    def assertNotIsSubclass(self, cls, superclass, msg=None):
+        self._check(not issubclass(cls, superclass), _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
+
     def assertNotIsInstance(self, value, kind, msg=None):
         self._check(not isinstance(value, kind), _representation(value) + ' is an instance of the requested class', msg)
 

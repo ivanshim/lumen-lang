@@ -5154,6 +5154,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
+| `ext.stmt.class.detail.abstract` | - | - | `__abstractmethods__` `TypeError: Can't instantiate abstract class ` ` without an implementation for abstract method ` ` without an implementation for abstract methods ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.arguments.init` | - | - | `TypeError: ` `.__init__() takes exactly one argument (the instance to initialize)` | - | - | - | - | - | - | - |
@@ -5549,6 +5550,10 @@ Frames are allocated on demand when an exception first records its location.
 
 `ext.builtin.text.getnewargs` exposes a string’s reconstruction arguments as a one-item tuple containing a fresh base string.
 `ext.stmt.class.detail.prepare` names the metaclass namespace preparation method.
+`ext.stmt.class.detail.abstract` names the member a class's maker
+leaves its set of unanswered abstract method names under, and words the
+refusal for making a thing of such a class: the opening, then the middle
+for one name and the middle for many.
 
 `ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.
 `ext.builtin.core.abs.type` names an unsupported magnitude operand;

@@ -678,6 +678,11 @@ impl Value {
             Value::Octets { changeable: true, .. } => Err("bytearray"),
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
+            // A builtin word is the one same value wherever the word is
+            // read, so it is addressed by the word, as it is equal by it.
+            Value::Intrinsic(_, word) => Ok(format!("word:{word}")),
+            Value::Wrapped(8, names) => Ok(format!("kind/{names:?}")),
+            Value::OctetKind { changeable, .. } => Ok(format!("octetkind:{changeable}")),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
             Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),

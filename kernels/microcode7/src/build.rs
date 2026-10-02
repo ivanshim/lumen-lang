@@ -8486,7 +8486,7 @@ impl<'a> Builder<'a> {
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
-            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1));
+            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len());
             if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression {
                 let scope = if self.layers.len() == 1 || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {scope}"));
@@ -8766,7 +8766,16 @@ impl<'a> Builder<'a> {
                             self.advance();
                             given.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                             prim_call(Prim::Bid, given)
-                        } else { self.class_not_ready() }
+                        } else {
+                            // A member of the forebear read and not
+                            // called: the proxy is made and the member
+                            // read off it, as a member of anything is.
+                            let private = self.parts().completed_class.ident.to_string();
+                            let pair = vec![self.read(&private), self.read(&receiver)];
+                            let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
+                            let proxy = invoke(parent_word, pair);
+                            prim_call(Prim::Of, vec![proxy, constant(Value::text(&called))])
+                        }
                     }
                     _ => self.class_not_ready(),
                 }

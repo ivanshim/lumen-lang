@@ -298,6 +298,12 @@ impl<'a> Engine<'a> {
         }
         // Keywords with no hook to receive them are refused.
         else if !carried.is_empty() { return Err(self.class_refusal()); }
+        // The class is told of to each forebear it was written under,
+        // loosely, so the forebear's __subclasses__ names it while it
+        // stands and never after.
+        for parent in &c.direct {
+            self.class_children.borrow_mut().entry(Rc::as_ptr(parent) as usize).or_default().push(Rc::downgrade(&c));
+        }
         Ok(Value::Class(c))
     }
     /// The slots a class names become members of it, each a descriptor
@@ -408,6 +414,11 @@ impl<'a> Engine<'a> {
         for part in ["property.fget", "property.fset", "property.fdel", "doc"] {
             members.push((self.class_word(part).to_string(), Self::adapter(28, vec![Value::text(Self::accessor_place(part))])));
         }
+        // A property is abstract when any accessor it keeps is: the mark
+        // is read off the accessors and weighed the way truth is weighed.
+        if self.lang.class_details.get("abstract").and_then(|words| words.first()).map_or(false, |word| !word.is_empty()) {
+            members.push(("__isabstractmethod__".to_string(), Self::adapter(28, vec![Value::text("\0abstract")])));
+        }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: RefCell::new(members), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
@@ -496,6 +507,21 @@ impl<'a> Engine<'a> {
             _ => Err(self.class_refusal()),
         }
     }
+    /// Whether a property still waits on an answer: any accessor it keeps
+    /// carries a mark that weighs true. An accessor with no mark counts as
+    /// not abstract; a mark that cannot be weighed raises as it would.
+    fn property_abstract(&mut self, property: &Instance) -> Flow<Value> {
+        for place in ["\0fget", "\0fset", "\0fdel"] {
+            let Some(accessor) = Self::property_accessor(property, place) else { continue };
+            let held = match self.class_get(accessor, "__isabstractmethod__", true) {
+                Ok(held) => held,
+                Err(fault) if self.attribute_fault(&fault) => continue,
+                Err(fault) => return Err(fault),
+            };
+            if self.special_truth(&held).map_err(Fault::from)? { return Ok(Value::Flag(true)); }
+        }
+        Ok(Value::Flag(false))
+    }
     /// What a property's kept accessor reads as: the accessor itself, or
     /// for its first string, the one it was given, else its getter's.
     fn property_reading(&self, property: &Instance, place: &str) -> Value {
@@ -564,6 +590,7 @@ impl<'a> Engine<'a> {
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
                     if self.exception_class(c) { return Ok(self.exception_instance(c.clone(), args[1..].to_vec(), Value::Null)); }
+                    self.abstract_refusal(c)?;
                     if args.len()!=1 { self.root_refuses_arguments(c,true)?; }
                     self.made += 1;
                     Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made})))
@@ -592,6 +619,17 @@ impl<'a> Engine<'a> {
                 43 => {
                     if let Some(first) = args.first() { self.iterator(first.clone())?; }
                     self.class_apply(w.1[0].clone(), args)
+                }
+                44 => {
+                    let Value::Class(c) = &w.1[0] else { return Err(self.class_refusal()); };
+                    let mut live = Vec::new();
+                    let mut children = self.class_children.borrow_mut();
+                    if let Some(list) = children.get_mut(&(Rc::as_ptr(c) as usize)) {
+                        list.retain(|weak| weak.upgrade().is_some());
+                        live = list.iter().filter_map(|weak| weak.upgrade().map(Value::Class)).collect();
+                    }
+                    drop(children);
+                    Ok(Value::array(live))
                 }
                 42 => Ok(Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true)),
                 30 => self.root_work(&w.1[0].plain(),args),
@@ -798,6 +836,7 @@ impl<'a> Engine<'a> {
     /// The making itself, as the kind builtin does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        self.abstract_refusal(&c)?;
         let allocation = self.class_value(&c,self.class_word("allocate"));
         // A metaclass called outright makes a class, the way the kind
         // builtin does, from a name, bases and a namespace.
@@ -875,8 +914,25 @@ impl<'a> Engine<'a> {
         if pieces.len() != 2 { return Err(self.class_refusal()); }
         Err(format!("{}{named}{}", pieces[0], pieces[1]).into())
     }
+    /// A class whose maker left it a set of names nobody answered is
+    /// refused on making, the names told in order: the label's words are
+    /// the member the set is kept under, the opening of the complaint and
+    /// the two middles, one name or many.
+    fn abstract_refusal(&self, c: &Rc<Class>) -> Flow<()> {
+        let Some(words) = self.lang.class_details.get("abstract").filter(|words| words.len() == 4) else { return Ok(()); };
+        let Some(held) = Self::own_class_value(c, &words[0]) else { return Ok(()); };
+        let mut names: Vec<String> = match held.contents() {
+            Value::Set(members) => members.borrow().items().iter().filter_map(|v| match v { Value::Text(t) => Some(t.to_string()), _ => None }).collect(),
+            _ => Vec::new(),
+        };
+        if names.is_empty() { return Ok(()); }
+        names.sort();
+        let listed = names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ");
+        let middle = if names.len() == 1 { &words[2] } else { &words[3] };
+        Err(format!("{}{}{}{}", words[1], c.name, middle, listed).into())
+    }
     /// A member every thing and every class has from the root, where
-    /// the name is one: the members the language names for it, and the
+    /// the name is one: the members the language names for it, and
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting. Given the class of a thing, the hooks come bare, to
     /// be bound to the thing.
@@ -1035,7 +1091,11 @@ impl<'a> Engine<'a> {
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
                 20..=27 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                28 => match subject { Some(Value::Object(o)) => Ok(self.property_reading(&o, &w.1[0].plain())), _ => Ok(value) },
+                28 => match &subject {
+                    Some(Value::Object(o)) if w.1[0].plain()=="\0abstract" => self.property_abstract(o),
+                    Some(Value::Object(o)) => Ok(self.property_reading(o, &w.1[0].plain())),
+                    _ => Ok(value),
+                },
                 _ => Ok(value),
             };
         }
@@ -1287,6 +1347,9 @@ impl<'a> Engine<'a> {
                 }
                 if self.lang.class_annotations.first().map_or(false,|word|word==name) { return self.class_annotations(c); }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                // The classes written beneath this one, the live ones,
+                // as the reference's own type.__subclasses__ tells them.
+                if name=="__subclasses__" { return Ok(Self::adapter(44, vec![subject.clone()])); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
                 // A class standing on a builtin kind reads that kind's
@@ -1530,6 +1593,15 @@ impl<'a> Engine<'a> {
                 // it holds under `__wrapped__`, and read the routine's
                 // own metadata through the wrapper unchanged.
                 if name=="__wrapped__" { return Ok(w.1[0].clone()); }
+                // The abstract mark of the routine within is read through
+                // the wrapper as well; a routine with no mark answers no.
+                if name=="__isabstractmethod__" {
+                    return match self.class_get(w.1[0].clone(),name,true) {
+                        Ok(held) => Ok(held),
+                        Err(fault) if self.attribute_fault(&fault) => Ok(Value::Flag(false)),
+                        Err(fault) => Err(fault),
+                    };
+                }
                 let inner=w.1[0].clone();
                 let carried=[self.class_word("module"),self.class_word("qualified"),self.class_word("name"),self.class_word("doc")];
                 let copied=carried.iter().any(|word|!word.is_empty()&&*word==name)
@@ -1549,6 +1621,10 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) if w.0==3 => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
+                // A bound routine reads any further member off the
+                // routine it wraps, the way the reference's own method
+                // reads its function's members.
+                return self.class_get(w.1[0].clone(), name, plain);
             }
             _ => {}
         }
@@ -2241,7 +2317,15 @@ impl<'a> Engine<'a> {
         let Some(name)=self.lang.class_special.get(if subclass{77}else{76}).cloned() else{return Ok(None);};
         let Some(member)=self.class_value(&maker,&name) else{return Ok(None);};
         let bound=self.bind_class_value(member,Some(wanted.clone()),maker)?;
-        let told=self.class_apply(bound,vec![given.clone()])?;
+        // A kind word asked about stands before the hook as the kind's
+        // own class, the way the reference hands the type itself over.
+        let given=match given {
+            Value::Adapter(w) if w.0==8 => match &w.1[0] { Value::Text(word) => Value::Class(self.kind_class(word)), _ => given.clone() },
+            Value::Native(_, word) if self.lang.builtins.get(word.as_ref()).copied().map_or(false,|op| Self::kind_builtin(&op)) => Value::Class(self.kind_class(word)),
+            Value::ByteKind(mutable, _) => { let word=self.byte_kind_word(*mutable).to_string(); Value::Class(self.kind_class(&word)) }
+            other => other.clone(),
+        };
+        let told=self.class_apply(bound,vec![given])?;
         Ok(Some(self.truth(&told)))
     }
     /// The builtin words that name a kind of value rather than a piece
@@ -2638,7 +2722,27 @@ impl<'a> Engine<'a> {
                 }
                 continue;
             }
-            if let Some(f)=Self::own_class_value(c,name){let mut all=if name==self.class_word("allocate"){vec![]}else{vec![subject.clone()]};all.extend(args);return self.class_apply(f,all);}
+            if let Some(f)=Self::own_class_value(c,name){
+                // A wrapper member is bound the way a plain reading
+                // binds it: a class method to the kind of the one
+                // asking, a static one as it stands, and a descriptor
+                // through its own reading of the one asking.
+                match &f {
+                    Value::Adapter(w) if w.0==5 => {
+                        return self.class_apply(Self::adapter(3,vec![w.1[0].clone(),Value::Class(receiver.clone())]),args);
+                    }
+                    Value::Adapter(w) if w.0==4 => { return self.class_apply(w.1[0].clone(),args); }
+                    _ => {}
+                }
+                if let Some(reader)=self.descriptor_hook(&f,"descriptor.get") {
+                    // The descriptor is told the one asking and the kind
+                    // it stands on, as the reference's own super tells
+                    // them, not the forebear the member was found on.
+                    let read=self.call_descriptor(&f,reader,vec![subject.clone(),Value::Class(receiver.clone())])?;
+                    return self.class_apply(read,args);
+                }
+                let mut all=if name==self.class_word("allocate"){vec![]}else{vec![subject.clone()]};all.extend(args);return self.class_apply(f,all);
+            }
             if self.exception_class(c) && self.lang.constructor.as_deref() == Some(name) {
                 if let Value::Object(o) = &subject { return self.exception_method(o.clone(), name, &args); }
             }
