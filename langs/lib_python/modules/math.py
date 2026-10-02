@@ -34,6 +34,14 @@ def _check_real(x):
         return
     raise 'TypeError: must be real number, not ' + type(x).__name__
 
+def _float_value(value):
+    if type(value) == type(1.0):
+        return value
+    if isinstance(value, float):
+        return float.__float__(value)
+    _check_real(value)
+    return float(value)
+
 def _answers_own(x, name):
     if type(x) == type(1) or type(x) == type(1.0) or type(x) == type(True):
         return False
@@ -253,10 +261,7 @@ def factorial(n):
 def fsum(values):
     def converted():
         for value in values:
-            if type(value) != type(1.0):
-                _check_real(value)
-                value = float(value)
-            yield value
+            yield value if type(value) == type(1.0) else _float_value(value)
     return __math('fsum', converted())
 
 
@@ -314,9 +319,7 @@ def isqrt(n):
 def hypot(*coordinates):
     values = []
     for coordinate in coordinates:
-        if type(coordinate) != type(1.0):
-            _check_real(coordinate)
-        values.append(float(coordinate))
+        values.append(_float_value(coordinate))
     return _hypot_values(values)
 
 
@@ -350,11 +353,7 @@ def dist(p, q, /):
         raise 'ValueError: both points must have the same number of dimensions'
     differences = []
     for i in range(len(p)):
-        if type(p[i]) != type(1.0):
-            _check_real(p[i])
-        if type(q[i]) != type(1.0):
-            _check_real(q[i])
-        differences.append(float(p[i]) - float(q[i]))
+        differences.append(_float_value(p[i]) - _float_value(q[i]))
     return _hypot_values(differences)
 
 def log2(x):
