@@ -1073,8 +1073,10 @@ impl<'a> Engine<'a> {
                         return Ok(answer);
                     }
                 }
-                let class = match &subject { Value::Object(o) => Value::Class(o.class_now().clone()), other => self.class_type(vec![other.clone()])? };
-                Value::tuple(vec![class, Value::tuple(Vec::new()), self.root_state(&subject)])
+                let protocol = if place == 12 { args.get(1).cloned().ok_or_else(|| self.class_refusal())? } else { Value::Small(0) };
+                let bridge = self.import_module("_object_reduce")?;
+                let reduce = self.class_get(bridge, "reduce", true)?;
+                return self.class_apply(reduce, vec![subject, protocol]);
             }
             13 => Value::Small(match &subject { Value::Object(o) if o.class_now().name != self.class_word("root") => 24, _ => 16 }),
             _ => return Err(self.class_refusal()),

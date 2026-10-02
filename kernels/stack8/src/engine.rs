@@ -2946,7 +2946,7 @@ impl<'a> Engine<'a> {
                         // the program's own code. What such code raised
                         // is raised on, and not the words that stood in
                         // for it while the walk gave way.
-                        Value::Cursor(_) => {
+                        Value::Cursor(_) | Value::Generator(_) | Value::Object(_) | Value::Bytes(..) => {
                             let members = self.core_members(&pair.1);
                             if let Some(fled) = self.carried.take() { return Err(fled); }
                             items.extend(members?.into_iter().map(|v| (None,v)));

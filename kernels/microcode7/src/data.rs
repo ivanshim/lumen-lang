@@ -687,6 +687,7 @@ impl Value {
             Value::Octets { changeable: true, .. } => Err("bytearray"),
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
             Value::Intrinsic(_, name) => Ok(["intrinsic/", name.as_ref()].concat()),
+            Value::Wrapped(9, members) => Ok(format!("parent-type/{:p}", Rc::as_ptr(members))),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),

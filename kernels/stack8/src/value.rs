@@ -1049,6 +1049,7 @@ impl Value {
             Value::Native(work, word) => Ok(format!("native:{work:?}:{word}")),
             Value::SortOf(sort) => Ok(format!("sortof:{}", sort.tag())),
             Value::ByteKind(changeable, _) => Ok(format!("bytekind:{changeable}")),
+            Value::Adapter(parts) if parts.0 == 9 => Ok(format!("parent-kind:{:p}", Rc::as_ptr(parts))),
             Value::Array(_) => Err("list"),
             Value::Map(_) => Err("dict"),
             // A set that cannot be changed is addressed by what it

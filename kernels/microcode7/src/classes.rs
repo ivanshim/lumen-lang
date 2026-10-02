@@ -1492,8 +1492,10 @@ impl<'a> Machine<'a> {
                         Some(reduction) => return Ok(reduction),
                     }
                 }
-                let kind=self.class_from_type(vec![first.clone()])?;
-                Value::tuple(vec![kind,Value::tuple(Vec::new()),Self::held_as_state(&first)])
+                let protocol = match which { Some(12) => values.get(1).cloned().ok_or_else(|| self.class_unready())?, _ => Value::Small(0) };
+                let helper = self.load_namespace("_object_reduce").map_err(Escape::from)?;
+                let routine = self.read_class_member(helper, "reduce", true)?;
+                return self.apply_class_member(routine, vec![first, protocol]);
             }
             Some(13)=>Value::Small(match &first{Value::Thing(t) if t.blueprint().name!=self.detail("root")=>24,_=>16}),
             _=>return Err(self.class_unready()),

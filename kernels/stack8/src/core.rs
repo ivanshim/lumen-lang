@@ -165,6 +165,9 @@ impl Value {
                 Value::text(&text).core_hash()
             }
             Value::Native(_, word) => Value::text(word).core_hash(),
+            Value::ByteKind(changeable, _) => Value::text(if *changeable { "bytearray" } else { "bytes" }).core_hash(),
+            Value::SortOf(kind) => Value::text(kind.tag()).core_hash(),
+            Value::Adapter(parts) if parts.0 == 9 => Some((std::rc::Rc::as_ptr(parts) as usize >> 4) as i64),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),

@@ -9,6 +9,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_decimal", include_str!("_decimal.py"), "_decimal.py"),
     ("_heapq", include_str!("_heapq.py"), "_heapq.py"),
     ("_namedtuple", include_str!("_namedtuple.py"), "_namedtuple.py"),
+    ("_object_reduce", include_str!("_object_reduce.py"), "_object_reduce.py"),
     ("_pylong", include_str!("_pylong.py"), "_pylong.py"),
     ("_random", include_str!("_random.py"), "_random.py"),
     ("_random_seed", include_str!("_random_seed.py"), "_random_seed.py"),

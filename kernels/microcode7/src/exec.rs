@@ -9840,7 +9840,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Flag(false) => {
                     match &pair.1.settled() {
-                        Value::Iterator(_) => positions.extend(self.core_collect(&pair.1)?),
+                        Value::Iterator(_) | Value::Generator(_) | Value::Thing(_) | Value::Octets { .. } => positions.extend(self.core_collect(&pair.1)?),
                         Value::Progression(walk) => {
                             let mut place = BigInt::from(0);
                             while place < walk.count() {

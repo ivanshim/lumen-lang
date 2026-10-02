@@ -186,6 +186,8 @@ impl Value {
                 spelling.hash(&mut hasher);
                 hasher.finish() as i64
             }
+            Self::OctetKind { changeable, .. } => return Self::text(if *changeable { "bytearray" } else { "bytes" }).hash_number(),
+            Self::KindOf(kind) => return Self::text(kind.tag()).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
@@ -196,6 +198,7 @@ impl Value {
                 let lies = match parts.get(1) { Some(Self::Thing(thing)) => std::rc::Rc::as_ptr(thing) as usize / 16, Some(other) => other.hash_number()? as usize, None => 0 };
                 parts[0].hash_number()? ^ lies as i64
             }
+            Self::Wrapped(9, kept) => (std::rc::Rc::as_ptr(kept) as usize / 16) as i64,
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
             // The bounds folded one after another, as a tuple's parts are,
