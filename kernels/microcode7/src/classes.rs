@@ -104,7 +104,7 @@ impl<'a> Machine<'a> {
             for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
                 if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
             }
-            for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
+            for word in [14, 15, 21, 24].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()).filter(|word| !word.is_empty()) {
                 if !word.is_empty() { names.push(word); }
             }
             names.sort();names.dedup();

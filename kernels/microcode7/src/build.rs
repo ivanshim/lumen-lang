@@ -3094,32 +3094,12 @@ impl<'a> Builder<'a> {
         let mut path = String::new();
         if taking_names {
             let start = self.pos;
-            let mut last_dot = None;
             while self.on_any("op.pipe") || self.on_any("ext.op.index.slice.ellipsis") {
-                last_dot = Some(self.look().clone());
                 path.push_str(&self.look().lexeme);
-                self.advance();
-            }
-            // A relative import written `from . lazy import`, the lazy
-            // word after the dots and set off by a space or a break, is
-            // the older order; the reference warns and reads it as the
-            // same import without the word.
-            if !self.in_lazy_from && self.pos != start && self.look().lexeme == "lazy"
-                && self.glance(1).shape == Shape::Bare && self.table.spells("ext.stmt.import", &self.glance(1).lexeme)
-                && last_dot.map_or(false, |dot: Token| {
-                    let flush = dot.column + dot.lexeme.chars().count();
-                    self.look().row != dot.row || self.look().column != flush
-                }) {
-                let at = self.look().clone();
-                let noticed = (format!("did you mean 'lazy from {path} import'?"), at.row, at.column);
-                if !self.warnings.contains(&noticed) { self.warnings.push(noticed); }
                 self.advance();
             }
             if self.pos == start || !self.key("ext.stmt.import") {
                 path.push_str(&self.module_path(true)?);
-            }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().lexeme == "lazy" {
-                return Err("SyntaxError: use 'lazy from ... ' instead of 'from ... lazy import'".to_owned());
             }
             if self.key("ext.stmt.import") {
                 self.advance();

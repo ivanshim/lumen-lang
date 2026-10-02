@@ -676,6 +676,10 @@ impl Layout<'_> {
     }
 
     fn unsupported(&self, letter: char, start: usize, at: usize, is_bytes: bool) -> String {
+        if self.table.flag("ext.op.arithmetic.python_numbers") {
+            let number = u32::from(letter);
+            return format!("ValueError: unsupported format character '{letter}' (0x{number:x}) at index {at}");
+        }
         if letter.is_ascii_alphanumeric() {
             return self.complain("ext.op.rem.format.code", &[&letter.to_string(), &start.to_string()]);
         }

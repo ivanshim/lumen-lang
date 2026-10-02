@@ -734,6 +734,9 @@ impl Writer<'_> {
     }
 
     fn percent_unknown(&self, code: char, mark: usize, character: usize, bytes: bool) -> String {
+        if self.lang.python_numbers {
+            return format!("ValueError: unsupported format character '{}' (0x{:x}) at index {}", code, code as u32, character);
+        }
         if code.is_ascii_alphanumeric() {
             return self.fault("ext.op.rem.format.code", &[&code.to_string(), &mark.to_string()]);
         }

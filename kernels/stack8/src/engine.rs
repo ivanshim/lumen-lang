@@ -2888,6 +2888,11 @@ impl<'a> Engine<'a> {
                         // the program's own code. What such code raised
                         // is raised on, and not the words that stood in
                         // for it while the walk gave way.
+                        Value::Generator(_) | Value::Object(_) if self.lang.python_numbers => {
+                            let expanded = self.special_items(&pair.1.contents());
+                            if let Some(raised) = self.carried.take() { return Err(raised); }
+                            items.extend(expanded?.into_iter().map(|item| (None, item)));
+                        }
                         Value::Cursor(_) => {
                             let members = self.core_members(&pair.1);
                             if let Some(fled) = self.carried.take() { return Err(fled); }
@@ -5303,7 +5308,25 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn python_constructor_hash(value: &Value) -> Option<Value> {
+        let spelling = match value {
+            Value::ByteKind(mutable, _) => if *mutable { "bytearray" } else { "bytes" },
+            Value::Adapter(wrapper) if wrapper.0 == 9 && wrapper.1.is_empty() => "super",
+            Value::Adapter(wrapper) if wrapper.0 == 8 => match wrapper.1.first() {
+                Some(Value::Text(word)) => word.as_ref(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Value::text(spelling).core_hash().map(Value::Small)
+    }
+
     fn special_key(&mut self, key: &Value) -> Res<Value> {
+        if !self.lang.class_special.is_empty() {
+            if let Some(hash) = Self::python_constructor_hash(key) {
+                return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
+            }
+        }
         if matches!(key, Value::Object(_)) && !self.lang.class_special.is_empty() {
             let hash = self.special_builtin(Builtin::Hash, std::slice::from_ref(key))?.ok_or_else(|| self.special_fault())?;
             return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
@@ -5910,6 +5933,9 @@ impl<'a> Engine<'a> {
             if let Some(view) = raw { return Ok(Some(Value::View(Rc::new((view.0.clone(), "mapping".to_string()))))); }
         }
         let held = value.contents();
+        if !self.lang.class_special.is_empty() && name == self.class_word("receiver") {
+            if let Value::ValueMethod(method) = &held { return Ok(Some(method.0.clone())); }
+        }
         if let Value::Native(op, _) = &held {
             if Self::kind_builtin(op) && ["bases", "mro", "order"].iter().any(|key| name == self.class_word(key)) {
                 let root = Value::Class(self.root_class());
@@ -6007,7 +6033,7 @@ impl<'a> Engine<'a> {
                 return Ok(Some(Value::text(if name == self.class_word("name") { &state.name } else { &state.qualified })));
             }
             if !self.is_async_generator(&Value::Generator(held.clone())) {
-            if let Some(index @ (14 | 15 | 19..=25)) = self.lang.trace_fields.iter().position(|key| key == name) {
+            if let Some(index @ (14 | 15 | 19..=24)) = self.lang.trace_fields.iter().position(|key| key == name) {
                 if index == 25 && held.try_borrow().is_err() { return Ok(Some(Value::text("GEN_RUNNING"))); }
                 if index == 23 { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
                 if index == 24 && held.try_borrow().is_err() { return Ok(Some(Value::Null)); }
@@ -7734,6 +7760,9 @@ impl<'a> Engine<'a> {
 
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
+        if op == Builtin::Hash && args.len() == 1 {
+            if let Some(hash) = Self::python_constructor_hash(&args[0]) { return Ok(Some(hash)); }
+        }
         if op == Builtin::Hash && args.len() == 1 && matches!(args[0], Value::Method(..)) {
             return Ok(args[0].core_hash().map(Value::Small));
         }
@@ -9784,7 +9813,7 @@ impl<'a> Engine<'a> {
                 let field = match &held {
                     Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18 | 26)),
                     Value::Generator(_) if self.is_async_generator(&held) => self.lang.async_generator_fields.iter().any(|word| word == name.as_ref()),
-                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=25)),
+                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=24)),
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     Value::Slice(_) => self.slice_bound_named(name).is_some(),
@@ -9879,6 +9908,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::ValueMethod(bound) if name.as_ref() == self.class_word("qualified") => Value::text(&format!("{}.{}", bound.0.core_kind(), bound.1)),
                 Value::ValueMethod(bound) if name.as_ref() == self.class_word("name") => Value::text(&bound.1),
+                Value::ValueMethod(bound) if !self.lang.class_special.is_empty() && name.as_ref() == self.class_word("receiver") => bound.0.clone(),
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 // An exception answers its own few methods itself.
                 Value::Object(o) if self.exception_class(&o.class_now()) && (self.exception_method_named(name) || ((self.stands_on(&o.class_now(), 36) || self.stands_on(&o.class_now(), 19)) && self.lang.constructor.as_deref() == Some(name))) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
@@ -11985,6 +12015,7 @@ impl<'a> Engine<'a> {
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
                     (Value::Object(_), Value::Text(_)) | (Value::Text(_), Value::Object(_)) => false,
                     (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
+                    (Value::Array(_), Value::Map(_)) | (Value::Map(_), Value::Array(_)) if self.lang.python_numbers => false,
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
                 };
@@ -13225,6 +13256,9 @@ impl<'a> Engine<'a> {
     }
 
     fn set_key(&self, value: &Value) -> Res<String> {
+        if !self.lang.class_special.is_empty() {
+            if let Some(hash) = Self::python_constructor_hash(value) { return Ok(format!("constructor:{}", hash.plain())); }
+        }
         value.member_key().map_err(|kind| self.set_said(if kind.is_empty() { ".unsupported" } else { ".unhashable" }, kind))
     }
 
@@ -20842,7 +20876,7 @@ impl Engine<'_> {
             if message.starts_with("unterminated ") || (unclosed && source.lines().count() > row) { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if message == "cannot assign to function call" && source.lines().count() > row { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if mode != 0 && message == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { col = 0; finish = 0; }
-            let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("annotated name ") || message.starts_with("duplicate parameter ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
+            let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("annotated name ") || message.starts_with("duplicate argument ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
             // Symbol-table diagnostics retain UTF-8 spans; tokenizer
             // diagnostics count characters in the original source.
             if compiler_only {
