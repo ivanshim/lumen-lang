@@ -1,4 +1,15 @@
 # Reals use the kernel's width; integer work stays exact.
+from operator import index as _operator_index
+
+def _integer_argument(value):
+    if not isinstance(value, int):
+        if not hasattr(type(value), '__index__'):
+            raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer")
+        index_method = getattr(type(value), '__index__')
+        if index_method is None:
+            return index_method(value)
+    return _operator_index(value)
+
 pi = 3.141592653589793
 e = 2.718281828459045
 inf = __math('fdiv', 1.0, 0.0)
@@ -241,10 +252,9 @@ def lcm(*integers):
     return result
 
 def factorial(n):
+    n = _integer_argument(n)
     if n < 0:
         raise 'ValueError: factorial() not defined for negative values'
-    if type(n) != type(1) and type(n) != type(True):
-        raise 'TypeError: factorial needs an integer'
     value = 1
     for i in range(2, n + 1):
         value *= i
@@ -336,10 +346,12 @@ def prod(values, *, start=1):
 tau = 2 * pi
 
 def comb(n, k):
-    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
-        raise 'TypeError: comb needs integers'
-    if n < 0 or k < 0:
-        raise 'ValueError: comb arguments must be non-negative'
+    n = _integer_argument(n)
+    k = _integer_argument(k)
+    if n < 0:
+        raise ValueError('n must be a non-negative integer')
+    if k < 0:
+        raise ValueError('k must be a non-negative integer')
     if k > n:
         return 0
     k = k if k < n - k else n - k
@@ -349,12 +361,14 @@ def comb(n, k):
     return result
 
 def perm(n, k=None):
+    n = _integer_argument(n)
     if k is None:
         return factorial(n)
-    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
-        raise 'TypeError: perm needs integers'
-    if n < 0 or k < 0:
-        raise 'ValueError: perm arguments must be non-negative'
+    k = _integer_argument(k)
+    if n < 0:
+        raise ValueError('n must be a non-negative integer')
+    if k < 0:
+        raise ValueError('k must be a non-negative integer')
     if k > n:
         return 0
     result = 1
@@ -363,19 +377,17 @@ def perm(n, k=None):
     return result
 
 def isqrt(n):
-    if type(n) != type(1) and type(n) != type(True):
-        raise 'TypeError: isqrt needs an integer'
+    n = _integer_argument(n)
     if n < 0:
-        raise 'ValueError: isqrt argument must be non-negative'
-    low = 0
-    high = n + 1
-    while high - low > 1:
-        mid = (low + high) // 2
-        if mid * mid <= n:
-            low = mid
-        else:
-            high = mid
-    return low
+        raise ValueError('isqrt() argument must be nonnegative')
+    if n < 2:
+        return n
+    root = 1 << ((n.bit_length() + 1) // 2)
+    while True:
+        smaller = (root + n // root) // 2
+        if smaller >= root:
+            return root
+        root = smaller
 
 def hypot(*coordinates):
     values = []
