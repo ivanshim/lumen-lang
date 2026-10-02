@@ -3,6 +3,8 @@
 # one file per invocation, all at once; write each result as count_run.py does (<rawdir>/<test>.<kernel>.txt).
 import json, os, pathlib, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from python_versions import supported
 import boto3
 from botocore.config import Config
 tests = [l.strip() for l in open(sys.argv[1]) if l.strip()]
@@ -26,6 +28,3 @@ with ThreadPoolExecutor(len(runs) or 1) as pool:
             dest.write_text("###EXIT %d\n###SECONDS %.1f\n" % (r["rc"], r["s"]) + r["out"] + "\n###STDERR\n" + r["err"])
         slow = max(slow, (r["s"], f"{stem} {r['k']}"))
 print("counted %d runs; wall %.0fs; slowest %.0fs %s" % (len(runs), time.time() - t0, *slow))
-
-# Each input path retains the full release from the version table.
-print("suites: " + ", ".join(sorted({str(pathlib.Path(t).parent) for t in tests})))

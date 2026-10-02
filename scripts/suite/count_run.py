@@ -8,6 +8,9 @@ REQUESTED = option(sys.argv)
 ROOT = pathlib.Path(os.environ.get("LUMEN_ROOT", ".")).resolve(); BIN = pathlib.Path(sys.argv[3]).resolve() if len(sys.argv) > 3 else ROOT/"target"/"debug"/"lumen-lang"
 RAW = pathlib.Path(sys.argv[1]); RAW.mkdir(parents=True, exist_ok=True)
 VERSION = select(REQUESTED, ROOT)
+metadata = RAW / 'suite.json'
+if metadata.exists() and __import__('json').loads(metadata.read_text())['release'] != VERSION['release']:
+    raise ValueError('Use a separate raw directory for each full Python release')
 (RAW / 'suite.json').write_text(__import__('json').dumps(VERSION) + '\n')
 CAP = int(sys.argv[2]) if len(sys.argv) > 2 else 900
 JOBS = int(os.environ.get("SUITE_JOBS", os.cpu_count()))

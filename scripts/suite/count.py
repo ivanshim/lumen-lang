@@ -18,6 +18,8 @@ else:
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
     from python_versions import select
     release = select()['release']
+def report(*items):
+    print(*items, f"· CPython {release} suite")
 for k in ("stack8", "microcode7"):
     p = r = files = nothing = 0
     for (stem, kk), (line, ran, to) in new.items():
@@ -30,9 +32,9 @@ for k in ("stack8", "microcode7"):
             ol = o[0]
             if len(ol) == len(line):
                 worse = [(i, ol[i], line[i]) for i in range(len(line)) if ol[i] == "." and line[i] in "EF"]
-                if worse: print("  REGRESSION", stem, k, worse[:5])
+                if worse: report("  REGRESSION", stem, k, worse[:5])
             else:
-                print("  length changed", stem, k, len(ol), "->", len(line))
-            if line.count(".") != ol.count("."): print("  %-20s %-10s %d -> %d" % (stem, k, ol.count("."), line.count(".")))
-        elif line: print("  NEW RUNNING", stem, k, line.count("."), "of", ran)
-    print("%s: %d pass of %d ran, %d files, %d run nothing · CPython %s suite" % (k, p, r, files, nothing, release))
+                report("  length changed", stem, k, len(ol), "->", len(line))
+            if line.count(".") != ol.count("."): report("  %-20s %-10s %d -> %d" % (stem, k, ol.count("."), line.count(".")))
+        elif line: report("  NEW RUNNING", stem, k, line.count("."), "of", ran)
+    report("%s: %d pass of %d ran, %d files, %d run nothing" % (k, p, r, files, nothing))
