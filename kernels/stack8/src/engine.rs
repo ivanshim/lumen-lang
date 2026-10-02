@@ -734,7 +734,7 @@ impl<'a> Engine<'a> {
         !self.lang.exceptions.is_empty() && class.all_fields().iter().any(|(n, _)| n == "\0exception")
     }
 
-    fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
+    pub(super) fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
         let mut class = Some(actual);
         while let Some(current) = class {
             if Rc::ptr_eq(current, wanted) { return true; }

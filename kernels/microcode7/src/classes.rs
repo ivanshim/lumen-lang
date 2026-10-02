@@ -2658,7 +2658,7 @@ impl<'a> Machine<'a> {
                     _ => {},
                 }
                 let b=match subject{Value::Blueprint(b) if class_only=>Some(b),Value::Thing(t) if !class_only=>Some(&t.blueprint()),_=>None};
-                Ok(b.map_or(false,|b|Rc::ptr_eq(b,c)||b.ancestry.iter().any(|a|Rc::ptr_eq(a,c))))
+                Ok(b.map_or(false,|candidate|Self::fault_descends(candidate,c)||candidate.ancestry.iter().any(|a|Rc::ptr_eq(a,c))))
             }
             Value::Wrapped(8,names)=>{
                 let Value::Text(word)=&names[0] else{return Err(self.not_a_class(amiss));};
