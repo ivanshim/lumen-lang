@@ -680,7 +680,7 @@ impl Writer<'_> {
                         }
                         Answer::Missing(name) | Answer::BadMethod(name) => {
                             let named = if name.is_empty() { value.core_kind() } else { name };
-                            return Err(self.fault(key, &[&location, &code.to_string(), &named]));
+                            return Err(self.fault(key, &[if decimal { &location } else { "" }, &code.to_string(), &named]));
                         }
                         _ => unreachable!(),
                     }
@@ -688,7 +688,7 @@ impl Writer<'_> {
                 if !accepted {
                     let key = if decimal { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
                     let named = value.core_kind();
-                    return Err(self.fault(key, &[&location, &code.to_string(), &named]));
+                    return Err(self.fault(key, &[if decimal { &location } else { "" }, &code.to_string(), &named]));
                 }
                 let n = match &held { Some(whole) => whole.as_big()?, None => value.as_big()? };
                 let mut digits = n.abs().to_str_radix(if decimal { 10 } else if code == 'o' { 8 } else { 16 });

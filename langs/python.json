@@ -2519,9 +2519,9 @@
     "OverflowError: cannot convert float infinity to integer"
   ],
   "ext.op.rem.format.integer": [
-    "TypeError: format argument",
-    ": %",
-    " requires an integer, not "
+    "TypeError: ",
+    "%",
+    " format: an integer is required, not "
   ],
   "ext.op.rem.format.many": [
     "TypeError: not all arguments converted during ",

@@ -23980,7 +23980,15 @@ impl crate::formatting::Elsewhere for Machine<'_> {
             }
             _ => None,
         };
-        let named = |other: &Value| qualified.clone().unwrap_or_else(|| other.kind_word());
+        let named = |other: &Value| {
+            if ['o', 'x', 'X'].contains(&code) {
+                if let Value::Thing(object) = other {
+                    let class = object.blueprint();
+                    return class.type_names.borrow().as_ref().map_or_else(|| class.name.clone(), |names| names.short.type_text().bare());
+                }
+            }
+            qualified.clone().unwrap_or_else(|| other.kind_word())
+        };
         let worth = || Self::underlying(&held).map(|w| w.settled()).filter(|w| match code {
             'd' | 'i' | 'u' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => matches!(w, Value::Frac(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
             _ => matches!(w, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),

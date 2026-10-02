@@ -7002,6 +7002,9 @@ impl<'a> Engine<'a> {
         match value {
             Value::Object(o) => {
                 let class = o.class_now();
+                if matches!(code, 'o' | 'x' | 'X') {
+                    return class.python_names.borrow().as_ref().map(|names| names.0.plain()).unwrap_or_else(|| class.name.clone());
+                }
                 if code == 'c' { if let Some(title) = class.python_qualified_title() { return title; } }
                 let qualified = self.class_value(&class, self.class_word("qualified")).and_then(|v| match v {
                     Value::Text(name) if !name.is_empty() => Some(name.to_string()),

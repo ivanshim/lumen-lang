@@ -619,7 +619,7 @@ impl Layout<'_> {
                             }
                             NumberAnswer::Missing(name) | NumberAnswer::BadMethod(name) => {
                                 let named = if name.is_empty() { item.kind_word() } else { name };
-                                return Err(self.complain(key, &[&location, &conversion.to_string(), &named]));
+                                return Err(self.complain(key, &[if accepts_real { location.as_str() } else { "" }, &conversion.to_string(), &named]));
                             }
                             NumberAnswer::CharacterType(_) => unreachable!(),
                         }
@@ -635,7 +635,7 @@ impl Layout<'_> {
                     if !accepted {
                         let key = if accepts_real { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
                         let named = item.kind_word();
-                        return Err(self.complain(key, &[&location, &conversion.to_string(), &named]));
+                        return Err(self.complain(key, &[if accepts_real { location.as_str() } else { "" }, &conversion.to_string(), &named]));
                     }
                     let number = match &held { Some(whole) => whole.as_big()?, None => item.as_big()? };
                     let radix = match conversion { 'x' | 'X' => 16, 'o' => 8, _ => 10 };
