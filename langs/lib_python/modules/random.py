@@ -206,3 +206,8 @@ class Random:
         while index >= n:
             index = self.getrandbits(k)
         return sequence[index]
+
+# Exponential sampling formula from CPython v3.14.8 Lib/random.py (PSF License).
+def expovariate(lambd=1.0):
+    import math
+    return -math.log(1.0 - random()) / lambd

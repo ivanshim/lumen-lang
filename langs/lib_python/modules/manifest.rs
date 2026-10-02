@@ -56,7 +56,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("json", include_str!("json.py"), "json.py"),
     ("keyword", include_str!("keyword.py"), "keyword.py"),
     ("locale", include_str!("locale.py"), "locale.py"),
-    ("logging", include_str!("logging.py"), "logging.py"),
+    ("logging", include_str!("logging/__init__.py"), "logging/__init__.py"),
     ("marshal", include_str!("marshal.py"), "marshal.py"),
     ("math", include_str!("math.py"), "math.py"),
     ("numbers", include_str!("numbers.py"), "numbers.py"),

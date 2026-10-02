@@ -2563,6 +2563,11 @@ impl<'a> Machine<'a> {
     }
 
     fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
+        let namespace = match rhs.settled() {
+            Value::Attributes(owner) => Some(owner.entries_shown()),
+            _ => None,
+        };
+        let rhs = namespace.as_ref().unwrap_or(rhs);
         let positional_base = Self::underlying(rhs).and_then(|value| {
             let settled = value.settled();
             if matches!(settled, Value::Tuple(_)) { Some(settled) } else { None }
