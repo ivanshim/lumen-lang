@@ -29,6 +29,7 @@ with tempfile.TemporaryDirectory(prefix='python-version-probe-') as directory:
         ('series', ['--python', series], None, None, pin, False),
         ('exact', ['--python', pin], None, None, pin, False),
         ('micro-warning', ['--python', wrong], None, None, pin, True),
+        ('large-micro-warning', ['--python', series + '.' + '9' * 100], None, None, pin, True),
         ('unsupported', ['--python', unsupported], None, None, None, False),
         ('malformed', ['--python', '3.14.x'], None, None, None, False),
         ('empty', ['--python', ''], None, None, None, False),
@@ -63,7 +64,8 @@ with tempfile.TemporaryDirectory(prefix='python-version-probe-') as directory:
                 assert result.returncode == 0, (kernel, label, result.stderr)
                 assert result.stdout.splitlines() == [expected + ' (Lumen)', f"({major}, {minor}, {micro}, 'final', 0)", str((major << 24) | (minor << 16) | (micro << 8) | 0xf0), expected], result.stdout
                 if warning:
-                    assert f'requested {wrong}, running {expected} compatibility, tested against the CPython {expected} suite' in result.stderr, result.stderr
+                    requested = args[args.index('--python') + 1] if '--python' in args else environment or configuration
+                    assert f'requested {requested}, running {expected} compatibility, tested against the CPython {expected} suite' in result.stderr, result.stderr
                 else:
                     assert not result.stderr, result.stderr
             print(f'{kernel} {label}: exit {result.returncode}; {result.stdout.strip() or result.stderr.strip()}' + (f'\nstderr: {result.stderr.strip()}' if expected and warning else ''))

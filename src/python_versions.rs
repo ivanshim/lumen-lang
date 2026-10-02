@@ -43,9 +43,9 @@ pub fn select(flag: Option<&str>, file: &str) -> Result<&'static PythonVersion, 
     if !(2..=3).contains(&parts.len()) || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) || (p.len() > 1 && p.starts_with('0'))) {
         return Err(error(&requested));
     }
-    let numbers: Vec<u32> = parts.iter().map(|p| p.parse()).collect::<Result<_, _>>().map_err(|_| error(&requested))?;
+    let numbers: Vec<u32> = parts[..2].iter().map(|p| p.parse()).collect::<Result<_, _>>().map_err(|_| error(&requested))?;
     let version = VERSIONS.iter().find(|v| v.numbers[..2] == numbers[..2]).ok_or_else(|| error(&requested))?;
-    if numbers.len() == 3 && numbers[2] != version.numbers[2] {
+    if parts.len() == 3 && requested != version.release {
         eprintln!("Warning: requested {requested}, running {} compatibility, tested against the CPython {} suite", version.release, version.release);
     }
     Ok(version)
