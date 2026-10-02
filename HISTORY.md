@@ -2404,3 +2404,32 @@ other replaced-file regression was fixed. tests/README.md records the pin and th
 Measured on both kernels, the sixty files count 3218 of 3596 against the CPython 3.14.8 suite (3291 of 3735 against
 the 3.16.0a0 snapshot before). The merged full check agrees on 1182 scratch programs and passes every gate; the one
 MathTests part that exceeds Lambda's 870-second limit and microcode7's slowest itertools class were counted separately.
+
+### 1az. The re-pin merged as #531; batch 20x: PEP 649 and 695 in both kernels, native type bases, frozen exec, generator resurrection
+
+The first batch measured against the CPython 3.14.8 suite (§1ay) is kernel work. Five branches, each certified on its
+own tip by a full check with no scratch mismatch and every gate passing:
+
+- fix/perf-mc7-slow: microcode7 speed for the slowest suites. Native float math inputs dispatch directly, binary
+  summation keeps its partials in the math backend, and list writes no longer copy snapshots; test_heapq now completes
+  on microcode7 (69/69 on both kernels). No count change; it removes timeouts.
+- fix/pep649-695: deferred annotations (PEP 649) and type-parameter syntax (PEP 695) compiled lazily in both kernels,
+  with native annotation and type-parameter objects and one shared Generic class for the public and native sides.
+- fix/type-base: native classes honour stored module metadata, Python C3 lookup respects native protocol entries, and
+  descriptor wrappers refuse keywords with CPython's wording.
+- fix/frozen-exec: stored Python descriptor values are called without interpreting strings, and native set methods bind
+  to their callable operations.
+- fix/generator-resurrection: suspended generators are refused in the default reduction paths, and list subclasses
+  respect an overridden allocation.
+
+GPT-6.1 Sol workers wrote the branches and the integration. An independent integration review by GPT-6 Astra found one
+interaction the sixty counted files could not see: the class-builder path from fix/frozen-exec returned before the
+implicit Generic base that fix/pep649-695 inserts, so `class C[T]: pass` kept its `__type_params__` but lost its
+Generic ancestry and inherited subscription. The repair carries the generic-class context into both kernels' Python
+class builders and appends the real shared Generic base after any explicit bases, leaving metaclass selection and
+custom `__build_class__` dispatch to ordinary construction; the PEP branch's identity, scope and subscription probes
+again print CPython's output on both kernels.
+
+Measured on both kernels, the sixty files count 3224 of 3596 (3218 before): test_builtin 108 to 112, test_functools 152
+to 153, test_generators 54 to 55; no passing test was lost. The merged full check agrees on 1182 scratch programs with
+no mismatch and passes every gate (lumen 522/522, PHP 318/318, Python 128/128); kernel independence reports no problem.
