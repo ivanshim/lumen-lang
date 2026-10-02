@@ -1284,11 +1284,26 @@ impl<'a> Engine<'a> {
         self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name))
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if let Value::Native(Builtin::ValueMethod, word) = &subject {
+            if self.lang.float_getformat.iter().any(|public| public == word.as_ref()) && name == self.class_word("name") {
+                return Ok(Value::text(word.rsplit('.').next().unwrap_or(word)));
+            }
+        }
         if let Value::ValueMethod(method) = &subject {
             if name == self.class_word("receiver") { return Ok(method.0.clone()); }
+            if method.1 == "float_getformat" {
+                if let Some(public) = self.lang.float_getformat.first() {
+                    if name == self.class_word("qualified") { return Ok(Value::text(public)); }
+                    if name == self.class_word("name") { return Ok(Value::text(public.rsplit('.').next().unwrap_or(public))); }
+                }
+            }
+            if name == self.class_word("name") { return Ok(Value::text(&method.1)); }
+            if name == self.class_word("qualified") { return Ok(Value::text(&format!("{}.{}", method.0.core_kind(), method.1))); }
         }
-        if name == self.class_word("receiver") {
-            if let Value::TextMethod(text, _, _) = &subject { return Ok(Value::Text(text.clone())); }
+        if let Value::TextMethod(text, _, word) = &subject {
+            if name == self.class_word("receiver") { return Ok(Value::Text(text.clone())); }
+            if name == self.class_word("name") { return Ok(Value::Text(word.clone())); }
+            if name == self.class_word("qualified") { return Ok(Value::text(&format!("str.{word}"))); }
         }
 
 
@@ -2836,7 +2851,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42|143))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::ValueMethod(_)|Value::TextMethod(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42|143))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{

@@ -3562,6 +3562,17 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn carried_native_fault(&mut self, escaped: Escape) -> String {
+        match escaped {
+            Escape::Thrown(value) => {
+                let description = self.suspension_fault(Escape::Thrown(value.clone()));
+                self.got_away = Some(Escape::Thrown(value));
+                description
+            }
+            other => self.suspension_fault(other),
+        }
+    }
+
     fn generator_words(&self, suffix: &str) -> String {
         self.table.single(&format!("ext.stmt.yield.{}", suffix)).unwrap_or_default().to_string()
     }
@@ -3905,7 +3916,7 @@ impl<'a> Machine<'a> {
         if let Some(category) = self.fault_kinds.get(&notice[2]).cloned() {
             let mut parameters = vec![Value::text(message), category];
             parameters.extend(location);
-            self.apply_class_member(function, parameters).map_err(|fault| self.suspension_fault(fault))?;
+            self.apply_class_member(function, parameters).map_err(|fault| self.carried_native_fault(fault))?;
         }
         Ok(())
     }
@@ -7964,7 +7975,10 @@ impl<'a> Machine<'a> {
         }
         if self.table.single("ext.builtin.class.name") == Some(name) {
             if let Value::Blueprint(kind) = value { return Some(Value::text(&kind.name)); }
-            if let Value::Intrinsic(_, word) = value { return Some(Value::text(word)); }
+            if let Value::Intrinsic(operation, word) = value {
+                let named = if *operation == Prim::ValueMethod && self.table.spells("ext.builtin.method.getformat", word) { word.rsplit('.').next().unwrap_or(word) } else { word.as_ref() };
+                return Some(Value::text(named));
+            }
             if let Value::KindOf(kind) = value { return Some(Value::text(Value::word_for_kind(*kind))); }
             // Either octet kind is a worth of its own rather than an
             // intrinsic word, so it answers for its name here.
@@ -12343,7 +12357,7 @@ impl<'a> Machine<'a> {
                 let entry = self.rules.specials.get(index).and_then(|word| self.inherited_entry(&factory, word));
                 if let Some(entry) = entry {
                     let call = self.member_binding(entry, Some(subject.clone()), factory).and_then(|bound| self.apply_class_member(bound, tail.to_vec()));
-                    return call.map(Some).map_err(|escape| self.suspension_fault(escape));
+                    return call.map(Some).map_err(|escape| self.carried_native_fault(escape));
                 }
             }
             return Ok(None);
@@ -13464,7 +13478,7 @@ impl<'a> Machine<'a> {
                     let namespace = self.load_namespace("types")?;
                     let alias_class = self.namespace_item(&namespace, "types", "GenericAlias")?;
                     let made = self.apply_class_member(alias_class, vec![operands[0].clone(), parameter.clone()]);
-                    return made.map(Some).map_err(|escape| self.suspension_fault(escape));
+                    return made.map(Some).map_err(|escape| self.carried_native_fault(escape));
                 }
             }
         }
@@ -15279,7 +15293,7 @@ impl<'a> Machine<'a> {
                     _ => changed,
                 }
             }
-            Prim::ClassWork(work) => return self.work_on_class(work, v.to_vec()).map_err(|e| self.suspension_fault(e)),
+            Prim::ClassWork(work) => return self.work_on_class(work, v.to_vec()).map_err(|e| self.carried_native_fault(e)),
             Prim::Pointed => v[0].clone().keeping_point(true),
             Prim::ComplexMade => self.complex_make(v)?,
             Prim::NumberAlone => match &v[0] {
@@ -15298,7 +15312,7 @@ impl<'a> Machine<'a> {
             Prim::ValueMethod if name.contains('.') => {
                 if self.table.spells("ext.builtin.method.getformat", name) {
                     let kind = Value::Intrinsic(Prim::AsReal, Rc::from("float"));
-                    return self.value_member(&kind, "float_getformat", v.to_vec(), Vec::new()).map_err(|away| self.suspension_fault(away));
+                    return self.value_member(&kind, "float_getformat", v.to_vec(), Vec::new()).map_err(|away| self.carried_native_fault(away));
                 }
                 let operation = name.rsplit('.').next().unwrap_or(name).to_owned();
                 if v.is_empty() { return Err(self.method_fault("arguments")); }
@@ -15311,7 +15325,7 @@ impl<'a> Machine<'a> {
                     let filling = v.get(1).cloned().unwrap_or(Value::Nil);
                     return self.dict_fromkeys(&v[0], filling);
                 }
-                return self.value_member(&v[0], &operation, v[1..].to_vec(), Vec::new()).map_err(|fault| self.suspension_fault(fault));
+                return self.value_member(&v[0], &operation, v[1..].to_vec(), Vec::new()).map_err(|fault| self.carried_native_fault(fault));
             }
             Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => {
                 let subject = v.first().cloned().unwrap_or(Value::Nil);
@@ -15448,7 +15462,7 @@ impl<'a> Machine<'a> {
                         let mut yielded = Vec::new();
                         loop {
                             if star.is_none() && yielded.len() > wanted { break; }
-                            match self.resume(state, Value::Nil).map_err(|e| self.suspension_fault(e))? {
+                            match self.resume(state, Value::Nil).map_err(|e| self.carried_native_fault(e))? {
                                 Some(item) => yielded.push(item),
                                 None => break,
                             }
@@ -15531,7 +15545,7 @@ impl<'a> Machine<'a> {
                 let values = if let Value::Generator(generator) = &v[0] {
                     let mut taken = Vec::new();
                     for _ in 0..=count {
-                        let item = self.resume(generator, Value::Nil).map_err(|fault| self.suspension_fault(fault))?;
+                        let item = self.resume(generator, Value::Nil).map_err(|fault| self.carried_native_fault(fault))?;
                         if let Some(item) = item { taken.push(item); } else { break; }
                     }
                     taken
@@ -15843,7 +15857,7 @@ impl<'a> Machine<'a> {
                         _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                     }
                 }
-                if self.has_class_order() { return self.build_class_value(title, vec![ancestor], holdings).map_err(|e| self.suspension_fault(e)); }
+                if self.has_class_order() { return self.build_class_value(title, vec![ancestor], holdings).map_err(|e| self.carried_native_fault(e)); }
                 let heir = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     under: Some(ancestor), name: title, shared: RefCell::new(holdings),
                     methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![], weak_slot: Cell::new(None), sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
@@ -15938,7 +15952,7 @@ impl<'a> Machine<'a> {
                             _ => None,
                         };
                         match answerer {
-                            Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&word)]).map_err(|fault| self.suspension_fault(fault))?,
+                            Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&word)]).map_err(|fault| self.carried_native_fault(fault))?,
                             _ => {
                                 let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
                                 return Err(format!("{opening}{word}{ending}"));
@@ -16058,7 +16072,7 @@ impl<'a> Machine<'a> {
                                         .map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() })
                                 };
                                 let made = match annotator {
-                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::Small(1)]).map_err(|fault| self.suspension_fault(fault))?,
+                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::Small(1)]).map_err(|fault| self.carried_native_fault(fault))?,
                                     _ => Value::Dict(Rc::new(Vec::new().into())),
                                 };
                                 thing.holds.borrow_mut().push((called.clone(), made.clone()));
@@ -16070,7 +16084,7 @@ impl<'a> Machine<'a> {
                                 let word = self.table.single("ext.system.module.getattr").unwrap_or_default();
                                 let answerer = thing.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() });
                                 match answerer {
-                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&called)]).map_err(|fault| self.suspension_fault(fault))?,
+                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&called)]).map_err(|fault| self.carried_native_fault(fault))?,
                                     _ => return Err(format!("Undefined property: {}::${}", thing.blueprint().name, called)),
                                 }
                             }
@@ -17593,7 +17607,7 @@ impl<'a> Machine<'a> {
                 let asked=if matches!(&entry,Value::Wrapped(5,_)){
                     match self.member_binding(entry,None,class.clone()){Ok(bound)=>self.apply_class_member(bound,vec![v[1].clone()]),Err(escape)=>Err(escape)}
                 }else{self.apply_class_member(entry,vec![v[0].clone(),v[1].clone()])};
-                asked.map_err(|fault|self.suspension_fault(fault))?
+                asked.map_err(|fault| self.carried_native_fault(fault))?
             }
             Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
             Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,
@@ -17987,7 +18001,7 @@ impl<'a> Machine<'a> {
                     }
                 }
                 let walk = if self.rules.suspends {
-                    Some(self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))?)
+                    Some(self.make_iterator(v[0].clone()).map_err(|fault| self.carried_native_fault(fault))?)
                 } else { None };
                 // A start already text or a row of octets is refused
                 // before a single member is read, in the words naming
@@ -18016,7 +18030,7 @@ impl<'a> Machine<'a> {
                 let mut balance = None;
                 if let Some(Value::Generator(walk)) = walk {
                     loop {
-                        let item = self.resume(&walk, Value::Nil).map_err(|fault| self.suspension_fault(fault))?;
+                        let item = self.resume(&walk, Value::Nil).map_err(|fault| self.carried_native_fault(fault))?;
                         let Some(item) = item else { break };
                         self.total_step(&mut answer, &mut balance, item)?;
                     }
@@ -21042,7 +21056,7 @@ impl<'a> Machine<'a> {
         let of = if let [path, name] = kind.as_slice() {
             let namespace = self.load_namespace(path)?;
             match self.read_class_member(namespace, name, false)
-                .map_err(|escape| self.suspension_fault(escape))?.settled() {
+                .map_err(|escape| self.carried_native_fault(escape))?.settled() {
                 Value::Blueprint(of) => of,
                 _ => return Err(self.bad_answer()),
             }
@@ -21322,8 +21336,8 @@ impl<'a> Machine<'a> {
                 // its own `keys`, set in order the same way a plain
                 // dictionary's own keys are.
                 Value::Thing(_) => {
-                    let bound = self.read_class_member(held.clone(), "keys", false).map_err(|e| self.suspension_fault(e))?;
-                    let listed = self.apply_class_member(bound, Vec::new()).map_err(|e| self.suspension_fault(e))?;
+                    let bound = self.read_class_member(held.clone(), "keys", false).map_err(|e| self.carried_native_fault(e))?;
+                    let listed = self.apply_class_member(bound, Vec::new()).map_err(|e| self.carried_native_fault(e))?;
                     self.object_members(&listed)?.iter().map(Value::bare).collect()
                 }
                 _ => Vec::new(),
@@ -21903,7 +21917,7 @@ impl<'a> Machine<'a> {
                             return Err("TypeError: cannot use a closure with this code object".to_owned());
                         }
                         return self.invoke(program.clone(), self.outermost.clone(), Vec::new())
-                            .map(|_| Value::Nil).map_err(|escape| self.suspension_fault(escape));
+                            .map(|_| Value::Nil).map_err(|escape| self.carried_native_fault(escape));
                     }
                     let Some(Value::Tuple(cells)) = requested else {
                         return Err(format!("TypeError: code object requires a closure of exactly length {count}"));
@@ -21947,7 +21961,7 @@ impl<'a> Machine<'a> {
                         }
                         let completed = self.invoke(program.clone(), room, Vec::new());
                         for (place, at, former) in restored { place.cells.borrow_mut()[at] = former; }
-                        return completed.map(|_| Value::Nil).map_err(|escape| self.suspension_fault(escape));
+                        return completed.map(|_| Value::Nil).map_err(|escape| self.carried_native_fault(escape));
                     }
                     let highest = program.reaching.iter().map(|address| address.up).max().unwrap_or(1);
                     if highest == 0 { return Err(format!("TypeError: code object requires a closure of exactly length {count}")); }
@@ -21983,7 +21997,7 @@ impl<'a> Machine<'a> {
                         levels[slot.up].capture_slots.borrow_mut().insert(slot.at);
                     }
                     return self.invoke(program.clone(), outer, Vec::new())
-                        .map(|_| Value::Nil).map_err(|escape| self.suspension_fault(escape));
+                        .map(|_| Value::Nil).map_err(|escape| self.carried_native_fault(escape));
                 }
             }
         }
@@ -22968,8 +22982,8 @@ impl Machine<'_> {
     fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
         match callable {
             Value::Method(_, _) | Value::Wrapped(3, _) => self.apply_class_member(callable.clone(), values)
-                .map_err(|escaped| self.suspension_fault(escaped)),
-            Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
+                .map_err(|escaped| self.carried_native_fault(escaped)),
+            Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.carried_native_fault(fault)),
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),
             Value::Bound(program, frame) => match self.invoke(program.clone(), frame.clone(), values) {
@@ -23005,7 +23019,7 @@ impl Machine<'_> {
             Value::Blueprint(class) => {
                 if self.namespace_has_kind(item, class) { return Ok(true); }
                 // A class whose metaclass speaks for the kind is asked first.
-                if let Some(told) = self.builder_answers(expected, item, false).map_err(|e| self.suspension_fault(e))? { return Ok(told); }
+                if let Some(told) = self.builder_answers(expected, item, false).map_err(|e| self.carried_native_fault(e))? { return Ok(told); }
                 // Every value at all is of the class every value is of.
                 if class.name == self.rules.detail_root { return Ok(true); }
                 // A blueprint standing for a native kind the table
@@ -23089,7 +23103,7 @@ impl Machine<'_> {
         }
         if self.has_class_order() && op == Prim::SortOf && input.len() == 3 {
             for (word, value) in keywords { input.push(Value::Couple(Rc::new((Value::text(&word), value)))); }
-            return self.class_from_type(input).map_err(|escape| self.suspension_fault(escape));
+            return self.class_from_type(input).map_err(|escape| self.carried_native_fault(escape));
         }
         if keywords.is_empty() {
             if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }
@@ -23103,7 +23117,7 @@ impl Machine<'_> {
             if op == Prim::Quoted && matches!(input.first(), Some(Value::Text(_))) { return crate::text::apply(self.table, crate::text::Work::REPR, name, &input, self.wording()); }
             if matches!(op, Prim::SetMember | Prim::DropMember) && matches!(input.first(), Some(Value::Generator(_))) {
                 let job = if op == Prim::SetMember { 4 } else { 5 };
-                return self.work_on_class(job, input).map_err(|fault| self.suspension_fault(fault));
+                return self.work_on_class(job, input).map_err(|fault| self.carried_native_fault(fault));
             }
             if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..) | Value::Member(..) | Value::TextCall { .. }) || matches!(op, Prim::GetMember | Prim::HasAttribute | Prim::MembersOf) && matches!(v, Value::Intrinsic(work, _) if work.names_a_kind()) || (matches!(op, Prim::SetMember | Prim::DropMember) && self.stands_for_a_kind(v))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
@@ -23751,7 +23765,7 @@ impl Machine<'_> {
                     if op == HasAttribute { return Ok(Value::Flag(found.is_some())); }
                     if let Some(member) = found {
                         return match member {
-                            Value::Member(receiver, operation) => self.method_of_value(receiver.as_ref().clone().keep(false), &operation).map_err(|fault| self.suspension_fault(fault)),
+                            Value::Member(receiver, operation) => self.method_of_value(receiver.as_ref().clone().keep(false), &operation).map_err(|fault| self.carried_native_fault(fault)),
                             settled => Ok(settled),
                         };
                     }

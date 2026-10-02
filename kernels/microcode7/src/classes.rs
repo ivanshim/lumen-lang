@@ -1705,9 +1705,27 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        match &value {
+            Value::Intrinsic(Prim::ValueMethod, spelling) if self.table.spells("ext.builtin.method.getformat", spelling) && key == self.detail("name") => {
+                return Ok(Value::text(spelling.rsplit('.').next().unwrap_or(spelling)));
+            }
+            _ => {}
+        }
 
-        if key == self.detail("receiver") {
-            if let Value::Member(owner, _) = &value { return Ok(owner.as_ref().clone()); }
+        if let Value::Member(owner, operation) = &value {
+            if key == self.detail("receiver") { return Ok(owner.as_ref().clone()); }
+            let public_format = (operation == "float_getformat").then(|| self.table.single("ext.builtin.method.getformat")).flatten();
+            if key == self.detail("qualified") {
+                return Ok(Value::text(&public_format.map(str::to_owned).unwrap_or_else(|| [owner.kind_word(), operation.clone()].join("."))));
+            }
+            if key == self.detail("name") {
+                return Ok(Value::text(public_format.and_then(|word| word.rsplit('.').next()).unwrap_or(operation)));
+            }
+        }
+        if let Value::TextCall { subject, name, .. } = &value {
+            if key == self.detail("receiver") { return Ok(Value::Text(subject.clone())); }
+            if key == self.detail("name") { return Ok(Value::Text(name.clone())); }
+            if key == self.detail("qualified") { return Ok(Value::text(&["str", name.as_ref()].join("."))); }
         }
 
         if let Value::Wrapped(143, payload) = value.settled() {
@@ -2968,7 +2986,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=72|143))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Member(..)|Value::TextCall { .. })||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=72|143))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

@@ -8237,7 +8237,13 @@ impl<'a> Engine<'a> {
                     answer
                 }
                 else if let Some(places) = self.indexed_walk(&args[0]) { places }
-                else { Value::Walk(Rc::new(RefCell::new((self.comprehension_items(&args[0])?, 0)))) }
+                else {
+                    let source = match Self::living_source(&args[0]) {
+                        Some(living) => living,
+                        None => CursorSource::Items(Rc::new(self.comprehension_items(&args[0])?).into(), 0),
+                    };
+                    Self::core_cursor_walked(source, Self::walk_called(&args[0]))
+                }
             }
             Builtin::Iter if args.len() == 2 => return Ok(None),
             // A thing with a method for walking backwards is asked for
@@ -10142,6 +10148,7 @@ impl<'a> Engine<'a> {
                     match kept { Some(held) => held, None => Value::Fields(o) }
                 }
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
+                Value::Native(Builtin::ValueMethod, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) && self.lang.float_getformat.iter().any(|public| public == word.as_ref()) => Value::text(word.rsplit('.').next().unwrap_or(&word)),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
                 Value::Native(_, word) if name.as_ref() == self.class_word("doc") && Self::builtin_kind_doc(&word).is_some() => {
                     Value::text(Self::builtin_kind_doc(&word).expect("checked"))
