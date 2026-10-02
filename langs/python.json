@@ -1042,6 +1042,7 @@
   ],
   "ext.builtin.math.floating": true,
   "ext.builtin.math.frexp": true,
+  "ext.builtin.math.fsum": true,
   "ext.builtin._random": [
     "__random"
   ],

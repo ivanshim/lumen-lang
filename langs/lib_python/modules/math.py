@@ -998,3 +998,5 @@ log2 = __math('method', 'log2', log2)
 fabs = __math('method', 'fabs', fabs)
 
 frexp = __math('method', 'frexp', frexp)
+
+fsum = __math('method', 'fsum', fsum)

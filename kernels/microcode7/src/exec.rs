@@ -16559,6 +16559,31 @@ impl<'a> Machine<'a> {
                     if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
                     return self.dot_product(&v[1], &v[2]);
                 }
+                if working == "fsum" && self.table.flag("ext.builtin.math.fsum") {
+                    let numbers = match v {
+                        [_, sequence] => match sequence.settled() {
+                            Value::Vector(items) | Value::Tuple(items) => items,
+                            _ => return Err(String::from("NotImplementedError: this summation helper expects a sequence")),
+                        },
+                        _ => return Err(String::from("TypeError: fsum needs one sequence")),
+                    };
+                    let widths = numbers.iter().map(|number| {
+                        let value = number.settled();
+                        match &value {
+                            Value::Flag(bit) => return Ok(f64::from(u8::from(*bit))),
+                            Value::Frac(r) if r.under && r.above.is_zero() => return Ok(if r.beneath.is_zero() { -f64::NAN } else { -0.0 }),
+                            _ => {},
+                        }
+                        let r = math::ratio_of(&value).ok_or_else(|| String::from("TypeError: a real number is required"))?;
+                        let rounded = crate::data::nearest_binary(&r.above, &r.beneath);
+                        if r.places.is_none() && !r.above.is_zero() && rounded.is_infinite() { return Err(String::from("OverflowError: int too large to convert to float")); }
+                        Ok(rounded)
+                    });
+                    let total = math::summed_expansion(widths)?;
+                    let mut result = crate::data::worth_of_binary(total, self.real_figures());
+                    if let Value::Frac(ratio) = &mut result { Rc::make_mut(ratio).float_style = self.rules.floating_math; }
+                    return Ok(result);
+                }
                 let takes = math::worked_takes(&working);
                 if v.len() != takes + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));

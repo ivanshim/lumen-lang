@@ -736,6 +736,13 @@ impl<'a> Machine<'a> {
                         // the C module's common case. Other values retain
                         // all of the library's protocol and error handling.
                         let operation=kept[0].bare();
+                        if operation == "fsum" && self.table.flag("ext.builtin.math.fsum") {
+                            if let [sequence] = values.as_slice() {
+                                let items = match sequence.settled() { Value::Vector(items) | Value::Tuple(items) => Some(items), _ => None };
+                                let native = items.is_some_and(|items| items.iter().all(|item| matches!(item.settled(), Value::Frac(_) | Value::Flag(_) | Value::Huge(_) | Value::Small(_))));
+                                if native { return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), sequence.clone()]); }
+                            }
+                        }
                         if let [integer]=values.as_slice() {
                             let worth=integer.settled();
                             if operation=="floor" && matches!(worth,Value::Small(_)|Value::Huge(_)) {return Ok(worth);}

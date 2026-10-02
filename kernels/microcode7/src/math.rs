@@ -514,3 +514,54 @@ pub fn decomposed(number: f64) -> (f64, i64) {
     let normalized = encoding ^ ((biased ^ 0x3fe) << 52);
     (f64::from_bits(normalized), biased as i64 - 0x3fe)
 }
+
+// CPython's expansion algorithm, Modules/mathmodule.c at 8e6e75d9102e;
+// PSF license: tests/python/LICENSE.
+pub fn summed_expansion(input: impl Iterator<Item = Result<f64, String>>) -> Result<f64, String> {
+    let mut pieces = Vec::<f64>::new();
+    let mut exceptional = 0.0;
+    let mut infinity_balance = 0.0f64;
+    for delivered in input {
+        let initial = delivered?;
+        let mut accumulator = initial;
+        let mut survivors = 0usize;
+        for position in 0..pieces.len() {
+            let other = pieces[position];
+            let (big, small) = if accumulator.abs() < other.abs() { (other, accumulator) } else { (accumulator, other) };
+            accumulator = big + small;
+            let residual = small - (accumulator - big);
+            if residual != 0.0 { pieces[survivors] = residual; survivors += 1; }
+        }
+        pieces.resize(survivors, 0.0);
+        match accumulator {
+            number if number == 0.0 => {},
+            number if number.is_finite() => pieces.push(number),
+            _ if initial.is_finite() => return Err(String::from("OverflowError: intermediate overflow in fsum")),
+            _ => {
+                if initial.is_infinite() { infinity_balance += initial; }
+                exceptional += initial;
+                pieces.truncate(0);
+            }
+        }
+    }
+    if exceptional != 0.0 {
+        return if infinity_balance.is_nan() { Err(String::from("ValueError: -inf + inf in fsum")) } else { Ok(exceptional) };
+    }
+    let mut answer = pieces.pop().unwrap_or_default();
+    let mut remainder = 0.0;
+    loop {
+        let Some(term) = pieces.pop() else { break; };
+        let before = answer;
+        answer += term;
+        remainder = term - (answer - before);
+        if remainder != 0.0 { break; }
+    }
+    if let Some(next) = pieces.last() {
+        if remainder < 0.0 && *next < 0.0 || remainder > 0.0 && *next > 0.0 {
+            let doubled = remainder + remainder;
+            let rounded = answer + doubled;
+            if rounded - answer == doubled { answer = rounded; }
+        }
+    }
+    Ok(answer)
+}

@@ -17033,6 +17033,28 @@ impl<'a> Engine<'a> {
                     if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
                     return self.product_sum(&args[1], &args[2]);
                 }
+                if working == "fsum" && self.lang.math_fsum {
+                    if args.len() != 2 { return Err("TypeError: fsum expected one iterable".into()); }
+                    let entries = match args[1].contents() {
+                        Value::Array(values) | Value::Tuple(values) => values,
+                        _ => return Err("NotImplementedError: native fsum requires a numeric sequence".into()),
+                    };
+                    let converted = entries.iter().map(|item| {
+                        let item = item.contents();
+                        if let Value::Flag(flag) = item { return Ok(if flag { 1.0 } else { 0.0 }); }
+                        if let Value::Real(real) = &item {
+                            if real.below && real.p.is_zero() { return Ok(if real.q.is_zero() { -f64::NAN } else { -0.0 }); }
+                        }
+                        let exact = arith::Exact::from_value(&item).ok_or("TypeError: must be real number")?;
+                        let number = crate::value::as_binary(&exact.p, &exact.q);
+                        if exact.places.is_none() && !exact.p.is_zero() && number.is_infinite() { return Err("OverflowError: int too large to convert to float".into()); }
+                        Ok(number)
+                    });
+                    let sum = arith::expansion_sum(converted)?;
+                    let mut result = crate::value::real_of(sum, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut result { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    return Ok(result);
+                }
                 let wants = match working.as_str() {
                     "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
                     "fma" => 3,

@@ -631,6 +631,12 @@ impl<'a> Engine<'a> {
                 // Domain edges and custom numeric protocols keep that frame.
                 64 => {
                     let operation = w.1[0].plain();
+                    if operation == "fsum" && self.lang.math_fsum && args.len() == 1 {
+                        let values = match args[0].contents() { Value::Array(values) | Value::Tuple(values) => Some(values), _ => None };
+                        if values.is_some_and(|row| row.iter().all(|item| matches!(item.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_)))) {
+                            return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), args[0].clone()]);
+                        }
+                    }
                     if args.len() == 1 {
                         let number = args[0].contents();
                         if operation == "floor" && matches!(number, Value::Small(_) | Value::Huge(_)) {
