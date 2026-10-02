@@ -1,4 +1,16 @@
 # Only in-memory streams are carried here: a text one and a binary one.
+class UnsupportedOperation(OSError, ValueError):
+    pass
+
+
+def _snapshot(value):
+    if type(value) is bytes:
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    raise TypeError("a bytes-like object is required, not '%s'" % type(value).__name__)
+
+
 class StringIO:
     def __init__(self, initial_value='', newline='\n'):
         if newline != "\n":
@@ -30,16 +42,19 @@ class StringIO:
 
     def seek(self, offset, whence=0):
         self._check()
-        if whence not in [0, 1, 2]:
-            raise 'ValueError: invalid whence'
-        if whence != 0 and offset != 0:
-            raise 'OSError: cannot do nonzero cur-relative seeks'
+        if whence == 1:
+            if offset != 0:
+                raise UnsupportedOperation("can't do nonzero cur-relative seeks")
+            return self.position
         if whence == 2:
-            offset += len(self.text)
-        elif whence == 1:
-            offset += self.position
+            if offset != 0:
+                raise UnsupportedOperation("can't do nonzero end-relative seeks")
+            self.position = len(self.text)
+            return self.position
+        if whence != 0:
+            raise ValueError("unsupported whence (%r)" % (whence,))
         if offset < 0:
-            raise 'ValueError: negative seek position'
+            raise ValueError("negative seek position %r" % (offset,))
         self.position = offset
         return offset
 
@@ -109,14 +124,16 @@ class StringIO:
 
 class BytesIO:
     def __init__(self, initial_value=b''):
-        self.data = initial_value
+        self.data = b'' if initial_value is None else _snapshot(initial_value)
         self.position = 0
         self.closed = False
 
     def write(self, value):
         if self.closed:
             raise ValueError('I/O operation on closed file')
-        value = bytes(value)
+        value = _snapshot(value)
+        if not value:
+            return 0
         while len(self.data) < self.position:
             self.data += b"\0"
         self.data = self.data[:self.position] + value + self.data[self.position + len(value):]
@@ -137,16 +154,16 @@ class BytesIO:
 
     def seek(self, offset, whence=0):
         self._check()
-        if whence not in [0, 1, 2]:
-            raise 'ValueError: invalid whence'
-        if whence != 0 and offset != 0:
-            raise 'OSError: cannot do nonzero cur-relative seeks'
-        if whence == 2:
-            offset += len(self.data)
-        elif whence == 1:
+        if whence == 1:
             offset += self.position
+        elif whence == 2:
+            offset += len(self.data)
+        elif whence != 0:
+            raise ValueError("invalid whence (%d, should be 0, 1 or 2)" % whence)
         if offset < 0:
-            raise 'ValueError: negative seek position'
+            if whence == 0:
+                raise ValueError("negative seek value %d" % offset)
+            offset = 0
         self.position = offset
         return offset
 
