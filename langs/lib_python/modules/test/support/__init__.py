@@ -674,7 +674,7 @@ requires_docstrings = unittest.skipUnless(HAVE_DOCSTRINGS, "docstrings are requi
 def skip_if_unlimited_stack_size(test):
     return test
 
-# Source: CPython 3b564385e4c9, Lib/test/support/__init__.py; PSF License.
+# Runtime adapter derived from CPython v3.14.8 / 8e6e75d9102e, Lib/test/support/__init__.py; PSF License.
 import annotationlib
 class EqualToForwardRef:
     """Helper to ease use of annotationlib.ForwardRef in tests.
@@ -716,7 +716,7 @@ class EqualToForwardRef:
             extra.append(f", owner={self.__owner__!r}")
         return f"EqualToForwardRef({self.__forward_arg__!r}{''.join(extra)})"
 
-# Source: CPython Lib/test/support/__init__.py at 3b564385e4c9; PSF License.
+# Runtime adapter derived from CPython Lib/test/support/__init__.py at v3.14.8 / 8e6e75d9102e; PSF License.
 def check__all__(test_case, module, name_of_module=None, extra=(),
                  not_exported=()):
     """Assert that the __all__ variable of 'module' contains all public names.
@@ -776,7 +776,7 @@ def check__all__(test_case, module, name_of_module=None, extra=(),
             expected.add(name)
     test_case.assertCountEqual(module.__all__, expected)
 
-# From CPython Lib/test/support at 3b564385e4c9, PSF License.
+# From CPython Lib/test/support at v3.14.8 / 8e6e75d9102e, PSF License.
 import functools
 PGO = False
 PGO_EXTENDED = False

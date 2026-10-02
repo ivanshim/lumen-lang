@@ -808,6 +808,10 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
         # in parts. A plain class name selects every method in that class.
         selected = []
         for tests in suite.tests:
+            if not isinstance(tests, TestSuite):
+                if type(tests).__name__ in only or tests.id() in only:
+                    selected.append(tests)
+                continue
             if tests.class_ is None:
                 continue
             name = tests.class_.__name__

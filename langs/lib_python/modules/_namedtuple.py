@@ -1,4 +1,4 @@
-# Source: CPython Lib/collections/__init__.py at 3b564385e4c9; PSF License.
+# Runtime adapter derived from CPython Lib/collections/__init__.py at v3.14.8 / 8e6e75d9102e; PSF License.
 import sys as _sys
 from keyword import iskeyword as _iskeyword
 def _tuplegetter(index, doc):

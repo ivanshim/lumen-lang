@@ -85,7 +85,7 @@ def get_type_hints(obj, globalns=None, localns=None, include_extras=False, *, fo
         resolved[name] = value
     return resolved
 
-# Adapted from CPython Lib/typing.py at 3b564385e4c9; PSF License.
+# Adapted from CPython Lib/typing.py at v3.14.8 / 8e6e75d9102e; PSF License.
 # Named tuple classes use the same tuple factory as their functional form.
 class _NamedTupleMeta(type):
     def __call__(cls, typename, fields, /):

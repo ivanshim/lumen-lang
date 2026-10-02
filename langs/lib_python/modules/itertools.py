@@ -1,4 +1,4 @@
-# Iterator algorithms following CPython 3b564385e4c9, Modules/itertoolsmodule.c
+# Iterator algorithms following CPython v3.14.8 / 8e6e75d9102e, Modules/itertoolsmodule.c
 # and the equivalent Python recipes in Doc/library/itertools.rst; PSF License.
 # CPython provides no Lib/itertools.py: these classes retain iterator state.
 import operator as _operator
