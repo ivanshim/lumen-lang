@@ -5119,9 +5119,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.byte` | - | - | `TypeError: format argument` `: %b requires a bytes-like object, or an object that implements __bytes__, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.character` | - | - | `TypeError: format argument` `: %c requires ` `, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.character` | - | - | `TypeError: ` `%c requires ` `, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character.range` | - | - | `OverflowError: format argument` `: %c argument not in range(` `)` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format %` ` at position ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string (got ` `)` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.incomplete` | - | - | `ValueError: stray % at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |

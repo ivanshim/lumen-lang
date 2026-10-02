@@ -638,12 +638,12 @@ impl Writer<'_> {
                             .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
                         Answer::CharacterType(name) => {
                             let required = if of_bytes { "an integer in range(256) or a single byte" }
-                                else { "an integer or a unicode character" };
-                            return Err(self.fault("ext.op.rem.format.character", &[&location, required, &name]));
+                                else { "an int or a unicode character" };
+                            return Err(self.fault("ext.op.rem.format.character", &["", required, &name]));
                         },
                         Answer::Missing(name) | Answer::BadMethod(name) => {
                             let required = if of_bytes { "an integer in range(256) or a single byte" }
-                                else { "an integer or a unicode character" };
+                                else { "an int or a unicode character" };
                             let subject = if !name.is_empty() {
                                 name
                             } else {
@@ -653,7 +653,7 @@ impl Writer<'_> {
                                     _ => value.core_kind(),
                                 }
                             };
-                            return Err(self.fault("ext.op.rem.format.character", &[&location, required, &subject]));
+                            return Err(self.fault("ext.op.rem.format.character", &["", required, &subject]));
                         },
                         _ => unreachable!(),
                     },
@@ -735,7 +735,7 @@ impl Writer<'_> {
 
     fn percent_unknown(&self, code: char, mark: usize, character: usize, bytes: bool) -> String {
         if code.is_ascii_alphanumeric() {
-            return self.fault("ext.op.rem.format.code", &[&code.to_string(), &mark.to_string()]);
+            return self.fault("ext.op.rem.format.code", &[&code.to_string(), &format!("{:x}", code as u32), &character.to_string()]);
         }
         let name = if bytes {
             if (code.is_ascii_graphic() || code == ' ') && code != '\'' { format!("'{code}'") }

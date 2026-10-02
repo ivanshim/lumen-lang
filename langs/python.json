@@ -2487,8 +2487,8 @@
     ": %b requires a bytes-like object, or an object that implements __bytes__, not "
   ],
   "ext.op.rem.format.character": [
-    "TypeError: format argument",
-    ": %c requires ",
+    "TypeError: ",
+    "%c requires ",
     ", not "
   ],
   "ext.op.rem.format.character.range": [
@@ -2497,8 +2497,9 @@
     ")"
   ],
   "ext.op.rem.format.code": [
-    "ValueError: unsupported format %",
-    " at position "
+    "ValueError: unsupported format character '",
+    "' (0x",
+    ") at index "
   ],
   "ext.op.rem.format.few": [
     "TypeError: not enough arguments for format string (got ",
