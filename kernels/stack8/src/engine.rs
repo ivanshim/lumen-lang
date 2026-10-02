@@ -7401,6 +7401,11 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let plain_number = |value: &Value| matches!(value, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
+        if matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
+            && plain_number(a) && plain_number(b) {
+            return self.dyadic(op, a, b);
+        }
         if let (Action::At, Value::View(proxy)) = (op, a) {
             if proxy.1 == "mapping" { return self.special_dyad(op, &proxy.0, b); }
         }

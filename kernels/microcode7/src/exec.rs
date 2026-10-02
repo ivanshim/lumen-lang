@@ -13425,6 +13425,12 @@ impl<'a> Machine<'a> {
             return Ok(method.hash_number().map(Value::Small));
         }
         if self.rules.specials.is_empty() { return Ok(None); }
+        if matches!(operation, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge)
+            && operands.len() == 2 && operands.iter().all(|item| matches!(item, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_))) {
+            // Native scalars have no Python override to ask; their ordinary
+            // comparison also handles exact large integers and special reals.
+            return Ok(None);
+        }
         // A compound write asks the thing it lands on for its in-place
         // answer first; declined or absent, the plain working runs.
         if let (Prim::Landing(place), [held, by]) = (operation, operands) {
