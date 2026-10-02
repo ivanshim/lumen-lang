@@ -111,6 +111,9 @@ pub struct Engine<'a> {
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
     function_members: Vec<(Value, Rc<Instance>)>,
+    function_book_slots: RefCell<HashMap<usize, (usize, Option<usize>)>>,
+    kind_directory_cache: RefCell<HashMap<String, Vec<String>>>,
+    opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
@@ -1235,7 +1238,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), function_book_slots: RefCell::new(HashMap::new()), kind_directory_cache: RefCell::new(HashMap::new()), opened_descriptors: HashMap::new(),
             native_exceptions,
             lang,
             world,
@@ -3466,8 +3469,23 @@ impl<'a> Engine<'a> {
         Ok(Value::tuple(vec![Value::tuple(answer), cursor]))
     }
 
+    /// Remember the metadata slot without retaining a snapshot of its globals.
+    /// Appending a function record invalidates every previous lookup.
     fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, holder) = self.function_members.iter().find(|(value, _)| matches!(value, Value::Routine(code) if Rc::ptr_eq(code, program)))?;
+        let address = Rc::as_ptr(program) as usize;
+        let count = self.function_members.len();
+        let remembered = self.function_book_slots.borrow().get(&address).copied();
+        let at = match remembered.filter(|entry| entry.0 == count) {
+            Some((_, at)) => at,
+            None => {
+                let at = self.function_members.iter().position(|(value, _)| matches!(value, Value::Routine(code) if Rc::ptr_eq(code, program)));
+                let mut slots = self.function_book_slots.borrow_mut();
+                if slots.len() > 8192 { slots.clear(); }
+                slots.insert(address, (count, at));
+                at
+            }
+        }?;
+        let holder = &self.function_members[at].1;
         let book = holder.fields.borrow().iter().find(|(name, _)| name == "\0 namespace")?.1.clone();
         match book {
             Value::Bond(cell) | Value::Binding(cell) => Some(cell),
@@ -4213,6 +4231,9 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn iterator(&mut self, source: Value) -> Flow<Value> {
+        if self.lang.yield_suspends {
+            if let Some(live) = Self::living_source(&source) { return Ok(Self::core_cursor(live)); }
+        }
         if matches!(source, Value::Generator(_)) { return Ok(source); }
         if self.lang.python_numbers {
             let value = source.contents();
@@ -5751,6 +5772,11 @@ impl<'a> Engine<'a> {
             return names;
         }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
+        let cache_key = match &held {
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Bytes(..) | Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Set(_) | Value::Counted(_) => Some(held.core_kind()),
+            _ => None,
+        };
+        if let Some(names) = cache_key.as_ref().and_then(|key| self.kind_directory_cache.borrow().get(key).cloned()) { return names; }
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         if matches!(family, Kindred::Set(_) | Kindred::Map) { names.extend(self.lang.constructor.iter().cloned()); }
         for (spelling, working) in self.lang.value_methods.iter() {
@@ -5785,6 +5811,7 @@ impl<'a> Engine<'a> {
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
+        if let Some(key) = cache_key { self.kind_directory_cache.borrow_mut().insert(key, names.clone()); }
         names
     }
 
@@ -5801,9 +5828,44 @@ impl<'a> Engine<'a> {
 
     /// The name a module read in goes by, where this value is that very
     /// module and nothing else.
+    fn file_descriptor_operation(&mut self, args: &[Value]) -> Option<Res<Value>> {
+        use std::os::fd::AsRawFd;
+        use std::io::{Seek, SeekFrom};
+        extern "C" { fn fcntl(fd: i32, command: i32, ...) -> i32; }
+        let error = |fault: std::io::Error| Value::tuple(vec![Value::Small(fault.raw_os_error().unwrap_or(5) as i64), Value::text(fault.to_string().split(" (os error").next().unwrap_or("I/O error"))]);
+        if let [Value::Text(path), Value::Text(mode)] = args {
+            let reading = mode.contains('r') || mode.contains('+') || !mode.contains(['w', 'a', 'x']);
+            let writing = mode.contains(['w', 'a', 'x', '+']);
+            return Some(Ok(match std::fs::OpenOptions::new().read(reading).write(writing).open(path.as_ref()) {
+                Ok(file) => { let fd = file.as_raw_fd(); self.opened_descriptors.insert(fd, file); Value::Small(fd as i64) },
+                Err(fault) => error(fault),
+            }));
+        }
+        let Value::Small(number) = args.first()?.contents() else { return None };
+        let Ok(fd) = i32::try_from(number) else { return Some(Err("OverflowError: Python int too large to convert to C int".into())) };
+        if args.get(1).is_some_and(|value| matches!(value.contents(), Value::Null)) {
+            return Some(Ok(if self.opened_descriptors.remove(&fd).is_some() { Value::Null } else { error(std::io::Error::from_raw_os_error(9)) }));
+        }
+        let Value::Text(action) = args.get(1)?.contents() else { return None };
+        if action.as_ref() == "seek" && args.len() == 3 {
+            let Value::Small(offset) = args[2].contents() else { return Some(Err("TypeError: an integer is required".into())) };
+            let outcome = self.opened_descriptors.get_mut(&fd).ok_or_else(|| std::io::Error::from_raw_os_error(9)).and_then(|file| file.seek(SeekFrom::Start(offset.max(0) as u64)));
+            return Some(Ok(outcome.map_or_else(error, |offset| Value::Small(offset as i64))));
+        }
+        if action.as_ref() != "inheritable" { return None; }
+        let flags = unsafe { fcntl(fd, 1) };
+        if flags < 0 { return Some(Ok(error(std::io::Error::last_os_error()))); }
+        if let Some(enabled) = args.get(2) {
+            let updated = if enabled.is_true() { flags & !1 } else { flags | 1 };
+            return Some(Ok(if unsafe { fcntl(fd, 2, updated) } < 0 { error(std::io::Error::last_os_error()) } else { Value::Null }));
+        }
+        Some(Ok(Value::Flag(flags & 1 == 0)))
+    }
+
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
-        let Value::Object(o) = value else { return None };
-        self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))).map(|(path, _)| path.clone())
+        let Value::Object(o) = value.contents() else { return None };
+        if let Some((_, Value::Text(path))) = o.fields.borrow().iter().find(|(key, _)| key == "\0module-owner") { return Some(path.to_string()); }
+        self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, &o))).map(|(path, _)| path.clone())
     }
 
     /// The word a value goes by as a kind: a class its own name, a
@@ -5905,7 +5967,10 @@ impl<'a> Engine<'a> {
         if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
             return Some(Self::adapter(30, vec![Value::text(name)]));
         }
-        if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
+        let cached = self.kind_directory_cache.borrow().get(&sample.core_kind())
+            .map(|entries| entries.iter().any(|entry| entry == name));
+        let present = cached.unwrap_or_else(|| self.kind_member_names(&sample).iter().any(|carried| carried == name));
+        if !present { return None; }
         Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
     }
 
@@ -9947,7 +10012,11 @@ impl<'a> Engine<'a> {
                     }
                 },
                 Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
-                Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class_now().clone()),
+                Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => {
+                    let held = Value::Object(o.clone());
+                    if self.module_holding(&held).is_some() { self.named_kind(&held) }
+                    else { Value::Class(o.class_now().clone()) }
+                },
                 Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {
                     // A thing that keeps a namespace of its own hands
                     // that over; one that keeps only fields stands as
@@ -16379,7 +16448,8 @@ impl<'a> Engine<'a> {
             }
             // One for a file, two for a directory, nought for neither.
             Builtin::FileKind => {
-                if args.len() != 1 && args.len() != 2 { arity(1)?; }
+                if !(1..=3).contains(&args.len()) { arity(1)?; }
+                if let Some(value) = self.file_descriptor_operation(args) { return value; }
                 let path = std::path::PathBuf::from(args[0].display(&self.wording()));
                 if args.len() == 2 && matches!(args[1].contents(), Value::Null) {
                     match std::fs::read_link(&path) {
@@ -16580,6 +16650,7 @@ impl<'a> Engine<'a> {
             // (anything else); a third stream told to follow the
             // second is kept as its own pipe, and the library that
             // asked reads the two together afterwards.
+            Builtin::RegexShortcut => crate::regex::shortcut(args)?,
             Builtin::AsciiSpan => {
                 arity(4)?;
                 let begin = as_index(&args[1])?;
@@ -18885,6 +18956,9 @@ impl Engine<'_> {
     }
 
     fn core_iterator(&mut self, source: &Value) -> Res<Value> {
+        if self.lang.yield_suspends {
+            if let Some(live) = Self::living_source(source) { return Ok(Self::core_cursor(live)); }
+        }
         if self.is_async_generator(source) { return Err(self.core_fault("core.uniterable", &source.core_kind())); }
         if matches!(source, Value::Cursor(_) | Value::Generator(_)) { return Ok(source.clone()); }
         if let Value::Counted(row) = source { return Ok(Self::core_cursor(CursorSource::Counted(row.clone(), BigInt::from(0)))); }
@@ -19345,6 +19419,7 @@ impl Engine<'_> {
         if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative) {
             for (position, value) in args.iter_mut().enumerate() {
                 if b == Builtin::SetAttr && position == 2 { continue; }
+                if b == Builtin::Enumerate && position == 0 || b == Builtin::Zip || b == Builtin::Map && position > 0 || b == Builtin::Filter && position == 1 { continue; }
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
@@ -19547,6 +19622,13 @@ impl Engine<'_> {
                     Value::Flag(v) => if *v { 2 } else { 1 },
                     Value::Null => 0,
                     Value::Ellipsis => 4,
+                    Value::Declined(_) => 5,
+                    Value::SortOf(kind) => {
+                        let mut digest = std::collections::hash_map::DefaultHasher::new();
+                        std::hash::Hash::hash(&Value::sort_called(*kind), &mut digest);
+                        std::hash::Hasher::finish(&digest)
+                    },
+                    Value::Adapter(holder) => Rc::as_ptr(holder) as usize as u64,
                     _ => return Err(self.core_fault("core.unready", name)),
                 };
                 let filed = format!("{}:{}", args[0].core_kind(), id);
@@ -20183,6 +20265,7 @@ impl Engine<'_> {
             if !fields.iter().any(|(name, _)| name == word) { fields.push((word.clone(), search)); }
         }
         if self.lang.module_path.is_some() && !fields.iter().any(|(name, _)| name == "__package__") { fields.push(("__package__".into(), Value::text(package_owner))); }
+        fields.push(("\0module-owner".into(), Value::text(path)));
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) }),

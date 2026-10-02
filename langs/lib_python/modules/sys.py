@@ -199,6 +199,19 @@ class _Input(_Stream):
         self._check_open()
         return _host_stream_read(size, True)
 
+    def readlines(self, hint=-1):
+        lines = []
+        total = 0
+        while True:
+            line = self.readline()
+            if not line:
+                break
+            lines.append(line)
+            total += len(line)
+            if hint > 0 and total >= hint:
+                break
+        return lines
+
     def isatty(self):
         return False
 

@@ -1,6 +1,7 @@
 # Host primitives used by class bodies need non-private module bindings.
 _host_copy_value = __copy_value
 _host_ascii_span = __text_scan_ascii
+_host_regex_shortcut = __re_shortcut
 
 # A backtracking reader over text. Inline flags, atomic groups and set
 # operations are read; backreferences, bytes and locale rules are carried
@@ -567,6 +568,9 @@ class Match:
         return self.captures[group][0] if group in self.captures else -1
 
     def end(self, group=0):
+        result = _host_regex_shortcut('end', self.captures, group, self.re.groups)
+        if result is not None:
+            return result
         group = self._index(group)
         return self.captures[group][1] if group in self.captures else -1
 
@@ -574,6 +578,9 @@ class Match:
         return (self.start(group), self.end(group))
 
     def groups(self, default=None):
+        result = _host_regex_shortcut('groups', self.string, self.captures, self.re.groups, default)
+        if result is not None:
+            return result
         values = []
         for i in range(1, self.re.groups + 1):
             value = self.group(i)
@@ -676,6 +683,9 @@ def _atom_matches(node, letter, opts):
 
 
 def _ascii_members(node, opts):
+    result = _host_regex_shortcut('ascii', node, opts, False)
+    if result is not None:
+        return result
     return ''.join(chr(n) for n in range(128)
                    if _atom_matches(node, chr(n), opts))
 
@@ -723,11 +733,13 @@ class Pattern:
                 end = _single_node(right[2])
                 if span is not None and end is not None:
                     if span[0] == 'repeat' and span[1][0] == 'dot' and span[2:] == [0, -1, False] and end[0] in ('lit', 'kind', 'class', 'dot'):
+                        skipped = _host_regex_shortcut('ascii', end, self._opts, True)
+                        if skipped is None:
+                            skipped = ''.join(chr(n) for n in range(128)
+                                              if not _atom_matches(end, chr(n), self._opts)
+                                              and (self.dotall or n != 10))
                         self._chunk = (left[1], right[1], end,
-                                       _ascii_members(end, self._opts),
-                                       ''.join(chr(n) for n in range(128)
-                                               if not _atom_matches(end, chr(n), self._opts)
-                                               and (self.dotall or n != 10)))
+                                       _ascii_members(end, self._opts), skipped)
         # The reader distinguishes shorthand classes and word boundaries
         # from escaped literals and a backspace inside a character class.
         self._shorthand = reader.shorthand

@@ -407,6 +407,7 @@ class _HostFile:
         self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
         self.errors = errors if errors is not None else 'strict'
         self.closed = False
+        self._descriptor = None
         self._pos = 0
         self._dirty = False
         # Line-at-a-time reading is what both the reference tests and
@@ -558,11 +559,28 @@ class _HostFile:
                 raise FileNotFoundError(2, 'No such file or directory', self.name)
             self._dirty = False
 
+    def fileno(self):
+        self._open()
+        if self._descriptor is None:
+            if self.writable():
+                self.flush()
+            descriptor = _host_file_kind(self.name, self.mode)
+            if isinstance(descriptor, tuple):
+                raise OSError(descriptor[0], descriptor[1], self.name)
+            self._descriptor = descriptor
+        offset = len(self._buffer[:self._pos].encode('utf-8')) if isinstance(self._buffer, str) else self._pos
+        position = _host_file_kind(self._descriptor, 'seek', offset)
+        if isinstance(position, tuple):
+            raise OSError(position[0], position[1])
+        return self._descriptor
+
     def close(self):
         if self.closed:
             return
         if self.writable():
             self.flush()
+        if self._descriptor is not None:
+            _host_file_kind(self._descriptor, None)
         self.closed = True
 
     def __enter__(self):

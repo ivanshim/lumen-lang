@@ -1447,6 +1447,7 @@ impl<'a> Engine<'a> {
                     return self.class_apply(f,vec![subject.clone(),Value::text(name)]);
                 } }
                 if name == self.class_word("kind") {
+                    if self.module_holding(&subject).is_some() { return Ok(self.named_kind(&subject)); }
                     let actual = o.class_now().clone();
                     if let Some(overridden) = self.class_value(&actual, name) {
                         return self.bind_class_value(overridden, Some(subject.clone()), actual);
@@ -2147,7 +2148,7 @@ impl<'a> Engine<'a> {
                 // A module's members are its own bindings, written through
                 // so that its routines see the new value; a thing's member
                 // is simply written over.
-                let module=self.modules.values().any(|held|matches!(held,Value::Object(space) if Rc::ptr_eq(space,o)));
+                let module=self.module_holding(&subject).is_some();
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {

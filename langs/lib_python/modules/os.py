@@ -236,3 +236,20 @@ def readlink(path, *, dir_fd=None):
     if isinstance(raw, tuple):
         raise OSError(raw[0], raw[1], path)
     return fsencode(raw) if isinstance(path, bytes) else raw
+
+
+def get_inheritable(fd):
+    if not isinstance(fd, int):
+        raise TypeError('an integer is required')
+    result = _host_file_kind(fd, 'inheritable')
+    if isinstance(result, tuple):
+        raise OSError(result[0], result[1])
+    return result
+
+
+def set_inheritable(fd, inheritable):
+    if not isinstance(fd, int):
+        raise TypeError('an integer is required')
+    result = _host_file_kind(fd, 'inheritable', bool(inheritable))
+    if isinstance(result, tuple):
+        raise OSError(result[0], result[1])

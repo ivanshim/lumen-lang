@@ -4750,6 +4750,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.re.shortcut` | - | - | `__re_shortcut` | - | - | - | - | - | - | - |
 | `ext.builtin.rebuild_native` | - | - | `__rebuild_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.reduce_native` | - | - | `__reduce_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
@@ -5734,3 +5735,7 @@ surrogates, permissive controls, and precise error diagnostics.
 character set and returns its ending code-point index. The regular-expression
 adapter uses it for repeated atoms and captured spans, retaining its Unicode
 matching rules when the scan reaches a non-ASCII character.
+
+`ext.builtin.re.shortcut` computes the existing regular-expression adapter's
+ASCII atom sets and capture endpoints/groups. Unsupported input shapes
+return no result and retain the adapter's existing Unicode and object paths.

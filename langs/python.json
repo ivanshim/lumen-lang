@@ -47,6 +47,7 @@
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
+  "ext.builtin.re.shortcut": ["__re_shortcut"],
   "ext.builtin.file.kind": [
     "__file_kind"
   ],

@@ -489,6 +489,9 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    world_record_indices: RefCell<std::collections::BTreeMap<usize, (usize, Option<usize>)>>,
+    fixed_native_directories: RefCell<std::collections::BTreeMap<char, Vec<String>>>,
+    descriptor_files: std::collections::BTreeMap<i32, std::fs::File>,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
     /// routine was, kept so the pair stays its own, what calls of it now
@@ -1556,7 +1559,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), world_record_indices: RefCell::new(std::collections::BTreeMap::new()), fixed_native_directories: RefCell::new(std::collections::BTreeMap::new()), descriptor_files: std::collections::BTreeMap::new(), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -3460,6 +3463,9 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn make_iterator(&mut self, source: Value) -> Res {
+        if let (true, Some(walk)) = (self.rules.suspends, Self::live_walk(&source)) {
+            return Ok(Self::cursor_value(walk));
+        }
         if let Value::Generator(_) = source { return Ok(source); }
         if self.table.flag("ext.op.arithmetic.python_numbers") {
             let naked = source.settled();
@@ -7016,6 +7022,11 @@ impl<'a> Machine<'a> {
             return bounds;
         }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
+        // Iterator directories can depend on their concrete implementation.
+        let reusable = !matches!(mark, 'w' | 'W' | 'V');
+        if reusable {
+            if let Some(names) = self.fixed_native_directories.borrow().get(&mark) { return names.clone(); }
+        }
         let mut gathered = Vec::new();
         if matches!(sample.settled(), Value::Set(_) | Value::Dict(_)) {
             gathered.extend(self.table.strings("ext.stmt.class.constructor").iter().cloned());
@@ -7063,6 +7074,7 @@ impl<'a> Machine<'a> {
         gathered.extend(self.table.strings("ext.stmt.class.detail.root.members").get(9).cloned());
         gathered.sort();
         gathered.dedup();
+        if reusable { self.fixed_native_directories.borrow_mut().insert(mark, gathered.clone()); }
         gathered
     }
 
@@ -7483,7 +7495,9 @@ impl<'a> Machine<'a> {
         if self.table.strings("ext.stmt.class.detail.root.members").get(9).is_some_and(|word| word == name) {
             return Some(Value::Wrapped(36, Rc::new(vec![Value::text(name)]).into()));
         }
-        if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
+        let known = Self::native_mark(&stand_in).filter(|mark| !matches!(mark, 'w' | 'W' | 'V'))
+            .and_then(|mark| self.fixed_native_directories.borrow().get(&mark).map(|entries| entries.binary_search_by(|entry| entry.as_str().cmp(name)).is_ok()));
+        if !known.unwrap_or_else(|| self.native_directory(&stand_in).binary_search_by(|entry| entry.as_str().cmp(name)).is_ok()) { return None; }
         Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into()))
     }
 
@@ -7647,7 +7661,12 @@ impl<'a> Machine<'a> {
             }
         }
         match value {
-            Value::Thing(t) if names.get(35).map_or(false, |s| s == name) => return Some(Value::Blueprint(t.blueprint().clone())),
+            Value::Thing(t) if names.get(35).map_or(false, |s| s == name) => {
+                return Some(match self.namespace_holding(value) {
+                    Some(_) => self.kind_named_after(value),
+                    None => Value::Blueprint(t.blueprint().clone()),
+                });
+            },
             Value::Thing(t) if names.get(36).map_or(false, |s| s == name) => {
                 if let Some((_, mapping)) = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").cloned() {
                     return Some(mapping);
@@ -7965,9 +7984,55 @@ impl<'a> Machine<'a> {
 
     /// The name a namespace was read in under, where this value is that
     /// very namespace and nothing else.
+    fn descriptor_action(&mut self, values: &[Value]) -> Option<Result<Value, String>> {
+        use std::io::Seek;
+        use std::os::fd::AsRawFd;
+        extern "C" { fn fcntl(descriptor: i32, request: i32, ...) -> i32; }
+        fn failed(error: std::io::Error) -> Value {
+            let text = error.to_string();
+            Value::tuple(vec![Value::Small(error.raw_os_error().unwrap_or(5) as i64), Value::text(text.split(" (os error").next().unwrap_or(&text))])
+        }
+        if values.len() == 2 {
+            if let (Value::Text(location), Value::Text(options)) = (&values[0], &values[1]) {
+                let mut opening = std::fs::OpenOptions::new();
+                let modify = options.chars().any(|ch| "wax+".contains(ch));
+                let obtain = options.contains('r') || options.contains('+') || !modify;
+                opening.read(obtain).write(modify);
+                let result = match opening.open(location.as_ref()) {
+                    Err(problem) => failed(problem),
+                    Ok(handle) => { let descriptor = handle.as_raw_fd(); self.descriptor_files.insert(descriptor, handle); Value::Small(descriptor as i64) },
+                };
+                return Some(Ok(result));
+            }
+        }
+        let descriptor = match values.first().map(Value::settled) { Some(Value::Small(n)) => match i32::try_from(n) { Ok(n) => n, Err(_) => return Some(Err("OverflowError: Python int too large to convert to C int".to_owned())) }, _ => return None };
+        let action = values.get(1)?.settled();
+        if matches!(action, Value::Nil) {
+            return Some(Ok(match self.descriptor_files.remove(&descriptor) { Some(_) => Value::Nil, None => failed(std::io::Error::from_raw_os_error(9)) }));
+        }
+        if action.bare() == "seek" && values.len() == 3 {
+            if let Value::Small(position) = values[2].settled() {
+                let seek = match self.descriptor_files.get_mut(&descriptor) {
+                    None => Err(std::io::Error::from_raw_os_error(9)),
+                    Some(handle) => handle.seek(std::io::SeekFrom::Start(position.max(0) as u64)),
+                };
+                return Some(Ok(match seek { Ok(position) => Value::Small(position as i64), Err(problem) => failed(problem) }));
+            }
+            return Some(Err("TypeError: an integer is required".to_owned()));
+        }
+        if action.bare() != "inheritable" { return None; }
+        let current = unsafe { fcntl(descriptor, 1) };
+        if current == -1 { return Some(Ok(failed(std::io::Error::last_os_error()))); }
+        if values.len() == 2 { return Some(Ok(Value::Flag(current & 1 != 1))); }
+        let desired = match values[2].is_true() { true => current & !1, false => current | 1 };
+        Some(Ok(match unsafe { fcntl(descriptor, 2, desired) } { -1 => failed(std::io::Error::last_os_error()), _ => Value::Nil }))
+    }
+
     pub(super) fn namespace_holding(&self, value: &Value) -> Option<String> {
-        let Value::Thing(thing) = value else { return None };
-        self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing))).map(|(path, _)| path.clone())
+        let Value::Thing(thing) = value.settled() else { return None };
+        let origin = thing.holds.borrow().iter().find_map(|(key, held)| if key == "\0namespace-origin" { Some(held.bare()) } else { None });
+        if origin.is_some() { return origin; }
+        self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(other) if Rc::ptr_eq(other, &thing))).map(|(path, _)| path.clone())
     }
 
     /// The word a value goes by as a kind: a blueprint its own name, a
@@ -10086,11 +10151,25 @@ impl<'a> Machine<'a> {
         Ok(Value::Generator(walk))
     }
 
+    // Cache locations, including absent records, until metadata gains an entry.
+    // The record itself stays live, so later writes to globals remain visible.
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
-            Value::Bound(code, _) | Value::Routine(code) => Rc::ptr_eq(code, body),
-            _ => false,
-        })?;
+        let identity = Rc::as_ptr(body) as usize;
+        let size = self.routine_members.len();
+        let held = self.world_record_indices.borrow().get(&identity).cloned();
+        let position = if let Some((_, position)) = held.filter(|entry| entry.0 == size) {
+            position
+        } else {
+            let position = self.routine_members.iter().position(|(candidate, _)| match candidate {
+                Value::Bound(code, _) | Value::Routine(code) => Rc::ptr_eq(code, body),
+                _ => false,
+            });
+            let mut indices = self.world_record_indices.borrow_mut();
+            if indices.len() >= 8000 { indices.clear(); }
+            indices.insert(identity, (size, position));
+            position
+        };
+        let record = &self.routine_members[position?].1;
         let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
         if let Value::Shared(cell) | Value::Mutable(cell, _) = worth { Some(cell) }
         else if matches!(worth, Value::Dict(_)) { Some(Rc::new(RefCell::new(worth))) }
@@ -13175,7 +13254,10 @@ impl<'a> Machine<'a> {
                     None => settled.push(operand.clone()),
                 }
             }
-            if changed && !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_))) {
+            let mapping_comparison = matches!(operation, Prim::Eq | Prim::Ne) && settled.len() == 2
+                && settled.iter().all(|value| matches!(value.settled(), Value::Dict(_)));
+            if mapping_comparison { settled = settled.iter().map(Value::settled).collect(); }
+            if changed && (mapping_comparison || !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
                 // A thing over a value that is not a number hashes as
                 // itself, the way CPython's own hash of a NaN does, and
                 // not as the worth that stood in for it here.
@@ -13884,8 +13966,8 @@ impl<'a> Machine<'a> {
     /// `one_place`/`equals`, which cannot call a key's own `__eq__`:
     /// same length, and every key of the one found among the other's
     /// through `keys_agree`, its value equal to the one paired with it
-    /// there. A value that is itself a Thing keeps to `equal_contents`;
-    /// only a map's own keys need the interpreter to compare them.
+    /// there. Both keys and values follow Python equality, including
+    /// user-defined comparisons on nested objects.
     fn dicts_equal(&mut self, one: &crate::data::MapStore, other: &crate::data::MapStore) -> Result<bool, String> {
         if self.recursion_ceiling().is_some_and(|limit| self.standing >= limit) {
             if let Some(text) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{text}")); }
@@ -13910,7 +13992,14 @@ impl<'a> Machine<'a> {
                 Some(index) => {
                     let rhs = &other[index].1;
                     if value.one_place(rhs) { continue; }
-                    let verdict = self.prim(Prim::Eq, "", &[value.clone(), rhs.clone()])?;
+                    let operands = [value.clone(), rhs.clone()];
+                    let verdict = match self.user_operation(Prim::Eq, &operands)? {
+                        Some(answer) => answer,
+                        None => {
+                            let native: Vec<_> = operands.iter().map(|operand| Self::underlying(operand).unwrap_or_else(|| operand.clone()).settled()).collect();
+                            self.prim(Prim::Eq, "", &native)?
+                        },
+                    };
                     if !self.object_truth(&verdict)? { return Ok(false); }
                 }
             }
@@ -16046,7 +16135,8 @@ impl<'a> Machine<'a> {
                 Value::Vector(crate::tuples::Sequence::plain(vec![kind, Value::text(&words)]))
             }
             Prim::PathSort => {
-                if v.len() < 1 || v.len() > 2 { n(1)?; }
+                if !(1..=3).contains(&v.len()) { n(1)?; }
+                if let Some(answer) = self.descriptor_action(v) { return answer; }
                 let named = v[0].render(self.wording());
                 let follows = v.len() == 1 || v[1].is_true();
                 let found = if follows { std::fs::metadata(&named) } else { std::fs::symlink_metadata(&named) };
@@ -16218,6 +16308,7 @@ impl<'a> Machine<'a> {
             // a pipe (1), or inherited (anything else); a third stream
             // told to follow the second is kept a pipe of its own, and
             // the library that asked joins the two later.
+            Prim::RegexShortcut => crate::regex::apply(v)?,
             Prim::AsciiRun => {
                 n(4)?;
                 let offset = as_index(&v[1])?;
@@ -20185,6 +20276,7 @@ impl Machine<'_> {
             if !members.iter().any(|entry| entry.0 == word) { members.push((word.to_owned(), directories)); }
         }
         if path_word.is_some() && !members.iter().any(|entry| entry.0 == "__package__") { members.push(("__package__".to_owned(), Value::text(owner_name))); }
+        members.push(("\0namespace-origin".to_owned(), Value::text(path)));
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
@@ -21989,6 +22081,9 @@ impl Machine<'_> {
     }
 
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
+        if self.rules.suspends {
+            if let Some(kind) = Self::live_walk(source) { return Ok(Self::cursor_value(kind)); }
+        }
         if matches!(source, Value::Wrapped(62, _)) { return Ok(source.clone()); }
         if self.is_async_generator(source) { return Err(self.core_complaint("core.uniterable", &source.kind_word())); }
         match source {
@@ -22466,7 +22561,8 @@ impl Machine<'_> {
                 if op == Prim::Belongs && matches!(item, Value::Window(..)) { continue; }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
-                *item = item.settled();
+                let lazy_input = match op { Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, _ => false };
+                if !lazy_input { *item = item.settled(); }
             }
         }
         if keywords.is_empty() {
@@ -22656,7 +22752,13 @@ impl Machine<'_> {
                 };
                 let address: u64 = match &held {
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
-                    Value::Ellipsis => 4,
+                    Value::Ellipsis => 4, Value::Refusal(_) => 5,
+                    Value::KindOf(kind) => {
+                        let word = Value::word_for_kind(*kind);
+                        let mut state = std::collections::hash_map::DefaultHasher::new();
+                        std::hash::Hash::hash(&word, &mut state);
+                        std::hash::Hasher::finish(&state)
+                    },
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Vector(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Intrinsic(_, word) => {

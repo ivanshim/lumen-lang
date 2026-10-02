@@ -1864,6 +1864,7 @@ impl<'a> Machine<'a> {
         }else if let Value::Thing(t)=&value {
             if !direct {if let Some(reader)=self.inherited_entry(&t.blueprint(),self.detail("get")){return self.apply_class_member(reader,vec![value.clone(),Value::text(key)]);}}
             if key == self.detail("kind") {
+                if self.namespace_holding(&value).is_some() { return Ok(self.kind_named_after(&value)); }
                 match self.inherited_entry(&t.blueprint(), key) {
                     Some(entry) => return self.member_binding(entry, Some(value.clone()), t.blueprint().clone()),
                     None => return Ok(Value::Blueprint(t.blueprint().clone())),
@@ -2321,7 +2322,7 @@ impl<'a> Machine<'a> {
                 }
                 // A loaded namespace keeps each binding in a cell its own
                 // code reads through; a new value goes into the cell.
-                if self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, t))) {
+                if self.namespace_holding(&subject).is_some() {
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
                     if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = v; return Ok(Value::Nil); }
                 }

@@ -240,7 +240,7 @@ pub enum Prim {
     /// at a time (ext.builtin.subprocess): one word, told which step it
     /// is on. Only a language spelling this may raise a second
     /// interpreter beside itself and read what it writes back.
-    AsciiRun,
+    RegexShortcut, AsciiRun,
     JsonStringScan,
     Subprocess,
     /// The host's signals, one word told which step it is on
