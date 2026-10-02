@@ -2683,7 +2683,7 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.throw_words, &w) {
                 self.take();
                 if !lang.syntax_members.is_empty() && self.on_keyword(&lang.throw_from) {
-                    return Err("SyntaxError: did you forget an expression between 'raise' and 'from'?".into());
+                    return Err("SyntaxError: invalid syntax".into());
                 }
                 if !lang.throw_from.is_empty() && (self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
                     self.act(Action::Reraise, 0);
@@ -3301,32 +3301,13 @@ impl<'a> Compiler<'a> {
         let mut module = String::new();
         if from {
             let mut relative = false;
-            let mut last_dot: Option<Token> = None;
             while self.on_any(&lang.pipe_words) || self.on_any(&lang.slice_ellipsis) {
                 relative = true;
-                last_dot = Some(self.take());
-                module.push_str(&last_dot.as_ref().unwrap().lexeme);
-            }
-            // A relative import written `from . lazy import` -- the lazy
-            // word after the dots, set off by a space or a line break --
-            // is the older order of a lazy import; the reference warns of
-            // it and reads the same import without the word.
-            if !lang.syntax_members.is_empty() && !self.in_lazy_from && relative && self.look().lexeme == "lazy"
-                && self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.import_words, &self.look_ahead(1).lexeme)
-                && last_dot.as_ref().map_or(false, |dot| {
-                    let flush = dot.column + dot.lexeme.chars().count();
-                    self.look().row != dot.row || self.look().column != flush
-                }) {
-                let at = self.look().clone();
-                let warning = (format!("did you mean 'lazy from {module} import'?"), at.row, at.column);
-                if !self.registry.warnings.contains(&warning) { self.registry.warnings.push(warning); }
-                self.take();
+                let dot = self.take();
+                module.push_str(&dot.lexeme);
             }
             if !relative || !self.on_keyword(&lang.import_words) {
                 module.push_str(&self.import_name(true)?);
-            }
-            if !lang.syntax_members.is_empty() && self.look().lexeme == "lazy" {
-                return Err("SyntaxError: use 'lazy from ... ' instead of 'from ... lazy import'".into());
             }
             if !self.on_keyword(&lang.import_words) {
                 return Err(format!("Expected '{}' after the module name, got '{}'", lang.import_words.first().map_or("", String::as_str), self.look().lexeme));
@@ -4328,8 +4309,8 @@ impl<'a> Compiler<'a> {
                 let mut rest: Option<(usize, String)> = None;
                 while !self.at_symbol(&map.close) {
                     if let Some((capture_at, _)) = &rest {
-                        self.pos = *capture_at;
-                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: double star pattern must be the last (right-most) subpattern in the mapping pattern".into() });
+                        if !lang.python_numbers { self.pos = *capture_at; }
+                        return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: invalid syntax".into() });
                     }
                     if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Power)) {
                         self.take();
@@ -6425,11 +6406,11 @@ impl<'a> Compiler<'a> {
         while !self.at_symbol(&call.close) && !self.exhausted() {
             let mut rule = if named_only { 2 } else { 0 };
             if lang.bind_names {
-                if pairs { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: parameters cannot follow var-keyword parameter".into() }); }
+                if pairs { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: arguments cannot follow var-keyword argument".into() }); }
                 let sign = self.look().lexeme.clone();
                 if Lang::spells(&lang.positional_only, &sign) {
                     if divided || named_only || formals.is_empty() {
-                        let phrase = if divided { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        let phrase = if divided { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one argument must precede /" };
                         return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {phrase}") });
                     }
                     divided = true;
@@ -6448,7 +6429,7 @@ impl<'a> Compiler<'a> {
                     pairs = true;
                     rule = 4;
                 } else if Lang::spells(&lang.carries_words, &sign) || Lang::spells(&lang.keyword_only, &sign) {
-                    if gather || named_only { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: * may appear only once".into() }); }
+                    if gather || named_only { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: * argument may appear only once".into() }); }
                     if !lang.syntax_members.is_empty() && self.look_ahead(1).is_lexeme(Shape::Sign, &call.close) {
                         return Err("SyntaxError: named arguments must follow bare *".into());
                     }
@@ -6530,7 +6511,7 @@ impl<'a> Compiler<'a> {
                 }
                 if self.on_assign() {
                     if rule >= 3 {
-                        let phrase = if rule == 3 { "var-positional parameter cannot have default value" } else { "var-keyword parameter cannot have default value" };
+                        let phrase = if rule == 3 { "var-positional argument cannot have default value" } else { "var-keyword argument cannot have default value" };
                         return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {phrase}") });
                     }
                     if rule == 0 { default_seen = true; }
@@ -6845,12 +6826,12 @@ impl<'a> Compiler<'a> {
         let mut repeated: Option<(String, usize)> = None;
         let bad = || lang.parameters_amiss.first().cloned().unwrap_or_default();
         while !self.at_symbol(&mark) {
-            if pairs { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: parameters cannot follow var-keyword parameter".into() }); }
+            if pairs { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: arguments cannot follow var-keyword argument".into() }); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Div | Action::DivReal)) {
                 if lang.closes_over {
                     if divided || keywords || modes.is_empty() {
-                        let reason = if divided { "/ may appear only once" } else if keywords { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        let reason = if divided { "/ may appear only once" } else if keywords { "/ must be ahead of *" } else { "at least one argument must precede /" };
                         return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {reason}") });
                     }
                     divided = true;
@@ -6866,18 +6847,18 @@ impl<'a> Compiler<'a> {
                 let mut mode = if keywords { 2 } else { 0 };
                 if spread {
                     let mapping = lang.dyadic.get(&star).map_or(false, |op| matches!(op.action, Action::Power));
-                    if keywords && !mapping { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: * may appear only once".into() }); }
+                    if keywords && !mapping { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: * argument may appear only once".into() }); }
                     self.take();
                     keywords = true;
                     pairs = mapping;
                     mode = if mapping { 4 } else { 3 };
                     if !mapping && self.at_symbol(&separator) {
                         self.take();
-                        if self.at_symbol(&mark) { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: named parameters must follow bare *".into() }); }
+                        if self.at_symbol(&mark) { return Err(if lang.syntax_members.is_empty() { bad() } else { "SyntaxError: named arguments must follow bare *".into() }); }
                         continue;
                     }
                     if !mapping && !lang.syntax_members.is_empty() && self.at_symbol(&mark) {
-                        return Err("SyntaxError: named parameters must follow bare *".into());
+                        return Err("SyntaxError: named arguments must follow bare *".into());
                     }
                     rest = Some(formals.len());
                 }
@@ -6900,7 +6881,7 @@ impl<'a> Compiler<'a> {
                 if self.on_assign() {
                     if mode >= 3 {
                         let kind = if mode == 3 { "var-positional" } else { "var-keyword" };
-                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {kind} parameter cannot have default value") });
+                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {kind} argument cannot have default value") });
                     }
                     if mode == 0 { default_seen = true; }
                     self.take();
@@ -10559,6 +10540,9 @@ impl<'a> Compiler<'a> {
             }
         }
         if let Some(clause) = self.comprehension_ahead() {
+            if self.lang.python_numbers && self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread }) {
+                return Err(if map { "SyntaxError: dict unpacking cannot be used in dict comprehension" } else { "SyntaxError: iterable unpacking cannot be used in comprehension" }.into());
+            }
             return self.comprehension(pair, clause, map);
         }
         self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);

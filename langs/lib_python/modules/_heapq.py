@@ -1,4 +1,4 @@
-# Source: CPython Lib/heapq.py at 3b564385e4c9; PSF License.
+# Runtime adapter derived from CPython Lib/heapq.py at v3.14.8 / 8e6e75d9102e; PSF License.
 # Python entry points for the native list-only heap accelerator.
 __all__ = ['heapify', 'heappop', 'heappush', 'heappushpop', 'heapreplace', 'heapify_max', 'heappop_max', 'heappush_max', 'heappushpop_max', 'heapreplace_max']
 

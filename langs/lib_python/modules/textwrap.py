@@ -1,6 +1,4 @@
-# From CPython 3.14, Lib/textwrap.py.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Source: CPython Lib/textwrap.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Text wrapping and filling.
 """
 
@@ -75,7 +73,7 @@ class TextWrapper:
     #   Hello/ /there/ /--/ /you/ /goof-/ball,/ /use/ /the/ /-b/ /option!
     # (after stripping out empty strings).
     word_punct = r'[\w!"\'&.,?]'
-    letter = r'[\w--\d]'
+    letter = r'[^\d\W]'
     whitespace = r'[%s]' % re.escape(_whitespace)
     nowhitespace = '[^' + whitespace[1:]
     wordsep_re = re.compile(r'''

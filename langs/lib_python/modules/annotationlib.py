@@ -48,7 +48,7 @@ def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1)
         raise 'NotImplementedError: annotationlib cannot evaluate string annotations here'
     return dict(stored)
 
-# Source: CPython 3b564385e4c9, Lib/annotationlib.py; PSF License.
+# Runtime adapter derived from CPython v3.14.8 / 8e6e75d9102e, Lib/annotationlib.py; PSF License.
 # ForwardRef uses conditionals for formats; symbolic AST transformation is unavailable.
 import ast
 import builtins

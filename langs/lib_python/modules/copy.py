@@ -1,4 +1,4 @@
-# Source: CPython Lib/copy.py at 3b564385e4c9; PSF License.
+# Source: CPython Lib/copy.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Generic (shallow and deep) copying operations.
 
 Interface summary:
@@ -51,13 +51,11 @@ __getstate__() and __setstate__().  See the documentation for module
 """
 
 import types
-import pickle as _pickle
 import weakref
 from copyreg import dispatch_table
 
 class Error(Exception):
     pass
-Error.__module__ = __name__
 error = Error   # backward compatibility
 
 __all__ = ["Error", "copy", "deepcopy", "replace"]
@@ -69,18 +67,14 @@ def copy(x):
     """
 
     cls = type(x)
-    if isinstance(x, type):
-        return x
 
-    if any(cls is kind for kind in _copy_atomic_types):
+    if cls in _copy_atomic_types:
         return x
-    if cls is bytearray:
-        return bytearray(x)
-    if any(cls is kind for kind in _copy_builtin_containers):
+    if cls in _copy_builtin_containers:
         return cls.copy(x)
 
 
-    if isinstance(x, type):
+    if issubclass(cls, type):
         # treat it as a regular class:
         return x
 
@@ -92,60 +86,52 @@ def copy(x):
     if reductor is not None:
         rv = reductor(x)
     else:
-        reductor = _reduction_hook(x, "__reduce_ex__")
+        reductor = getattr(x, "__reduce_ex__", None)
         if reductor is not None:
             rv = reductor(4)
         else:
-            reductor = _reduction_hook(x, "__reduce__")
+            reductor = getattr(x, "__reduce__", None)
             if reductor:
                 rv = reductor()
             else:
-                rv = _reduce_native(x)
+                raise Error("un(shallow)copyable object of type %s" % cls)
 
     if isinstance(rv, str):
         return x
     return _reconstruct(x, None, *rv)
 
 
-_copy_atomic_types = (types.NoneType, int, float, bool, complex, str, tuple,
+_copy_atomic_types = {types.NoneType, int, float, bool, complex, str, tuple,
           bytes, frozenset, type, range, slice, property,
           types.BuiltinFunctionType, types.EllipsisType,
           types.NotImplementedType, types.FunctionType, types.CodeType,
-          weakref.ref, super,)
-try:
-    _copy_atomic_types = _copy_atomic_types + (frozendict,)
-except NameError:
-    pass
-_copy_atomic_types = _copy_atomic_types + (type(copy), type(max), type(Ellipsis), type(NotImplemented), type(property()))
+          weakref.ref, super}
+_copy_builtin_containers = {list, dict, set, bytearray}
 
-_copy_builtin_containers = (list, dict, set, bytearray,)
-
-def deepcopy(x, memo=None):
+def deepcopy(x, memo=None, _nil=[]):
     """Deep copy operation on arbitrary Python objects.
 
     See the module's __doc__ string for more info.
     """
 
     cls = type(x)
-    if isinstance(x, type):
-        return x
 
-    if any(cls is kind for kind in _atomic_types):
+    if cls in _atomic_types:
         return x
 
     d = id(x)
     if memo is None:
         memo = {}
     else:
-        y = memo.get(d, None)
-        if y is not None:
+        y = memo.get(d, _nil)
+        if y is not _nil:
             return y
 
     copier = _deepcopy_dispatch.get(cls)
     if copier is not None:
         y = copier(x, memo)
     else:
-        if isinstance(x, type):
+        if issubclass(cls, type):
             y = x # atomic copy
         else:
             copier = getattr(x, "__deepcopy__", None)
@@ -156,15 +142,16 @@ def deepcopy(x, memo=None):
                 if reductor:
                     rv = reductor(x)
                 else:
-                    reductor = _reduction_hook(x, "__reduce_ex__")
+                    reductor = getattr(x, "__reduce_ex__", None)
                     if reductor is not None:
                         rv = reductor(4)
                     else:
-                        reductor = _reduction_hook(x, "__reduce__")
+                        reductor = getattr(x, "__reduce__", None)
                         if reductor:
                             rv = reductor()
                         else:
-                            rv = _reduce_native(x)
+                            raise Error(
+                                "un(deep)copyable object of type %s" % cls)
                 if isinstance(rv, str):
                     y = x
                 else:
@@ -176,11 +163,9 @@ def deepcopy(x, memo=None):
         _keep_alive(x, memo) # Make sure x lives at least as long as d
     return y
 
-_atomic_types = (types.NoneType, types.EllipsisType, types.NotImplementedType,
+_atomic_types =  {types.NoneType, types.EllipsisType, types.NotImplementedType,
           int, float, bool, complex, bytes, str, types.CodeType, type, range,
-          types.BuiltinFunctionType, types.FunctionType, weakref.ref, property,)
-
-_atomic_types = _atomic_types + (type(copy), type(max), type(Ellipsis), type(NotImplemented), type(property()))
+          types.BuiltinFunctionType, types.FunctionType, weakref.ref, property}
 
 _deepcopy_dispatch = d = {}
 
@@ -219,37 +204,9 @@ def _deepcopy_dict(x, memo, deepcopy=deepcopy):
     return y
 d[dict] = _deepcopy_dict
 
-def _deepcopy_frozendict(x, memo, deepcopy=deepcopy):
-    y = {}
-    for key, value in x.items():
-        y[deepcopy(key, memo)] = deepcopy(value, memo)
-
-    # We're not going to put the frozendict in the memo, but it's still
-    # important we check for it, in case the frozendict contains recursive
-    # mutable structures.
-    try:
-        return memo[id(x)]
-    except KeyError:
-        pass
-    return frozendict(y)
-try:
-    d[frozendict] = _deepcopy_frozendict
-except NameError:
-    pass
-
 def _deepcopy_method(x, memo): # Copy instance methods
-    owner = deepcopy(x.__self__, memo)
-    function = x.__func__
-    bound = getattr(owner, function.__name__, None)
-    if getattr(bound, "__func__", None) is function:
-        return bound
-    return types.MethodType(function, owner)
+    return type(x)(x.__func__, deepcopy(x.__self__, memo))
 d[types.MethodType] = _deepcopy_method
-class _MethodProbe:
-    def method(self):
-        pass
-d[type(_MethodProbe().method)] = _deepcopy_method
-del _MethodProbe
 
 del d
 
@@ -274,7 +231,7 @@ def _reconstruct(x, memo, func, args,
                  *, deepcopy=deepcopy):
     deep = memo is not None
     if deep and args:
-        args = [deepcopy(arg, memo) for arg in args]
+        args = (deepcopy(arg, memo) for arg in args)
     y = func(*args)
     if deep:
         memo[id(x)] = y
@@ -323,28 +280,8 @@ def replace(obj, /, **changes):
     This is especially useful for immutable objects, like named tuples or
     frozen dataclasses.
     """
-    cls = type(obj)
+    cls = obj.__class__
     func = getattr(cls, '__replace__', None)
     if func is None:
         raise TypeError(f"replace() does not support {cls.__name__} objects")
     return func(obj, **changes)
-
-# The root object reduction hooks are supplied by the pickle bridge.
-def _reduce_native(value):
-    if type(value) is slice:
-        return (slice, (value.start, value.stop, value.step))
-    if type(value) in (set, frozenset):
-        return (type(value), (list(value),))
-    if getattr(value, "__reduce_ex__", None) is None and getattr(value, "__reduce__", None) is None:
-        raise Error("un(shallow)copyable object of type %s" % type(value))
-    reduction = _pickle._reduce(value, 4)
-    if len(reduction) > 2 and not hasattr(value, "__dict__"):
-        state = reduction[2]
-        if isinstance(state, tuple) and len(state) == 2:
-            reduction = (*reduction[:2], (None, state[1]), *reduction[3:])
-    return reduction
-
-# Resolve hooks before excluding the incomplete inherited root hook.
-def _reduction_hook(value, name):
-    getattr(value, name, None)
-    return _pickle._reduction_hook(value, name)

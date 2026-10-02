@@ -1541,7 +1541,8 @@ class TestBasicOps(unittest.TestCase):
         )
         for tp in dataset:
             with self.subTest(tp=tp):
-                support.check_immutable_type(self, tp)
+                with self.assertRaisesRegex(TypeError, "immutable"):
+                    tp.foobar = 1
 
 
 class TestExamples(unittest.TestCase):

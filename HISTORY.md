@@ -2378,3 +2378,29 @@ branch — version 3.16.0a0 — not CPython 3.14 as §1aw said. The next batch r
 file to the CPython 3.14.8 release (tag v3.14.8, commit 8e6e75d9102e).
 
 Merged, the sixty files count 3291 of 3735 on both kernels (2961 of 3390 on fifty-five files before).
+
+### 1ay. Batch 20w merged as #530; the reference suite re-pinned to the CPython 3.14.8 release
+
+Until now every CPython file in the repository — the reference tests, their support files and data, and the library
+modules copied from CPython — came from commit 3b564385e4c9 of 2026-09-07, which is CPython's development branch,
+version 3.16.0a0 (§1aw and §1ax corrected the earlier description of it as 3.14). The owner decided to pin the
+project to a release instead: CPython 3.14.8 (tag v3.14.8, commit 8e6e75d9102e, 2026-09-30), the newest release of the
+version people run. One GPT-6.1 Sol worker did the re-pin; an independent review accepted it.
+
+Every CPython-derived file was inventoried (120 entries) and replaced by its v3.14.8 counterpart, byte for byte, each
+checked by SHA-256: 105 release bodies (72 test and support files, 20 library sources, 13 scratch copies), of which 58
+changed. Two fixtures with no counterpart in 3.14.8 were removed (test_import/data/syntax_warnings.py, in the tests and
+in the library's test package). Library adapters that are not CPython copies now live apart from the copied files.
+Python reports itself as 3.14.8 through sys and platform, and the post-release features the kernels had followed —
+explicit lazy imports, starred comprehensions, newer builtins and math functions, gi_state and iterator keywords — are
+switched off for Python by label; PHP and Lumen are unchanged.
+
+Because the tests themselves changed, the counts move once: 138 previously passing tests do not exist in 3.14.8; five
+tests now fail because 3.14.8 asks for different behaviour (a syntax-error caret span, warning attribution for a
+deprecated reduce keyword, writable generator frame locals, rebuilding a generator expression from its code object,
+list equality while an operand mutates), left failing honestly for later work; four tests new in 3.14.8 fail. Every
+other replaced-file regression was fixed. tests/README.md records the pin and the per-file provenance.
+
+Measured on both kernels, the sixty files count 3218 of 3596 against the CPython 3.14.8 suite (3291 of 3735 against
+the 3.16.0a0 snapshot before). The merged full check agrees on 1182 scratch programs and passes every gate; the one
+MathTests part that exceeds Lambda's 870-second limit and microcode7's slowest itertools class were counted separately.

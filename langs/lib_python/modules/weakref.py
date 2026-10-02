@@ -331,7 +331,7 @@ class WeakValueDictionary:
                 new[key] = o
         return new
 
-    # Source: CPython Lib/weakref.py at 3b564385e4c9; PSF License.
+    # Runtime adapter derived from CPython Lib/weakref.py at v3.14.8 / 8e6e75d9102e; PSF License.
     def __deepcopy__(self, memo):
         from copy import deepcopy
         new = self.__class__()
@@ -522,7 +522,7 @@ class WeakKeyDictionary:
                 new[o] = value
         return new
 
-    # Source: CPython Lib/weakref.py at 3b564385e4c9; PSF License.
+    # Runtime adapter derived from CPython Lib/weakref.py at v3.14.8 / 8e6e75d9102e; PSF License.
     def __deepcopy__(self, memo):
         from copy import deepcopy
         new = self.__class__()

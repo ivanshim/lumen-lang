@@ -4748,7 +4748,7 @@ impl<'a> Machine<'a> {
         }
         let index = words.iter().position(|word| word == key)?;
         match value {
-            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 25) => {
+            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24) => {
                 if index == 25 && cell.try_borrow().is_err() { return Some(Value::text("GEN_RUNNING")); }
                 if index == 23 { return Some(Value::Flag(cell.try_borrow().is_err())); }
                 if index == 24 && cell.try_borrow().is_err() { return Some(Value::Nil); }
@@ -7478,6 +7478,9 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if self.rules.has_any_ext_stmt_class_special && name == self.rules.detail_receiver {
+            if let Value::Member(owner, _) = value.settled() { return Some(owner.as_ref().clone()); }
+        }
         if let Some(hook) = self.directory_attribute(value, name) { return Some(hook); }
         if let Value::Intrinsic(primitive, spelling) = value.settled() {
             if primitive.names_a_kind() && ["bases", "order", "mro"].iter().any(|part| name == self.detail(part)) {
@@ -9560,6 +9563,11 @@ impl<'a> Machine<'a> {
                 }
                 Value::Flag(false) => {
                     match &pair.1.settled() {
+                        Value::Generator(_) | Value::Thing(_) if self.table.flag("ext.op.arithmetic.python_numbers") => {
+                            let sequence = self.object_members(&pair.1.settled());
+                            if let Some(escape) = self.got_away.take() { return Err(escape); }
+                            positions.extend(sequence?);
+                        }
                         Value::Iterator(_) => positions.extend(self.core_collect(&pair.1)?),
                         Value::Progression(walk) => {
                             let mut place = BigInt::from(0);
@@ -11532,7 +11540,26 @@ impl<'a> Machine<'a> {
         Ok(Some(crate::data::worth_of_binary(result, math::DEFAULT_PLACES)))
     }
 
+    fn constructor_hash(held: &Value) -> Option<Value> {
+        let name = match held {
+            Value::OctetKind { changeable: true, .. } => "bytearray",
+            Value::OctetKind { changeable: false, .. } => "bytes",
+            Value::Wrapped(9, parts) if parts.is_empty() => "super",
+            Value::Wrapped(8, names) => {
+                let Some(Value::Text(name)) = names.first() else { return None; };
+                name.as_ref()
+            }
+            _ => return None,
+        };
+        Some(Value::Small(Value::text(name).hash_number()?))
+    }
+
     fn hash_key(&mut self, value: &Value) -> Result<Value, String> {
+        if self.rules.has_any_ext_stmt_class_special {
+            if let Some(number) = Self::constructor_hash(value) {
+                return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(number)));
+            }
+        }
         if self.rules.has_any_ext_stmt_class_special && matches!(value, Value::Thing(_)) {
             let hash = self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
             Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(hash)))
@@ -12941,6 +12968,9 @@ impl<'a> Machine<'a> {
             return Ok(method.hash_number().map(Value::Small));
         }
         if self.rules.specials.is_empty() { return Ok(None); }
+        if let (Prim::Hashed, [held]) = (operation, operands) {
+            if let Some(number) = Self::constructor_hash(held) { return Ok(Some(number)); }
+        }
         // A compound write asks the thing it lands on for its in-place
         // answer first; declined or absent, the plain working runs.
         if let (Prim::Landing(place), [held, by]) = (operation, operands) {
@@ -17028,6 +17058,7 @@ impl<'a> Machine<'a> {
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
+                    (Value::Vector(_), Value::Dict(_)) | (Value::Dict(_), Value::Vector(_)) if self.table.flag("ext.op.arithmetic.python_numbers") => false,
                     _ if !v[0].selfsame(&v[1]) => false,
                     _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
                 };
@@ -18780,6 +18811,9 @@ impl<'a> Machine<'a> {
     }
 
     fn hash_for_set(&self, item: &Value) -> Result<String, String> {
+        if self.rules.has_any_ext_stmt_class_special {
+            if let Some(number) = Self::constructor_hash(item) { return Ok(format!("type-key/{}", number.bare())); }
+        }
         match item.hash_address() {
             Ok(address) => Ok(address),
             Err("") => Err(self.set_complaint("unsupported", "")),
@@ -20764,7 +20798,7 @@ impl<'a> Machine<'a> {
                 if words.starts_with("unterminated ") || (needs_closer && source.lines().count() > line as usize) { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if words == "cannot assign to function call" && source.lines().count() > line as usize { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if mode > 0 && words == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { offset = 0; end_offset = 0; }
-                let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("annotated name ") || words.starts_with("duplicate parameter ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
+                let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("annotated name ") || words.starts_with("duplicate argument ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
                 if omit {
                     let first: String = text.chars().take(offset.saturating_sub(1) as usize).collect();
                     offset = first.len() as i64 + 1;

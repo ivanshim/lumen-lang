@@ -3,7 +3,7 @@ def python_implementation():
     return 'Lumen'
 
 def python_version():
-    return '3.14.0'
+    return '3.14.8'
 
 def system():
     word = __host_info()[1]

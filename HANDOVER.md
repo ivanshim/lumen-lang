@@ -8,8 +8,8 @@ diary that used to live here is in `HISTORY.md`; read it when a question
 starts with "why is it like this".
 
 **Branch for work:** `claude/codebase-familiarization-t6vjhi`, reset to
-`main` after each batch merges. **Goal:** all 50 files in `tests/python/`
-(CPython 3.14's own tests) pass on both full kernels, `stack8` and
+`main` after each batch merges. **Goal:** all 60 reference files in `tests/python/`
+(CPython 3.14.8's own tests, tag v3.14.8 / 8e6e75d9102e) pass on both full kernels, `stack8` and
 `microcode7`, without weakening a test or a fixture.
 
 ---

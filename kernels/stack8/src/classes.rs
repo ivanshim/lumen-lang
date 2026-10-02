@@ -1189,12 +1189,12 @@ impl<'a> Engine<'a> {
                         _ => match state.delegate.clone().unwrap_or(Value::Null) { Value::Adapter(parts) if parts.0 == 33 => parts.1[0].clone(), other => other },
                     });
                 }
-                if self.lang.trace_fields.iter().position(|key| key == name).is_some_and(|at| matches!(at, 14 | 15 | 19..=25)) {
+                if self.lang.trace_fields.iter().position(|key| key == name).is_some_and(|at| matches!(at, 14 | 15 | 19..=24)) {
                     return Err(self.missing_member(&subject, name));
                 }
             }
             let index = self.lang.trace_fields.iter().position(|key| key == name);
-            if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 25)) {
+            if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24)) {
                 if index == Some(25) && generator.try_borrow().is_err() { return Ok(Value::text("GEN_RUNNING")); }
                 let kept = generator.try_borrow().map_err(|_| self.class_refusal())?;
                 match index {
@@ -2703,7 +2703,7 @@ impl<'a> Engine<'a> {
             for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
                 if let Some(w)=words.first() { names.push(w.clone()); }
             }
-            for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()) {
+            for word in [14, 15, 21, 24].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()).filter(|word| !word.is_empty()) {
                 if !word.is_empty() { names.push(word); }
             }
             names.sort();names.dedup();

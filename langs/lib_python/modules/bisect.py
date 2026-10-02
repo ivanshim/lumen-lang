@@ -1,4 +1,4 @@
-# Source: CPython Lib/bisect.py at 3b564385e4c9; PSF License.
+# Source: CPython Lib/bisect.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Bisection algorithms."""
 
 

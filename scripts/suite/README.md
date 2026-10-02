@@ -27,3 +27,10 @@ run it alone with `SUITE_JOBS=1`. The checkers give this fixture a 2,400 s cap;
 other programs keep the 900 s cap.
 
 `worker-brief.md` is the template for a worker's brief.
+
+`fixwrite.py --from-logs <json> <root> <piece/n>...` writes records from
+reviewed measurements made elsewhere, including Lambda. The JSON maps each
+piece to `stack8` and `microcode7` objects with `returncode`, `stdout`, and
+`stderr`. Both kernels must agree under stderr_record.py's rule. This mode
+also handles a justified change between successful and failing status; review
+the source change and test identities before supplying such measurements.

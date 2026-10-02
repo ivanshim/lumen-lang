@@ -241,10 +241,10 @@ def lcm(*integers):
     return result
 
 def factorial(n):
+    from operator import index
+    n = index(n)
     if n < 0:
         raise 'ValueError: factorial() not defined for negative values'
-    if type(n) != type(1) and type(n) != type(True):
-        raise 'TypeError: factorial needs an integer'
     value = 1
     for i in range(2, n + 1):
         value *= i
@@ -336,8 +336,8 @@ def prod(values, *, start=1):
 tau = 2 * pi
 
 def comb(n, k):
-    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
-        raise 'TypeError: comb needs integers'
+    from operator import index
+    n, k = index(n), index(k)
     if n < 0 or k < 0:
         raise 'ValueError: comb arguments must be non-negative'
     if k > n:
@@ -351,8 +351,8 @@ def comb(n, k):
 def perm(n, k=None):
     if k is None:
         return factorial(n)
-    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
-        raise 'TypeError: perm needs integers'
+    from operator import index
+    n, k = index(n), index(k)
     if n < 0 or k < 0:
         raise 'ValueError: perm arguments must be non-negative'
     if k > n:
@@ -363,8 +363,8 @@ def perm(n, k=None):
     return result
 
 def isqrt(n):
-    if type(n) != type(1) and type(n) != type(True):
-        raise 'TypeError: isqrt needs an integer'
+    from operator import index
+    n = index(n)
     if n < 0:
         raise 'ValueError: isqrt argument must be non-negative'
     low = 0
@@ -751,106 +751,12 @@ def erfc(x):
         return cf
     return 2.0 - cf
 
-def sinpi(x):
-    _check_real(x)
-    _overflow_guard(x)
-    x = float(x)
-    if not isfinite(x):
-        if isnan(x):
-            return x
-        raise ValueError('expected a finite input, got ' + str(x))
-    return _sinpi(x)
 
-def cospi(x):
-    # cos(pi*x). The whole turns are folded away exactly first, so an
-    # exact multiple answers an exact value; what is left is asked of
-    # cos or sin on the nearest piece of the half turn.
-    _check_real(x)
-    _overflow_guard(x)
-    x = float(x)
-    if not isfinite(x):
-        if isnan(x):
-            return x
-        raise ValueError('expected a finite input, got ' + str(x))
-    r = x - 2.0 * round(0.5 * x)
-    r = -r if r < 0 else r
-    if r <= 0.25:
-        return __math('cos', pi * r)
-    if r == 0.5:
-        return __math('fdiv', 0.0, 1.0)
-    if r <= 0.75:
-        return __math('sin', pi * (0.5 - r))
-    return -__math('cos', pi * (1.0 - r))
 
-def tanpi(x):
-    # tan(pi*x), folded the way cospi folds but kept signed; an exact
-    # half turn answers a zero of the right sign, and an exact odd
-    # quarter turn overflows, the way the width's own divide by nought
-    # would say it.
-    _check_real(x)
-    _overflow_guard(x)
-    x = float(x)
-    if not isfinite(x):
-        if isnan(x):
-            return x
-        raise ValueError('expected a finite input, got ' + str(x))
-    y = x - 2.0 * round(0.5 * x)
-    absy = -y if y < 0 else y
-    if absy == 0.0:
-        return __math('copysign', 0.0, x)
-    if absy == 1.0:
-        return __math('copysign', 0.0, -x)
-    if absy == 0.5:
-        raise OverflowError('math range error')
-    if absy > 0.5:
-        y = y - __math('copysign', 1.0, y)
-        absy = -y if y < 0 else y
-    if absy <= 0.25:
-        return __math('tan', pi * y)
-    return __math('copysign', 1.0 / __math('tan', pi * (0.5 - absy)), y)
 
-def asinpi(x):
-    _check_real(x)
-    if x < -1 or x > 1:
-        raise ValueError('expected a number in range from -1 up to 1, got ' + str(float(x)))
-    _overflow_guard(x)
-    x = float(x)
-    r = __math('asin', x) / pi
-    if r > 0.5 or r < -0.5:
-        return __math('copysign', 0.5, r)
-    return r
 
-def acospi(x):
-    _check_real(x)
-    if x < -1 or x > 1:
-        raise ValueError('expected a number in range from -1 up to 1, got ' + str(float(x)))
-    _overflow_guard(x)
-    x = float(x)
-    if x >= 0.5:
-        # Near 1 the straight acos loses places the half-angle reading
-        # of the same value keeps.
-        return 2.0 * __math('asin', __math('sqrt', (1.0 - x) / 2.0)) / pi
-    r = __math('acos', x) / pi
-    if r > 1.0:
-        return __math('fdiv', 1.0, 1.0)
-    return r
 
-def atanpi(x):
-    _check_real(x)
-    _overflow_guard(x)
-    x = float(x)
-    r = __math('atan', x) / pi
-    if r > 0.5 or r < -0.5:
-        return __math('copysign', 0.5, r)
-    return r
 
-def atan2pi(y, x):
-    _check_real(y)
-    _check_real(x)
-    r = __math('atan2', y, x) / pi
-    if r > 1.0 or r < -1.0:
-        return __math('copysign', 1.0, r)
-    return r
 
 def nextafter(x, y, steps=1):
     if type(steps) != type(1) and type(steps) != type(True):
@@ -944,31 +850,14 @@ def fma(x, y, z):
     _check_real(z)
     return __math('fma', x, y, z)
 
-def fmin(x, y):
-    _check_real(x)
-    _check_real(y)
-    return __math('fmin', x, y)
 
-def fmax(x, y):
-    _check_real(x)
-    _check_real(y)
-    return __math('fmax', x, y)
 
 def cbrt(x):
     _check_real(x)
     return __math('cbrt', x)
 
-def signbit(x):
-    _check_real(x)
-    return __math('signbit', x) != 0.0
 
-def isnormal(x):
-    _check_real(x)
-    return __math('isnormal', x) != 0.0
 
-def issubnormal(x):
-    _check_real(x)
-    return __math('issubnormal', x) != 0.0
 
 def sumprod(p, q, /):
     return __math('sumprod', p, q)
