@@ -535,7 +535,9 @@ class deque:
                 if name in ('__dict__', '__weakref__'):
                     continue
                 if name.startswith('__') and not name.endswith('__'):
-                    name = '_' + cls.__name__.lstrip('_') + name
+                    prefix = cls.__name__.lstrip('_')
+                    if prefix:
+                        name = '_' + prefix + name
                 try:
                     slots[name] = getattr(self, name)
                 except AttributeError:
