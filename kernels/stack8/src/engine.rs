@@ -36,7 +36,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
-use num_traits::{ToPrimitive, Signed, Zero};
+use num_traits::{ToPrimitive, Signed, Zero, One};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
@@ -15931,7 +15931,7 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 let wants = match working.as_str() {
-                    "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+                    "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" | "fsum_partial" => 2,
                     "fma" => 3,
                     _ => 1,
                 };
@@ -15964,6 +15964,47 @@ impl<'a> Engine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
+                if working == "fsum_partial" {
+                    if !self.lang.arithmetic_binary || self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES) != arith::DEFAULT_PLACES {
+                        return Ok(Value::Null);
+                    }
+                    let original = args[1].contents();
+                    let Value::Array(sequence) = args[2].contents() else { return Ok(Value::Null) };
+                    let as_double = |value: &Value| -> Option<f64> {
+                        match value {
+                            Value::Real(number) if number.places == arith::DEFAULT_PLACES => {
+                                let whole_bits = number.p.bits();
+                                let valid_integer = number.q.is_one() && whole_bits <= 1024
+                                    && whole_bits.saturating_sub(number.p.trailing_zeros().unwrap_or(0)) <= 53;
+                                let valid_fraction = whole_bits < 54 && (1..=1075).contains(&number.q.bits())
+                                    && number.q.trailing_zeros() == Some(number.q.bits() - 1);
+                                if !number.outside() && !valid_integer && !valid_fraction { return None; }
+                                let positive_zero = crate::value::as_binary(&number.p, &number.q);
+                                Some(if number.below && number.p.is_zero() { -positive_zero } else { positive_zero })
+                            }
+                            _ => None,
+                        }
+                    };
+                    let Some(mut sum) = as_double(&original) else { return Ok(Value::Null) };
+                    let mut doubles = Vec::new();
+                    for value in sequence.iter() {
+                        match as_double(value) { Some(n) => doubles.push(n), None => return Ok(Value::Null) }
+                    }
+                    let mut remaining = Vec::with_capacity(doubles.len() + 1);
+                    for value in doubles {
+                        let (larger, smaller) = if sum.abs() < value.abs() { (value, sum) } else { (sum, value) };
+                        let combined = larger + smaller;
+                        let residue = smaller - (combined - larger);
+                        if residue != 0.0 { remaining.push(crate::value::real_of(residue, arith::DEFAULT_PLACES)); }
+                        sum = combined;
+                    }
+                    let last = match sequence.len() {
+                        0 => original,
+                        _ => crate::value::real_of(sum, arith::DEFAULT_PLACES),
+                    };
+                    remaining.push(last.clone());
+                    return Ok(Value::tuple(vec![Value::array(remaining).held(true), last]));
+                }
                 let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
                 if working == "frexp" {
                     let (mantissa, exponent) = if x == 0.0 || !x.is_finite() {

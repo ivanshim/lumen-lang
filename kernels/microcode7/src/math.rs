@@ -366,7 +366,7 @@ fn scaled_by_twos(mut real: f64, mut power: i64) -> f64 {
 
 pub fn worked_takes(named: &str) -> usize {
     match named {
-        "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+        "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" | "fsum_partial" => 2,
         "fma" => 3,
         _ => 1,
     }

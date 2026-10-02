@@ -44,7 +44,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
-use num_traits::{ToPrimitive, Zero};
+use num_traits::{One, ToPrimitive, Zero};
 
 use crate::math::{self, Calc};
 use crate::table::Table;
@@ -15403,6 +15403,35 @@ impl<'a> Machine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
+                if working == "fsum_partial" {
+                    if !self.rules.binary_arithmetic || self.real_figures() != math::DEFAULT_PLACES { return Ok(Value::Nil); }
+                    let first = self.worth_of(&v[1]);
+                    let Value::Vector(parts) = self.worth_of(&v[2]) else { return Ok(Value::Nil) };
+                    let read = |item: &Value| -> Option<f64> {
+                        let Value::Frac(ratio) = item else { return None };
+                        if ratio.places != Some(math::DEFAULT_PLACES) { return None; }
+                        let integral = ratio.beneath.is_one() && ratio.above.bits() <= 1024
+                            && ratio.above.bits() - ratio.above.trailing_zeros().unwrap_or(0) <= 53;
+                        let fractional = ratio.above.bits() <= 53 && ratio.beneath.bits() <= 1075
+                            && ratio.beneath.trailing_zeros().is_some_and(|twos| twos + 1 == ratio.beneath.bits());
+                        if !ratio.past_numbers() && !integral && !fractional { return None; }
+                        let raw = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+                        Some(if ratio.under && ratio.above.is_zero() { -raw } else { raw })
+                    };
+                    let Some(mut total) = read(&first) else { return Ok(Value::Nil) };
+                    let Some(numbers) = parts.iter().map(read).collect::<Option<Vec<_>>>() else { return Ok(Value::Nil) };
+                    let mut kept = Vec::with_capacity(numbers.len() + 1);
+                    for mut next in numbers {
+                        if total.abs() < next.abs() { std::mem::swap(&mut total, &mut next); }
+                        let high = total + next;
+                        let tail = next - (high - total);
+                        if tail != 0.0 { kept.push(crate::data::worth_of_binary(tail, math::DEFAULT_PLACES)); }
+                        total = high;
+                    }
+                    let carried = if parts.is_empty() { first } else { crate::data::worth_of_binary(total, math::DEFAULT_PLACES) };
+                    kept.push(carried.clone());
+                    return Ok(Value::tuple(vec![Value::Vector(crate::tuples::Sequence::plain(kept)).keep(true), carried]));
+                }
                 let two = match takes {
                     2 | 3 => width(2)?,
                     _ => 0.0,

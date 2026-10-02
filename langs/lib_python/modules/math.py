@@ -273,18 +273,20 @@ def fsum(values):
         if x == -inf:
             neg_inf = True
             continue
-        kept = []
-        for y in partials:
-            # These operands are already binary reals. Compare their
-            # magnitudes without re-entering the conversion protocol.
-            if (-x if x < 0 else x) < (-y if y < 0 else y):
-                x, y = y, x
-            high = x + y
-            low = y - (high - x)
-            if low != 0:
-                kept.append(low)
-            x = high
-        kept.append(x)
+        step = __math('fsum_partial', x, partials)
+        if step is None:
+            kept = []
+            for y in partials:
+                if (-x if x < 0 else x) < (-y if y < 0 else y):
+                    x, y = y, x
+                high = x + y
+                low = y - (high - x)
+                if low != 0:
+                    kept.append(low)
+                x = high
+            kept.append(x)
+        else:
+            kept, x = step
         partials = kept
     # Two infinities of opposite sign have no sum to agree on, and that
     # objection stands even when a NaN walked in among them; CPython says
