@@ -2410,8 +2410,9 @@
     ")"
   ],
   "ext.op.rem.format.code": [
-    "ValueError: unsupported format %",
-    " at position "
+    "ValueError: unsupported format character '",
+    "' (0x",
+    ") at index "
   ],
   "ext.op.rem.format.few": [
     "TypeError: not enough arguments for format string (got ",

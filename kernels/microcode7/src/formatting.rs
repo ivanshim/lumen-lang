@@ -683,6 +683,12 @@ impl Layout<'_> {
     }
 
     fn unsupported(&self, letter: char, start: usize, at: usize, is_bytes: bool) -> String {
+        let pieces = self.table.strings("ext.op.rem.format.code");
+        if pieces.len() == 3 {
+            let displayed = match (is_bytes, letter as u32) { (false, 0..=31 | 127..) => '?', _ => letter };
+            let hexadecimal = format!("{:x}", u32::from(letter));
+            return self.complain("ext.op.rem.format.code", &[&displayed.to_string(), &hexadecimal, &at.to_string()]);
+        }
         if letter.is_ascii_alphanumeric() {
             return self.complain("ext.op.rem.format.code", &[&letter.to_string(), &start.to_string()]);
         }

@@ -740,6 +740,10 @@ impl Writer<'_> {
     }
 
     fn percent_unknown(&self, code: char, mark: usize, character: usize, bytes: bool) -> String {
+        if self.lang.fmt_op_rem_format_code.len() == 3 {
+            let visible = if bytes || (' '..='~').contains(&code) { code } else { '?' };
+            return self.fault("ext.op.rem.format.code", &[&visible.to_string(), &format!("{:x}", code as u32), &character.to_string()]);
+        }
         if code.is_ascii_alphanumeric() {
             return self.fault("ext.op.rem.format.code", &[&code.to_string(), &mark.to_string()]);
         }
