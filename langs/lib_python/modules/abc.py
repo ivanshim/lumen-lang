@@ -1,9 +1,6 @@
 # CPython's Lib/abc.py, byte for byte from python/cpython commit
 # 3b564385e4c9 (the commit the reference suite in tests/python is
 # taken from), under the PSF licence (tests/python/LICENSE).
-# Two spellings differ: abstractclassmethod and abstractstaticmethod
-# wrap classmethod/staticmethod rather than standing upon them, the
-# kernels having no class written upon those builtins.
 
 # Copyright 2007 Google, Inc. All Rights Reserved.
 # Licensed to PSF under a Contributor Agreement.
@@ -32,7 +29,7 @@ def abstractmethod(funcobj):
     return funcobj
 
 
-class abstractclassmethod:
+class abstractclassmethod(classmethod):
     """A decorator indicating abstract classmethods.
 
     Deprecated, use 'classmethod' with 'abstractmethod' instead:
@@ -45,9 +42,6 @@ class abstractclassmethod:
 
     .. deprecated-removed: 3.3 3.21
 
-    This runtime cannot write a class upon the classmethod builtin, so
-    the wrapper the reference inherits is kept under __wrapped__ here
-    and bound through __get__ instead.
     """
 
     __isabstractmethod__ = True
@@ -56,13 +50,10 @@ class abstractclassmethod:
         import warnings
         warnings._deprecated('abc.abstractclassmethod', remove=(3, 21))
         callable.__isabstractmethod__ = True
-        self.__wrapped__ = classmethod(callable)
-
-    def __get__(self, obj, cls=None):
-        return self.__wrapped__.__get__(obj, cls)
+        super().__init__(callable)
 
 
-class abstractstaticmethod:
+class abstractstaticmethod(staticmethod):
     """A decorator indicating abstract staticmethods.
 
     Deprecated, use 'staticmethod' with 'abstractmethod' instead:
@@ -75,9 +66,6 @@ class abstractstaticmethod:
 
     .. deprecated-removed: 3.3 3.21
 
-    This runtime cannot write a class upon the staticmethod builtin, so
-    the wrapper the reference inherits is kept under __wrapped__ here
-    and bound through __get__ instead.
     """
 
     __isabstractmethod__ = True
@@ -86,10 +74,7 @@ class abstractstaticmethod:
         import warnings
         warnings._deprecated('abc.abstractstaticmethod', remove=(3, 21))
         callable.__isabstractmethod__ = True
-        self.__wrapped__ = staticmethod(callable)
-
-    def __get__(self, obj, cls=None):
-        return self.__wrapped__.__get__(obj, cls)
+        super().__init__(callable)
 
 
 class abstractproperty(property):

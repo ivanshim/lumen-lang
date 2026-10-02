@@ -433,6 +433,57 @@ impl<'a> Machine<'a> {
     fn accessor_key(part:&str)->&'static str {
         match part {"property.fget"=>"\0fget","property.fset"=>"\0fset","property.fdel"=>"\0fdel","doc"=>"\0doc",_=>"\0name"}
     }
+    /// The blueprint of every classmethod, made once. It keeps the
+    /// routine it was given under a name no program can spell, and read
+    /// through a class it binds the routine to that class, as the
+    /// reference's own classmethod does.
+    pub(super) fn classmethod_blueprint(&mut self)->Rc<Blueprint> {
+        if let Some(b)=&self.classmethod_kind{return b.clone();}
+        let root=self.common_ancestor();
+        let title=self.table.prims.iter().find(|(_,op)|**op==Prim::ClassWork(10)).map(|(w,_)|w.to_string()).unwrap_or_default();
+        let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
+            parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root.clone()),answers:Vec::new(),fields:Vec::new(),
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),
+            shared:RefCell::new(vec![
+                (self.detail("descriptor.get").to_owned(),Self::wrap(46,Vec::new())),
+                (self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned(),Self::wrap(45,Vec::new())),
+            ]),
+            weak_slot:Cell::new(None),sealed:Cell::new(false)});
+        self.classmethod_kind=Some(kind.clone());
+        kind
+    }
+    /// The blueprint of every staticmethod, made once: it keeps the
+    /// routine it was given the same way, and read through anything it
+    /// hands the routine back unbound.
+    pub(super) fn staticmethod_blueprint(&mut self)->Rc<Blueprint> {
+        if let Some(b)=&self.staticmethod_kind{return b.clone();}
+        let root=self.common_ancestor();
+        let title=self.table.prims.iter().find(|(_,op)|**op==Prim::ClassWork(9)).map(|(w,_)|w.to_string()).unwrap_or_default();
+        let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
+            parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root.clone()),answers:Vec::new(),fields:Vec::new(),
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),
+            shared:RefCell::new(vec![
+                (self.detail("descriptor.get").to_owned(),Self::wrap(48,Vec::new())),
+                (self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned(),Self::wrap(47,Vec::new())),
+            ]),
+            weak_slot:Cell::new(None),sealed:Cell::new(false)});
+        self.staticmethod_kind=Some(kind.clone());
+        kind
+    }
+    /// Whether a value stands for the classmethod builtin read as a
+    /// class: its word, before anything else was bound to that name.
+    pub(super) fn spells_classmethod_kind(&self,value:&Value)->bool {
+        self.spells_wrapper_kind(value,10)
+    }
+    /// Whether a value stands for the staticmethod builtin read as a
+    /// class.
+    pub(super) fn spells_staticmethod_kind(&self,value:&Value)->bool {
+        self.spells_wrapper_kind(value,9)
+    }
+    fn spells_wrapper_kind(&self,value:&Value,which:u8)->bool {
+        let word=match value {Value::Intrinsic(_,w)=>w.as_ref(),Value::Wrapped(8,parts)=>match parts.first(){Some(Value::Text(t))=>t.as_ref(),_=>return false},_=>return false};
+        self.table.prims.get(word)==Some(&Prim::ClassWork(which))
+    }
     /// Whether a value stands for the property builtin read as a class:
     /// its word, before anything else was bound to that name.
     pub(super) fn spells_property_kind(&self,value:&Value)->bool {
@@ -625,6 +676,32 @@ impl<'a> Machine<'a> {
                     43 => {
                         if let Some(first) = values.first() { self.make_iterator(first.clone())?; }
                         self.apply_class_member(kept[0].clone(), values)
+                    }
+                    45|47 => {
+                        // A wrapper's own making: the callable it is
+                        // given is kept under a name no program can
+                        // spell.
+                        let Some(Value::Thing(t))=values.first() else{return Err(self.class_unready())};
+                        let Some(callable)=values.get(1) else{return Err(self.class_unready())};
+                        t.holds.borrow_mut().push(("\0callable".to_owned(),callable.clone()));
+                        Ok(Value::Nil)
+                    }
+                    46 => {
+                        // classmethod.__get__: the kept callable is
+                        // bound to the class the read came through, as
+                        // the reference binds it, never to nothing.
+                        let Some(Value::Thing(t))=values.first() else{return Err(self.class_unready())};
+                        let Some(callable)=t.holds.borrow().iter().find(|(k,_)|k=="\0callable").map(|(_,v)|v.clone()) else{return Err(self.class_unready())};
+                        let bound=values[1..].iter().find_map(|v| match v { c @ Value::Blueprint(_) => Some(c.clone()), _ => None })
+                            .unwrap_or_else(|| values.get(1).cloned().unwrap_or(Value::Nil));
+                        Ok(Self::wrap(3,vec![callable,bound]))
+                    }
+                    48 => {
+                        // staticmethod.__get__: the kept callable
+                        // itself, unbound.
+                        let Some(Value::Thing(t))=values.first() else{return Err(self.class_unready())};
+                        let Some(callable)=t.holds.borrow().iter().find(|(k,_)|k=="\0callable").map(|(_,v)|v.clone()) else{return Err(self.class_unready())};
+                        Ok(callable)
                     }
                     44 => {
                         let Value::Blueprint(c)=&kept[0] else{return Err(self.class_unready())};
@@ -978,7 +1055,10 @@ impl<'a> Machine<'a> {
             Value::Wrapped(32,items) if receiver.is_some()=>return self.slot_value(&receiver.unwrap(),items),
             // A working of the property blueprint, reached through a
             // property, is tied to it; a kept accessor reads at once.
-            Value::Wrapped(50..=57,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
+            // The wrappers' own making and reading, reached through
+            // one: bound to it, as the property blueprint's workings
+            // are.
+            Value::Wrapped(45..=48,_) | Value::Wrapped(50..=57,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(58,items)=>{
                 if let Some(Value::Thing(t))=&receiver {
                     if items[0].bare()=="\0abstract" { return self.accessor_abstract(t); }
@@ -2486,6 +2566,12 @@ impl<'a> Machine<'a> {
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), choice, class_only); }
         if let Value::OctetKind { changeable, .. } = choice { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), class_only); }
         if let Value::Intrinsic(_, word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)]).into()), choice, class_only); }
+        // The property and the two method wrappers name a class of
+        // their own where they are asked after as one: a wrapper of
+        // their kind, or a class built upon them, answers to them.
+        if self.spells_property_kind(choice) { let kind=self.property_blueprint(); return self.is_beneath(subject, &Value::Blueprint(kind), class_only); }
+        if self.spells_classmethod_kind(choice) { let kind=self.classmethod_blueprint(); return self.is_beneath(subject, &Value::Blueprint(kind), class_only); }
+        if self.spells_staticmethod_kind(choice) { let kind=self.staticmethod_blueprint(); return self.is_beneath(subject, &Value::Blueprint(kind), class_only); }
         if let Value::Intrinsic(_, word) = choice { return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(word)]).into()), class_only); }
         // The kind asked after must be a class wherever it is asked, and
         // each of the two has its own words, as the reference has.

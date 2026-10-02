@@ -430,6 +430,56 @@ impl<'a> Engine<'a> {
     fn accessor_place(part: &str) -> &'static str {
         match part { "property.fget" => "\0fget", "property.fset" => "\0fset", "property.fdel" => "\0fdel", "doc" => "\0doc", _ => "\0name" }
     }
+    /// The class every classmethod stands on, made once: it keeps the
+    /// routine it was given under a name no program can spell, and read
+    /// through a class it binds the routine to that class, as the
+    /// reference's own classmethod does.
+    pub(super) fn classmethod_class(&mut self) -> Rc<Class> {
+        if let Some(c) = &self.classmethod_class { return c.clone(); }
+        let root = self.root_class();
+        let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::ClassTool(10)).map(|(n, _)| n.clone()).unwrap_or_default();
+        let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
+            direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
+            methods: vec![], constants: vec![],
+            shared: RefCell::new(vec![
+                (self.class_word("descriptor.get").to_string(), Self::adapter(46, vec![])),
+                (self.lang.constructor.clone().unwrap_or_default(), Self::adapter(45, vec![])),
+            ]),
+            weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
+        self.classmethod_class = Some(c.clone());
+        c
+    }
+    /// The class every staticmethod stands on, made once: it keeps the
+    /// routine it was given the same way, and read through anything it
+    /// hands the routine back unbound.
+    pub(super) fn staticmethod_class(&mut self) -> Rc<Class> {
+        if let Some(c) = &self.staticmethod_class { return c.clone(); }
+        let root = self.root_class();
+        let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::ClassTool(9)).map(|(n, _)| n.clone()).unwrap_or_default();
+        let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
+            direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
+            methods: vec![], constants: vec![],
+            shared: RefCell::new(vec![
+                (self.class_word("descriptor.get").to_string(), Self::adapter(48, vec![])),
+                (self.lang.constructor.clone().unwrap_or_default(), Self::adapter(47, vec![])),
+            ]),
+            weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
+        self.staticmethod_class = Some(c.clone());
+        c
+    }
+    /// Whether a value read as a class names the classmethod class: the
+    /// builtin's word, read before anything was written to that name.
+    pub(super) fn names_classmethod_class(&self, value: &Value) -> bool {
+        self.names_wrapper_class(value, 10)
+    }
+    /// Whether a value read as a class names the staticmethod class.
+    pub(super) fn names_staticmethod_class(&self, value: &Value) -> bool {
+        self.names_wrapper_class(value, 9)
+    }
+    fn names_wrapper_class(&self, value: &Value, which: u8) -> bool {
+        let word = match value { Value::Native(_, word) => word.as_ref(), Value::Adapter(w) if w.0 == 8 => match &w.1[0] { Value::Text(t) => t.as_ref(), _ => return false }, _ => return false };
+        self.lang.builtins.get(word) == Some(&Builtin::ClassTool(which))
+    }
     /// Whether a value read as a class names the property class: the
     /// builtin's word, read before anything was written to that name.
     pub(super) fn names_property_class(&self, value: &Value) -> bool {
@@ -619,6 +669,31 @@ impl<'a> Engine<'a> {
                 43 => {
                     if let Some(first) = args.first() { self.iterator(first.clone())?; }
                     self.class_apply(w.1[0].clone(), args)
+                }
+                45|47 => {
+                    // A wrapper's own making: the callable it is given
+                    // is kept under a name no program can spell.
+                    let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()); };
+                    let Some(callable) = args.get(1) else { return Err(self.class_refusal()); };
+                    o.fields.borrow_mut().push(("\0callable".to_string(), callable.clone()));
+                    Ok(Value::Null)
+                }
+                46 => {
+                    // classmethod.__get__: the kept callable is bound to
+                    // the class the read came through, as the reference
+                    // binds it, never to nothing.
+                    let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()); };
+                    let Some(callable) = o.fields.borrow().iter().find(|(n, _)| n == "\0callable").map(|(_, v)| v.clone()) else { return Err(self.class_refusal()) };
+                    let bound = args[1..].iter().find_map(|v| match v { c @ Value::Class(_) => Some(c.clone()), _ => None })
+                        .unwrap_or_else(|| args.get(1).cloned().unwrap_or(Value::Null));
+                    Ok(Self::adapter(3, vec![callable, bound]))
+                }
+                48 => {
+                    // staticmethod.__get__: the kept callable itself,
+                    // unbound.
+                    let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()) };
+                    let Some(callable) = o.fields.borrow().iter().find(|(n, _)| n == "\0callable").map(|(_, v)| v.clone()) else { return Err(self.class_refusal()) };
+                    Ok(callable)
                 }
                 44 => {
                     let Value::Class(c) = &w.1[0] else { return Err(self.class_refusal()); };
@@ -1090,7 +1165,9 @@ impl<'a> Engine<'a> {
                 16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
-                20..=27 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                // The wrappers' own making and reading, reached through
+                // one: bound to it, as the property class's workings are.
+                20..=27 | 45..=48 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 28 => match &subject {
                     Some(Value::Object(o)) if w.1[0].plain()=="\0abstract" => self.property_abstract(o),
                     Some(Value::Object(o)) => Ok(self.property_reading(o, &w.1[0].plain())),
@@ -2439,6 +2516,12 @@ impl<'a> Engine<'a> {
         if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }
         if let Value::ByteKind(mutable, _) = wanted { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(value, &Self::adapter(8, vec![Value::text(&word)]), subclass); }
         if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
+        // The property and the two method wrappers name a class of
+        // their own where they are asked after as one: a wrapper of
+        // their kind, or a class written upon them, answers to them.
+        if self.names_property_class(wanted) { let c=self.property_class(); return self.beneath(value, &Value::Class(c), subclass); }
+        if self.names_classmethod_class(wanted) { let c=self.classmethod_class(); return self.beneath(value, &Value::Class(c), subclass); }
+        if self.names_staticmethod_class(wanted) { let c=self.staticmethod_class(); return self.beneath(value, &Value::Class(c), subclass); }
         if let Value::Native(_, word) = wanted { return self.beneath(value, &Self::adapter(8, vec![Value::text(word)]), subclass); }
         if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
         // A union built by `|` carries a bare `None` for the `NoneType`

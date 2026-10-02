@@ -356,6 +356,10 @@ pub struct Machine<'a> {
     builtins_stand_in: Option<Value>,
     code_kind: Option<Rc<Blueprint>>,
     ancestor: Option<Rc<Blueprint>>,
+    /// The blueprint every classmethod or staticmethod stands on, made
+    /// once each, so a class may be built upon the wrapping builtins.
+    classmethod_kind: Option<Rc<Blueprint>>,
+    staticmethod_kind: Option<Rc<Blueprint>>,
     /// The blueprint of properties, once one has been asked for.
     property_kind: Option<Rc<Blueprint>>,
     /// The blueprint every metaclass is built on, made when first asked for.
@@ -1287,7 +1291,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, classmethod_kind: None, staticmethod_kind: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -5182,6 +5186,11 @@ impl<'a> Machine<'a> {
                         }
                         // The property builtin, stood on as a class.
                         Some(named) if self.has_class_order() && self.spells_property_kind(&named) => Some(self.property_blueprint()),
+                        // The two method wrappers, each stood on as a
+                        // class, as the reference lets a class stand
+                        // upon them.
+                        Some(named) if self.has_class_order() && self.spells_classmethod_kind(&named) => Some(self.classmethod_blueprint()),
+                        Some(named) if self.has_class_order() && self.spells_staticmethod_kind(&named) => Some(self.staticmethod_blueprint()),
                         Some(Value::Intrinsic(_,word)) if self.table.spells("ext.builtin.bool", &word) && self.table.has_any("ext.builtin.bool.base") => {
                             return Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into());
                         }
@@ -5200,6 +5209,8 @@ impl<'a> Machine<'a> {
                             let kind = self.native_kind(&word); answers.push(kind);
                         }
                         Some(named) if self.has_class_order() && self.spells_property_kind(&named) => { let kind = self.property_blueprint(); answers.push(kind); }
+                        Some(named) if self.has_class_order() && self.spells_classmethod_kind(&named) => { let kind = self.classmethod_blueprint(); answers.push(kind); }
+                        Some(named) if self.has_class_order() && self.spells_staticmethod_kind(&named) => { let kind = self.staticmethod_blueprint(); answers.push(kind); }
                         _ => return Err(format!("Class {} cannot answer to that", plan.name).into()),
                     }
                 }
@@ -18801,12 +18812,26 @@ impl<'a> Machine<'a> {
         self.world_kept()
     }
 
+    /// The dictionary the module a program was read in as keeps its own
+    /// names under, where it was read in as one: the module's own
+    /// members, never the outermost names it was read in from.
+    fn space_book_of(&self) -> Option<Rc<RefCell<Value>>> {
+        let program = self.frames_named.last()?;
+        let path = program.written_in.as_ref().and_then(|file| self.loaded_spaces.get(file.as_ref()))?;
+        let Some(Value::Thing(module)) = self.imported.get(path) else { return None };
+        let members = module.holds.borrow().clone();
+        let entries: Vec<(Value, Value)> = members.iter().map(|(name, held)| (Value::text(name), held.settled())).collect();
+        Some(Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into())))))
+    }
     /// The names about a call given nothing: the outermost dictionary;
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
         let book = if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
-            self.book_about(op == Prim::WorldBook)
+            // A program read in as a module asks its names of the
+            // module itself: globals() there is the module's own
+            // dictionary, as it is in the reference.
+            self.space_book_of().unwrap_or_else(|| self.book_about(op == Prim::WorldBook))
         } else {
             let mut entries = Vec::new();
             if let Some(program) = self.frames_named.last() {
@@ -20419,6 +20444,12 @@ impl Machine<'_> {
         if matches!(expected.settled(), Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned());
         }
+        // The property and the two method wrappers name a class of
+        // their own where they are asked after as one: a wrapper of
+        // their kind, or a class built upon them, answers to them.
+        if self.spells_property_kind(expected) { let kind=self.property_blueprint(); return self.core_belongs(item, &Value::Blueprint(kind)); }
+        if self.spells_classmethod_kind(expected) { let kind=self.classmethod_blueprint(); return self.core_belongs(item, &Value::Blueprint(kind)); }
+        if self.spells_staticmethod_kind(expected) { let kind=self.staticmethod_blueprint(); return self.core_belongs(item, &Value::Blueprint(kind)); }
         match expected {
             Value::Tuple(kinds) => {
                 let kinds = kinds.clone();

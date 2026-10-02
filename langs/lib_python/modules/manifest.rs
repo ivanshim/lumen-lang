@@ -11,6 +11,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("_testcapi", include_str!("_testcapi.py")),
     ("_testinternalcapi", include_str!("_testinternalcapi.py")),
     ("_testlimitedcapi", include_str!("_testlimitedcapi.py")),
+    ("_weakref", include_str!("_weakref.py")),
     ("_weakrefset", include_str!("_weakrefset.py")),
     ("abc", include_str!("abc.py")),
     ("annotationlib", include_str!("annotationlib.py")),

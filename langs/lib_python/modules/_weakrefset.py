@@ -1,15 +1,12 @@
 # CPython's Lib/_weakrefset.py, byte for byte from python/cpython commit
 # 3b564385e4c9 (the commit the reference suite in tests/python is
 # taken from), under the PSF licence (tests/python/LICENSE).
-# One line differs: the reference takes ref from the C accelerator
-# _weakref; here the kernel's weak holds are reached through the
-# weakref module, which exposes the same ref.
 
 # Access WeakSet through the weakref module.
 # This code is separated-out because it is needed
 # by abc.py to load everything else at startup.
 
-from weakref import ref
+from _weakref import ref
 from types import GenericAlias
 
 __all__ = ['WeakSet']

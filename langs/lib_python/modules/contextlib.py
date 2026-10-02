@@ -1,9 +1,6 @@
 # CPython's Lib/contextlib.py, byte for byte from python/cpython commit
 # 3b564385e4c9 (the commit the reference suite in tests/python is
 # taken from), under the PSF licence (tests/python/LICENSE).
-# One spelling differs: the reference's `lazy from inspect import`
-# (PEP 810) is written as a plain import, the reader having no lazy
-# imports.
 
 """Utilities for with-statement contexts.  See PEP 343."""
 
@@ -13,7 +10,7 @@ import sys
 import _collections_abc
 from collections import deque
 from functools import wraps
-from inspect import (
+lazy from inspect import (
     isasyncgenfunction as _isasyncgenfunction,
     iscoroutinefunction as _iscoroutinefunction,
     isgeneratorfunction as _isgeneratorfunction,

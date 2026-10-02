@@ -75,6 +75,10 @@ pub struct Engine<'a> {
     class_maker: Option<Rc<Class>>,
     /// The class of properties, once a program has asked for one.
     property_class: Option<Rc<Class>>,
+    /// The class every classmethod or staticmethod stands on, made
+    /// once each, so a class may be written upon the wrapping builtins.
+    classmethod_class: Option<Rc<Class>>,
+    staticmethod_class: Option<Rc<Class>>,
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
     function_members: Vec<(Value, Rc<Instance>)>,
@@ -1158,7 +1162,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
             native_exceptions,
             lang,
             world,
@@ -8643,6 +8647,11 @@ impl<'a> Engine<'a> {
                         }
                         // The property builtin, read as a class to stand on.
                         Some(v) if self.fuller_classes() && self.names_property_class(&v) => Some(self.property_class()),
+                        // The two method wrappers, each read as a class
+                        // to stand on, as the reference lets a class
+                        // stand upon them.
+                        Some(v) if self.fuller_classes() && self.names_classmethod_class(&v) => Some(self.classmethod_class()),
+                        Some(v) if self.fuller_classes() && self.names_staticmethod_class(&v) => Some(self.staticmethod_class()),
                         Some(v) => return Err(if self.fuller_classes(){self.class_word("unready").to_string()}else{format!("Class {} cannot stand on {}", plan.name, v.plain())}.into()),
                         None => return Err("Stack underflow".to_string().into()),
                     },
@@ -8658,6 +8667,8 @@ impl<'a> Engine<'a> {
                             let kind = self.kind_class(&word); answers.push(kind);
                         }
                         Some(v) if self.fuller_classes() && self.names_property_class(&v) => { let class = self.property_class(); answers.push(class); }
+                        Some(v) if self.fuller_classes() && self.names_classmethod_class(&v) => { let class = self.classmethod_class(); answers.push(class); }
+                        Some(v) if self.fuller_classes() && self.names_staticmethod_class(&v) => { let class = self.staticmethod_class(); answers.push(class); }
                         Some(v) => return Err(format!("Class {} cannot answer to {}", plan.name, v.plain()).into()),
                         None => return Err("Stack underflow".to_string().into()),
                     }
@@ -17803,6 +17814,12 @@ impl Engine<'_> {
         // member, the very value `None` itself is, so a chained union
         // reads it back this way rather than needing `type(None)`.
         if matches!(kind, Value::Null) { return Ok(matches!(value, Value::Null)); }
+        // The property and the two method wrappers name a class of
+        // their own where they are asked after as one: a wrapper of
+        // their kind, or a class written upon them, answers to them.
+        if self.names_property_class(kind) { let class=self.property_class(); return self.core_isinstance(value, &Value::Class(class)); }
+        if self.names_classmethod_class(kind) { let class=self.classmethod_class(); return self.core_isinstance(value, &Value::Class(class)); }
+        if self.names_staticmethod_class(kind) { let class=self.staticmethod_class(); return self.core_isinstance(value, &Value::Class(class)); }
         if let Value::Class(class) = kind {
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
@@ -19042,6 +19059,16 @@ impl Engine<'_> {
         self.outer_book_made()
     }
 
+    /// The dictionary the module a program was read in as keeps its own
+    /// names under, where it was read in as one: the module's own
+    /// members, never the outermost names it was read in from.
+    fn module_book_of(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+        let (_, path) = program.written_in.as_ref().and_then(|file| self.module_slots.get(file.as_ref())).cloned()?;
+        let Some(Value::Object(module)) = self.modules.get(&path) else { return None };
+        let fields = module.fields.borrow().clone();
+        let pairs: Vec<(Value, Value)> = fields.iter().map(|(name, held)| (Value::text(name), held.contents())).collect();
+        Some(Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into())))))
+    }
     /// The names about a call with nothing given: the outermost
     /// dictionary, or inside a routine a fresh dictionary of its own
     /// names; listed in order for dir.
@@ -19050,7 +19077,10 @@ impl Engine<'_> {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
         let book = if kind == Builtin::OuterNames || program.body_of_all {
-            self.book_here(kind == Builtin::OuterNames)
+            // A program read in as a module asks its names of the
+            // module itself: globals() there is the module's own
+            // dictionary, as it is in the reference.
+            self.module_book_of(program).unwrap_or_else(|| self.book_here(kind == Builtin::OuterNames))
         } else {
             let mut pairs = Vec::new();
             for (name, held) in program.idents.iter().zip(frame.iter()) {
