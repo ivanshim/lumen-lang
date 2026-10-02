@@ -882,6 +882,8 @@ impl Builtin {
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {
+    pub postponed_annotation: bool,
+    pub checks_annotation_format: bool,
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
     pub code_names: Vec<String>,

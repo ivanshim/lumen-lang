@@ -6605,6 +6605,11 @@ impl<'a> Machine<'a> {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
+                            Prim::Of if values.len() == 2 && self.namespace_holding(&values[0]).is_some()
+                                && (self.table.single("ext.stmt.class.annotations") == Some(values[1].bare().as_str())
+                                    || self.table.strings("ext.stmt.class.detail.code.fields").get(10).is_some_and(|word| word == &values[1].bare())) => {
+                                return self.read_class_member(values[0].clone(), &values[1].bare(), false);
+                            },
                             Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(Prim::SortOf | Prim::Truthful, _)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
@@ -10128,6 +10133,13 @@ impl<'a> Machine<'a> {
     /// Run a program in a frame already built. A tail call replaces the
     /// program and the frame; what the replaced programs caught is still caught.
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        if program.annotation_protocol {
+            let format = frame.cells.borrow()[program.formal_slots[0]].clone();
+            let format = format.settled();
+            let exceeds = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
+            if exceeds.is_true() { return Err(String::from("NotImplementedError: ").into()); }
+        }
+
         if program.generator && self.rules.suspends {
             if program.flags & 512 != 0 { self.code_handle(&program); }
             let mut suspension = Suspension::body(&program, frame.clone());
@@ -12155,6 +12167,7 @@ impl<'a> Machine<'a> {
                 self.object_words(&Value::Dict(Rc::new(pairs.into())), true)
             }
             Value::Thing(t) => {
+                if let Some(spelling) = t.holds.borrow().iter().find(|entry| entry.0 == "\0type-display").map(|entry| entry.1.bare()) { return Ok(spelling); }
                 if self.is_fault_kind(&t.blueprint()) && self.appointment(subject, usize::from(quoted)).is_none() {
                     let codec = (43..=45).find(|&n| self.stands_under(&t.blueprint(), n));
                     if let Some(number) = codec.filter(|_| !quoted) {
@@ -20004,6 +20017,8 @@ impl Machine<'_> {
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+        if path == "_typing" && self.table.has_any("ext.stmt.type_params.open") { return Ok(self.type_support_namespace()); }
+
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is
         // where CPython keeps such a cache, and a program that empties

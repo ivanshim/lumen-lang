@@ -1425,7 +1425,10 @@ impl Value {
                 let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
-            Value::Thing(t) => format!("<object {}>", t.blueprint().name),
+            Value::Thing(t) => match t.holds.borrow().iter().find(|entry| entry.0 == "\0type-display") {
+                Some(entry) => entry.1.bare(),
+                None => format!("<object {}>", t.blueprint().name),
+            },
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(|bound| bound.quoted(false)).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
