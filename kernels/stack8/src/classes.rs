@@ -1831,6 +1831,7 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) if w.0==3 => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
+                return self.class_get(w.1[0].clone(), name, true);
             }
             _ => {}
         }
