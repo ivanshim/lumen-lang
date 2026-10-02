@@ -5621,6 +5621,26 @@ impl<'a> Machine<'a> {
                                 None => Err(self.exhausted_of(&generator)),
                             };
                         }
+                        if self.table.strings("ext.stmt.yield.asyncgen").iter().any(|word| word == &called) {
+                            // The asynchronous generator protocol: each
+                            // word but __aiter__ makes a coroutine of the
+                            // library's words for it, which drives the
+                            // generator when it is awaited.
+                            let asynchronous = generator.try_borrow().ok()
+                                .and_then(|state| state.of.as_ref().map(|program| program.flags & 512 != 0))
+                                .unwrap_or(false);
+                            if asynchronous {
+                                if called == "__aiter__" { return Ok(Value::Generator(generator.clone())); }
+                                let word: &str = if called == "__anext__" { "anext" } else { called.as_str() };
+                                let helper = self.load_namespace("_asyncgen")?;
+                                let entry = self.read_class_member(helper, word, true)?.settled();
+                                let mut given = vec![Value::Generator(generator.clone())];
+                                given.extend(values);
+                                let coroutine = self.apply_class_member(entry, given)?;
+                                return Ok(coroutine);
+                            }
+                            return Err(self.generator_words("unsupported").into());
+                        }
                         if self.table.spells("ext.stmt.yield.throw", &called) && (1..=3).contains(&values.len()) {
                             let given = values.clone();
                             let value = self.thrown_into(values, frame)?;
@@ -6953,6 +6973,21 @@ impl<'a> Machine<'a> {
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
         if let Value::Generator(state) = value {
+            // An asynchronous generator answers the protocol's words
+            // itself: __aiter__ with itself, and asend, athrow, aclose
+            // and __anext__ with a call that makes a coroutine of the
+            // library's words for each.
+            let asynchronous = state.try_borrow().ok()
+                .and_then(|held| held.of.as_ref().map(|program| program.flags & 512 != 0))
+                .unwrap_or(false);
+            if asynchronous {
+                let protocol = self.table.strings("ext.stmt.yield.asyncgen").iter().any(|word| word == name)
+                    || self.table.strings("ext.stmt.class.special").get(83).map_or(false, |word| !word.is_empty() && word == name)
+                    || self.table.strings("ext.stmt.class.special").get(84).map_or(false, |word| !word.is_empty() && word == name);
+                if protocol {
+                    return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
+                }
+            }
             if ["ext.stmt.yield.close", "ext.stmt.yield.send", "ext.stmt.yield.throw"].iter().any(|key| self.table.spells(key, name)) {
                 return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
             }
@@ -7485,7 +7520,8 @@ impl<'a> Machine<'a> {
         }
 
         if matches!(receiver.settled(), Value::Generator(_)) &&
-            ["ext.stmt.yield.throw", "ext.stmt.yield.close", "ext.stmt.yield.send"].iter().any(|label| self.table.spells(label, name)) {
+            (["ext.stmt.yield.throw", "ext.stmt.yield.close", "ext.stmt.yield.send"].iter().any(|label| self.table.spells(label, name))
+                || self.table.strings("ext.stmt.yield.asyncgen").iter().any(|word| word == name)) {
             if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             let mut inputs = vec![Form::Const(receiver.settled()), Form::Const(Value::text(name))];
             inputs.extend(arguments.into_iter().map(Form::Const));

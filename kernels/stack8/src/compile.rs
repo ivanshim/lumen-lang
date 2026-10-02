@@ -10284,7 +10284,8 @@ impl<'a> Compiler<'a> {
                         self.let_go(&held);
                         self.write(&target);
                     } else { self.class_cannot_run(); }
-                } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
+                } else if lang.yield_suspends && ([&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named))
+                        || lang.asyncgen_words.iter().any(|word| *word == named)) {
                     self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
                 } else if let Some(method) = native.filter(|b| b.set_method()) {
                     if call.is_some() { self.act(Action::Builtin(method, Rc::from(named.as_str())), argc + 1); }

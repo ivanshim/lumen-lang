@@ -5294,6 +5294,21 @@ impl<'a> Engine<'a> {
         // way through the machine at this very moment: exactly when the
         // cell that holds it cannot be borrowed a second time.
         if let Value::Generator(held) = &held {
+            // An asynchronous generator answers the protocol's words
+            // itself: __aiter__ with itself, and asend, athrow, aclose
+            // and __anext__ with a call that makes a coroutine of the
+            // library's words for each.
+            let asynchronous = held.try_borrow().ok()
+                .and_then(|state| state.program.as_ref().map(|program| program.code_flags & 512 != 0))
+                .unwrap_or(false);
+            if asynchronous {
+                if self.lang.class_special.get(83).map_or(false, |word| !word.is_empty() && word == name) { return Ok(Some(Value::Generator(held.clone()))); }
+                let protocol = self.lang.asyncgen_words.iter().any(|word| word == name)
+                    || self.lang.class_special.get(84).map_or(false, |word| !word.is_empty() && word == name);
+                if protocol {
+                    return Ok(Some(Self::adapter(49, vec![Value::Generator(held.clone()), Value::text(name)])));
+                }
+            }
             if [&self.lang.yield_close, &self.lang.yield_send, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)) {
                 return Ok(Some(Value::ValueMethod(Rc::new((Value::Generator(held.clone()), name.to_string())))));
             }
@@ -9242,6 +9257,26 @@ impl<'a> Engine<'a> {
                             Some(item) => item,
                             None => return Err(self.stop_of(&held)),
                         }
+                    } else if self.lang.asyncgen_words.iter().any(|word| word.as_str() == name.as_ref()) {
+                        // The asynchronous generator protocol: each
+                        // word but __aiter__ makes a coroutine of the
+                        // library's words for it, which drives the
+                        // generator when it is awaited.
+                        let asynchronous = held.try_borrow().ok()
+                            .and_then(|state| state.program.as_ref().map(|program| program.code_flags & 512 != 0))
+                            .unwrap_or(false);
+                        if asynchronous {
+                            if name.as_ref() == "__aiter__" { self.data.push(Value::Generator(held.clone())); return Ok(()); }
+                            let word: &str = if name.as_ref() == "__anext__" { "anext" } else { name.as_ref() };
+                            let helper = self.import_module("_asyncgen")?;
+                            let f = self.class_get(helper, word, false)?.contents();
+                            let mut given = vec![Value::Generator(held.clone())];
+                            given.extend(args);
+                            let coroutine = self.class_apply(f, given)?;
+                            self.data.push(coroutine);
+                            return Ok(());
+                        }
+                        return Err(self.lang.yield_unsupported[0].clone().into());
                     } else if Lang::spells(&self.lang.yield_throw, name) && (1..=3).contains(&args.len()) {
                         let given = args.clone();
                         let value = self.thrown_into(args)?;

@@ -3259,6 +3259,13 @@
     "TypeError: throw() third argument must be a traceback object",
     "TypeError: calling exception class should have returned an instance of BaseException"
   ],
+  "ext.stmt.yield.asyncgen": [
+    "asend",
+    "athrow",
+    "aclose",
+    "__anext__",
+    "__aiter__"
+  ],
   "ext.stmt.yield.throw.warning": [
     "warnings",
     "warn_explicit",

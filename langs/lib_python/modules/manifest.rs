@@ -3,6 +3,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("__future__", include_str!("__future__.py")),
     ("_codec_idna", include_str!("_codec_idna.py")),
     ("_codec_names", include_str!("_codec_names.py")),
+    ("_asyncgen", include_str!("_asyncgen.py")),
     ("_collections_abc", include_str!("_collections_abc.py")),
     ("_decimal", include_str!("_decimal.py")),
     ("_py_abc", include_str!("_py_abc.py")),

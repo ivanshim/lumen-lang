@@ -670,6 +670,18 @@ impl<'a> Engine<'a> {
                     if let Some(first) = args.first() { self.iterator(first.clone())?; }
                     self.class_apply(w.1[0].clone(), args)
                 }
+                49 => {
+                    // The asynchronous generator protocol: the coroutine
+                    // each word makes comes from the library's own
+                    // words for it, and drives the generator when it is
+                    // awaited.
+                    let [Value::Generator(gen), Value::Text(word)] = &w.1[..] else { return Err(self.class_refusal()); };
+                    let helper = self.import_module("_asyncgen")?;
+                    let f = self.class_get(helper, word, false)?.contents();
+                    let mut given = vec![Value::Generator(gen.clone())];
+                    given.extend(args);
+                    self.class_apply(f, given)
+                }
                 45|47 => {
                     // A wrapper's own making: the callable it is given
                     // is kept under a name no program can spell.
