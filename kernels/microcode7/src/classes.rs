@@ -726,6 +726,7 @@ impl<'a> Machine<'a> {
     }
     fn wrap(tag:u8,items:Vec<Value>)->Value {Value::Wrapped(tag,Rc::new(items).into())}
     pub(super) fn apply_class_member(&mut self,f:Value,mut values:Vec<Value>)->Res {
+        let f = if matches!(f, Value::Shared(_)) { self.what_it_spells(f) } else { f };
         match f {
             Value::Bound(code,environment)=>self.invoke(code,environment,values),
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),
@@ -1959,7 +1960,8 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone());
+            let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone())
+                .filter(|v| !matches!(v.settled(), Value::Unset));
             if let Some(v)=own{return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.blueprint().clone());}
             if self.is_fault_kind(&t.blueprint()) && self.fault_method_word(key) { return Ok(Value::Member(Rc::new(value.clone()), key.to_owned())); }

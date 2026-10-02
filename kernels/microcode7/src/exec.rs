@@ -3458,7 +3458,7 @@ impl<'a> Machine<'a> {
             return cell;
         }
         let cell = Rc::new(RefCell::new(match held {
-            Value::Unset => Value::Nil,
+            Value::Unset if !self.table.has_any("ext.system.module.kind") => Value::Nil,
             other => other,
         }));
         f.cells.borrow_mut()[slot.at] = Value::Shared(cell.clone());
@@ -5536,7 +5536,8 @@ impl<'a> Machine<'a> {
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
-                    Value::Shared(cell) if f.capture_slots.borrow().contains(&slot.at) => *cell.borrow_mut() = Value::Unset,
+                    Value::Shared(cell) if f.capture_slots.borrow().contains(&slot.at)
+                        || Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") => *cell.borrow_mut() = Value::Unset,
                     Value::Shared(cell) if self.rules.closes_over && !self.names_in_calls => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }

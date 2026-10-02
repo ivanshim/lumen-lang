@@ -634,6 +634,10 @@ impl<'a> Engine<'a> {
         } else { self.class_apply(callable, args) }
     }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
+        let callable = match callable {
+            held @ (Value::Bond(_) | Value::Binding(_)) => self.what_it_spells(held),
+            held => held,
+        };
         match callable {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A method bound to a value of a builtin kind, reached as a
@@ -1530,7 +1534,9 @@ impl<'a> Engine<'a> {
                         _ => {}
                     }
                 }
-                if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
+                if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {
+                    if !matches!(v.contents(), Value::Blank) { return Ok(v.clone()); }
+                }
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class_now().clone());}
                 if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
                     let root = Self::adapter(30, vec![Value::text(name)]);
