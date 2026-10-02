@@ -288,7 +288,12 @@ pub struct Builder<'a> {
     outside_lambda: Vec<String>,
     loop_depth: usize,
     range_end: Option<(usize, u32)>,
+    annotation_lookup: bool,
+    annotation_owner: Option<(String, Vec<String>)>,
+    generic_class_body: bool,
+    annotations_as_strings: bool,
     annotation_sites: Vec<(String, usize)>,
+    module_site_flags: HashMap<usize, String>,
     module_sites: Vec<(String, usize)>,
     declarations: Vec<(usize, String, bool)>,
 }
@@ -564,7 +569,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -691,11 +696,25 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         sequence(ahead)
     };
     let body = if r.module_sites.is_empty() { body } else {
-        r.annotation_sites = std::mem::take(&mut r.module_sites);
-        let annotation = r.build_annotator()?.expect("module annotations");
-        let name = annotation.ident.clone();
-        let bind = r.write(&name, constant(Value::Routine(annotation)));
-        sequence(vec![body, bind])
+        let sites = std::mem::take(&mut r.module_sites);
+        let flags = r.module_site_flags.values().cloned().collect::<Vec<_>>();
+        let bind = if r.annotations_as_strings {
+            let member = r.table.single("ext.stmt.class.annotations").unwrap_or_default().to_owned();
+            r.write(&member, prim_call(Prim::MakeMap, Vec::new()))
+        } else {
+            let environment = r.routine("<annotation environment>", Holds::Every, Traps::Yields, flags.clone(), flags.len(), |b| {
+                b.annotation_sites = sites;
+                let generated = b.build_annotator()?.expect("module annotator");
+                Ok(constant(Value::Routine(generated)))
+            })?;
+            let captured = flags.iter().map(|flag| r.read(flag)).collect();
+            let evaluator = Form::Apply(Callee::Code(Box::new(environment)), captured);
+            let name = r.table.strings("ext.stmt.class.detail.code.fields")[10].clone();
+            r.write(&name, evaluator)
+        };
+        let mut initialization = flags.into_iter().map(|flag| r.write(&flag, prim_call(Prim::MakeArray, vec![constant(Value::Flag(false))]))).collect::<Vec<_>>();
+        initialization.extend([bind, body]);
+        sequence(initialization)
     };
     // What the reading itself remarked on was noticed before a single
     // statement ran, so it is said ahead of the whole body.
@@ -715,7 +734,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { annotation_protocol: false, annotation_is_text: false,  annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
@@ -1551,6 +1570,22 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        if let Some((class, entries)) = &self.annotation_owner {
+            if self.annotation_lookup && entries.iter().any(|entry| entry == name) {
+                let class = class.clone();
+                let receiver = Form::Read(self.address_to_read(&class));
+                let outside = self.routine("<annotation fallback>", Holds::Every, Traps::Naught, Vec::new(), 0, |b| {
+                    let at = match b.layers[0].idents.iter().position(|word| word == name) {
+                        Some(at) => at, None => { b.layers[0].idents.push(name.to_owned()); b.layers[0].idents.len() - 1 },
+                    };
+                    let up = b.layers[1..].iter().filter(|layer| layer.holds != Holds::Nothing).count();
+                    Ok(Form::Read(Address { ident: Rc::from(name), up, at, fallback: None }))
+                }).expect("fallback name lookup is syntactically complete");
+                let helper = constant(Value::Wrapped(74, Rc::new(Vec::new()).into()));
+                return Form::Apply(Callee::Code(Box::new(helper)), vec![receiver, constant(Value::text(name)), outside]);
+            }
+        }
+
         if let Some((depth, names)) = self.class_bindings.last() {
             if *depth == self.layers.len() {
                 if let Some(slot) = names.get(name).cloned() {
@@ -1667,6 +1702,7 @@ impl<'a> Builder<'a> {
         let local = self.table.single("ext.stmt.class.detail.locals").unwrap_or("");
         let mut path = self.within.as_ref().map(|(c, _)| format!("{c}.")).unwrap_or_default();
         for (outer, afresh) in self.naming.iter().zip(&self.named_afresh).skip(self.named_before) {
+            if outer.starts_with("<type ") { continue; }
             if *afresh { path.clear(); }
             path.push_str(outer); path.push('.'); path.push_str(local); path.push('.');
         }
@@ -1685,7 +1721,11 @@ impl<'a> Builder<'a> {
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
         let type_params = std::mem::take(&mut self.pending_types);
-        let annotator = self.build_annotator()?;
+        let annotator = self.build_annotator()?.map(|code| {
+            let mut child = (*code).clone();
+            child.qualification = format!("{}.__annotate__", self.full_name_of(name));
+            Rc::new(child)
+        });
         let began = self.pos;
         let mut start = self.pos;
         while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.lexeme)) { start += 1; }
@@ -1789,9 +1829,25 @@ impl<'a> Builder<'a> {
         let mut suspension = false;
         inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
         if scope.permits_async && suspension { flags = (flags & !128) | 512; }
-        Ok(constant(Value::Routine(Rc::new(Routine { annotation_protocol: false, annotation_is_text: false,  annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { annotation_is_text: false, annotation_protocol: false, annotator, literals, referenced, locals, flags, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
+    fn annotation_spelling(&self, first: usize, last: usize) -> String {
+        let mut pieces: Vec<String> = Vec::new();
+        for word in &self.tokens[first..last] {
+            if matches!(word.shape, Shape::LineEnd | Shape::Open | Shape::Close) { continue; }
+            let spelling = match word.shape {
+                Shape::Quote => format!("'{}'", word.lexeme.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n")),
+                _ => word.lexeme.clone(),
+            };
+            let left = pieces.last().map(String::as_str).unwrap_or("");
+            let gap = !pieces.is_empty() && !matches!(spelling.as_str(), "." | "," | ":" | ")" | "]" | "}" | "(" | "[")
+                && !matches!(left, "." | "(" | "[" | "{");
+            if gap { pieces.push(String::from(" ")); }
+            pieces.push(spelling);
+        }
+        pieces.concat()
+    }
     fn build_annotator(&mut self) -> Res<Option<Rc<Routine>>> {
         let sites = std::mem::take(&mut self.annotation_sites);
         if sites.len() == 0 { return Ok(None); }
@@ -1800,8 +1856,18 @@ impl<'a> Builder<'a> {
         let kinds = std::mem::take(&mut self.formal_kinds);
         let title = self.table.strings("ext.stmt.class.detail.code.fields").get(10).cloned().unwrap_or_default();
         self.pos = sites[0].1;
+        let outer_owner = self.annotation_owner.clone();
+        if self.in_class_body() && self.annotation_owner.is_none() {
+            let class = self.parts().completed_class.ident.to_string();
+            let entries = self.parts().lexical_members.clone();
+            self.address_to_write(&class);
+            self.annotation_owner = Some((class, entries));
+        }
+        let module = sites.iter().any(|site| self.module_site_flags.contains_key(&site.1));
         let made = self.routine(&title, Holds::Every, Traps::Yields, vec!["format".to_owned()], 1, |b| {
+            let map = b.gensym("module_annotations");
             let mut pairs = Vec::new();
+            if module { pairs.push(b.write(&map.ident, prim_call(Prim::MakeMap, Vec::new()))); }
             for (mut word, at) in sites {
                 if let Some((owner, _)) = &b.within {
                     let owner = owner.split('.').next_back().unwrap_or(owner).trim_start_matches('_');
@@ -1810,16 +1876,35 @@ impl<'a> Builder<'a> {
                     }
                 }
                 b.pos = at;
+                let outer = b.annotation_lookup;
+                b.annotation_lookup = true;
                 let expression = b.expr_at(0, false)?;
-                pairs.push(prim_call(Prim::Couple, vec![constant(Value::text(&word)), expression]));
+                b.annotation_lookup = outer;
+                let expression = if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(at, b.pos))) } else { expression };
+                if module {
+                    let target = b.read_to_write(&map.ident);
+                    let put = prim_call(Prim::Replace, vec![target, constant(Value::text(&word)), expression]);
+                    let put = if let Some(flag) = b.module_site_flags.get(&at).cloned() {
+                        let flag = b.read(&flag);
+                        let ran = prim_call(Prim::At, vec![flag, constant(Value::Small(0))]);
+                        b.choose(ran, put, constant(Value::Nil))
+                    } else { put };
+                    pairs.push(put);
+                } else { pairs.push(prim_call(Prim::Couple, vec![constant(Value::text(&word)), expression])); }
             }
-            Ok(prim_call(Prim::MakeMap, pairs))
+            Ok(if module { pairs.push(b.read(&map.ident)); sequence(pairs) } else { prim_call(Prim::MakeMap, pairs) })
         });
+        self.annotation_owner = outer_owner;
         self.pos = resume;
         self.taking = taking;
         self.formal_kinds = kinds;
         match made? {
-            Form::Const(Value::Routine(r)) => Ok(Some(r)),
+            Form::Const(Value::Routine(r)) => {
+                let mut generated = (*r).clone();
+                generated.annotation_protocol = true;
+                generated.taking = Some(vec!['p']);
+                Ok(Some(Rc::new(generated)))
+            },
             _ => unreachable!(),
         }
     }
@@ -1838,7 +1923,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { annotation_protocol: false, annotation_is_text: false,  annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -2869,6 +2954,27 @@ impl<'a> Builder<'a> {
                 if self.table.has_any("ext.builtin.exceptions.syntax") && alias == "__debug__" {
                     return Err(String::from("SyntaxError: cannot assign to __debug__"));
                 }
+                if self.on_any("ext.stmt.type_params.open") {
+                    let factory = self.routine("<type parameters>", Holds::Every, Traps::Yields, Vec::new(), 0, |reader| {
+                        let (mut forms, names) = reader.declare_type_objects()?;
+                        reader.need_assign("after the type alias")?;
+                        let value = reader.routine(&alias, Holds::Every, Traps::Yields, Vec::new(), 0, |inner| {
+                            let outer = inner.annotation_lookup;
+                            inner.annotation_lookup = true;
+                            let value = if inner.table.has_any("ext.op.tuple") { inner.comma_value() } else { inner.expr(0) };
+                            inner.annotation_lookup = outer;
+                            value
+                        })?;
+                        let parameters = names.iter().map(|name| reader.read(name)).collect();
+                        let tuple = prim_call(Prim::MakeTuple, parameters);
+                        let maker = constant(Value::Wrapped(45, Rc::new(Vec::new()).into()));
+                        forms.push(Form::Apply(Callee::Code(Box::new(maker)), vec![value, tuple]));
+                        Ok(sequence(forms))
+                    })?;
+                    self.forbids_await = earlier;
+                    let value = Form::Apply(Callee::Code(Box::new(factory)), Vec::new());
+                    return Ok(self.write(&alias, value));
+                }
                 self.type_names()?;
                 self.pending_types.clear();
                 self.need_assign("after the type alias")?;
@@ -2876,12 +2982,16 @@ impl<'a> Builder<'a> {
                 // is asked for, since names in it need not mean anything
                 // yet: the name is bound to a routine answering it.
                 let made = self.routine(&alias, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
+                    let outer = b.annotation_lookup;
+                    b.annotation_lookup = true;
                     let worth = if b.table.has_any("ext.op.tuple") { b.comma_value()? } else { b.expr(0)? };
+                    b.annotation_lookup = outer;
                     Ok(prim_call(Prim::Yield, vec![worth]))
                 });
                 self.forbids_await = earlier;
                 let thunk = made?;
-                return Ok(self.write(&alias, thunk));
+                let alias_value = Form::Apply(Callee::Code(Box::new(constant(Value::Wrapped(45, Rc::new(Vec::new()).into())))), vec![thunk]);
+                return Ok(self.write(&alias, alias_value));
             }
             if self.key("stmt.return") {
                 self.note_finally_word("return");
@@ -3175,7 +3285,8 @@ impl<'a> Builder<'a> {
                     let complaint = match original.as_str() { "braces" => "not a chance".to_owned(), name => format!("future feature {name} is not defined") };
                     return Err(format!("SyntaxError: {complaint}"));
                 }
-                let worth = if self.table.flag("ext.stmt.import.value") {
+                if future && original == "annotations" { self.annotations_as_strings = true; }
+                let worth = if self.table.flag("ext.stmt.import.value") && !future {
                     prim_call(Prim::BringModule, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
                 } else { constant(Value::Nil) };
                 self.claim(&local);
@@ -4250,6 +4361,20 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
             return Ok(true);
         }
+        if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
+            let alias = self.glance(1).lexeme.clone();
+            let place = self.member_address(&alias, "alias");
+            self.member_noted(&alias, place.clone());
+            let class = self.parts().completed_class.ident.to_string();
+            let entries = self.parts().lexical_members.clone();
+            self.address_to_write(&class);
+            let outer = self.annotation_owner.replace((class, entries));
+            setup.push(self.stmt()?);
+            self.annotation_owner = outer;
+            if let Some(mirror) = self.mirror_member(&alias, &place) { setup.push(mirror); }
+            self.skip_line_ends();
+            return Ok(false);
+        }
         let mut wrappers=Vec::new();
         while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
             self.advance();
@@ -4264,6 +4389,21 @@ impl<'a> Builder<'a> {
             self.advance();
             let method_name = self.need_word("as the method name")?;
             let title = self.original_words[self.pos - 1].lexeme.clone();
+            if self.on_any("ext.stmt.type_params.open") {
+                let owner = self.parts().completed_class.ident.to_string();
+                let entries = self.parts().lexical_members.clone();
+                self.address_to_write(&owner);
+                let enclosing = self.annotation_owner.replace((owner, entries));
+                let mut expression = self.func(method_name.clone(), false)?;
+                self.annotation_owner = enclosing;
+                while let Some(wrapper) = wrappers.pop() { expression = Form::Apply(Callee::Code(Box::new(Form::Read(wrapper))), vec![expression]); }
+                let slot = self.member_address(&method_name, "generic_method");
+                setup.push(Form::Write(slot.clone(), Box::new(expression)));
+                self.member_noted(&method_name, slot.clone());
+                if let Some(mirror) = self.mirror_member(&method_name, &slot) { setup.push(mirror); }
+                self.skip_line_ends();
+                return Ok(false);
+            }
             let body = self.method(&title)?;
             self.parts().methods.retain(|(old, _)| old != &method_name);
             if let Some(at) = self.parts().attributes.iter().position(|old| old == &method_name) {
@@ -4347,7 +4487,10 @@ impl<'a> Builder<'a> {
                 // itself among them -- is bound.
                 let deferred = self.annotation_routine()?;
                 let key = self.private_key(&member);
-                self.parts().annotated_names.push((constant(Value::text(&key)), deferred));
+                let location = self.gensym("annotation_expression");
+                setup.push(Form::Write(location.clone(), Box::new(deferred)));
+                let captured = Form::Glance(location.clone());
+                self.parts().annotated_names.push((constant(Value::text(&key)), captured));
                 if self.on_assign() {
                     self.advance();
                     let value = self.comma_value()?;
@@ -4680,6 +4823,23 @@ impl<'a> Builder<'a> {
     }
 
     fn class_with_receiver(&mut self) -> Res<(Form, bool)> {
+        let nested = std::mem::take(&mut self.generic_class_body);
+        if !nested && self.table.spells("ext.stmt.type_params.open", &self.glance(2).lexeme) {
+            let beginning = self.pos;
+            let name = self.glance(1).lexeme.clone();
+            self.pos += 2;
+            let factory = self.routine("<type parameters>", Holds::Every, Traps::Yields, Vec::new(), 0, |reader| {
+                let (mut forms, names) = reader.declare_type_objects()?;
+                reader.pos = beginning;
+                reader.generic_class_body = true;
+                forms.push(reader.class_with_receiver()?.0);
+                forms.push(reader.give_type_parameters(&name, &names));
+                forms.push(reader.read(&name));
+                Ok(sequence(forms))
+            })?;
+            let value = Form::Apply(Callee::Code(Box::new(factory)), Vec::new());
+            return Ok((self.write(&name, value), false));
+        }
         self.advance();
         let class_title = self.original_words[self.pos].lexeme.clone();
         let named = self.need_word("as the class name")?;
@@ -4759,6 +4919,13 @@ impl<'a> Builder<'a> {
             self.need_sign(end, "after the bases")?;
             }
         }
+        if nested {
+            let generic = self.gensym("generic_parent");
+            let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
+            let value = Form::Apply(Callee::Code(Box::new(maker)), Vec::new());
+            setup.push(Form::Write(generic.clone(), Box::new(value)));
+            if parent.is_none() { parent = Some(generic); } else { other_parents.push(generic); }
+        }
         let full_name = self.full_name_of(&class_title);
         let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
         let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
@@ -4831,12 +4998,17 @@ impl<'a> Builder<'a> {
         // The routines answering what the body annotated, carried under
         // a hidden name until the class's annotations are asked for; a
         // body that annotated nothing leaves the class without them.
+        let mut annotation_slots = Vec::new();
         if table.has_any("ext.stmt.class.annotations") && !annotated_names.is_empty() {
+            annotation_slots.extend(annotated_names.iter().filter_map(|(_, value)| if let Form::Glance(address) = value { Some(address.clone()) } else { None }));
             // Keys and routines alternate in one row, made as the body runs.
             ranking.push(crate::data::ANNOTATE_WORD.to_owned());
             attributes.push(crate::data::ANNOTATE_WORD.to_owned());
             let row: Vec<Form> = annotated_names.into_iter().flat_map(|(key, routine)| [key, routine]).collect();
             held.push(prim_call(Prim::MakeArray, row));
+            ranking.push(String::from("\0string_annotations"));
+            attributes.push(String::from("\0string_annotations"));
+            held.push(constant(Value::Flag(self.annotations_as_strings)));
         }
         // The header's keywords ride along as entries under their hidden
         // names, for the building of the class to hand on.
@@ -4850,7 +5022,7 @@ impl<'a> Builder<'a> {
         // once the class holds what it found, so that a class statement
         // read a second time — one standing in a loop — does not find
         // what the pass before it left behind.
-        let mut emptied = Vec::new();
+        let mut emptied = annotation_slots;
         for (at, word) in attributes.iter().enumerate() {
             if !uncertain.iter().any(|n| n == word) { continue; }
             if let Form::Read(place) = held[at].clone() {
@@ -6089,6 +6261,69 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    fn declare_type_objects(&mut self) -> Res<(Vec<Form>, Vec<String>)> {
+        self.advance();
+        let mut setup = Vec::new();
+        let mut names = Vec::new();
+        loop {
+            let kind = if self.on_any("ext.stmt.function.carries.pairs") { self.advance(); "ParamSpec" }
+                else if self.on_any("ext.stmt.function.carries") { self.advance(); "TypeVarTuple" } else { "TypeVar" };
+            let name = self.need_word("among type parameters")?;
+            names.push(name.clone());
+            self.address_to_write(&name);
+            let mut constraints = false;
+            let bound = if self.on_any("ext.stmt.annotation") {
+                self.advance();
+                if self.sign("(") {
+                    let mut opened = Vec::new();
+                    for token in &self.tokens[self.pos..] {
+                        match token.lexeme.as_str() {
+                            "(" | "[" | "{" => opened.push(token.lexeme.as_str()),
+                            ")" | "]" | "}" => { opened.pop(); if opened.is_empty() { break; } },
+                            "," if opened.len() == 1 => constraints = true,
+                            _ => {},
+                        }
+                    }
+                }
+                self.routine("<type bound>", Holds::Every, Traps::Naught, Vec::new(), 0, |reader| {
+                    let outer = reader.annotation_lookup;
+                    reader.annotation_lookup = true;
+                    let expression = reader.expr_at(0, false);
+                    reader.annotation_lookup = outer;
+                    expression
+                })?
+            } else { constant(Value::Nil) };
+            let fallback = if self.on_assign() {
+                self.advance();
+                self.routine("<type default>", Holds::Every, Traps::Naught, Vec::new(), 0, |reader| {
+                    let outer = reader.annotation_lookup;
+                    reader.annotation_lookup = true;
+                    let starred = kind == "TypeVarTuple" && reader.sign("*");
+                    if starred { reader.advance(); }
+                    let expression = reader.expr_at(0, false).map(|value| if starred {
+                        prim_call(Prim::NextItem, vec![prim_call(Prim::Iterator, vec![value])])
+                    } else { value });
+                    reader.annotation_lookup = outer;
+                    expression
+                })?
+            } else { constant(Value::Nil) };
+            let constructor = constant(Value::Wrapped(46, Rc::new(Vec::new()).into()));
+            let object = Form::Apply(Callee::Code(Box::new(constructor)), vec![constant(Value::text(&name)), constant(Value::text(kind)), bound, fallback, constant(Value::Flag(constraints))]);
+            setup.push(self.write(&name, object));
+            if !self.on_any("ext.op.tuple") { break; }
+            self.advance();
+            if self.on_any("ext.stmt.type_params.close") { break; }
+        }
+        self.need_sign(self.table.single("ext.stmt.type_params.close").unwrap(), "after type parameters")?;
+        Ok((setup, names))
+    }
+    fn give_type_parameters(&mut self, name: &str, parameters: &[String]) -> Form {
+        let values = parameters.iter().map(|parameter| self.read(parameter)).collect();
+        let row = prim_call(Prim::MakeTuple, values);
+        let object = self.read(name);
+        let member = self.table.single("ext.stmt.class.detail.type_params").unwrap_or_default().to_owned();
+        prim_call(Prim::SetMember, vec![object, constant(Value::text(&member)), row])
+    }
     fn type_names(&mut self) -> Res<bool> {
         if !self.table.flag("ext.stmt.type_parameters") || !self.on_any("op.index.open") { return Ok(false); }
         let earlier = std::mem::replace(&mut self.forbids_await, true);
@@ -6485,7 +6720,33 @@ impl<'a> Builder<'a> {
         let ident = self.table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
         // A plain expression: an equals sign after it gives the member its
         // value and is no assignment within the annotation.
-        self.routine(ident, Holds::Every, Traps::Naught, Vec::new(), 0, |b| b.expr_at(0, false))
+        let class = self.parts().completed_class.ident.to_string();
+        let entries = self.parts().lexical_members.clone();
+        self.address_to_write(&class);
+        let outer_owner = self.annotation_owner.replace((class, entries));
+        let original = self.class_bindings.last().cloned();
+        if let Some((level, bindings)) = self.class_bindings.last_mut() {
+            *level += 1;
+            for address in bindings.values_mut() { address.up += 1; }
+        }
+        let result = self.routine(ident, Holds::Every, Traps::Naught, Vec::new(), 0, |b| {
+            let first = b.pos;
+            let outer = b.annotation_lookup;
+            b.annotation_lookup = true;
+            let expression = b.expr_at(0, false)?;
+            b.annotation_lookup = outer;
+            Ok(if b.annotations_as_strings { constant(Value::text(&b.annotation_spelling(first, b.pos))) } else { expression })
+        });
+        if let Some(original) = original { *self.class_bindings.last_mut().unwrap() = original; }
+        self.annotation_owner = outer_owner;
+        result.map(|form| match form {
+            Form::Const(Value::Routine(code)) => {
+                let mut scalar = (*code).clone();
+                scalar.annotation_is_text = self.annotations_as_strings;
+                constant(Value::Routine(Rc::new(scalar)))
+            }
+            other => other,
+        })
     }
 
     /// The key a blueprint carries a member's annotation under: a name
@@ -6591,12 +6852,43 @@ impl<'a> Builder<'a> {
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
         if bound && self.table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
-        let title = match self.pos.checked_sub(1).and_then(|at| self.original_words.get(at)) {
-            Some(word) if word.shape == Shape::Bare && self.tokens[self.pos - 1].lexeme == name => word.lexeme.clone(),
+        let mut source_name = self.pos.saturating_sub(1);
+        if self.table.spells("ext.stmt.type_params.close", &self.tokens[source_name].lexeme) {
+            let mut brackets = 0usize;
+            for index in (0..=source_name).rev() {
+                let word = &self.tokens[index].lexeme;
+                if self.table.spells("ext.stmt.type_params.close", word) { brackets += 1; }
+                if self.table.spells("ext.stmt.type_params.open", word) {
+                    brackets -= 1;
+                    if brackets == 0 { source_name = index.saturating_sub(1); break; }
+                }
+            }
+        }
+        let title = match self.original_words.get(source_name) {
+            Some(word) if word.shape == Shape::Bare && self.tokens[source_name].lexeme == name => word.lexeme.clone(),
             _ => name.clone(),
         };
         let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
+        if self.on_any("ext.stmt.type_params.open") {
+            let saved_owner = self.annotation_owner.clone();
+            if self.in_class_body() {
+                let class = self.parts().completed_class.ident.to_string();
+                let entries = self.parts().lexical_members.clone();
+                self.address_to_write(&class);
+                self.annotation_owner = Some((class, entries));
+            }
+            let factory = self.routine("<type parameters>", Holds::Every, Traps::Yields, Vec::new(), 0, |reader| {
+                let (mut setup, parameters) = reader.declare_type_objects()?;
+                setup.push(reader.func(name.clone(), true)?);
+                setup.push(reader.give_type_parameters(&name, &parameters));
+                setup.push(reader.read(&name));
+                Ok(sequence(setup))
+            })?;
+            self.annotation_owner = saved_owner;
+            let result = Form::Apply(Callee::Code(Box::new(factory)), Vec::new());
+            return Ok(if bound { self.write(&name, result) } else { result });
+        }
         self.type_names()?;
         // The type names read here stand aside while the parameters
         // and their defaults are read, so a routine written within one
@@ -7261,15 +7553,31 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        let expression_start = self.pos + 1;
+        let mut site = None;
         if self.layers.len() == 1 && !parenthesized {
             if let Form::Read(slot) = &place {
                 if self.tokens[self.pos - 1].lexeme == slot.ident.as_ref() {
-                    self.module_sites.push((slot.ident.to_string(), self.pos + 1));
+                    let flag = self.gensym("annotation_executed").ident.to_string();
+                    self.module_site_flags.insert(expression_start, flag.clone());
+                    site = Some((slot.ident.to_string(), flag));
+                    self.module_sites.push((slot.ident.to_string(), expression_start));
                 }
             }
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
+        let expression_end = self.pos;
+        let mut execution = Vec::new();
+        if let Some((key, flag)) = site {
+            let flag = self.read_to_write(&flag);
+            execution.push(prim_call(Prim::Replace, vec![flag, constant(Value::Small(0)), constant(Value::Flag(true))]));
+            if self.annotations_as_strings {
+                let member = table.single("ext.stmt.class.annotations").unwrap_or_default();
+                let target = self.read_to_write(member);
+                execution.push(prim_call(Prim::Replace, vec![target, constant(Value::text(&key)), constant(Value::text(&self.annotation_spelling(expression_start, expression_end)))]));
+            }
+        }
         if self.on_assign() {
             if self.table.has_any("ext.builtin.exceptions.syntax") {
                 if let Some(at) = self.second_sign_ahead() {
@@ -7277,9 +7585,11 @@ impl<'a> Builder<'a> {
                     return Err("SyntaxError: invalid syntax".to_owned());
                 }
             }
-            return self.written(place, false);
+            let written = self.written(place, false)?;
+            execution.insert(0, written);
+            return Ok(sequence(execution));
         }
-        Ok(match place {
+        let bare = match place {
             Form::Read(slot) => {
                 if table.flag("ext.stmt.function.closes_over") && !parenthesized { self.address_to_write(&slot.ident); }
                 constant(Value::Nil)
@@ -7287,7 +7597,9 @@ impl<'a> Builder<'a> {
             Form::Apply(Callee::Prim(Prim::At, _), parts) => sequence(parts),
             Form::Apply(Callee::Prim(Prim::Of, _), mut parts) => parts.remove(0),
             _ => unreachable!("the annotation target was read above"),
-        })
+        };
+        execution.insert(0, bare);
+        Ok(sequence(execution))
     }
 
     /// Seek the kind's sign before reading a statement's place. Marks
@@ -10901,7 +11213,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { annotation_protocol: false, annotation_is_text: false,  annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let program = Routine { annotation_is_text: false, annotation_protocol: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
