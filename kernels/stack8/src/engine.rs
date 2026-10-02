@@ -21982,21 +21982,9 @@ impl Engine<'_> {
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::default();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
-        // Where the outer dictionary names a dictionary of builtins of
-        // its own, every builtin word is read as a name, so that the
-        // text reaches only what that dictionary holds.
-        let roots = near.as_ref().map_or(&outer, |_| &outer);
-        let builtin_name = self.lang.module_builtins.first().cloned();
-        let own_natives = if let Some(word) = builtin_name {
-            match self.book_builtins(roots, &word) {
-                Ok(Some(held)) => !self.our_native_dict(&held),
-                Ok(None) => false,
-                Err(failure) => { self.carried = Some(failure); return Err(self.special_fault()); }
-            }
-        } else { false };
-        if own_natives {
-            for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
-        }
+        // A dynamic namespace can bind any builtin spelling, including
+        // after this code is compiled. Use the name lookup path for each.
+        local.program_bound.extend(self.lang.builtins.keys().cloned());
         // A routine written by text handed a dictionary of its own
         // keeps that dictionary and the builtins in force there, so
         // that it may answer for both later.

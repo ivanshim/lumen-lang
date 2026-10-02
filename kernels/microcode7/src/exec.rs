@@ -22114,17 +22114,9 @@ impl<'a> Machine<'a> {
         };
         let beginning = self.idents.len();
         let prior: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
-        // Where the outer dictionary names a dictionary of builtins of
-        // its own, every builtin word is read as a name, and the text
-        // reaches only what that dictionary holds.
-        let own_natives = if let Some(word) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
-            match self.builtin_entry(&outer, &word) {
-                Ok(Some(value)) => !self.is_our_natives(&value),
-                Ok(None) => false,
-                Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
-            }
-        } else { false };
-        let shadowed: Vec<String> = if own_natives { self.table.prims.keys().cloned().collect() } else { Vec::new() };
+        // Executed code resolves builtin spellings through its live names,
+        // so a supplied global or local binding can replace them later.
+        let shadowed: Vec<String> = self.table.prims.keys().cloned().collect();
         // The dictionary the text was handed and the builtins in force
         // there go onto every routine it makes, so a routine can answer
         // for both once the reading that made it is over.
