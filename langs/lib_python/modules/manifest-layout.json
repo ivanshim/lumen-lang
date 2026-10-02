@@ -4,7 +4,8 @@
     "unittest": "unittest/__init__.py"
   },
   "aliases": {
-    "os.path": "path"
+    "os.path": "path",
+    "importlib.util": "util"
   },
   "adapters": {
     "copy": "runtime_adapters/copy.py",

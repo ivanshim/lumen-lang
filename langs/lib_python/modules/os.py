@@ -1,6 +1,7 @@
 # Host primitives used by class bodies need non-private module bindings.
 _host_file_exists = __file_exists
 _host_file_kind = __file_kind
+_host_file_link = __file_link
 
 # The path rules below are POSIX rules. Host facts are read afresh.
 name = 'posix'
@@ -73,26 +74,31 @@ def rmdir(path, *, dir_fd=None):
         raise OSError(39, 'Directory not empty', path)
 
 def fspath(path):
-    # The string a path stands as: text answers as itself, and a
-    # path-like thing answers with the name it gives through
-    # __fspath__.
-    if isinstance(path, str):
+    # The spelling a path stands as: text or bytes answer as themselves,
+    # and a path-like thing answers with the spelling it gives through
+    # __fspath__, which is one of those two and nothing else.
+    if isinstance(path, str) or isinstance(path, bytes):
         return path
     named = getattr(path, '__fspath__', None)
     if named is not None:
         answer = named()
-        if isinstance(answer, str):
+        if isinstance(answer, str) or isinstance(answer, bytes):
             return answer
         raise TypeError('expected str, bytes or os.PathLike object, not ' + str(type(answer)))
     raise TypeError('expected str, bytes or os.PathLike object, not ' + str(type(path)))
+
+def islink(path):
+    # Whether the name given is a link to somewhere else, asking the
+    # host about the link itself rather than what stands at its end.
+    return _host_file_link(path)
 
 def walk(top, topdown=True, onerror=None, followlinks=False):
     # Every directory under a name, one at a time, with the names of
     # its own directories and its own files beside it. The caller may
     # rewrite the directory list it is given as it goes where the
-    # directories come first. A directory is not followed through a
-    # link unless asked for; the host tells no link from its end, so
-    # every directory reached is walked here.
+    # directories come first. A link is followed to tell a directory
+    # from a file, and named among the directories all the same, but
+    # not walked into unless the caller asks for links to be followed.
     try:
         names = listdir(top)
     except OSError as error:
@@ -102,14 +108,18 @@ def walk(top, topdown=True, onerror=None, followlinks=False):
     directories = []
     files = []
     for name in names:
-        if path.isdir(path.join(top, name)):
+        joined = path.join(top, name)
+        if path.isdir(joined):
             directories.append(name)
         else:
             files.append(name)
     if topdown:
         yield (top, directories, files)
     for name in directories:
-        for entry in walk(path.join(top, name), topdown, onerror, followlinks):
+        joined = path.join(top, name)
+        if not followlinks and islink(joined):
+            continue
+        for entry in walk(joined, topdown, onerror, followlinks):
             yield entry
     if not topdown:
         yield (top, directories, files)

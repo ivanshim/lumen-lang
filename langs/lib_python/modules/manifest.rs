@@ -106,5 +106,6 @@ pub static MODULES: &[(&str, &str, &str)] = &[
 
 // Non-package aliases initialize real source with their embedded parent.
 pub static MODULE_ALIASES: &[(&str, &str)] = &[
+    ("importlib.util", "util"),
     ("os.path", "path"),
 ];
