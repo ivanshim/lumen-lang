@@ -90,41 +90,27 @@ Not spelled: `clone`, `declare`, `enddeclare`, `goto`, `insteadof`, `match`, `na
 | `array_merge` | 8 | no |
 | `is_uploaded_file` | 8 | no |
 
-## Python: 50 tests
+## Python: 52 tests
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `python` | 50 | pass 0, differs 2, error 48, skipped 0 | pass 0, differs 2, error 48, skipped 0 |
+| `python` | 52 | pass 0, differs 34, error 18, skipped 0 | pass 0, differs 34, error 18, skipped 0 |
 
 | Reason | Tests |
 |---|---|
-| Uncaught test run failed | 13 |
-| ModuleNotFoundError: No module named 'doctest' | 6 |
-| ran to the end without asserting anything | 2 |
-| ModuleNotFoundError: No module named 'ast' | 2 |
-| Cannot coerce array to number | 2 |
-| NotImplementedError: this class operation is not supported | 2 |
-| ModuleNotFoundError: No module named 'collections.abc' | 2 |
-| ModuleNotFoundError: No module named 'types' | 2 |
-| NotImplementedError: this class form cannot run yet | 1 |
-| Undefined variable: globals | 1 |
-| ModuleNotFoundError: No module named 'test.test_math' | 1 |
-| ModuleNotFoundError: No module named 'threading' | 1 |
-| ImportError: cannot import name 'BOM_UTF8' | 1 |
-| ModuleNotFoundError: No module named 'errno' | 1 |
-| Undefined variable: __file__ | 1 |
-| ModuleNotFoundError: No module named 'numbers' | 1 |
-| ModuleNotFoundError: No module named 'annotationlib' | 1 |
-| ImportError: cannot import name 'mock' | 1 |
-| ModuleNotFoundError: No module named 'signal' | 1 |
-| this slice operation is not supported | 1 |
-| invalid syntax | 1 |
-| ModuleNotFoundError: No module named 'dis' | 1 |
-| Unexpected token: , | 1 |
-| ImportError: cannot import name 'loads' | 1 |
-| ModuleNotFoundError: No module named '_string' | 1 |
-| ModuleNotFoundError: No module named 'shutil' | 1 |
-| Invalid assignment target before '=' | 1 |
+| ran to the end without asserting anything | 34 |
+| test run failed | 4 |
+| timeout | 4 |
+| AssertionError: 2 != -2 | 1 |
+| AssertionError: ValueError not raised | 1 |
+| AssertionError: test_exceptions.py not found in Traceback (most recent call last): | 1 |
+| AssertionError: 30.0 != 20.0 | 1 |
+| AssertionError: -107129202950599351702797472822744173501480199585519522353425 != -107129202950599351702797472822744173501480199585519522353426 | 1 |
+| AssertionError: 0 != 1 | 1 |
+| b'Traceback (most recent call last):\n  File "...", line 7, in <module>\n    for x in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):\n  File "...", line 24, in __getattr__\n    raise \'NotImplementedError: _testinternalcapi.\' + name + \' is not supported\'\nNotImplementedError: _testinternalcapi.SPECIALIZATION_THRESHOLD is not supported\n' | 1 |
+| AssertionError: -9 != 1 | 1 |
+| AssertionError: range(-4294967298, -4294967297, 2): unexpected excess element -4294967298 at position 0 | 1 |
+| BozoError | 1 |
 
 ### Reserved words: 35 of 35 spelled
 
@@ -136,46 +122,46 @@ Not spelled:
 
 | Function | Calls | Spelled |
 |---|---|---|
-| `assertEqual` | 5435 | no |
-| `assertRaises` | 1637 | no |
-| `range` | 850 | yes |
-| `F` | 803 | yes |
-| `f` | 595 | yes |
+| `assertEqual` | 5570 | no |
+| `assertRaises` | 1688 | no |
+| `range` | 851 | yes |
+| `F` | 805 | yes |
+| `f` | 599 | yes |
 | `Traceback` | 587 | no |
-| `assertTrue` | 549 | no |
+| `assertTrue` | 568 | no |
 | `format` | 525 | yes |
+| `assertIs` | 468 | no |
 | `list` | 437 | yes |
-| `assertIs` | 429 | no |
-| `type` | 419 | yes |
+| `type` | 428 | yes |
 | `complex` | 398 | yes |
 | `check` | 369 | no |
 | `int` | 357 | yes |
-| `len` | 339 | yes |
+| `len` | 346 | yes |
 | `float` | 336 | yes |
-| `str` | 286 | yes |
-| `assertRaisesRegex` | 271 | no |
-| `set` | 267 | yes |
-| `assertFalse` | 257 | no |
+| `assertRaisesRegex` | 287 | no |
+| `str` | 287 | yes |
+| `assertFalse` | 274 | no |
+| `set` | 272 | yes |
 | `fromHex` | 253 | no |
 | `identical` | 252 | no |
-| `pow` | 224 | yes |
-| `next` | 197 | yes |
-| `__init__` | 183 | yes |
+| `pow` | 225 | yes |
+| `next` | 200 | yes |
+| `__init__` | 188 | yes |
 | `repr` | 179 | yes |
 | `_` | 171 | yes |
+| `append` | 169 | yes |
 | `assertIn` | 168 | no |
-| `eval` | 161 | no |
+| `eval` | 161 | yes |
 | `testcommon` | 161 | no |
+| `C` | 160 | no |
 | `isnan` | 153 | no |
+| `fail` | 149 | no |
 | `ftest` | 145 | no |
 | `round` | 143 | yes |
 | `iter` | 141 | yes |
-| `fail` | 139 | no |
+| `print` | 139 | yes |
 | `g` | 137 | no |
 | `pow_op` | 135 | no |
-| `_check_error` | 135 | no |
-| `print` | 134 | yes |
-| `C` | 129 | no |
 
 ## Every test
 
@@ -603,53 +589,55 @@ Not spelled:
 | `php/lang/type_hints_002.phpt` | pass | pass |  |
 | `php/lang/type_hints_003.phpt` | pass | pass |  |
 | `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
-| `python/test_augassign.py` | error | error | Uncaught test run failed |
+| `python/test_abc.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_augassign.py` | differs | differs | ran to the end without asserting anything |
 | `python/test_bigmem.py` | differs | differs | ran to the end without asserting anything |
-| `python/test_binop.py` | error | error | NotImplementedError: this class form cannot run yet |
-| `python/test_bool.py` | error | error | Uncaught test run failed |
-| `python/test_builtin.py` | error | error | ModuleNotFoundError: No module named 'ast' |
-| `python/test_class.py` | error | error | Undefined variable: globals |
-| `python/test_cmath.py` | error | error | ModuleNotFoundError: No module named 'test.test_math' |
-| `python/test_compare.py` | error | error | Cannot coerce array to number |
-| `python/test_complex.py` | error | error | NotImplementedError: this class operation is not supported |
-| `python/test_contains.py` | error | error | Uncaught test run failed |
-| `python/test_decorators.py` | error | error | Uncaught test run failed |
-| `python/test_dict.py` | error | error | ModuleNotFoundError: No module named 'collections.abc' |
-| `python/test_dictcomps.py` | error | error | Uncaught test run failed |
-| `python/test_enumerate.py` | error | error | ModuleNotFoundError: No module named 'threading' |
-| `python/test_eof.py` | error | error | ImportError: cannot import name 'BOM_UTF8' |
-| `python/test_exceptions.py` | error | error | ModuleNotFoundError: No module named 'errno' |
-| `python/test_float.py` | error | error | Undefined variable: __file__ |
-| `python/test_format.py` | error | error | Uncaught test run failed |
-| `python/test_fractions.py` | error | error | ModuleNotFoundError: No module named 'numbers' |
-| `python/test_fstring.py` | error | error | ModuleNotFoundError: No module named 'ast' |
-| `python/test_funcattrs.py` | error | error | ModuleNotFoundError: No module named 'types' |
-| `python/test_generators.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
-| `python/test_genexps.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
-| `python/test_global.py` | error | error | ModuleNotFoundError: No module named 'types' |
-| `python/test_grammar.py` | error | error | ModuleNotFoundError: No module named 'annotationlib' |
-| `python/test_index.py` | error | error | NotImplementedError: this class operation is not supported |
-| `python/test_int.py` | error | error | ImportError: cannot import name 'mock' |
+| `python/test_binop.py` | error | error | AssertionError: 2 != -2 |
+| `python/test_bool.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_builtin.py` | error | error | AssertionError: ValueError not raised |
+| `python/test_class.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_cmath.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_compare.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_complex.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_contains.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_contextlib.py` | error | error | test run failed |
+| `python/test_decorators.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_dict.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_dictcomps.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_enumerate.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_eof.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_exceptions.py` | error | error | AssertionError: test_exceptions.py not found in Traceback (most recent call last): |
+| `python/test_float.py` | error | error | AssertionError: 30.0 != 20.0 |
+| `python/test_format.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_fractions.py` | error | error | AssertionError: -107129202950599351702797472822744173501480199585519522353425 != -107129202950599351702797472822744173501480199585519522353426 |
+| `python/test_fstring.py` | error | error | test run failed |
+| `python/test_funcattrs.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_generators.py` | error | error | AssertionError: 0 != 1 |
+| `python/test_genexps.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_global.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_grammar.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_index.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_int.py` | differs | differs | ran to the end without asserting anything |
 | `python/test_int_literal.py` | differs | differs | ran to the end without asserting anything |
-| `python/test_iter.py` | error | error | ModuleNotFoundError: No module named 'collections.abc' |
-| `python/test_keywordonlyarg.py` | error | error | Uncaught test run failed |
-| `python/test_list.py` | error | error | ModuleNotFoundError: No module named 'signal' |
-| `python/test_listcomps.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
-| `python/test_long.py` | error | error | Cannot coerce array to number |
-| `python/test_math.py` | error | error | this slice operation is not supported |
-| `python/test_opcodes.py` | error | error | invalid syntax |
-| `python/test_positional_only_arg.py` | error | error | ModuleNotFoundError: No module named 'dis' |
-| `python/test_pow.py` | error | error | Uncaught test run failed |
-| `python/test_print.py` | error | error | Uncaught test run failed |
-| `python/test_range.py` | error | error | Uncaught test run failed |
-| `python/test_scope.py` | error | error | Uncaught test run failed |
-| `python/test_set.py` | error | error | Unexpected token: , |
-| `python/test_setcomps.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
-| `python/test_slice.py` | error | error | ImportError: cannot import name 'loads' |
-| `python/test_str.py` | error | error | ModuleNotFoundError: No module named '_string' |
-| `python/test_string_literals.py` | error | error | ModuleNotFoundError: No module named 'shutil' |
-| `python/test_syntax.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
-| `python/test_tuple.py` | error | error | Uncaught test run failed |
-| `python/test_unary.py` | error | error | Uncaught test run failed |
-| `python/test_unpack.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
-| `python/test_with.py` | error | error | Invalid assignment target before '=' |
+| `python/test_iter.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_keywordonlyarg.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_list.py` | error | error | b'Traceback (most recent call last):\n  File "...", line 7, in <module>\n    for x in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):\n  File "...", line 24, in __getattr__\n    raise \'NotImplementedError: _testinternalcapi.\' + name + \' is not supported\'\nNotImplementedError: _testinternalcapi.SPECIALIZATION_THRESHOLD is not supported\n' |
+| `python/test_listcomps.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_long.py` | error | error | timeout |
+| `python/test_math.py` | error | error | timeout |
+| `python/test_opcodes.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_positional_only_arg.py` | error | error | test run failed |
+| `python/test_pow.py` | error | error | AssertionError: -9 != 1 |
+| `python/test_print.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_range.py` | error | error | AssertionError: range(-4294967298, -4294967297, 2): unexpected excess element -4294967298 at position 0 |
+| `python/test_scope.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_set.py` | error | error | timeout |
+| `python/test_setcomps.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_slice.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_str.py` | error | error | timeout |
+| `python/test_string_literals.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_syntax.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_tuple.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_unary.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_unpack.py` | error | error | BozoError |
+| `python/test_with.py` | error | error | test run failed |
