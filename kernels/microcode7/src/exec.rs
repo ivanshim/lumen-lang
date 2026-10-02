@@ -16496,7 +16496,9 @@ impl<'a> Machine<'a> {
                     if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
                     return self.dot_product(&v[1], &v[2]);
                 }
-                let takes = math::worked_takes(&working);
+                let takes = if !self.rules.floating_math && matches!(working.as_str(), "ldexp_plain" | "fsum_partial" | "fsum_finite" | "dist_float") {
+                    1
+                } else { math::worked_takes(&working) };
                 if v.len() != takes + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
                 }
@@ -16527,7 +16529,7 @@ impl<'a> Machine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
-                if working == "dist_float" {
+                if working == "dist_float" && self.rules.floating_math {
                     if !self.rules.binary_arithmetic || self.rules.lone_system_real_render != Some("shortest") || self.real_figures() != math::DEFAULT_PLACES { return Ok(Value::Nil); }
                     let coordinates = |input: &Value| -> Option<Vec<f64>> {
                         let sequence = match input.settled() { Value::Tuple(row) | Value::Vector(row) => row, _ => return None };
@@ -16555,7 +16557,7 @@ impl<'a> Machine<'a> {
                     }
                     return Ok(Value::tuple(vec![Value::Small(status), Value::Vector(crate::tuples::Sequence::plain(differences)).keep(true)]));
                 }
-                if matches!(working.as_str(), "frexp_plain" | "ldexp_plain") {
+                if matches!(working.as_str(), "frexp_plain" | "ldexp_plain") && self.rules.floating_math {
                     let native = match v[1].settled() {
                         Value::Frac(r) => r.places.is_some(),
                         Value::Small(n) => working == "ldexp_plain" || n.unsigned_abs() <= 9007199254740992,
@@ -16566,7 +16568,7 @@ impl<'a> Machine<'a> {
                     let exponent = working != "ldexp_plain" || matches!(v[2].settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                     if !native || !exponent { return Ok(Value::Nil); }
                 }
-                if matches!(working.as_str(), "fsum_partial" | "fsum_finite") {
+                if matches!(working.as_str(), "fsum_partial" | "fsum_finite") && self.rules.floating_math {
                     if !self.rules.binary_arithmetic || self.real_figures() != math::DEFAULT_PLACES { return Ok(Value::Nil); }
                     let first = if working == "fsum_finite" { v[1].settled() } else { self.worth_of(&v[1]) };
                     let Value::Vector(parts) = v[2].settled() else { return Ok(Value::Nil) };
@@ -16609,7 +16611,7 @@ impl<'a> Machine<'a> {
                     return Ok(result);
                 }
                 let one = width(1)?;
-                if matches!(working.as_str(), "frexp" | "frexp_plain") {
+                if matches!(working.as_str(), "frexp" | "frexp_plain") && self.rules.floating_math {
                     let mut exponent = 0;
                     let mantissa = match one {
                         n if n == 0.0 || !n.is_finite() => n,
@@ -16626,7 +16628,7 @@ impl<'a> Machine<'a> {
                     if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = self.rules.floating_math; }
                     return Ok(Value::tuple(vec![worth, Value::Small(exponent)]));
                 }
-                match math::worked(if working == "ldexp_plain" { "ldexp" } else { &working }, one, two) {
+                match math::worked(if working == "ldexp_plain" && self.rules.floating_math { "ldexp" } else { &working }, one, two) {
                     Some(got) => {
                         // A working handed only reals of the width
                         // already, and answering past every number of

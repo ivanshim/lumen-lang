@@ -3568,6 +3568,9 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
+  This Python-only switch also enables the `frexp`, `frexp_plain`,
+  `ldexp_plain`, `fsum_partial`, `fsum_finite` and `dist_float` workings.
+  Without it these names retain the unknown-working path and its arity.
 - `ext.builtin.module.helper.amiss`: the complaint for unsuitable
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
   holds two pieces surrounding an attribute name which lookup cannot find.

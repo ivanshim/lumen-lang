@@ -16962,7 +16962,8 @@ impl<'a> Engine<'a> {
                     return self.product_sum(&args[1], &args[2]);
                 }
                 let wants = match working.as_str() {
-                    "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "ldexp_plain" | "nextafter" | "fmin" | "fmax" | "fsum_partial" | "fsum_finite" | "dist_float" => 2,
+                    "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+                    "ldexp_plain" | "fsum_partial" | "fsum_finite" | "dist_float" if self.lang.math_floating => 2,
                     "fma" => 3,
                     _ => 1,
                 };
@@ -16995,7 +16996,7 @@ impl<'a> Engine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
-                if working == "dist_float" {
+                if self.lang.math_floating && working == "dist_float" {
                     if !(self.lang.arithmetic_binary && self.lang.shortest_reals) || self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES) != arith::DEFAULT_PLACES {
                         return Ok(Value::Null);
                     }
@@ -17031,7 +17032,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::tuple(vec![Value::Small(category), Value::array(deltas).held(true)]));
                 }
                 match working.as_str() {
-                    "frexp_plain" | "ldexp_plain" => {
+                    "frexp_plain" | "ldexp_plain" if self.lang.math_floating => {
                         let accepts = match args[1].contents() {
                             Value::Real(_) | Value::Flag(_) => true,
                             Value::Small(number) => wants == 2 || (-9007199254740992..=9007199254740992).contains(&number),
@@ -17048,7 +17049,7 @@ impl<'a> Engine<'a> {
                     }
                     _ => {}
                 }
-                if working == "fsum_partial" || working == "fsum_finite" {
+                if self.lang.math_floating && matches!(working.as_str(), "fsum_partial" | "fsum_finite") {
                     if !self.lang.arithmetic_binary || self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES) != arith::DEFAULT_PLACES {
                         return Ok(Value::Null);
                     }
@@ -17091,7 +17092,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::tuple(vec![Value::array(remaining).held(true), last]));
                 }
                 let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
-                if working == "frexp" || working == "frexp_plain" {
+                if self.lang.math_floating && (working == "frexp" || working == "frexp_plain") {
                     let (mantissa, exponent) = if x == 0.0 || !x.is_finite() {
                         (x, 0)
                     } else {
@@ -17149,7 +17150,7 @@ impl<'a> Engine<'a> {
                     // Scaled a thousand powers at a time, so that a result
                     // down among the smallest reals is reached rather than
                     // lost against a power that was nought on its own.
-                    "ldexp" | "ldexp_plain" => {
+                    "ldexp" | "ldexp_plain" if working == "ldexp" || self.lang.math_floating => {
                         let (mut held, mut by) = (x, y as i64);
                         if held != 0.0 && held.is_finite() {
                             while by > 1000 && held.is_finite() { held *= 2f64.powi(1000); by -= 1000; }
