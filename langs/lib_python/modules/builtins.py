@@ -407,18 +407,21 @@ class memoryview:
             self._format = object._format
             self._itemsize = object._itemsize
             self._readonly = object._readonly
+            self._shape = object._shape
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
             self._offsets = list(range(len(object)))
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
+            self._shape = (len(self._offsets),)
         elif isinstance(object, array) and object.typecode in ('B', 'i'):
             self._source = object
             self._offsets = list(range(0, len(object.data) * object.itemsize, object.itemsize))
             self._format = object.typecode
             self._itemsize = object.itemsize
             self._readonly = False
+            self._shape = (len(self._offsets),)
         else:
             raise TypeError("memoryview: a bytes-like object is required, not '" + type(object).__name__ + "'")
         self._released = False
@@ -467,17 +470,36 @@ class memoryview:
 
     @property
     def nbytes(self):
-        return len(self) * self.itemsize
+        self._check()
+        return len(self._offsets) * self.itemsize
+
+    @property
+    def ndim(self):
+        self._check()
+        return len(self._shape)
+
+    @property
+    def shape(self):
+        self._check()
+        return self._shape
+
+    @property
+    def c_contiguous(self):
+        self._check()
+        return all(self._offsets[i] == self._offsets[i-1] + self.itemsize for i in range(1, len(self._offsets)))
 
     def __len__(self):
         self._check()
-        return len(self._offsets)
+        return self._shape[0]
 
     def __getitem__(self, key):
         self._check()
+        if self.ndim != 1:
+            raise NotImplementedError('multi-dimensional sub-views are not implemented')
         if isinstance(key, slice):
             child = memoryview(self)
             child._offsets = self._offsets[key]
+            child._shape = (len(child._offsets),)
             return child
         try:
             first = self._offsets[key]
@@ -486,10 +508,12 @@ class memoryview:
         except TypeError:
             raise TypeError('memoryview: invalid slice key')
         raw = bytes([self._byte(first + i) for i in range(self._itemsize)])
-        return int.from_bytes(raw, 'little', signed=self._format != 'B')
+        return int.from_bytes(raw, 'little', signed=self._format not in ('B', 'I'))
 
     def __setitem__(self, key, value):
         self._check()
+        if self.ndim != 1:
+            raise NotImplementedError('multi-dimensional assignments are not implemented')
         if self._readonly:
             raise TypeError('cannot modify read-only memory')
         if isinstance(key, slice):
@@ -511,7 +535,7 @@ class memoryview:
             except TypeError:
                 raise TypeError('memoryview: invalid slice key')
             try:
-                raw = value.to_bytes(self._itemsize, 'little', signed=self._format != 'B')
+                raw = value.to_bytes(self._itemsize, 'little', signed=self._format not in ('B', 'I'))
             except OverflowError:
                 raise ValueError("memoryview: invalid value for format '" + self._format + "'")
             for i in range(self._itemsize):
@@ -544,9 +568,9 @@ class memoryview:
 
     def cast(self, format, shape=None):
         self._check()
-        if shape is not None and (not isinstance(shape, (list, tuple)) or len(shape) != 1):
-            raise TypeError('memoryview: multi-dimensional casts are not supported')
-        if format not in ('B', 'b', 'i'):
+        if shape is not None and not isinstance(shape, (list, tuple)):
+            raise TypeError('shape must be a list or a tuple')
+        if format not in ('B', 'b', 'i', 'I'):
             raise TypeError('memoryview: destination format must be a native single character format')
         if self._offsets:
             start = self._offsets[0]
@@ -555,15 +579,28 @@ class memoryview:
                     raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
-        width = 4 if format == 'i' else 1
+        width = 4 if format in ('i', 'I') else 1
         if self.nbytes % width:
             raise TypeError('memoryview: length is not a multiple of itemsize')
-        if shape is not None and shape[0] != self.nbytes // width:
-            raise TypeError('memoryview: product(shape) * itemsize != buffer size')
+        dimensions = (self.nbytes // width,)
+        if shape is not None:
+            product = 1
+            if not shape or len(shape) > 64:
+                raise ValueError('memoryview: number of dimensions must not exceed 64')
+            for length in shape:
+                if not isinstance(length, int):
+                    raise TypeError('memoryview.cast(): elements of shape must be integers')
+                if length <= 0:
+                    raise ValueError('memoryview.cast(): elements of shape must be integers > 0')
+                product *= length
+            if product != self.nbytes // width:
+                raise TypeError('memoryview: product(shape) * itemsize != buffer size')
+            dimensions = tuple(shape)
         result = memoryview(self)
         result._format = format
         result._itemsize = width
         result._offsets = list(range(start, start + self.nbytes, width))
+        result._shape = dimensions
         return result
 
     def release(self):

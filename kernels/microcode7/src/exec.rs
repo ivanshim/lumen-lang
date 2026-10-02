@@ -11288,7 +11288,9 @@ impl<'a> Machine<'a> {
             }
             40 => {
                 let [from, onto] = values else { return Err(wrong()); };
-                return self.octet_mapping(&self.octet_contents(from, false)?, &self.octet_contents(onto, false)?);
+                let source = self.octet_buffer(from)?;
+                let destination = self.octet_buffer(onto)?;
+                return self.octet_mapping(&source, &destination);
             }
             // The workings that change a changeable row where it lies.
             // The row itself stands first, so the cell the row lives in
@@ -15285,8 +15287,9 @@ impl<'a> Machine<'a> {
                 // reference's __import__ reads it in, and a value the
                 // program's own __import__ answered with answers through
                 // the protocol it answers to.
-                if self.is_our_namespace(&v[0], &v[1].bare()) {
-                    self.namespace_item(&v[0], &v[1].bare(), &v[2].bare())?
+                let full_name = self.qualify_relative(&v[1].bare())?;
+                if self.is_our_namespace(&v[0], &full_name) {
+                    self.namespace_item(&v[0], &full_name, &v[2].bare())?
                 } else {
                     // A member the program's own __import__ answered
                     // without is a missing import, not a missing
@@ -17435,7 +17438,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::BinaryAscii | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -19906,6 +19909,21 @@ impl Machine<'_> {
 
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
+    fn qualify_relative(&self, request: &str) -> Result<String, String> {
+        let level = request.chars().take_while(|c| *c == '.').count();
+        if level == 0 { return Ok(request.into()); }
+        let missing = || String::from("ImportError: attempted relative import with no known parent package");
+        let origin = self.loaded_spaces.get(&self.written_in).ok_or_else(missing)?;
+        let is_package = self.namespace_file_path(origin).is_some_and(|location| location.ends_with("/__init__.py"));
+        let mut anchor = if is_package { origin.as_str() } else { origin.rsplit_once('.').map(|pair| pair.0).ok_or_else(missing)? };
+        for _ in 1..level {
+            anchor = anchor.rsplit_once('.').map(|pair| pair.0)
+                .ok_or_else(|| String::from("ImportError: attempted relative import beyond top-level package"))?;
+        }
+        let suffix = &request[level..];
+        Ok(if suffix.is_empty() { anchor.to_owned() } else { format!("{anchor}.{suffix}") })
+    }
+
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is
@@ -19923,7 +19941,8 @@ impl Machine<'_> {
             if self.import_cache_names(path) { return Ok(value.clone()); }
         }
         if path.starts_with('.') {
-            return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_string());
+            let qualified = self.qualify_relative(path)?;
+            return self.load_namespace(&qualified);
         }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
@@ -21501,7 +21520,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | BinaryAscii | HeapNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -22472,6 +22491,10 @@ impl Machine<'_> {
                 }
                 Ok(Value::Dict(Rc::new(entries.into())))
             }
+            BinaryAscii => {
+                require(2, 5)?;
+                self.ascii_binary_work(&input)
+            }
             HeapNative => {
                 require(2, 3)?;
                 self.heap_work(&input[0], &input[1].settled().bare(), input.get(2).cloned())
@@ -23230,3 +23253,6 @@ fn decimal_value(c: char) -> Option<u32> {
 
 #[path = "heap.rs"]
 mod heap;
+
+#[path = "binascii.rs"]
+mod binascii;

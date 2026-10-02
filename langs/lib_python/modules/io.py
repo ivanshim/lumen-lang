@@ -8,6 +8,8 @@ class StringIO:
         self.closed = False
 
     def write(self, text):
+        if not isinstance(text, str):
+            raise TypeError('string argument expected, got ' + type(text).__name__)
         if self.closed:
             raise ValueError('I/O operation on closed file')
         while len(self.text) < self.position:
@@ -106,3 +108,93 @@ class StringIO:
     def _check(self):
         if self.closed:
             raise ValueError('I/O operation on closed file')
+
+
+# In-memory binary streams use bytes throughout, including EOF and line ends.
+class BytesIO:
+    def __init__(self, initial_bytes=b''):
+        self.data = memoryview(initial_bytes).tobytes()
+        self.position = 0
+        self.closed = False
+
+    def _check(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file.')
+
+    def read(self, size=-1):
+        import operator
+        self._check()
+        size = -1 if size is None else operator.index(size)
+        if size < 0:
+            size = max(0, len(self.data) - self.position)
+        answer = self.data[self.position:self.position + size]
+        self.position += len(answer)
+        return answer
+
+    def write(self, data):
+        self._check()
+        data = memoryview(data).tobytes()
+        if not data:
+            return 0
+        if self.position > len(self.data):
+            self.data += b'\0' * (self.position - len(self.data))
+        self.data = self.data[:self.position] + data + self.data[self.position + len(data):]
+        self.position += len(data)
+        return len(data)
+
+    def readline(self, size=-1):
+        self._check()
+        limit = len(self.data) if size is None or size < 0 else self.position + size
+        end = self.position
+        while end < min(limit, len(self.data)):
+            end += 1
+            if self.data[end-1] == 10:
+                break
+        return self.read(max(0, end - self.position))
+
+    def getvalue(self):
+        self._check()
+        return self.data
+
+    def seek(self, offset, whence=0):
+        import operator
+        self._check()
+        offset = operator.index(offset)
+        whence = operator.index(whence)
+        if whence == 1:
+            offset = max(0, self.position + offset)
+        elif whence == 2:
+            offset = max(0, len(self.data) + offset)
+        elif whence != 0:
+            raise ValueError('invalid whence (' + str(whence) + ', should be 0, 1 or 2)')
+        if offset < 0:
+            raise ValueError('negative seek value ' + str(offset))
+        self.position = offset
+        return offset
+
+    def tell(self):
+        self._check()
+        return self.position
+
+    def flush(self):
+        self._check()
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        self._check()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def __iter__(self):
+        self._check()
+        return self
+
+    def __next__(self):
+        result = self.readline()
+        if result == b'':
+            raise StopIteration
+        return result

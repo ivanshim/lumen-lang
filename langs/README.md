@@ -4418,6 +4418,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
+| `ext.builtin.binascii_native` | - | - | `__binascii_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
@@ -5716,3 +5717,7 @@ were introduced after 3.14. Integer math arguments use the index protocol,
 including int subclasses and objects implementing __index__.
 Percent-format type errors follow the release wording; successful ordered
 unittest assertions do not stringify their operands.
+
+`ext.builtin.binascii_native` selects the Python binary/ASCII bridge: base64,
+uuencode, quoted-printable, hexadecimal and CRC operations, following CPython
+v3.14.8 Modules/binascii.c. Other languages do not select this bridge.

@@ -28,7 +28,12 @@ class array:
     def tolist(self):
         return list(self.data)
 
+    def __len__(self):
+        return len(self.data)
+
     def __getitem__(self, index):
+        if isinstance(index, slice):
+            return array(self.typecode, self.data[index])
         return self.data[index]
 
     def tobytes(self):

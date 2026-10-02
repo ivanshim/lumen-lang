@@ -589,6 +589,14 @@ class _FindIter:
         return found
 
 def _expand(repl, found):
+    binary = isinstance(repl, bytes)
+    if binary:
+        repl = repl.decode('latin-1')
+    def captured(group):
+        value = found.group(group)
+        if value is None:
+            return ''
+        return value.decode('latin-1') if isinstance(value, bytes) else value
     result = ''
     i = 0
     n = len(repl)
@@ -597,7 +605,7 @@ def _expand(repl, found):
         if c == '\\' and i + 1 < n:
             nxt = repl[i + 1]
             if nxt in _DIGITS:
-                result += found.group(int(nxt))
+                result += captured(int(nxt))
                 i += 2
                 continue
             if nxt == 'g' and i + 2 < n and repl[i + 2] == '<':
@@ -609,7 +617,7 @@ def _expand(repl, found):
                     raise 'error: missing >, unterminated name'
                 name = repl[start:j]
                 group = int(name) if name.isdigit() else name
-                result += found.group(group)
+                result += captured(group)
                 i = j + 1
                 continue
             if nxt == '\\':
@@ -621,7 +629,7 @@ def _expand(repl, found):
             continue
         result += c
         i += 1
-    return result
+    return result.encode('latin-1') if binary else result
 
 class Pattern:
     def __init__(self, pattern, flags=0):
@@ -630,6 +638,16 @@ class Pattern:
         original = pattern
         if self.is_bytes:
             pattern = str(pattern, 'latin-1')
+        # A global flag group at the start affects the entire expression.
+        while pattern.startswith('(?'):
+            end = pattern.find(')')
+            letters = pattern[2:end] if end >= 0 else ''
+            if not letters or any(letter not in 'imsx' for letter in letters):
+                break
+            for letter in letters:
+                flags |= {'i': IGNORECASE, 'm': MULTILINE, 's': DOTALL, 'x': VERBOSE}[letter]
+            pattern = pattern[end+1:]
+        self.flags = flags
         self.ignorecase = (flags & IGNORECASE) != 0
         self.multiline = (flags & MULTILINE) != 0
         self.dotall = (flags & DOTALL) != 0
@@ -674,20 +692,22 @@ class Pattern:
         # The part of `match` a caller who already checked the text
         # (`search`, `_next`) may call directly, at every position it
         # tries, without paying for that check again each time.
+        original = string
         string = self._coerce(string)
         if endpos is not None:
             string = string[:endpos]
         states = _walk(self.tree, string, pos, {}, self._opts)
-        return Match(self, string, pos, states[0]) if len(states) else None
+        return Match(self, original if endpos is None else original[:endpos], pos, states[0]) if len(states) else None
 
     def fullmatch(self, string, pos=0, endpos=None):
         self._check_text(string)
+        original = string
         string = self._coerce(string)
         if endpos is not None:
             string = string[:endpos]
         for state in _walk(self.tree, string, pos, {}, self._opts):
             if state[0] == len(string):
-                return Match(self, string, pos, state)
+                return Match(self, original if endpos is None else original[:endpos], pos, state)
         return None
 
     def search(self, string, pos=0, endpos=None):
@@ -702,11 +722,12 @@ class Pattern:
         return None
 
     def _next(self, string, pos, empty_at):
+        original = string
         string = self._coerce(string)
         while pos <= len(string):
             for state in _walk(self.tree, string, pos, {}, self._opts):
                 if pos != empty_at or state[0] != pos:
-                    return Match(self, string, pos, state)
+                    return Match(self, original, pos, state)
             pos += 1
         return None
 
@@ -735,7 +756,7 @@ class Pattern:
 
     def sub(self, repl, string, count=0):
         is_func = callable(repl)
-        result = ''
+        result = b'' if self.is_bytes else ''
         previous = 0
         pos = 0
         used = 0
@@ -754,7 +775,7 @@ class Pattern:
 
     def subn(self, repl, string, count=0):
         is_func = callable(repl)
-        result = ''
+        result = b'' if self.is_bytes else ''
         previous = 0
         pos = 0
         used = 0

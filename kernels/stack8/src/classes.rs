@@ -2524,7 +2524,8 @@ impl<'a> Engine<'a> {
                 if let Some(word)=Self::own_kind(c) { return Ok(value.core_kind()==word); }
             }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class_now()),Value::Class(c) if subclass=>Some(c),_=>None};
-            return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));
+            return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))
+                || self.exception_class(c) && Self::exception_beneath(k,c)));
         }
         if let Value::Adapter(w)=wanted {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
