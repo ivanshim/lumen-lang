@@ -844,7 +844,12 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
         # in parts. A plain class name selects every method in that class.
         selected = []
         for tests in suite.tests:
-            name = tests.class_.__name__
+            # A part that is no test class's own (a doctest suite, say)
+            # answers to no class name and is left out of a selection.
+            kind = getattr(tests, 'class_', None)
+            if kind is None:
+                continue
+            name = kind.__name__
             if name in only:
                 selected.append(tests)
             else:
