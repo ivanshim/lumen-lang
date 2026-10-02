@@ -112,6 +112,7 @@ pub struct Engine<'a> {
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
     function_members: Vec<(Value, Rc<Instance>)>,
+    constructor_holders: RefCell<HashMap<usize, (Weak<Routine>, Option<Weak<Instance>>)>>,
     collecting_cycles: bool,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -1232,7 +1233,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), collecting_cycles: false,
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), constructor_holders: RefCell::new(HashMap::new()), collecting_cycles: false,
             native_exceptions,
             lang,
             world,
@@ -1825,6 +1826,7 @@ impl<'a> Engine<'a> {
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| !after.unowned(function));
+        self.constructor_holders.borrow_mut().clear();
         let grave = crate::faint::Graph::sever(&unreached);
         drop(unreached);
         drop(after);
@@ -3514,7 +3516,21 @@ impl<'a> Engine<'a> {
     }
 
     fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, holder) = self.function_members.iter().find(|(value, _)| matches!(value, Value::Routine(code) if Rc::ptr_eq(code, program)))?;
+        let address = Rc::as_ptr(program) as usize;
+        let known = self.constructor_holders.borrow().get(&address).and_then(|(code, holder)| {
+            if !code.upgrade().is_some_and(|code| Rc::ptr_eq(&code, program)) { return None; }
+            match holder { None => Some(None), Some(holder) => holder.upgrade().map(Some) }
+        });
+        let holder = match known {
+            Some(holder) => holder,
+            None => {
+                let found = self.function_members.iter().find(|(value, _)| matches!(value, Value::Routine(code) if Rc::ptr_eq(code, program))).map(|(_, holder)| holder.clone());
+                let mut cache = self.constructor_holders.borrow_mut();
+                if cache.len() >= 2048 { cache.clear(); }
+                cache.insert(address, (Rc::downgrade(program), found.as_ref().map(Rc::downgrade)));
+                found
+            }
+        }?;
         let book = holder.fields.borrow().iter().find(|(name, _)| name == "\0 namespace")?.1.clone();
         match book {
             Value::Bond(cell) | Value::Binding(cell) => Some(cell),

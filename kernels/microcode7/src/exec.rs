@@ -521,6 +521,7 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    world_records: RefCell<HashMap<usize, (Weak<Routine>, Option<Weak<Thing>>)>>,
     reaping: bool,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
@@ -1571,7 +1572,7 @@ impl<'a> Machine<'a> {
             builtins_stand_in: None,
             body_namespace: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), reaping: false, written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), world_records: RefCell::new(HashMap::new()), reaping: false, written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -2509,6 +2510,7 @@ impl<'a> Machine<'a> {
         let lost = checked.remaining(original);
         let found = lost.len();
         self.routine_members.retain(|(function, _)| !checked.unowned(function));
+        self.world_records.get_mut().clear();
         let taken = Web::cut(&lost);
         drop(lost);
         drop(checked);
@@ -10329,10 +10331,25 @@ impl<'a> Machine<'a> {
     }
 
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
-            Value::Bound(code, _) | Value::Routine(code) => Rc::ptr_eq(code, body),
-            _ => false,
-        })?;
+        let pointer = Rc::as_ptr(body) as usize;
+        let remembered = {
+            let entries = self.world_records.borrow();
+            entries.get(&pointer).and_then(|entry| {
+                let same = entry.0.upgrade().filter(|held| Rc::ptr_eq(held, body))?;
+                drop(same);
+                if let Some(weak) = &entry.1 { weak.upgrade().map(Some) } else { Some(None) }
+            })
+        };
+        let record = if let Some(saved) = remembered { saved } else {
+            let located = self.routine_members.iter().find_map(|(candidate, holder)| {
+                let matches = match candidate { Value::Bound(code, _) | Value::Routine(code) => Rc::ptr_eq(code, body), _ => false };
+                matches.then(|| holder.clone())
+            });
+            let mut entries = self.world_records.borrow_mut();
+            if entries.len() == 2048 { entries.clear(); }
+            entries.insert(pointer, (Rc::downgrade(body), located.as_ref().map(Rc::downgrade)));
+            located
+        }?;
         let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
         if let Value::Shared(cell) | Value::Mutable(cell, _) = worth { Some(cell) }
         else if matches!(worth, Value::Dict(_)) { Some(Rc::new(RefCell::new(worth))) }

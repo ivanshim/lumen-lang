@@ -1585,6 +1585,7 @@ impl<'a> Machine<'a> {
                 let of = self.common_ancestor(); self.made += 1;
                 let holder = Rc::new(Thing {reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
                 self.routine_members.push((code.clone(), holder));
+                self.world_records.get_mut().clear();
                 self.routine_members.len() - 1
             }
         }
