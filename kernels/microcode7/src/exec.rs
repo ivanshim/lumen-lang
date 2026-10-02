@@ -3232,6 +3232,18 @@ impl<'a> Machine<'a> {
 
     fn fetch(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
+        // A slot standing past the cells of the frame it names is a
+        // binding of an outer scope the address did not climb all the
+        // way to. The frame cannot hold it, so the name is answered
+        // where such names live rather than read past the frame's end.
+        if slot.at >= f.cells.borrow().len() {
+            if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
+            if let Some(g) = slot.fallback {
+                if let Some(found) = self.booked_read(g, &slot.ident) { return found; }
+            }
+            if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
+            return Err(format!("Undefined variable: {}", slot.ident));
+        }
         if Rc::ptr_eq(f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
         }
@@ -11662,7 +11674,7 @@ impl<'a> Machine<'a> {
     /// The cell a map method's receiver stands in written over with a
     /// new set of pairs, exactly as `Request::replace` writes it.
     fn replace_dict(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>) -> Result<(), String> {
-        let Value::Mutable(cell, _) = receiver else { return Err(self.method_fault("unready")); };
+        let (Value::Mutable(cell, _) | Value::Shared(cell)) = receiver else { return Err(self.method_fault("unready")); };
         let new_value = Value::Dict(Rc::new(pairs.into()));
         if crate::members::circular(&new_value, cell, 0) { return Err(self.method_fault("unready")); }
         cell.replace(new_value);
@@ -14161,6 +14173,16 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A value as the sequence it stands for where a sequence is
+    /// weighed: the row of words a string method hands back becomes the
+    /// row of texts it reads, so it may meet a list item by item.
+    fn as_state_row(value: &Value) -> Value {
+        match value.settled() {
+            Value::TextRow(words, false) => Value::Vector(crate::tuples::Sequence::plain(words.iter().map(|s| Value::text(s)).collect())),
+            _ => value.clone(),
+        }
+    }
+
     fn compare_sequences(&mut self, operation: Prim, first: &Value, second: &Value) -> Result<Value, String> {
         if self.recursion_ceiling().is_some_and(|n| self.standing >= n) {
             if let Some(message) = self.table.single("ext.system.recursion.exceeded") { return Err(format!("\0{message}")); }
@@ -14235,9 +14257,13 @@ impl<'a> Machine<'a> {
         }
         if matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
             if let [first, second] = v {
-                let shape = Self::sequence_shape(first);
-                let comparable = shape != 0 && shape == Self::sequence_shape(second);
-                if comparable && self.works_sequences() { return self.compare_sequences(op, first, second); }
+                // The row of words a string method hands back reads as
+                // the row of texts it stands for, and is weighed item by
+                // item with a list exactly as one.
+                let (first, second) = (Self::as_state_row(first), Self::as_state_row(second));
+                let shape = Self::sequence_shape(&first);
+                let comparable = shape != 0 && shape == Self::sequence_shape(&second);
+                if comparable && self.works_sequences() { return self.compare_sequences(op, &first, &second); }
             }
         }
         if matches!(op, Prim::Contains | Prim::Absent) && self.works_sequences() {
@@ -14603,6 +14629,32 @@ impl<'a> Machine<'a> {
         if let Prim::Landing(place) = op {
             let plain = self.table.landing_working(place);
             if let [held, by] = v {
+                // The reference's list has no number-slot answer for a
+                // compound join, so the other side's reflected method is
+                // heard before the row is grown: a list joined with a
+                // thing that says how to be on the right answers with
+                // that thing, not with the list itself.
+                let reflected = match plain {
+                    Prim::OctetAssign(false) => Some((26, Prim::Plus)),
+                    Prim::OctetAssign(true) => Some((28, Prim::Times)),
+                    _ => None,
+                };
+                if let Some((when, binary)) = reflected {
+                    if self.appointment(by, when).is_some() {
+                        self.landed += 1;
+                        let done = self.prim_values(binary, name, v);
+                        self.landed -= 1;
+                        return done;
+                    }
+                }
+                // A map written into with the set-or sign keeps its own
+                // cell and takes the pairs of whatever mapping or row of
+                // pairs stands on the right, exactly as its update does,
+                // so a plain mapping joined with a UserDict stays a map.
+                if matches!(plain, Prim::SetAssign(0)) && Self::dict_cell(held).is_some() {
+                    self.dict_update(held, vec![by.clone()], &[])?;
+                    return Ok(held.clone());
+                }
                 if let Some(kept) = self.native_written_over(plain, held, by)? { return Ok(kept); }
             }
             // Whatever the plain working refuses is refused under the

@@ -204,6 +204,17 @@ class MappingProxyType:
             return self.copy() == other.copy()
         return self.copy() == other
 
+    # A reading stands in for the mapping it reads when the union sign
+    # reaches it, on either side: the pairs are gathered into a plain
+    # mapping and the sign runs again there, so a reading joined with a
+    # UserDict answers with a UserDict and one joined with a plain
+    # mapping answers with a mapping.
+    def __or__(self, other):
+        return self.copy() | other
+
+    def __ror__(self, other):
+        return other | self.copy()
+
     def __repr__(self):
         return 'mappingproxy(' + repr(self._mapping) + ')'
 
