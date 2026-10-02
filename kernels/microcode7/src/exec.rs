@@ -22293,7 +22293,15 @@ impl Machine<'_> {
                         return Ok(Self::native_word(class).is_some() && item.kind_word() == word);
                     }
                 }
-                Ok(matches!(item, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)))
+                // Python lays its class order out in `ancestry`, so a
+                // multiply-inheriting class answers for every base it
+                // stands on, not only the first; the shared `goes_by`
+                // keeps the first-base chain and the interfaces a
+                // language files under `answers`.
+                Ok(matches!(item, Value::Thing(t) if {
+                    let held = &t.blueprint();
+                    held.goes_by(&class.name, false) || held.ancestry.iter().any(|p| p.goes_by(&class.name, false))
+                }))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
             // A byte kind may stand inside a tuple of kinds, so it is

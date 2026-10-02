@@ -19204,7 +19204,15 @@ impl Engine<'_> {
                     });
                 }
             }
-            return Ok(matches!(value, Value::Object(o) if o.class_now().named(&class.name, false)));
+            // Python lays its class order out in `lineage`, so a
+            // multiply-inheriting class answers for every base it stands
+            // on, not only the first; the shared `named` keeps the
+            // first-base chain and the interfaces a language files under
+            // `answers`.
+            return Ok(matches!(value, Value::Object(o) if {
+                let held = &o.class_now();
+                held.named(&class.name, false) || held.lineage.iter().any(|b| b.named(&class.name, false))
+            }));
         }
         // A thing of a class standing on a builtin kind is of that kind.
         if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {

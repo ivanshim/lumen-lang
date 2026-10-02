@@ -1795,7 +1795,7 @@ impl Class {
         };
         same
             || self.base.as_ref().map_or(false, |b| b.named(name, loosely))
-            || self.lineage.iter().any(|b| b.named(name, loosely))
+            || self.answers.iter().any(|a| a.named(name, loosely))
     }
 
     /// Whether this class is that one, stands on it, or answers to it,

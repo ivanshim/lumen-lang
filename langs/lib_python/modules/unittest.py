@@ -324,8 +324,32 @@ class TestCase:
     def assertEndsWith(self, text, suffix, msg=None):
         self._check(suffix == '' or text[-len(suffix):] == suffix, _representation(text) + ' does not end with ' + _representation(suffix), msg)
 
+    def _tail_type_check(self, text, tails, msg):
+        # A prefix or suffix handed a kind it cannot compare fails with
+        # the kind named, the way CPython's own tail check does.
+        if not isinstance(tails, tuple):
+            tails = (tails,)
+        for tail in tails:
+            if isinstance(tail, str):
+                if not isinstance(text, str):
+                    self._check(False, 'Expected str, not ' + _class_name(text), msg)
+            elif isinstance(tail, (bytes, bytearray)):
+                if not isinstance(text, (bytes, bytearray)):
+                    self._check(False, 'Expected bytes, not ' + _class_name(text), msg)
+
     def assertNotEndsWith(self, text, suffix, msg=None):
-        self._check(suffix != '' and text[-len(suffix):] != suffix, _representation(text) + ' ends with ' + _representation(suffix), msg)
+        try:
+            if not text.endswith(suffix):
+                return
+        except (AttributeError, TypeError):
+            self._tail_type_check(text, suffix, msg)
+            raise
+        if isinstance(suffix, tuple):
+            for part in suffix:
+                if text.endswith(part):
+                    suffix = part
+                    break
+        self._check(False, _representation(text) + ' ends with ' + _representation(suffix), msg)
 
     def _run_test(self):
         if getattr(self, '__unittest_skip__', False):

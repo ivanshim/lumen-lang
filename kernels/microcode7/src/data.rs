@@ -1649,7 +1649,7 @@ impl Blueprint {
         };
         it
             || self.under.as_ref().map_or(false, |u| u.goes_by(name, either_way))
-            || self.ancestry.iter().any(|u| u.goes_by(name, either_way))
+            || self.answers.iter().any(|a| a.goes_by(name, either_way))
     }
 
     /// How far a member of that name is reached from, and the class
