@@ -122,7 +122,7 @@ class Context:
         ctx._handle = __context_native__('copy', self._handle)
         return ctx
 
-    def run(self, *args, **kwargs):
+    def run(self, /, *args, **kwargs):
         if not args:
             raise TypeError('run() missing 1 required positional argument')
         previous = __context_native__('enter', self._handle, repr(self))
