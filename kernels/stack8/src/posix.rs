@@ -4,6 +4,12 @@ pub(crate) fn operate(args: &[Value]) -> Result<Value, String> {
     let command = args.first().ok_or("TypeError: host operation is required")?.plain();
     let file = args.get(1).ok_or("TypeError: host path is required")?.plain();
     let outcome: std::io::Result<Value> = match command.as_str() {
+        "flags" => {
+            let bits = if cfg!(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "arm"))) { [16384, 32768] }
+                else if cfg!(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86"))) { [65536, 131072] }
+                else { return Err("NotImplementedError: host open flags are unavailable".into()); };
+            Ok(Value::tuple(bits.into_iter().map(Value::Small).collect()))
+        }
         "stat" | "lstat" => {
             let metadata = if command == "stat" { std::fs::metadata(&file) } else { std::fs::symlink_metadata(&file) };
             metadata.map(|data| {

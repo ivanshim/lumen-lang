@@ -5728,6 +5728,6 @@ protocols.
 on list storage directly, retaining aliases and catching size changes across
 user comparisons; the four reference kernels ignore this label.
 
-`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access and file descriptors for the Python POSIX adapter. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
+`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
 
 `ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.

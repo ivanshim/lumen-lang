@@ -189,8 +189,7 @@ O_EXCL = 128
 O_TRUNC = 512
 O_APPEND = 1024
 O_NONBLOCK = 2048
-O_DIRECTORY = 65536
-O_NOFOLLOW = 131072
+O_DIRECTORY, O_NOFOLLOW = _host_posix("flags", "")[0]
 O_CLOEXEC = 524288
 supports_dir_fd = set()
 supports_fd = set()
@@ -221,6 +220,8 @@ def _posix_call(operation, path, *args):
         number, message = error
         message = message.split(' (os error')[0]
         error_type = {1: PermissionError, 2: FileNotFoundError, 13: PermissionError, 17: FileExistsError, 20: NotADirectoryError, 21: IsADirectoryError}.get(number, OSError)
+        if operation == 'close':
+            raise error_type(number, message)
         raise error_type(number, message, path)
     return result
 

@@ -7,6 +7,14 @@ pub(crate) fn perform(values: &[Value]) -> Result<Value, String> {
         values.get(at).ok_or_else(|| "TypeError: missing numeric host argument".to_owned())?.as_big()?.to_string().parse().map_err(|_| "OverflowError: host argument outside integer range".to_owned())
     };
     let result = match step.as_str() {
+        "flags" => {
+            let directory = match (std::env::consts::OS, std::env::consts::ARCH) {
+                ("linux", "aarch64" | "arm") => 0x4000,
+                ("linux", "x86_64" | "x86") => 0x10000,
+                _ => return Err(String::from("NotImplementedError: filesystem flags for this host are unsupported")),
+            };
+            Ok(Value::tuple(vec![Value::Small(directory), Value::Small(directory * 2)]))
+        }
         "stat" | "lstat" => {
             let found = match step.as_str() { "lstat" => std::fs::symlink_metadata(&path), _ => std::fs::metadata(&path) };
             found.map(|info| {
