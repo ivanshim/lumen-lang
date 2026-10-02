@@ -184,7 +184,7 @@ class BytesIO(BufferedIOBase):
         self._state[1] = 0
         if initial_bytes is None:
             self._state[0] = bytearray()
-        elif isinstance(initial_bytes, bytes):
+        elif type(initial_bytes) is bytes:
             self._state = [bytearray(initial_bytes), 0, False]
         else:
             self._state[0] = bytearray()
@@ -311,7 +311,7 @@ class BytesIO(BufferedIOBase):
 
     def seek(self, offset, whence=0, /):
         offset = _ssize(offset)
-        whence = _operator.index(whence)
+        whence = _ssize(whence, "Python int too large to convert to C int")
         if whence < -2147483648 or whence > 2147483647:
             raise OverflowError('Python int too large to convert to C int')
         self._check()
@@ -391,11 +391,19 @@ class BytesIO(BufferedIOBase):
             self.__dict__.update(state[2])
 
     def __reduce_ex__(self, protocol, /):
-        protocol = _operator.index(protocol)
+        protocol = _ssize(protocol, "Python int too large to convert to C int")
+        if protocol < -2147483648 or protocol > 2147483647:
+            raise OverflowError("Python int too large to convert to C int")
+        if type(self).__reduce__ is not BytesIO.__reduce__:
+            return self.__reduce__()
         if protocol < 2:
-            raise TypeError("cannot pickle '" + type(self).__name__ + "' object")
+            if type(self) is BytesIO:
+                raise TypeError("cannot pickle 'BytesIO' object")
+            # The legacy object reduction obtains state by constructing the
+            # first non-heap base from this instance, requesting its buffer.
+            BytesIO(self)
         import copyreg
         return (copyreg.__newobj__, (type(self),), self.__getstate__(), None, None)
 
     def __reduce__(self):
-        raise TypeError("cannot pickle '" + type(self).__name__ + "' object")
+        return BytesIO.__reduce_ex__(self, 0)
