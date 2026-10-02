@@ -4309,7 +4309,7 @@ impl<'a> Compiler<'a> {
                 let mut rest: Option<(usize, String)> = None;
                 while !self.at_symbol(&map.close) {
                     if let Some((capture_at, _)) = &rest {
-                        self.pos = *capture_at;
+                        if !lang.python_numbers { self.pos = *capture_at; }
                         return Err(if lang.syntax_members.is_empty() { self.pattern_fault() } else { "SyntaxError: invalid syntax".into() });
                     }
                     if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Power)) {
@@ -6881,7 +6881,7 @@ impl<'a> Compiler<'a> {
                 if self.on_assign() {
                     if mode >= 3 {
                         let kind = if mode == 3 { "var-positional" } else { "var-keyword" };
-                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {kind} parameter cannot have default value") });
+                        return Err(if lang.syntax_members.is_empty() { bad() } else { format!("SyntaxError: {kind} argument cannot have default value") });
                     }
                     if mode == 0 { default_seen = true; }
                     self.take();
@@ -10540,6 +10540,9 @@ impl<'a> Compiler<'a> {
             }
         }
         if let Some(clause) = self.comprehension_ahead() {
+            if self.lang.python_numbers && self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread }) {
+                return Err(if map { "SyntaxError: dict unpacking cannot be used in dict comprehension" } else { "SyntaxError: iterable unpacking cannot be used in comprehension" }.into());
+            }
             return self.comprehension(pair, clause, map);
         }
         self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);

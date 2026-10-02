@@ -5836,7 +5836,7 @@ impl<'a> Builder<'a> {
             let mut rest: Option<(usize, String)> = None;
             while !self.on_any("syntax.map.close") {
                 if let Some((start, _)) = &rest {
-                    self.pos = *start;
+                    if !table.flag("ext.op.arithmetic.python_numbers") { self.pos = *start; }
                     let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: invalid syntax".to_owned() } else { self.bad_case() };
                     return Err(words);
                 }
@@ -6427,7 +6427,7 @@ impl<'a> Builder<'a> {
                 match (self.on_assign(), manner) {
                     (true, 'v' | 'k') => {
                         let kind = if manner == 'v' { "var-positional" } else { "var-keyword" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} parameter cannot have default value") } else { wrong() });
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { wrong() });
                     }
                     (true, 'b') => optional = true,
                     (false, 'b') if optional => {
@@ -6822,7 +6822,7 @@ impl<'a> Builder<'a> {
                 if self.on_assign() {
                     if many || mapping {
                         let kind = if many { "var-positional" } else { "var-keyword" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} parameter cannot have default value") } else { bad() });
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { bad() });
                     }
                     if way == 'b' { default_seen = true; }
                     self.advance();
@@ -9937,6 +9937,10 @@ impl<'a> Builder<'a> {
             }
         }
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
+            if self.table.flag("ext.op.arithmetic.python_numbers") && self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" }) {
+                let problem = if mapped { "dict unpacking cannot be used in dict comprehension" } else { "iterable unpacking cannot be used in comprehension" };
+                return Err(format!("SyntaxError: {problem}"));
+            }
             return self.gather_comprehension(next, &closing, mapped);
         }
         let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
