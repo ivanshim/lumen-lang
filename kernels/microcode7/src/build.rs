@@ -9947,6 +9947,7 @@ impl<'a> Builder<'a> {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
             let mut parameter_lists = 0usize;
+            let mut inside_clauses = false;
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
                 if inner.is_empty() {
@@ -9955,9 +9956,15 @@ impl<'a> Builder<'a> {
                         (Shape::Bare, text) if self.table.spells("ext.op.lambda", text) => parameter_lists += 1,
                         _ => (),
                     }
-                    if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
-                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    // Only a comma in the element itself is refused;
+                    // once the clauses begin, a comma belongs to a
+                    // target or an iterable and stands as allowed.
+                    if !inside_clauses && parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
+                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                        if comma_before_for {
+                            return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                        }
+                        inside_clauses = true;
                     }
                 }
                 if part.shape == Shape::Sign {
