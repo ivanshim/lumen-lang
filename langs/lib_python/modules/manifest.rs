@@ -7,6 +7,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_decimal", include_str!("_decimal.py"), "_decimal.py"),
     ("_heapq", include_str!("_heapq.py"), "_heapq.py"),
     ("_namedtuple", include_str!("_namedtuple.py"), "_namedtuple.py"),
+    ("_ordering", include_str!("_ordering.py"), "_ordering.py"),
     ("_pylong", include_str!("_pylong.py"), "_pylong.py"),
     ("_pyrepl", include_str!("_pyrepl/__init__.py"), "_pyrepl/__init__.py"),
     ("_pyrepl.pager", include_str!("_pyrepl/pager.py"), "_pyrepl/pager.py"),

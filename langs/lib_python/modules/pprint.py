@@ -1,5 +1,5 @@
 # Compact representations preserve sequence punctuation and quote nested text.
-from heapq import _ordered
+from _ordering import _ordered
 
 def _join(parts, separator):
     text = ''

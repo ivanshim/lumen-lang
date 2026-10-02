@@ -1,5 +1,5 @@
 import math
-from heapq import _ordered
+from _ordering import _ordered
 
 class StatisticsError(ValueError):
     pass

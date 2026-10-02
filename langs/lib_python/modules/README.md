@@ -38,3 +38,7 @@ behavior and the newer integrated suite inventory are retained.
 Frame, C-API, dataclass, and pickle limitations remain visible as failures or
 honest skips in the reference suite. No reference test is rewritten to conceal
 a runtime limitation.
+
+`_ordering` preserves the inherited stable-ordering runtime helper outside the
+unchanged upstream `heapq` source. The existing `pprint` and `statistics` adapters
+import it directly; their algorithms are unchanged.
