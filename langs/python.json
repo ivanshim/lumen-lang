@@ -805,6 +805,8 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.file_read.bytes": ["__file_read_bytes"],
+  "ext.builtin.struct_native": ["__struct_native"],
   "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"

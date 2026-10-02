@@ -4566,6 +4566,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.file_read.bytes` | - | - | `__file_read_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.frame.module` | - | - | `__frame_module` | - | - | - | - | - | - | - |
@@ -4811,6 +4812,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
+| `ext.builtin.struct_native` | - | - | `__struct_native` | - | - | - | - | - | - | - |
 | `ext.builtin.subprocess` | - | - | `__subprocess` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
@@ -5716,3 +5718,7 @@ were introduced after 3.14. Integer math arguments use the index protocol,
 including int subclasses and objects implementing __index__.
 Percent-format type errors follow the release wording; successful ordered
 unittest assertions do not stringify their operands.
+
+`ext.builtin.struct_native` selects Python binary format compilation and byte-exact packing and unpacking for `_struct` and `array`.
+
+`ext.builtin.file_read.bytes` reads binary file contents without decoding, for Python buffer consumers such as `array.fromfile`.

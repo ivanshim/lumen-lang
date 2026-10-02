@@ -13,7 +13,7 @@ impl ByteExport {
         BYTE_EXPORTS.with(|counts| *counts.borrow_mut().entry(key).or_default() += 1);
         Self(key)
     }
-    fn active(cell: &Rc<RefCell<Vec<u8>>>) -> bool {
+    pub(crate) fn active(cell: &Rc<RefCell<Vec<u8>>>) -> bool {
         BYTE_EXPORTS.with(|counts| counts.borrow().contains_key(&(Rc::as_ptr(cell) as usize)))
     }
 }
@@ -12987,6 +12987,11 @@ impl<'a> Engine<'a> {
     }
 
     fn write_slice(&mut self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
+        if self.special_method(&target, 12).is_some() {
+            let key = Value::Slice(Rc::new(parts.clone()));
+            self.special_call(&target, 12, vec![key, given])?;
+            return Ok(target);
+        }
         let given = collection_contents(&given);
         if let Value::Bytes(row, mutable, _) = &target {
             if !mutable { return Err(self.byte_fault("immutable")); }
@@ -16203,6 +16208,13 @@ impl<'a> Engine<'a> {
             // Reaching outside the run: only a language that spells
             // these labels can, and what cannot be done gives false
             // back rather than stopping, as such a language expects.
+            Builtin::FileReadBytes => {
+                arity(1)?;
+                match std::fs::read(args[0].display(&self.wording())) {
+                    Ok(data) => self.byte_make(data, false),
+                    Err(_) => Value::Flag(false),
+                }
+            }
             Builtin::FileRead => {
                 arity(1)?;
                 let sp = self.wording();
@@ -17820,7 +17832,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::StructNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -18515,7 +18527,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::StructNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -19391,6 +19403,10 @@ impl Engine<'_> {
                         _ => Value::Null,
                     }
                 } else { self.native_reduce(&args[0]) }
+            }
+            Builtin::StructNative => {
+                arity(2, 3)?;
+                crate::structpack::apply(&args)?
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;

@@ -843,3 +843,26 @@ def captured_output(stream_name):
         yield getattr(sys, stream_name)
     finally:
         setattr(sys, stream_name, orig_stdout)
+
+# Parameterized synchronous subtests used by the array module's reference suite.
+def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
+    import functools
+    if isinstance(arg_names, str):
+        arg_names = arg_names.replace(',', ' ').split()
+    arg_values = tuple(arg_values)
+    def decorator(func):
+        if isinstance(func, type):
+            raise TypeError('subTests() can only decorate methods, not classes')
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            for values in arg_values:
+                params = dict(zip(arg_names, (values,) if len(arg_names) == 1 else values))
+                with self.subTest(**params):
+                    func(self, *args, **kwargs, **params)
+                if _do_cleanups:
+                    self.doCleanups()
+        return wrapper
+    return decorator
+
+is_android = sys.platform == "android"
+is_apple_mobile = sys.platform in {"ios", "tvos", "watchos"}

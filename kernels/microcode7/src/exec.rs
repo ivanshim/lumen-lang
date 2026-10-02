@@ -12,7 +12,7 @@ impl OctetLease {
         OCTET_LEASES.with(|leases| { let mut entries = leases.borrow_mut(); *entries.entry(address).or_insert(0) += 1; });
         Self { address }
     }
-    fn held(bytes: &Rc<RefCell<Vec<u8>>>) -> bool {
+    pub(crate) fn held(bytes: &Rc<RefCell<Vec<u8>>>) -> bool {
         OCTET_LEASES.with(|leases| leases.borrow().get(&(Rc::as_ptr(bytes) as usize)).copied().unwrap_or(0) != 0)
     }
 }
@@ -6722,8 +6722,14 @@ impl<'a> Machine<'a> {
             'b' => given.insert(0, member.extra.clone().expect("a receiver")),
             _ => return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_string().into()),
         }
+        // A routine kept by a descriptor already belongs to its defining
+        // namespace; reading it as a new closure would capture the caller.
+        let target = match &member.target {
+            Value::Routine(body) => Value::Bound(body.clone(), self.outermost.clone()),
+            held => held.clone(),
+        };
         let expressions = given.into_iter().map(Form::Const).collect();
-        let apply = Form::Apply(Callee::Code(Box::new(Form::Const(member.target.clone()))), expressions);
+        let apply = Form::Apply(Callee::Code(Box::new(Form::Const(target))), expressions);
         self.value_of(&apply, frame)
     }
 
@@ -17431,11 +17437,16 @@ impl<'a> Machine<'a> {
                     },
                 }
             }
+            Prim::ReadOctetFile => {
+                n(1)?;
+                let filename = v[0].render(w);
+                if let Ok(raw) = std::fs::read(filename) { self.octets(raw, false) } else { Value::Flag(false) }
+            }
             Prim::Tupled => {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::BinaryFormat | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -18545,6 +18556,11 @@ impl<'a> Machine<'a> {
                 if positions.len() != incoming.len() { return Err(self.octet_error("arguments")); }
                 for (index, byte) in positions.into_iter().zip(incoming) { cell.borrow_mut()[index] = byte; }
             }
+            return Ok(());
+        }
+        if self.appointment(held, 12).is_some() {
+            let slice = Value::Span(crate::tuples::Sequence::plain(bounds.to_vec()));
+            self.ask_special(held, 12, &[slice, handed.clone()])?;
             return Ok(());
         }
         let Value::Vector(row) = held else { return Err(self.span_complaint("unsupported")) };
@@ -21501,7 +21517,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | BinaryFormat | HeapNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -22471,6 +22487,10 @@ impl Machine<'_> {
                     if !key.starts_with('\0') { entries.push((Value::text(key), item.clone())); }
                 }
                 Ok(Value::Dict(Rc::new(entries.into())))
+            }
+            BinaryFormat => {
+                require(2, 3)?;
+                crate::byteformat::perform(&input)
             }
             HeapNative => {
                 require(2, 3)?;
