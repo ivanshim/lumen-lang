@@ -12563,6 +12563,35 @@ impl<'a> Engine<'a> {
         Ok(Value::tuple(vec![Value::Small(i64::from(result)), Value::Small(index + 1), replacement]))
     }
 
+    fn random_draw(&self, state: &Value, position: &Value, amount: &Value) -> Res<Value> {
+        let Value::Small(bits) = amount.contents() else { return Err("OverflowError: Python int too large to convert to C int".into()); };
+        if !(-1..=i32::MAX as i64).contains(&bits) { return Err("ValueError: invalid random bit count".into()); }
+        let count = if bits == -1 { 2 } else { (bits as usize).div_ceil(32) };
+        let mut storage = state.clone();
+        let mut offset = position.clone();
+        let mut changed = false;
+        let mut integer = BigInt::from(0);
+        let mut leading = 0_u32;
+        let mut real = 0.0;
+        for at in 0..count {
+            let Value::Tuple(parts) = self.random_word(&storage, &offset)? else { unreachable!() };
+            let Value::Small(raw) = parts[0] else { unreachable!() };
+            offset = parts[1].clone();
+            if !matches!(&parts[2], Value::Null) { storage = parts[2].clone(); changed = true; }
+            let word = raw as u32;
+            if bits == -1 {
+                if at == 0 { leading = word >> 5; }
+                else { real = (f64::from(leading) * 67108864.0 + f64::from(word >> 6)) / 9007199254740992.0; }
+            } else {
+                let remaining = bits as usize - at * 32;
+                let word = if remaining < 32 { word >> (32 - remaining) } else { word };
+                integer |= BigInt::from(word) << (at * 32);
+            }
+        }
+        let answer = if bits == -1 { crate::complex::real(real) } else { Value::of_big(integer) };
+        Ok(Value::tuple(vec![answer, offset, if changed { storage } else { Value::Null }]))
+    }
+
     fn precise_sum(&mut self, iterable: &Value) -> Res<Value> {
         let walk = match Self::living_source(iterable) {
             Some(source) => Self::core_cursor(source),
@@ -16004,8 +16033,11 @@ impl<'a> Engine<'a> {
         if builtin == Builtin::Math {
             if let Some(Value::Text(operation)) = args.first().map(Value::contents) {
                 if operation.as_ref() == "mt19937" && self.lang.random_words {
-                    if args.len() != 3 { return Err("TypeError: random word expected state and position".into()); }
-                    return self.random_word(&args[1], &args[2]);
+                    return match args.len() {
+                        3 => self.random_word(&args[1], &args[2]),
+                        4 => self.random_draw(&args[1], &args[2], &args[3]),
+                        _ => Err("TypeError: random word expected state and position".into()),
+                    };
                 }
                 if self.lang.math_floating && matches!(operation.as_ref(), "sqrt" | "exp") {
                     if args.len() != 2 { return Err("TypeError: unary math operation expected 1 argument".into()); }

@@ -14392,6 +14392,38 @@ impl<'a> Machine<'a> {
         Ok(Value::tuple(vec![Value::Small(output.into()), Value::Small((slot + 1) as i64), rebuilt]))
     }
 
+    fn twister_draw(&self, arguments: &[Value]) -> Result<Value, String> {
+        let size = match arguments[3].settled() {
+            Value::Small(size) if (-1..=2147483647).contains(&size) => size,
+            _ => return Err("OverflowError: Python int too large to convert to C int".to_owned()),
+        };
+        let mut request = arguments[..3].to_vec();
+        let mut replacement = Value::Nil;
+        let mut whole = BigInt::zero();
+        let mut high = 0.0;
+        let mut floating = None;
+        let turns = if size < 0 { 2 } else { (size + 31) / 32 };
+        let mut turn = 0;
+        while turn < turns {
+            let next = self.twister_next(&request)?;
+            let Value::Tuple(next) = next else { unreachable!() };
+            let raw = match next[0] { Value::Small(n) => n as u32, _ => unreachable!() };
+            request[2] = next[1].clone();
+            if !matches!(next[2], Value::Nil) { request[1] = next[2].clone(); replacement = request[1].clone(); }
+            if size < 0 {
+                if turn == 0 { high = f64::from(raw / 32) * 67108864.0; }
+                else { floating = Some((high + f64::from(raw / 64)) / 9007199254740992.0); }
+            } else {
+                let used = (size - 32 * turn).min(32) as u32;
+                let masked = raw >> (32 - used);
+                whole += BigInt::from(masked) << (32 * turn) as usize;
+            }
+            turn += 1;
+        }
+        let result = match floating { Some(number) => crate::data::worth_of_binary(number, self.real_figures()), None => Value::from_big(whole) };
+        Ok(Value::tuple(vec![result, request[2].clone(), replacement]))
+    }
+
     fn compensated_total(&mut self, supplied: &Value) -> Result<Value, String> {
         let iterator = if let Some(kind) = Self::live_walk(supplied) { Self::cursor_value(kind) }
             else { self.iterated_value(&supplied.settled())? };
@@ -14593,7 +14625,9 @@ impl<'a> Machine<'a> {
             let task = v.first().map(Value::settled);
             if let Some(Value::Text(task)) = task {
                 match task.as_ref() {
-                    "mt19937" if self.table.flag("ext.builtin.random.words") => return self.twister_next(v),
+                    "mt19937" if self.table.flag("ext.builtin.random.words") => {
+                        return if v.len() == 4 { self.twister_draw(v) } else { self.twister_next(v) };
+                    },
                     "sqrt" | "exp" if self.table.flag("ext.builtin.math.floating") => {
                         if v.len() != 2 { return Err("TypeError: unary math operation needs one value".to_owned()); }
                         let input = self.real_math_input(&v[1])?;

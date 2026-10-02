@@ -53,33 +53,28 @@ class Random:
             self._mt = changed
         return word
 
-    def getrandbits(self, k):
-        from operator import index
-        k = index(k)
-        if k < 0:
-            raise ValueError('number of bits must be non-negative')
-        if k == 0:
-            return 0
-        result = 0
-        shift = 0
-        while k > 0:
-            take = min(k, 32)
-            result |= (self._word() >> (32 - take)) << shift
-            shift += take
-            k -= take
+    def _draw(self, bits):
+        result, self._index, changed = __math('mt19937', self._mt, self._index, bits)
+        if changed is not None:
+            self._mt = changed
         return result
 
-    def random(self):
-        # The reference's own draw: twenty-seven figures of one word
-        # and twenty-six of the next, scaled into [0, 1).
-        high = self.getrandbits(32) >> 5
-        low = self.getrandbits(32) >> 6
-        return (high * 67108864.0 + low) * (1.0 / 9007199254740992.0)
+    def getrandbits(self, k, /):
+        from operator import index
+        k = index(k)
+        if not -2147483648 <= k <= 2147483647:
+            raise OverflowError('Python int too large to convert to C int')
+        if k < 0:
+            raise ValueError('number of bits must be non-negative')
+        return self._draw(k)
 
-    def getstate(self):
+    def random(self):
+        return self._draw(-1)
+
+    def getstate(self, /):
         return (*self._mt, self._index)
 
-    def setstate(self, state):
+    def setstate(self, state, /):
         if not isinstance(state, tuple):
             raise TypeError('state vector must be a tuple')
         if len(state) != 625:

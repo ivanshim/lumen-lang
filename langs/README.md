@@ -3551,7 +3551,8 @@ only. The extension labels so far, all from PHP:
   where the run has no package context to resolve it against.
 - `ext.builtin.random.words`: a switch enabling the Python Mersenne Twister
   state-word primitive through the real-math dispatcher. It twists a complete
-  624-word state and tempers the next word, preserving state round trips.
+  624-word state and tempers words, assembling random floats or requested
+  bit strings while preserving state round trips.
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
