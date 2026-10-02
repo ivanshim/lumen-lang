@@ -1,4 +1,4 @@
-# Source: CPython 3b564385e4c9, Lib/functools.py; PSF License.
+# Source: CPython v3.14.8 Lib/functools.py; PSF License.
 """functools.py - Tools for working with functions and callable objects
 """
 # Python module wrapper for _functools C module
@@ -20,7 +20,7 @@ from collections import namedtuple
 # import weakref  # Deferred to single_dispatch()
 from operator import itemgetter
 from reprlib import recursive_repr
-from types import FunctionType, GenericAlias, MethodType, MappingProxyType, UnionType
+from types import GenericAlias, MethodType, MappingProxyType, UnionType
 from _thread import RLock
 
 ################################################################################
@@ -171,7 +171,7 @@ def _lt_from_ge(self, other):
         return op_result
     return not op_result
 
-_convert = frozendict({
+_convert = {
     '__lt__': [('__gt__', _gt_from_lt),
                ('__le__', _le_from_lt),
                ('__ge__', _ge_from_lt)],
@@ -184,12 +184,12 @@ _convert = frozendict({
     '__ge__': [('__le__', _le_from_ge),
                ('__gt__', _gt_from_ge),
                ('__lt__', _lt_from_ge)]
-})
+}
 
 def total_ordering(cls):
     """Class decorator that fills in missing ordering methods"""
     # Find user-defined comparisons (not those inherited from object).
-    roots = {op for op in _convert if any(op in base.__dict__ for base in cls.__mro__ if base is not object)}
+    roots = {op for op in _convert if getattr(cls, op, None) is not getattr(object, op, None)}
     if not roots:
         raise ValueError('must define at least one ordering operation: < > <= >=')
     root = max(roots)       # prefer __lt__ to __le__ to __gt__ to __ge__
@@ -233,9 +233,9 @@ except ImportError:
 ### reduce() sequence to a single item
 ################################################################################
 
-_initial_missing = sentinel('_initial_missing')
+_initial_missing = object()
 
-def reduce(function, sequence, /, initial=_initial_missing):
+def reduce(function, sequence, initial=_initial_missing):
     """
     reduce(function, iterable, /[, initial]) -> value
 
@@ -264,11 +264,6 @@ def reduce(function, sequence, /, initial=_initial_missing):
         value = function(value, element)
 
     return value
-
-try:
-    from _functools import reduce
-except ImportError:
-    pass
 
 
 ################################################################################
@@ -523,32 +518,7 @@ def _unwrap_partialmethod(func):
 ### LRU Cache function decorator
 ################################################################################
 
-# The shared namedtuple implementation does not yet provide tuple storage.
-# Cache statistics use the same immutable tuple layout and field accessors.
-class CacheInfo(tuple):
-    __slots__ = ()
-    _fields = ('hits', 'misses', 'maxsize', 'currsize')
-    def __iter__(self):
-        return iter((self[0], self[1], self[2], self[3]))
-    def __new__(cls, hits, misses, maxsize, currsize):
-        return tuple.__new__(cls, (hits, misses, maxsize, currsize))
-    @property
-    def hits(self):
-        return self[0]
-    @property
-    def misses(self):
-        return self[1]
-    @property
-    def maxsize(self):
-        return self[2]
-    @property
-    def currsize(self):
-        return self[3]
-    def __repr__(self):
-        return 'CacheInfo(hits=%r, misses=%r, maxsize=%r, currsize=%r)' % tuple(self)
-_CacheInfo = CacheInfo
-del CacheInfo
-_CacheInfo.__module__ = __name__
+_CacheInfo = namedtuple("CacheInfo", ["hits", "misses", "maxsize", "currsize"])
 
 def _make_key(args, kwds, typed,
              kwd_mark = (object(),),
@@ -570,15 +540,13 @@ def _make_key(args, kwds, typed,
     # distinct call from f(y=2, x=1) which will be cached separately.
     key = args
     if kwds:
-        key = list(key)
         key += kwd_mark
         for item in kwds.items():
             key += item
-        key = tuple(key)
     if typed:
-        key += tuple([type(v) for v in args])
+        key += tuple(type(v) for v in args)
         if kwds:
-            key += tuple([type(v) for v in kwds.values()])
+            key += tuple(type(v) for v in kwds.values())
     elif len(key) == 1 and type(key[0]) in fasttypes:
         return key[0]
     return key
@@ -613,14 +581,12 @@ def lru_cache(maxsize=128, typed=False):
         # Negative maxsize is treated as 0
         if maxsize < 0:
             maxsize = 0
-
     elif callable(maxsize) and isinstance(typed, bool):
         # The user_function was passed in directly via the maxsize argument
         user_function, maxsize = maxsize, 128
         wrapper = _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo)
         wrapper.cache_parameters = lambda : {'maxsize': maxsize, 'typed': typed}
         return update_wrapper(wrapper, user_function)
-
     elif maxsize is not None:
         raise TypeError(
             'Expected first argument to be an integer, a callable, or None')
@@ -633,9 +599,6 @@ def lru_cache(maxsize=128, typed=False):
     return decorating_function
 
 def _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo):
-    if not callable(user_function):
-        raise TypeError("the first argument must be callable")
-
     # Constants shared by all lru cache instances:
     sentinel = object()          # unique object used to signal cache misses
     make_key = _make_key         # build a key from the function arguments
@@ -655,7 +618,6 @@ def _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo):
         def wrapper(*args, **kwds):
             # No caching -- just a statistics update
             nonlocal misses
-
             misses += 1
             result = user_function(*args, **kwds)
             return result
@@ -665,7 +627,6 @@ def _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo):
         def wrapper(*args, **kwds):
             # Simple caching without ordering or size limit
             nonlocal hits, misses
-
             key = make_key(args, kwds, typed)
             result = cache_get(key, sentinel)
             if result is not sentinel:
@@ -681,9 +642,7 @@ def _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo):
         def wrapper(*args, **kwds):
             # Size limited caching that tracks accesses by recency
             nonlocal root, hits, misses, full
-
             key = make_key(args, kwds, typed)
-
             with lock:
                 link = cache_get(key)
                 if link is not None:
@@ -698,9 +657,7 @@ def _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo):
                     hits += 1
                     return result
                 misses += 1
-
             result = user_function(*args, **kwds)
-
             with lock:
                 if key in cache:
                     # Getting here means that this same key was added to the
@@ -708,13 +665,11 @@ def _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo):
                     # update is already done, we need only return the
                     # computed result and update the count of misses.
                     pass
-
                 elif full:
                     # Use the old root to store the new key and result.
                     oldroot = root
                     oldroot[KEY] = key
                     oldroot[RESULT] = result
-
                     # Empty the oldest link and make it the new root.
                     # Keep a reference to the old key and old result to
                     # prevent their ref counts from going to zero during the
@@ -723,27 +678,22 @@ def _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo):
                     # still adjusting the links.
                     root = oldroot[NEXT]
                     oldkey = root[KEY]
-                    oldresult = root[RESULT]  # noqa: F841
+                    oldresult = root[RESULT]
                     root[KEY] = root[RESULT] = None
-
                     # Now update the cache dictionary.
                     del cache[oldkey]
-
                     # Save the potentially reentrant cache[key] assignment
                     # for last, after the root and links have been put in
                     # a consistent state.
                     cache[key] = oldroot
-
                 else:
                     # Put result in a new link at the front of the queue.
                     last = root[PREV]
                     link = [last, root, key, result]
                     last[NEXT] = root[PREV] = cache[key] = link
-
                     # Use the cache_len bound method instead of the len() function
                     # which could potentially be wrapped in an lru_cache itself.
                     full = (cache_len() >= maxsize)
-
             return result
 
     def cache_info():
@@ -754,7 +704,6 @@ def _lru_cache_wrapper(user_function, maxsize, typed, _CacheInfo):
     def cache_clear():
         """Clear the cache and cache statistics"""
         nonlocal hits, misses, full
-
         with lock:
             cache.clear()
             root[:] = [root, root, None, None]
@@ -1047,8 +996,7 @@ def singledispatch(func):
 class singledispatchmethod:
     """Single-dispatch generic method descriptor.
 
-    Supports wrapping existing descriptors and handles non-descriptor
-    callables as instance methods.
+    Supports wrapping existing descriptors.
     """
 
     def __init__(self, func):
@@ -1091,11 +1039,6 @@ class _singledispatchmethod_get:
         # Set instance attributes which cannot be handled in __getattr__()
         # because they conflict with type descriptors.
         func = unbound.func
-
-        # Dispatch on the second argument if a generic method turns into
-        # a bound method on instance-level access. See GH-143535.
-        self._dispatch_arg_index = 1 if obj is None and isinstance(func, FunctionType) else 0
-
         try:
             self.__module__ = func.__module__
         except AttributeError:
@@ -1124,23 +1067,7 @@ class _singledispatchmethod_get:
                                'singledispatchmethod method')
             raise TypeError(f'{funcname} requires at least '
                             '1 positional argument')
-        method = self._dispatch(args[self._dispatch_arg_index].__class__)
-
-        if hasattr(method, "__get__"):
-            # If the method is a descriptor, it might be necessary
-            # to drop the first argument before calling
-            # as it can be no longer expected after descriptor access.
-            skip_bound_arg = False
-            if isinstance(method, staticmethod):
-                skip_bound_arg = self._dispatch_arg_index == 1
-
-            method = method.__get__(self._obj, self._cls)
-            if isinstance(method, MethodType):
-                skip_bound_arg = self._dispatch_arg_index == 1
-
-            if skip_bound_arg:
-                return method(*args[1:], **kwargs)
-        return method(*args, **kwargs)
+        return self._dispatch(args[0].__class__).__get__(self._obj, self._cls)(*args, **kwargs)
 
     def __getattr__(self, name):
         # Resolve these attributes lazily to speed up creation of
@@ -1210,9 +1137,30 @@ class cached_property:
 
     __class_getitem__ = classmethod(GenericAlias)
 
-# Imported class bodies currently default to the main module in the runtime.
-# Keep the public classes tied to the module that supplies them.
-for _class in (partial, partialmethod, _PlaceholderType, singledispatchmethod,
-               _singledispatchmethod_get, cached_property):
-    _class.__module__ = __name__
-del _class
+def _warn_python_reduce_kwargs(py_reduce):
+    @wraps(py_reduce)
+    def wrapper(*args, **kwargs):
+        if 'function' in kwargs or 'sequence' in kwargs:
+            import os
+            import warnings
+            warnings.warn(
+                'Calling functools.reduce with keyword arguments '
+                '"function" or "sequence" '
+                'is deprecated in Python 3.14 and will be '
+                'forbidden in Python 3.16.',
+                DeprecationWarning,
+                skip_file_prefixes=(os.path.dirname(__file__),))
+        return py_reduce(*args, **kwargs)
+    return wrapper
+
+reduce = _warn_python_reduce_kwargs(reduce)
+del _warn_python_reduce_kwargs
+
+# The import of the C accelerated version of reduce() has been moved
+# here due to gh-121676. In Python 3.16, _warn_python_reduce_kwargs()
+# should be removed and the import block should be moved back right
+# after the definition of reduce().
+try:
+    from _functools import reduce
+except ImportError:
+    pass

@@ -1,4 +1,4 @@
-# From CPython 3b564385e4c9, Lib/__future__.py; PSF License.
+# Source: CPython v3.14.8 Lib/__future__.py; PSF License.
 """Record of phased-in incompatible language changes.
 
 Each line is of the form:

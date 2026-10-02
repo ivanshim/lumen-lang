@@ -1,39 +1,40 @@
 # Python library sources
 
-The enum support uses CPython commit `3b564385e4c9`. `enum.py`, `pydoc.py`,
-`__future__.py`, `pkgutil.py`, `reprlib.py`, `token.py`, and `keyword.py`
-retain the upstream source below a PSF provenance comment. `linecache.py`
-retains the upstream implementation with uncached filesystem source reading
-when os.stat is unavailable, without inventing timestamps.
+The integrated suite pin is CPython `v3.14.8`. The following library files are
+copied unchanged, apart from one provenance and PSF licence header: enum,
+pydoc, __future__, pkgutil, reprlib, token, keyword, inspect, linecache,
+tokenize, functools, bisect, heapq, copyreg, posixpath, fnmatch, shlex, and the _pyrepl package initializer and pager.
+Their upstream bodies are checked byte for byte during source auditing.
+
+Native C facilities are modeled separately. `_tokenize` supplies the pinned
+TokenizerIter interface; its Python scanner derives from CPython's older
+pure-Python tokenizer and separates interpolation tokens. The public tokenize
+module is the pinned source, including its original open implementation.
+The separate scanner handles ordinary tokens and interpolation conversions,
+format specifications, and nested replacement fields. It is not CPython's C
+lexer: interpolation with the enclosing quote reused inside a replacement
+expression and some malformed-input diagnostic positions remain unsupported.
+The existing io adapter supplies text streams, and the os adapter obtains
+real stat fields through a Python-only runtime label. The text-stream adapter
+currently buffers input eagerly; full incremental decoding and opaque seek
+cookies remain outside its supported surface. Native directory-file
+stat operations remain unsupported and raise NotImplementedError.
 
 The import execution remains in the kernels. The full CPython bootstrap
-requires `_imp`, frozen modules, native import locks, and runtime installation
-hooks that these kernels do not expose. `importlib._bootstrap` therefore
-retains the upstream `ModuleSpec`, `spec_from_loader`, `_spec_from_module`,
-`_init_module_attrs`, `module_from_spec`, `_load_unlocked`, and `_resolve_name`
-implementations. Its module creation, diagnostic output, frame-call wrapper,
-and single-threaded `_load` entry use the existing runtime facilities.
-`_bootstrap_external` retains `spec_from_file_location` and provides source
-loaders and filesystem finders. CPython bytecode and extension execution
-raise `ImportError`. Embedded modules continue through the native importer;
-this is not a replacement for CPython's complete import framework.
+requires `_imp`, frozen modules, native import locks, and installation hooks
+that these kernels do not expose. The partial bootstrap preserves ModuleSpec,
+spec_from_loader, _spec_from_module, _init_module_attrs, module_from_spec,
+_load_unlocked, and _resolve_name. Source-loader and filesystem finder adapters
+provide the names used by inspect and pydoc. Bytecode and extension execution
+raise ImportError. These adapters are not claimed to be unchanged CPython files.
 
-`tokenize.py` uses CPython v3.11.0's pure-Python tokenizer because the newer
-source requires the native `_tokenize` implementation. Its `open` helper uses
-the runtime's text streams after the upstream encoding detection, since
-`io.TextIOWrapper` is unavailable. `sysconfig` describes the embedded library
-paths; it supplies no CPython build configuration. `_thread` exposes the
-existing thread identifier, without advertising native threading support.
+The inherited abc, collections, datetime, doctest, importlib, os, re,
+sysconfig, test.support, types, and unittest modules are runtime adapters.
+Some reuse upstream functions; their complete files are not upstream copies.
+The native-module models _thread, itertools, sys, and io likewise have no
+corresponding pure-Python implementation of their C facilities. Their existing
+behavior and the newer integrated suite inventory are retained.
 
-Member, module, documentation, and source-comment discovery in `inspect`,
-wrapper metadata and single
-dispatch in `functools`, and the support helpers needed by the enum suite
-reuse upstream Python implementations. Signature, Parameter, and bound
-argument models also retain upstream implementations, using ordered builtin
-dictionaries in Signature rather than an OrderedDict subclass. Annotation formatting
-uses the 3.11 implementation because ForwardRef is unavailable; native text
-signatures, partial-object signatures, and frame inspection remain unsupported.
-Complete dataclass behavior and the remaining container and pickle
-protocols retain their runtime limitations; the tests report them.
-The changes to `abc`, `collections`, `datetime`, `os`, `re`, `sys`, and the documented `itertools.chain` recipe are
-limited to the dependencies required by these library paths.
+Frame, C-API, dataclass, and pickle limitations remain visible as failures or
+honest skips in the reference suite. No reference test is rewritten to conceal
+a runtime limitation.

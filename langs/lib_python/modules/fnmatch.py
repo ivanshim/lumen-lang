@@ -1,6 +1,4 @@
-# From CPython 3.14, Lib/fnmatch.py.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Source: CPython v3.14.8 Lib/fnmatch.py; PSF License.
 """Filename matching with shell patterns.
 
 fnmatch(FILENAME, PATTERN) matches according to the local convention.

@@ -1,4 +1,4 @@
-# Source: CPython Lib/copyreg.py at 3b564385e4c9; PSF License.
+# Source: CPython v3.14.8 Lib/copyreg.py; PSF License.
 """Helper to provide extensibility for pickle.
 
 This is only useful to add pickle support for extension types defined in
@@ -54,7 +54,7 @@ def _reconstructor(cls, base, state):
     return obj
 
 _HEAPTYPE = 1<<9
-_new_type = type(len)
+_new_type = type(int.__new__)
 
 # Python code for object.__reduce_ex__ for protocols 0 and 1
 

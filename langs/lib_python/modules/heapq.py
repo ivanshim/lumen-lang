@@ -1,4 +1,4 @@
-# Source: CPython Lib/heapq.py at 3b564385e4c9; PSF License.
+# Source: CPython v3.14.8 Lib/heapq.py; PSF License.
 """Heap queue algorithm (a.k.a. priority queue).
 
 Heaps are arrays for which a[k] <= a[2*k+1] and a[k] <= a[2*k+2] for
@@ -328,8 +328,6 @@ def _siftup_max(heap, pos):
     heap[pos] = newitem
     _siftdown_max(heap, startpos, pos)
 
-from builtins import next as _next_item
-
 def merge(*iterables, key=None, reverse=False):
     '''Merge multiple sorted inputs into a single sorted output.
 
@@ -365,8 +363,8 @@ def merge(*iterables, key=None, reverse=False):
     if key is None:
         for order, it in enumerate(map(iter, iterables)):
             try:
-                next = it
-                h_append([_next_item(next), order * direction, next])
+                next = it.__next__
+                h_append([next(), order * direction, next])
             except StopIteration:
                 pass
         _heapify(h)
@@ -375,7 +373,7 @@ def merge(*iterables, key=None, reverse=False):
                 while True:
                     value, order, next = s = h[0]
                     yield value
-                    s[0] = _next_item(next)           # raises StopIteration when exhausted
+                    s[0] = next()           # raises StopIteration when exhausted
                     _heapreplace(h, s)      # restore heap condition
             except StopIteration:
                 _heappop(h)                 # remove empty iterator
@@ -383,17 +381,13 @@ def merge(*iterables, key=None, reverse=False):
             # fast case when only a single iterator remains
             value, order, next = h[0]
             yield value
-            while True:
-                try:
-                    yield _next_item(next)
-                except StopIteration:
-                    return
+            yield from next.__self__
         return
 
     for order, it in enumerate(map(iter, iterables)):
         try:
-            next = it
-            value = _next_item(next)
+            next = it.__next__
+            value = next()
             h_append([key(value), order * direction, value, next])
         except StopIteration:
             pass
@@ -403,7 +397,7 @@ def merge(*iterables, key=None, reverse=False):
             while True:
                 key_value, order, value, next = s = h[0]
                 yield value
-                value = _next_item(next)
+                value = next()
                 s[0] = key(value)
                 s[2] = value
                 _heapreplace(h, s)
@@ -412,11 +406,7 @@ def merge(*iterables, key=None, reverse=False):
     if h:
         key_value, order, value, next = h[0]
         yield value
-        while True:
-            try:
-                yield _next_item(next)
-            except StopIteration:
-                return
+        yield from next.__self__
 
 
 # Algorithm notes for nlargest() and nsmallest()
@@ -505,7 +495,7 @@ def nsmallest(n, iterable, key=None):
         pass
     else:
         if n >= size:
-            return sorted(iterable, key=key)
+            return sorted(iterable, key=key)[:n]
 
     # When key is none, use simpler decoration
     if key is None:
@@ -522,7 +512,7 @@ def nsmallest(n, iterable, key=None):
         for elem in it:
             if elem < top:
                 _heapreplace(result, (elem, order))
-                top = result[0][0]
+                top, _order = result[0]
                 order += 1
         result.sort()
         return [elem for (elem, order) in result]
@@ -540,7 +530,7 @@ def nsmallest(n, iterable, key=None):
         k = key(elem)
         if k < top:
             _heapreplace(result, (k, order, elem))
-            top = result[0][0]
+            top, _order, _elem = result[0]
             order += 1
     result.sort()
     return [elem for (k, order, elem) in result]
@@ -565,7 +555,7 @@ def nlargest(n, iterable, key=None):
         pass
     else:
         if n >= size:
-            return sorted(iterable, key=key, reverse=True)
+            return sorted(iterable, key=key, reverse=True)[:n]
 
     # When key is none, use simpler decoration
     if key is None:
@@ -580,7 +570,7 @@ def nlargest(n, iterable, key=None):
         for elem in it:
             if top < elem:
                 _heapreplace(result, (elem, order))
-                top = result[0][0]
+                top, _order = result[0]
                 order -= 1
         result.sort(reverse=True)
         return [elem for (elem, order) in result]
@@ -598,7 +588,7 @@ def nlargest(n, iterable, key=None):
         k = key(elem)
         if top < k:
             _heapreplace(result, (k, order, elem))
-            top = result[0][0]
+            top, _order, _elem = result[0]
             order -= 1
     result.sort(reverse=True)
     return [elem for (k, order, elem) in result]
@@ -620,20 +610,3 @@ if __name__ == "__main__":
 
     import doctest # pragma: no cover
     print(doctest.testmod()) # pragma: no cover
-
-# Compatibility for the existing statistics implementation.
-# Finite selections need no change to the caller's list.
-def _ordered(iterable, key=None, reverse=False):
-    values = []
-    keys = []
-    for item in iterable:
-        wanted = item if key is None else key(item)
-        at = len(values)
-        while at > 0:
-            before = wanted < keys[at - 1] if not reverse else keys[at - 1] < wanted
-            if not before:
-                break
-            at -= 1
-        values = [*values[:at], item, *values[at:]]
-        keys = [*keys[:at], wanted, *keys[at:]]
-    return values

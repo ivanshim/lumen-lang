@@ -14,11 +14,13 @@ import os
 import re
 import types
 import decimal
+import subprocess
 import unittest
 import warnings
 from test import support
 from test.support.os_helper import temp_cwd
-from test.support.script_helper import assert_python_failure, assert_python_ok
+from test.support.script_helper import (
+    assert_python_failure, assert_python_ok, spawn_python)
 
 a_global = 'global variable'
 
@@ -709,16 +711,6 @@ except Exception:
                             ["f'{ {{}} }'", # dict in a set
                              ])
 
-    def test_double_brace_ast_location_covers_both_source_braces(self):
-        value = ast.parse('f"a{{"').body[0].value.values[0]
-        self.assertIsInstance(value, ast.Constant)
-        self.assertEqual(value.value, "a{")
-        self.assertEqual(
-            (value.lineno, value.col_offset, value.end_lineno,
-             value.end_col_offset),
-            (1, 2, 1, 5),
-        )
-
     def test_compile_time_concat(self):
         x = 'def'
         self.assertEqual('abc' f'## {x}ghi', 'abc## defghi')
@@ -831,6 +823,18 @@ except Exception:
         # Test lots of expressions and constants, concatenated.
         s = "f'{1}' 'x' 'y'" * 1024
         self.assertEqual(eval(s), '1xy' * 1024)
+
+    @support.requires_resource('cpu')
+    def test_many_fstrings_in_module(self):
+        fields = ''.join(f'{{x{i}}}' for i in range(100))
+        source = ''.join(
+            f"value_{i} = f'{fields}'\n" for i in range(1_000)
+        )
+        namespace = {f'x{i}': str(i) for i in range(100)}
+        expected = ''.join(str(i) for i in range(100))
+        exec(source, namespace)
+        self.assertEqual(namespace['value_0'], expected)
+        self.assertEqual(namespace['value_999'], expected)
 
     def test_format_specifier_expressions(self):
         width = 10
@@ -1348,6 +1352,9 @@ except Exception:
         self.assertEqual(f'{3!=4:}', 'True')
         self.assertEqual(f'{3!=4!s}', 'True')
         self.assertEqual(f'{3!=4!s:.3}', 'Tru')
+        a = 3
+        b = 4
+        self.assertEqual(f'{a!=b=:>10}', 'a!=b=         1')
 
     def test_equal_equal(self):
         # Because an expression ending in = has special meaning,
@@ -1603,8 +1610,6 @@ except Exception:
         self.assertEqual(f'''{
 3
 =}''', '\n3\n=3')
-        x = 1
-        self.assertEqual(eval('f"""{(\nx\n)=}"""'), '(\nx\n)=1')
 
         # Since = is handled specially, make sure all existing uses of
         # it still work.
@@ -1680,6 +1685,14 @@ except Exception:
         self.assertEqual(f'{" # nooo "=}', '" # nooo "=\' # nooo \'')
         self.assertEqual(f'{" \" # nooo \" "=}', '" \\" # nooo \\" "=\' " # nooo " \'')
 
+        result = f'''{(
+            1,  # Force lexer metadata reconstruction.
+            "\"#")=}'''
+        self.assertEqual(
+            result,
+            '(\n            1,  \n            "\\"#")=(1, \'"#\')',
+        )
+
         self.assertEqual(f'{ # some comment goes here
   """hello"""=}',  ' \n  """hello"""=\'hello\'')
         self.assertEqual(f'{"""# this is not a comment
@@ -1718,9 +1731,6 @@ except Exception:
         with self.assertRaisesRegex(SyntaxError,
                                     "f-string: expecting '=', or '!', or ':', or '}'"):
             compile("f'{a $ b}'", "?", "exec")
-        with self.assertRaisesRegex(SyntaxError,
-                                    "f-string: expecting '!', or ':', or '}'"):
-            compile("f'{a=b}'", "?", "exec")
 
     def test_with_two_commas_in_format_specifier(self):
         error_msg = re.escape("Cannot specify ',' with ','.")
@@ -1795,6 +1805,32 @@ print(f'''{{
             _, stdout, _ = assert_python_ok(script)
         self.assertEqual(stdout.decode('utf-8').strip().replace('\r\n', '\n').replace('\r', '\n'),
                          "3\n=3")
+
+    @support.requires_subprocess()
+    def test_expression_in_interactive_after_buffer_resize(self):
+        expression = "(\n" + (" " * 64 + "\n") * 256 + "1\n)"
+        source = (
+            f"result = f'''{{{expression}=}}'''\n"
+            "print(repr(result))\n"
+        )
+        with spawn_python('-i', '-q', stderr=subprocess.PIPE) as process:
+            stdout, stderr = process.communicate(
+                source.encode(), timeout=support.SHORT_TIMEOUT)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(stdout.decode().strip(), repr(expression + "=1"))
+
+    def test_debug_in_file_after_buffer_resize(self):
+        expression = "(\n" + (" " * 64 + "\n") * 256 + "1\n)"
+        expected = expression + "=1"
+        with temp_cwd():
+            script = 'script.py'
+            source = (
+                f"result = f'''{{{expression}=}}'''\n"
+                f"assert result == {expected!r}\n"
+            )
+            with open(script, 'w') as f:
+                f.write(source)
+            assert_python_ok(script)
 
     def test_syntax_warning_infinite_recursion_in_file(self):
         with temp_cwd():
