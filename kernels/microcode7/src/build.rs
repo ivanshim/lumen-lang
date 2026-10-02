@@ -4307,7 +4307,7 @@ impl<'a> Builder<'a> {
             self.advance();
             let method_name = self.need_word("as the method name")?;
             let title = self.original_words[self.pos - 1].lexeme.clone();
-            let body = self.method(&title)?;
+            let (body, spares) = self.method(&title)?;
             self.parts().methods.retain(|(old, _)| old != &method_name);
             if let Some(at) = self.parts().attributes.iter().position(|old| old == &method_name) {
                 self.parts().attributes.remove(at);
@@ -4315,7 +4315,22 @@ impl<'a> Builder<'a> {
             }
             let slot = self.member_address(&method_name, "method_body");
             let decorated=!wrappers.is_empty();
+            // What a parameter falls back on is read where the method
+            // stands, and goes with the routine, as the reference reads
+            // a default once at the definition.
+            let resume = self.pos;
+            let mut default_values = Vec::new();
+            for (_, start) in &spares {
+                self.pos = *start;
+                default_values.push(self.expr(0)?);
+            }
+            self.pos = resume;
             let mut expression=constant(Value::Routine(body.clone()));
+            if !default_values.is_empty() {
+                let mut given = vec![expression];
+                given.extend(default_values);
+                expression = prim_call(Prim::Carry, given);
+            }
             while let Some(address)=wrappers.pop(){expression=Form::Apply(Callee::Code(Box::new(Form::Read(address))),vec![expression]);}
             setup.push(Form::Write(slot.clone(),Box::new(expression)));
             // A method of a class standing in a function climbs through
@@ -4334,7 +4349,10 @@ impl<'a> Builder<'a> {
             // A method an arm of a conditional writes belongs among the
             // members the class is handed, not among the methods it
             // always has: the arm holding it may never run.
-            match decorated || self.parts().arms > 0 || stands_in_routine {
+            // A method carrying the values its parameters fall back on
+            // is handed over from its address too, since the table of
+            // routines as compiled knows no such value.
+            match decorated || self.parts().arms > 0 || stands_in_routine || !spares.is_empty() {
                 true => self.member_noted(&method_name, slot.clone()),
                 false => {
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot.clone());
@@ -4707,7 +4725,20 @@ impl<'a> Builder<'a> {
             }
             self.advance();
             word = self.need_word("as the method name")?;
-            decorated = constant(Value::Routine(self.method(&word)?));
+            let (routine, spares) = self.method(&word)?;
+            let resume = self.pos;
+            let mut default_values = Vec::new();
+            for (_, start) in &spares {
+                self.pos = *start;
+                default_values.push(self.expr(0)?);
+            }
+            self.pos = resume;
+            decorated = constant(Value::Routine(routine));
+            if !default_values.is_empty() {
+                let mut given = vec![decorated];
+                given.extend(default_values);
+                decorated = prim_call(Prim::Carry, given);
+            }
         }
         while let Some((manner, slot)) = waiting.pop() {
             decorated = match manner {
@@ -5087,7 +5118,7 @@ impl<'a> Builder<'a> {
                 let gives_cell = self.skip_reference();
                 let member = self.need_word("as the method name")?;
                 self.giving_cells.push(gives_cell);
-                let program = self.method(&member);
+                let program = self.method(&member).map(|(routine, _)| routine);
                 self.giving_cells.pop();
                 held.methods.push((member, program?));
                 // A parameter of the maker that names a property makes
@@ -5140,7 +5171,7 @@ impl<'a> Builder<'a> {
 
     /// A method: a program whose first parameter is the thing it is for,
     /// under the name the definition gives it (`$this`).
-    fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+    fn method(&mut self, name: &str) -> Res<(Rc<Routine>, Vec<(usize, usize)>)> {
         let deferred = self.pos.checked_sub(3).and_then(|at| self.tokens.get(at))
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.lexeme));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
@@ -5177,7 +5208,7 @@ impl<'a> Builder<'a> {
         if self.on_stmt_end() && !self.block_opens_ahead() {
             let named = self.routine(name, Holds::Every, Traps::Yields, params, least, |_| Ok(constant(Value::Nil)))?;
             return match named {
-                Form::Const(Value::Routine(p)) => Ok(p),
+                Form::Const(Value::Routine(p)) => Ok((p, Vec::new())),
                 _ => Err("A method must be a program".to_string()),
             };
         }
@@ -5186,11 +5217,20 @@ impl<'a> Builder<'a> {
         let sigil = table.letter("identifier.variable_prefix");
         let enclosing_receiver = self.receiver.take();
         self.receiver = params.first().cloned();
+        let keep_defaults = table.flag("ext.syntax.call.bind_names");
+        let spares_out = spares.clone();
         let local_defaults = spares.iter().map(|(place, _)| *place).collect();
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
             r.layers.last_mut().unwrap().permits_async = deferred;
             r.generator_seen = deferred;
-            let mut items = r.spare_values(spares, &formals)?;
+            // A method in a language that binds names carries the places
+            // its defaults stand for, filled where it is written, as a
+            // plain routine's are; anywhere else they are written in as
+            // the call leaves them out.
+            let mut items = if keep_defaults {
+                for (place, _) in &spares { r.carrying.push(*place); }
+                Vec::new()
+            } else { r.spare_values(spares, &formals)? };
             // What a parameter that names a property was handed is put
             // into the thing before the body runs.
             for member in &named {
@@ -5215,7 +5255,7 @@ impl<'a> Builder<'a> {
         match program? {
             Form::Const(Value::Routine(mut p)) => {
                 Rc::get_mut(&mut p).unwrap().local_defaults = local_defaults;
-                Ok(p)
+                Ok((p, spares_out))
             },
             _ => Err("A method must be a program".to_string()),
         }

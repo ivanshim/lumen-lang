@@ -5338,8 +5338,34 @@ impl<'a> Compiler<'a> {
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
             self.take();
             named = self.want_name("as the method name")?;
-            let body = self.method(&named)?;
+            let (body, formals, spares) = self.method(&named)?;
+            // What a parameter falls back on is read where the method
+            // is written, and the reading goes with the routine, as the
+            // reference reads a default once at the definition. The
+            // method's own parameters stand aside while it is read, so a
+            // name spelled like one of them still means the one outside.
+            let after = self.pos;
+            for (_, from) in &spares {
+                self.pos = *from;
+                // A default that is one bare name spelled like a
+                // parameter means the name outside, as the reference
+                // reads it: the parameter itself never stands here.
+                let lone = if self.tokens.get(*from).map_or(false, |t| t.shape == Shape::Instr)
+                    && self.tokens.get(*from + 1).map_or(true, |t| t.shape == Shape::Sign)
+                    && formals.contains(&self.tokens[*from].lexeme) {
+                    self.tokens[*from].lexeme.clone()
+                } else { String::new() };
+                if lone.is_empty() {
+                    self.expr(0)?;
+                } else {
+                    let cell = self.enclosing_cell(self.pieces.len() - 1, &lone)
+                        .unwrap_or_else(|| Cell { free: false, ident: Rc::from(lone.as_str()), near: Vec::new(), far: self.registry.slot(&lone), moving: false });
+                    self.put(Instr::Read(cell));
+                }
+            }
+            self.pos = after;
             self.constant(Value::Routine(body));
+            if !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
         }
         for (kind, held) in saved.into_iter().rev() {
             if kind == 0 {
@@ -5578,11 +5604,32 @@ impl<'a> Compiler<'a> {
             self.take();
             let named = self.want_name("as the method name")?;
             let original = self.spelled[self.pos - 1].lexeme.clone();
-            let method = self.method(&original)?;
+            let (method, formals, spares) = self.method(&original)?;
             self.gathering().methods.retain(|(old, _)| old != &named);
             self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
+            let after = self.pos;
+            for (_, from) in &spares {
+                self.pos = *from;
+                // A default that is one bare name spelled like a
+                // parameter means the name outside, as the reference
+                // reads it: the parameter itself never stands here.
+                let lone = if self.tokens.get(*from).map_or(false, |t| t.shape == Shape::Instr)
+                    && self.tokens.get(*from + 1).map_or(true, |t| t.shape == Shape::Sign)
+                    && formals.contains(&self.tokens[*from].lexeme) {
+                    self.tokens[*from].lexeme.clone()
+                } else { String::new() };
+                if lone.is_empty() {
+                    self.expr(0)?;
+                } else {
+                    let cell = self.enclosing_cell(self.pieces.len() - 1, &lone)
+                        .unwrap_or_else(|| Cell { free: false, ident: Rc::from(lone.as_str()), near: Vec::new(), far: self.registry.slot(&lone), moving: false });
+                    self.put(Instr::Read(cell));
+                }
+            }
+            self.pos = after;
             self.constant(Value::Routine(method.clone()));
+            if !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
             let wrapped=!decorators.is_empty();
             for place in decorators.into_iter().rev() {self.read(&place);self.act(Action::Invoke(Rc::from("")),2);}
             self.write(&slot);
@@ -5593,8 +5640,10 @@ impl<'a> Compiler<'a> {
             let reaches_out = !method.enclosing.is_empty();
             // A method an arm of a conditional defines is a member like
             // any other: the class cannot carry it among the methods it
-            // always has, since the arm may not run.
-            match wrapped || self.gathering().arms > 0 || reaches_out {
+            // always has, since the arm may not run. One carrying the
+            // values its parameters fall back on stands in its place,
+            // since the table of routines as compiled knows no such value.
+            match wrapped || self.gathering().arms > 0 || reaches_out || !spares.is_empty() {
                 true => self.member_kept(&named, &slot),
                 false => {
                     self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot.clone());
@@ -6276,7 +6325,8 @@ impl<'a> Compiler<'a> {
                 self.giving_cells.push(gives_cell);
                 let built = self.method(&member);
                 self.giving_cells.pop();
-                held.methods.push((member.clone(), built?));
+                let (routine, _, _) = built?;
+                held.methods.push((member.clone(), routine));
                 // A parameter of the maker that names a property makes
                 // the class carry that property too.
                 for named in std::mem::take(&mut self.promoted) {
@@ -6329,7 +6379,7 @@ impl<'a> Compiler<'a> {
 
     /// A method: a program whose first parameter is the object it is for,
     /// under the name the definition gives (`$this`).
-    fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+    fn method(&mut self, name: &str) -> Res<(Rc<Routine>, Vec<String>, Vec<(usize, usize)>)> {
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
@@ -6366,12 +6416,13 @@ impl<'a> Compiler<'a> {
                 a.piece().result_touched = true;
                 a.write(RESULT_CELL);
                 Ok(())
-            });
+            }).map(|routine| (routine, Vec::new(), Vec::new()));
         }
         let named = promoted.clone();
         self.promoted = promoted;
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
+        let spares_out = spares.clone();
         let built = self.routine(name, formals, least, true, |a| {
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
@@ -6393,7 +6444,8 @@ impl<'a> Compiler<'a> {
             a.body()
         });
         self.method_self = previous;
-        built
+        let formals_out = given.clone();
+        built.map(|routine| (routine, formals_out, spares_out))
     }
 
     /// The parameters of a function or a method, up to the closing bracket.
@@ -6707,10 +6759,15 @@ impl<'a> Compiler<'a> {
             // sees the names a class body around the method keeps, as
             // the reference reading it there sees them.
             let outside = self.default_depth.replace(self.pieces.len() - 1);
+            let idents_before = self.pieces.last().expect("a unit").idents.len();
             let read = self.expr(0);
             {
                 let unit = self.pieces.last_mut().expect("a unit");
                 for slot in shadowed { unit.declared[slot] = false; }
+                // A name the default's reading reached for outside stands
+                // in a place of its own now; the routine's own later reads
+                // mean the parameter again, not that place.
+                for slot in idents_before..unit.idents.len() { unit.declared[slot] = true; }
             }
             self.default_depth = outside;
             read?;
