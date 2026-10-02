@@ -115,6 +115,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("typing", include_str!("typing.py"), "typing.py"),
     ("unicodedata", include_str!("unicodedata.py"), "unicodedata.py"),
     ("unittest.mock", include_str!("unittest/mock.py"), "unittest/mock.py"),
+    ("unittest.util", include_str!("unittest/util.py"), "unittest/util.py"),
     ("unittest", include_str!("unittest.py"), "unittest/__init__.py"),
     ("warnings", include_str!("warnings.py"), "warnings.py"),
     ("weakref", include_str!("weakref.py"), "weakref.py"),

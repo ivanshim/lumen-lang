@@ -11,3 +11,5 @@ isdir = _path.isdir
 abspath = _path.abspath
 realpath = _path.realpath
 normcase = _path.normcase
+
+from genericpath import commonprefix

@@ -147,16 +147,24 @@ class TestCase:
         self._check(isinstance(value, kind), 'value is not an instance of the requested class', msg)
 
     def assertGreater(self, a, b, msg=None):
-        self._check(a > b, str(a) + ' not greater than ' + str(b), msg)
+        if not a > b:
+            from unittest.util import safe_repr
+            self._check(False, safe_repr(a) + ' not greater than ' + safe_repr(b), msg)
 
     def assertLess(self, a, b, msg=None):
-        self._check(a < b, str(a) + ' not less than ' + str(b), msg)
+        if not a < b:
+            from unittest.util import safe_repr
+            self._check(False, safe_repr(a) + ' not less than ' + safe_repr(b), msg)
 
     def assertGreaterEqual(self, a, b, msg=None):
-        self._check(a >= b, str(a) + ' not greater than or equal to ' + str(b), msg)
+        if not a >= b:
+            from unittest.util import safe_repr
+            self._check(False, safe_repr(a) + ' not greater than or equal to ' + safe_repr(b), msg)
 
     def assertLessEqual(self, a, b, msg=None):
-        self._check(a <= b, str(a) + ' not less than or equal to ' + str(b), msg)
+        if not a <= b:
+            from unittest.util import safe_repr
+            self._check(False, safe_repr(a) + ' not less than or equal to ' + safe_repr(b), msg)
 
     def assertAlmostEqual(self, a, b, places=None, msg=None, delta=None):
         if delta is not None and places is not None:
