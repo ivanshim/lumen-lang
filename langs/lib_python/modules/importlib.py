@@ -7,5 +7,6 @@ def import_module(name, package=None):
         parts = package.rsplit('.', level - 1)
         if len(parts) < level:
             raise ImportError('attempted relative import beyond top-level package')
-        name = parts[0] + '.' + name[level:]
+        remainder = name[level:]
+        name = parts[0] + '.' + remainder if remainder else parts[0]
     return __load_module(name)

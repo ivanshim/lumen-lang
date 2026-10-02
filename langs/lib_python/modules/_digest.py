@@ -78,7 +78,7 @@ class Hash:
     def block_size(self):
         return self._block_size
 
-    def update(self, data):
+    def update(self, data, /):
         self._data += _buffer(data)
 
     def copy(self):
