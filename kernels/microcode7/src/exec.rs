@@ -5261,6 +5261,16 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
             callable => callable,
         };
+        if args.is_empty() && self.table.has_any("ext.stmt.class.builder") {
+            let operation = match &stands {
+                Value::Intrinsic(operation, _) => Some(*operation),
+                Value::Wrapped(8, words) => words.first().and_then(|word| self.table.prims.get(word.bare().as_str())).copied(),
+                _ => None,
+            };
+            if let Some(operation @ (Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook)) = operation {
+                return self.names_here(frame, operation).map_err(Escape::Error);
+            }
+        }
         if let Value::Adorned(adornment) = &stands {
             let given = self.value_list(args, frame)?;
             return self.call_adornment(adornment, given, frame);
@@ -6120,9 +6130,15 @@ impl<'a> Machine<'a> {
                     Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
                     callable => callable,
                 };
-                if args.is_empty() && self.table.has_any("ext.stmt.class.builder") && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
-                    let Value::Intrinsic(operation, _) = stands else { unreachable!() };
-                    return self.names_here(frame, operation).map_err(Escape::Error);
+                if args.is_empty() && self.table.has_any("ext.stmt.class.builder") {
+                    let operation = match &stands {
+                        Value::Intrinsic(operation, _) => Some(*operation),
+                        Value::Wrapped(8, words) => words.first().and_then(|word| self.table.prims.get(word.bare().as_str())).copied(),
+                        _ => None,
+                    };
+                    if let Some(operation @ (Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook)) = operation {
+                        return self.names_here(frame, operation).map_err(Escape::Error);
+                    }
                 }
                 if let Value::Adorned(adornment) = &stands {
                     let given = self.value_list(args, frame)?;
@@ -6863,6 +6879,9 @@ impl<'a> Machine<'a> {
                     // written with them, they stand in its place.
                     if *op == Prim::Of && self.table.has_any("ext.stmt.class.builder") {
                         if let Some(subject) = values.first_mut() { *subject = self.what_it_spells(subject.clone()); }
+                    }
+                    if values.is_empty() && self.table.has_any("ext.stmt.class.builder") && matches!(op, Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook) {
+                        return self.names_here(frame, *op).map_err(Escape::Error);
                     }
                     if self.has_class_order() {
                         match op {
@@ -9509,7 +9528,7 @@ impl<'a> Machine<'a> {
             let class = Value::Intrinsic(Prim::AsReal, Rc::from("float"));
             return self.value_member(&class, "float_getformat", std::mem::take(positional), keywords).map(Some);
         }
-        if self.has_class_order() && op == Prim::SortOf && positional.len() == 3 {
+        if self.has_class_order() && op == Prim::SortOf && (positional.len() != 1 || !keywords.is_empty()) {
             let mut supplied = positional.clone();
             supplied.extend(keywords.into_iter().map(|(key, value)| Value::Couple(Rc::new((Value::text(&key), value)))));
             return self.class_from_type(supplied).map(Some);
@@ -21203,9 +21222,24 @@ impl<'a> Machine<'a> {
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
         let class_book = self.frames_named.last().and_then(|program| program.class_namespace.as_ref().and_then(|(name, _)| program.idents.iter().position(|word| word == name))).map(|at| frame.cells.borrow()[at].clone());
         let book = if op != Prim::WorldBook && class_book.is_some() {
-            match self.what_it_spells(class_book.unwrap()) {
-                Value::Shared(cell) | Value::Mutable(cell, _) => cell,
-                value => Rc::new(RefCell::new(value)),
+            let mut selected = self.what_it_spells(class_book.unwrap());
+            loop {
+                match selected {
+                    Value::Shared(cell) => {
+                        let inside = cell.borrow().clone();
+                        if matches!(inside, Value::Mutable(..) | Value::Shared(_)) { selected = inside; }
+                        else { break cell; }
+                    }
+                    Value::Mutable(cell, _) => break cell,
+                    value => break Rc::new(RefCell::new(value)),
+                }
+            }
+        } else if op == Prim::WorldBook && self.reading_now.is_none() {
+            let source = self.frames_named.last().and_then(|code| code.written_in.as_ref());
+            let namespace = source.and_then(|source| self.loaded_spaces.get(source)).and_then(|name| self.imported.get(name));
+            match namespace {
+                Some(Value::Thing(space)) => Rc::new(RefCell::new(Value::Attributes(space.clone()))),
+                _ => self.world_kept(),
             }
         } else if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
             self.book_about(op == Prim::WorldBook)

@@ -14075,7 +14075,12 @@ impl<'a> Engine<'a> {
         }
         if let Builtin::ClassTool(job) = builtin {
             let supplied = items.into_iter().map(|(key, value)| match key { Some(key) => Value::Tie(Rc::new((Value::text(&key), value))), None => value }).collect();
-            return self.class_work(job, supplied).map_err(|fault| { self.carried = Some(fault); self.lang.stream_failed[0].clone() });
+            return self.class_work(job, supplied).map_err(|fault| {
+                match self.carried.take().unwrap_or(fault) {
+                    Fault::Note(words) => words,
+                    raised => { self.carried = Some(raised); self.special_fault() }
+                }
+            });
         }
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
@@ -20920,7 +20925,7 @@ impl Engine<'_> {
     /// The dictionary of builtin words itself, as a value a program may
     /// hold and ask after.
     fn native_dict(&mut self) -> Value {
-        self.natives_book().borrow().clone()
+        Value::Bond(self.natives_book())
     }
 
     /// Whether a value is that very dictionary, rather than some other

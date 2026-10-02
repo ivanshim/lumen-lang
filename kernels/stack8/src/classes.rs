@@ -169,7 +169,7 @@ impl<'a> Engine<'a> {
         }
         let Some(op) = self.lang.builtins.get(word).copied() else { return Err(self.class_refusal()); };
         let items = self.call_items(args)?;
-        let made = self.builtin_call(op, word, items)?;
+        let made = self.builtin_call(op, word, items).map_err(|words| self.carried.take().unwrap_or(Fault::Note(words)))?;
         let made = if word == "str" { Self::worth_of(&made).unwrap_or(made) } else { made };
         let kept = match made.contents() {
             held @ (Value::Array(_) | Value::Map(_)) => Value::Collection(Rc::new(RefCell::new(held)), true),
