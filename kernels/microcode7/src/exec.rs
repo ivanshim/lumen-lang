@@ -15004,6 +15004,12 @@ impl<'a> Machine<'a> {
                         let walk = self.iterated_value(&thing.clone())?;
                         self.apart_members(&walk, wanted, star.is_some())?
                     }
+                    // A thing built on a native tuple or list, saying
+                    // nothing of how it walks, offers the members of
+                    // that built-in to be taken apart here.
+                    thing @ Value::Thing(_) if self.underlying_unless(thing, &[15]).is_some() => {
+                        self.gathered_members(thing)?
+                    }
                     Value::Tuple(items) | Value::Row(items) => items.to_vec(),
                     Value::TextRow(..) | Value::Octets { .. } | Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),

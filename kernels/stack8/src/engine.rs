@@ -9315,6 +9315,12 @@ impl<'a> Engine<'a> {
                         let walk = self.core_iterator(&source)?;
                         self.apart_members(&walk, *count, rest.is_some())?
                     }
+                    // A thing of a class standing on a tuple or list
+                    // that adds no walk of its own is taken apart by
+                    // what it holds, the members a loop over it sees.
+                    Value::Object(_) if self.worth_free_of(&source, &[15]).is_some() => {
+                        self.comprehension_items(&source)?
+                    }
                     Value::Words(..) | Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
