@@ -87,6 +87,7 @@
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
+  "ext.builtin.at_end": ["__at_end"],
   "ext.builtin.host.info": [
     "__host_info"
   ],

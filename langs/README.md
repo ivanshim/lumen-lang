@@ -4420,7 +4420,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
-| `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
+| `ext.builtin.at_end` | - | - | `__at_end` | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
@@ -5723,3 +5723,5 @@ unittest assertions do not stringify their operands.
 
 The `ext.builtin.host.info` helper also accepts the `build` query, exposing
 the Rust compiler flags for support-library sanitizer detection.
+
+Python `ext.builtin.at_end` registers the atexit dispatcher for interpreter shutdown.
