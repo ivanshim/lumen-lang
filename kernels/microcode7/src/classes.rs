@@ -1486,8 +1486,12 @@ impl<'a> Machine<'a> {
             None => {
                 let of = self.common_ancestor(); self.made += 1;
                 let holder = Rc::new(Thing {reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
+                let position = self.routine_members.len();
+                if let Value::Routine(body) | Value::Bound(body, _) = code {
+                    self.routine_worlds.entry(Rc::as_ptr(body) as usize).or_insert(position);
+                }
                 self.routine_members.push((code.clone(), holder));
-                self.routine_members.len() - 1
+                position
             }
         }
     }
