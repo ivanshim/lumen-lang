@@ -293,6 +293,7 @@ pub enum Action {
     /// What a walk walks. A thing that hands another over to be walked
     /// in its stead answers with that one; a thing that is its own walk
     /// is wound back and answers with itself; anything else is itself.
+    IteratorSeed,
     WalkFrom,
     Awaited,
     AsyncGenerator,

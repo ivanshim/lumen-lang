@@ -10211,7 +10211,7 @@ impl<'a> Builder<'a> {
         let begins = self.pos;
         let source = self.expr(1)?;
         let ends = self.pos;
-        let parameter = self.gather_name("first_source");
+        let parameter = self.table.single("ext.stmt.yield.input").map(str::to_owned).unwrap_or_else(|| self.gather_name("first_source"));
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
         let mut async_result = false;
         let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
@@ -10435,7 +10435,12 @@ impl<'a> Builder<'a> {
         let walks = self.table.flag("ext.stmt.yield.suspends");
         let beginning = self.pos;
         let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
-            Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
+            Some((_, end, parameter)) => {
+                self.pos = end;
+                let supplied = self.read(&parameter);
+                if asynchronous || !self.table.has_any("ext.stmt.yield.input") { supplied }
+                else { prim_call(Prim::IteratorInput, vec![supplied]) }
+            }
             None => {
                 let value = self.expr(1)?;
                 prim_call(if asynchronous { Prim::AsyncWalked } else if walks { Prim::Walked } else { Prim::Iterated }, vec![value])

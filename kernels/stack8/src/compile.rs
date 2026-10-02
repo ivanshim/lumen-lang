@@ -10818,7 +10818,7 @@ impl<'a> Compiler<'a> {
         let source_end = self.pos;
         let first_async = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
         self.act(if first_async { Action::AsyncWalk } else { Action::WalkFrom }, 1);
-        let seed = self.gensym("generator_source");
+        let seed = self.lang.yield_input.first().cloned().unwrap_or_else(|| self.gensym("generator_source"));
         let name = "<genexpr>".to_string();
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let mut asynchronous = false;
@@ -11029,6 +11029,7 @@ impl<'a> Compiler<'a> {
             let instruction_start = self.mark();
             if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
                 self.read(&seed);
+                if !asynchronous && !self.lang.yield_input.is_empty() { self.act(Action::IteratorSeed, 1); }
                 self.pos = end;
             } else {
                 self.expr(1)?;

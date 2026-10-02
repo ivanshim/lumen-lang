@@ -1862,6 +1862,13 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::IteratorInput => {
+                n(1)?;
+                let value = v[0].settled();
+                if matches!(value, Value::Iterator(_) | Value::Generator(_) | Value::Traversal(..) | Value::Cursor(_) | Value::SetCursor { .. }) { value }
+                else if self.appointment(&value, 16).is_some() { Value::Traversal(Rc::new(value), Rc::new(RefCell::new(None))) }
+                else { return Err(self.core_complaint("core.not_iterator", &value.kind_word()).into()); }
+            }
             Prim::MoreYet => {
                 n(2)?;
                 if let Value::Generator(state) = &v[0] {
@@ -6229,7 +6236,7 @@ impl<'a> Machine<'a> {
                     let unwrapped = if let Value::Wrapped(245, inner) = held { inner[0].clone() } else { held };
                     self.walking(&Prim::Walked, name, &[unwrapped])
                 }
-                Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
+                Prim::IteratorInput | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                     let v = self.value_list(args, frame)?;
                     self.walking(op, name, &v)
                 }
@@ -15665,7 +15672,7 @@ impl<'a> Machine<'a> {
             }
             // The steps of a walk that a thing may answer for itself are
             // worked out where a call can be made, not here.
-            Prim::AsyncWalk | Prim::AwaitResult | Prim::AsyncGathered | Prim::AsyncWalked | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
+            Prim::AsyncWalk | Prim::AwaitResult | Prim::AsyncGathered | Prim::AsyncWalked | Prim::IteratorInput | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                 return Err(format!("{}() is worked out where a call can be made", name))
             }
             Prim::Kept => {
@@ -22071,6 +22078,33 @@ impl<'a> Machine<'a> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
+    pub(super) fn function_from_compilation(&mut self, original: &Value, namespace: Value) -> Result<Value,String> {
+        let Value::Thing(compiled)=original.settled() else { return Err(self.source_refused()); };
+        let entries=compiled.holds.borrow();
+        let text=entries.first().map(|(_,v)|v.bare()).ok_or_else(||self.source_refused())?;
+        let filename=entries.get(1).map(|(_,v)|v.bare()).ok_or_else(||self.source_refused())?;
+        let manner=match entries.get(2) {Some((_,Value::Small(mode)))=>*mode as usize,_=>return Err(self.source_refused())};
+        let suspended=entries.iter().any(|(key,v)|key=="co_flags" && matches!(v,Value::Small(bits) if bits&128!=0));
+        let Value::Dict(_)=namespace.settled() else {return Err(String::from("TypeError: function() argument 'globals' must be dict"))};
+        let room=match &namespace {Value::Mutable(cell,_)|Value::Shared(cell)=>cell.clone(),_=>Rc::new(RefCell::new(namespace.clone()))};
+        let tokens=self.text_tokens(&text,manner).map_err(|(said,row,col)|self.text_unreadable_at(manner,said,&filename,row,col,None,&text))?;
+        let start=self.idents.len();
+        let seed:Vec<String>=(0..start).map(|i|format!("\0outside/{i}")).collect();
+        let mut natives=self.builtins_here();
+        let mut shadow=Vec::new();
+        if let Some(key)=self.table.single("ext.system.module.builtins") {
+            if let Some(held)=looked_up(&room,key) { natives=held;shadow.extend(self.table.prims.keys().cloned()); }
+        }
+        let (built,_)=self.text_built(&text,&tokens,&seed,&filename,manner,&shadow,suspended,Some(namespace.clone()),Some(natives),None)?;
+        self.idents.extend(built.globals[start..].iter().map(|word|format!("\0names/{start}/{word}")));
+        self.outermost.cells.borrow_mut().resize(self.idents.len(),Value::Unset);
+        self.readings.push(Namebook {near:room,outer:None,from:start,upto:built.globals.len(),declared:built.outer_aliases});
+        let function=Value::Bound(built.program,self.outermost.clone());
+        let record=self.routine_storage(&function);
+        self.routine_members[record].1.holds.borrow_mut().push(("\0handed".to_owned(),namespace));
+        Ok(function)
+    }
+
     fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool) -> Result<Value, String> {
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {

@@ -671,6 +671,9 @@ impl<'a> Engine<'a> {
                     let Some(Value::Object(object))=args.first().cloned() else { return Err(self.class_refusal()); };
                     args.remove(0);
                     let op=*self.lang.builtins.get(&word).ok_or_else(||self.class_refusal())?;
+                    if op == Builtin::List && self.class_value(&object.class_now(),self.class_word("allocate")).is_some_and(|maker| !matches!(maker,Value::Adapter(_))) {
+                        args=self.call_items(args)?.into_iter().filter_map(|(key,value)|key.is_none().then_some(value)).collect();
+                    }
                     let initialized=self.descriptor_apply(Value::Native(op,Rc::from(word)),args)?;
                     let mut fields=object.fields.borrow_mut();
                     let slot=fields.iter_mut().find(|(name,_)|name=="\0worth").ok_or_else(||self.class_refusal())?;
@@ -700,7 +703,7 @@ impl<'a> Engine<'a> {
                     self.class_construct(class, values)
                 }
                 43 => {
-                    if let Some(first) = args.first() { self.iterator(first.clone())?; }
+
                     self.class_apply(w.1[0].clone(), args)
                 }
                 42 => Ok(Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true)),
@@ -915,6 +918,10 @@ impl<'a> Engine<'a> {
         }
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
+        }
+        if Self::own_kind(&c).as_deref() == Some("function") && matches!(args.first().map(Value::contents), Some(Value::Object(code)) if self.lang.compile_kind.as_deref()==Some(code.class_now().name.as_str())) {
+            if args.len()!=2 { return Err("TypeError: function requires code and globals".into()); }
+            return self.function_from_text(args[0].clone(),args[1].clone()).map_err(Fault::from);
         }
         if Self::own_kind(&c).as_deref() == Some("function") && self.lang.trace_fields.len() > 18 && matches!(args.first().map(Value::contents), Some(Value::Adapter(code)) if code.0 == 7) {
             let mut parts = vec![None; 5];
@@ -2029,7 +2036,7 @@ impl<'a> Engine<'a> {
     /// A namespace handed to a routine: a dictionary it keeps from then
     /// on, the very one handed over; anything else, or taking it away,
     /// is refused as CPython refuses it.
-    fn routine_namespace_write(&mut self, at: usize, value: Option<Value>) -> Flow<Value> {
+    pub(super) fn routine_namespace_write(&mut self, at: usize, value: Option<Value>) -> Flow<Value> {
         let Some(book)=value else {return Err(self.class_word("namespace.kept").to_string().into())};
         if !matches!(book.contents(),Value::Map(_)) {
             let pieces=self.lang.class_details.get("namespace.amiss").cloned().unwrap_or_default();
@@ -2069,7 +2076,7 @@ impl<'a> Engine<'a> {
         self.function_members[at].1.fields.borrow_mut().push((own,fresh.clone()));
         fresh
     }
-    fn function_storage(&mut self, function: &Value) -> usize {
+    pub(super) fn function_storage(&mut self, function: &Value) -> usize {
         if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
         let class = self.root_class();
         self.made += 1;
@@ -2882,7 +2889,7 @@ impl<'a> Engine<'a> {
             for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
                 if let Some(w)=words.first() { names.push(w.clone()); }
             }
-            for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()) {
+            for word in [14, 15, 21, 24].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()) {
                 if !word.is_empty() { names.push(word); }
             }
             names.sort();names.dedup();

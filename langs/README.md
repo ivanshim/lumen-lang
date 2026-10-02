@@ -5412,6 +5412,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.exit` | - | - | `GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.input` | - | - | `.0` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.running` | - | - | `gi_running` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.suspends` | - | - | `true` | - | - | - | - | - | - | - |
@@ -5713,3 +5714,7 @@ user comparisons; the four reference kernels ignore this label.
 `ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.
 
 The Python floating math adapter also supplies compensated `fsum`, consuming its iterable lazily and preserving overflow and infinity errors.
+
+`ext.stmt.yield.input` names the iterator argument of a generator expression.
+It exposes that argument in the frame namespace and requires an iterator when
+the expression starts, including when its code is made into a new function.

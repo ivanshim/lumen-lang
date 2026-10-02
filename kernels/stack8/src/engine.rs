@@ -10851,6 +10851,14 @@ impl<'a> Engine<'a> {
                 };
                 Value::Small(onward as i64)
             }
+            Action::IteratorSeed => {
+                let supplied = self.drop_top()?.contents();
+                match supplied {
+                    iterator @ (Value::Cursor(_) | Value::Generator(_) | Value::Walking(_) | Value::Walk(_) | Value::SetWalk(..)) => iterator,
+                    other if self.special_value(&other, 16).is_some() => Value::Walking(Rc::new(RefCell::new((other, None)))),
+                    other => return Err(self.core_fault("core.not_iterator", &other.core_kind()).into()),
+                }
+            }
             Action::WalkMore => {
                 let pair = self.drop_many(2)?;
                 if let Value::Generator(held) = &pair[0] {
@@ -21966,6 +21974,36 @@ impl Engine<'_> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
+    pub(super) fn function_from_text(&mut self, code: Value, globals: Value) -> Res<Value> {
+        let Value::Object(code)=code.contents() else { return Err(self.source_unready()); };
+        let fields=code.fields.borrow();
+        let (Value::Text(source),Value::Text(file),Value::Small(mode))=(&fields[0].1,&fields[1].1,&fields[2].1) else { return Err(self.source_unready()); };
+        let asynchronous=fields.iter().any(|(name,value)|name=="co_flags" && matches!(value,Value::Small(flags) if flags&128!=0));
+        if !matches!(globals.contents(),Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
+        let outer=match &globals { Value::Bond(cell)|Value::Collection(cell,_)=>cell.clone(), _=>Rc::new(RefCell::new(globals.clone())) };
+        let file=file.clone();
+        let tokens=self.text_tokens(source,*mode as usize).map_err(|(said,row,col)|self.text_syntax(*mode as usize,said,&file,row,col,None,source))?;
+        let offset=self.registry.idents.len();
+        let mut local=crate::compile::Registry::default();
+        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        local.globe=Some(globals.clone());
+        local.born=Some(self.native_dict());
+        if let Some(word)=self.lang.module_builtins.first() {
+            if let Some(held)=book_entry(&outer,word) {
+                local.born=Some(self.as_builtins_dictionary(held).map_err(|fault|match fault {Fault::Note(said)=>said,other=>{self.carried=Some(other);self.special_fault()}})?);
+                for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
+            }
+        }
+        let (program,_)=self.text_program(source,&tokens,&file,*mode as usize,Some(&mut local),asynchronous,None)?;
+        for name in &local.idents[offset..] { self.registry.slot(&format!("\0names:{offset}:{name}")); }
+        self.world.resize(self.registry.idents.len(),Value::Blank);
+        self.text_books.push(TextBook {near:outer,outer:None,from:offset,upto:local.idents.len(),declared:local.declared_outer});
+        let function=Value::Routine(program);
+        let at=self.function_storage(&function);
+        self.routine_namespace_write(at,Some(globals)).map_err(|fault|match fault {Fault::Note(said)=>said,other=>{self.carried=Some(other);self.special_fault()}})?;
+        Ok(function)
+    }
+
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool) -> Res<Value> {
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {

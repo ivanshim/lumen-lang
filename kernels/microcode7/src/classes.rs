@@ -110,7 +110,7 @@ impl<'a> Machine<'a> {
             for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
                 if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
             }
-            for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
+            for word in [14, 15, 21, 24].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
                 if !word.is_empty() { names.push(word); }
             }
             names.sort();names.dedup();
@@ -765,6 +765,10 @@ impl<'a> Machine<'a> {
                         let receiver=values.remove(0).settled();
                         let Value::Thing(object)=receiver else { return Err(self.class_unready()); };
                         let operation=*self.table.prims.get(&word).ok_or_else(||self.class_unready())?;
+                        if operation == Prim::Listed {
+                            let allocation=self.inherited_entry(&object.blueprint(),self.detail("allocate"));
+                            if allocation.is_some_and(|entry| !matches!(entry,Value::Wrapped(..))) { values=self.open_arguments(values)?.0; }
+                        }
                         let initialized=self.apply_held(Value::Intrinsic(operation,Rc::from(word)),values)?;
                         let mut holds=object.holds.borrow_mut();
                         let Some((_,under))=holds.iter_mut().find(|(name,_)|name=="\0underlying") else { return Err(self.class_unready()); };
@@ -795,7 +799,7 @@ impl<'a> Machine<'a> {
                         self.construct_plainly(target, positional)
                     }
                     43 => {
-                        if let Some(first) = values.first() { self.make_iterator(first.clone())?; }
+
                         self.apply_class_member(kept[0].clone(), values)
                     }
                     72 => Ok(Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true)),
@@ -1004,6 +1008,10 @@ impl<'a> Machine<'a> {
             let mut given=given;
             if !matches!(given[0].settled(),Value::Routine(_)|Value::Bound(..)) { given.push(Value::Flag(true)); }
             return Ok(Self::wrap(3, given));
+        }
+        if Self::native_word(&class).as_deref()==Some("function") && matches!(given.first().map(Value::settled),Some(Value::Thing(code)) if self.table.single("ext.builtin.compile.kind")==Some(code.blueprint().name.as_str())) {
+            if given.len()!=2 { return Err(String::from("TypeError: function requires code and globals").into()); }
+            return self.function_from_compilation(&given[0],given[1].clone()).map_err(Escape::from);
         }
         if Self::native_word(&class).as_deref() == Some("function") && self.table.has_any("ext.builtin.exceptions.traceback") && matches!(given.first().map(Value::settled), Some(Value::Wrapped(7, _))) {
             let (positional, keywords) = self.open_arguments(given)?;
@@ -1622,7 +1630,7 @@ impl<'a> Machine<'a> {
         self.routine_members[at].1.holds.borrow_mut().push((apart,fresh.clone()));
         fresh
     }
-    fn routine_storage(&mut self, code: &Value) -> usize {
+    pub(super) fn routine_storage(&mut self, code: &Value) -> usize {
         match self.routine_members.iter().position(|(candidate, _)| candidate.equals(code)) {
             Some(found) => found,
             None => {
