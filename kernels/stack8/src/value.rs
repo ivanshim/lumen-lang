@@ -1019,6 +1019,24 @@ impl Value {
             if length.is_one() { return Ok(format!("span1/{}", span.start)); }
             return Ok(format!("span{}/{}/{}", length, span.start, span.step));
         }
+        // A complex is keyed by the two numbers it stands for, and one
+        // whose imaginary part is nought is the very real number it
+        // equals, taking that number's key so the two meet as one. A
+        // pair holding a value no number answers to keeps its own
+        // place, shared with nothing, as a real no number answers to
+        // does.
+        if let Value::Complex(z) = self {
+            if z.real.is_nan() || z.imag.is_nan() { return Ok(format!("apart{:p}", Rc::as_ptr(z))); }
+            if z.imag == 0.0 {
+                if let Some((p, q)) = crate::arith::parts(&crate::complex::real(z.real)) {
+                    if q.is_zero() { return Err(""); }
+                    let common = p.gcd(&q);
+                    return Ok(format!("n{}/{}", p / &common, q / common));
+                }
+            }
+            let near = |n: f64| if n == 0.0 { "0".to_string() } else { format!("{n:?}") };
+            return Ok(format!("c{}/{}", near(z.real), near(z.imag)));
+        }
         if let Some((p, q)) = crate::arith::parts(self) {
             if q.is_zero() { return Err(""); }
             let common = p.gcd(&q);
@@ -1558,6 +1576,23 @@ impl Value {
             // writes it.
             Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
             Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
+            // A cell a closure keeps a name in is written the way the
+            // reference writes it: the place it stands and the kind of
+            // what it holds there, or its emptiness before it holds
+            // anything at all.
+            Value::Adapter(w) if w.0 == 31 => {
+                let held = w.1.first().and_then(|slot| match slot {
+                    Value::Binding(place) | Value::Bond(place) => {
+                        let value = place.borrow().clone();
+                        (!matches!(value, Value::Blank | Value::Gap)).then_some(value)
+                    },
+                    _ => None,
+                });
+                match held {
+                    Some(value) => format!("<cell at 0x1: {} object at 0x1>", value.core_kind()),
+                    None => "<cell at 0x1: empty>".to_string(),
+                }
+            },
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => format!("<object {}>", o.class_now().name),
             Value::SortOf(k) => k.tag().to_string(),

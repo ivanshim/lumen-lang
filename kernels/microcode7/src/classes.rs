@@ -550,7 +550,7 @@ impl<'a> Machine<'a> {
         }
         if let Some(word)=self.table.single("ext.stmt.class.property.setter"){entries.push((word.to_owned(),Self::wrap(54,Vec::new())));}
         if let Some(word)=self.table.single("ext.stmt.class.constructor"){entries.push((word.to_owned(),Self::wrap(56,Vec::new())));}
-        for part in ["property.fget","property.fset","property.fdel","doc"] {
+        for part in ["property.fget","property.fset","property.fdel","doc","property.is_abstract"] {
             entries.push((self.detail(part).to_owned(),Self::wrap(58,vec![Value::text(Self::accessor_key(part))])));
         }
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
@@ -562,7 +562,7 @@ impl<'a> Machine<'a> {
     /// The keys a property keeps its accessors under, out of reach of
     /// any name a program can write.
     fn accessor_key(part:&str)->&'static str {
-        match part {"property.fget"=>"\0fget","property.fset"=>"\0fset","property.fdel"=>"\0fdel","doc"=>"\0doc",_=>"\0name"}
+        match part {"property.fget"=>"\0fget","property.fset"=>"\0fset","property.fdel"=>"\0fdel","doc"=>"\0doc","property.is_abstract"=>"\0abstract",_=>"\0name"}
     }
     /// Whether a value stands for the property builtin read as a class:
     /// its word, before anything else was bound to that name.
@@ -585,7 +585,21 @@ impl<'a> Machine<'a> {
     }
     /// What a property's kept accessor shows: itself; or, for the first
     /// string, the one given, else the getter's own.
-    fn accessor_shown(&self,property:&Thing,key:&str)->Value {
+    fn accessor_shown(&mut self,property:&Thing,key:&str)->Value {
+        // Whether the property's getter is one nobody has answered: a
+        // plain yes or no, as the reference gives it, read off the
+        // getter's own mark and off nothing else.
+        if key=="\0abstract" {
+            let word=self.detail("property.is_abstract").to_owned();
+            let marked=Self::kept_accessor(property,"\0fget")
+                .and_then(|held|self.read_class_member(held,&word,true).ok())
+                .map(|worth|worth.settled());
+            return Value::Flag(match marked {
+                Some(Value::Flag(answers))=>answers,
+                Some(Value::Nil)|Some(Value::Unset)|None=>false,
+                Some(_)=>true,
+            });
+        }
         if let Some(v)=Self::kept_accessor(property,key){return v;}
         if key=="\0doc" {
             if let Some(Value::Routine(getter)|Value::Bound(getter,_))=Self::kept_accessor(property,"\0fget") {
@@ -1453,8 +1467,13 @@ impl<'a> Machine<'a> {
         let mut items = Vec::new();
         if !code.type_params.is_empty() {
             let maker = self.hint_maker()?;
-            for name in &code.type_params {
-                items.push(self.apply_class_member(maker.clone(), vec![Value::text(name)])?);
+            for (name, bound) in &code.type_params {
+                let mut given = vec![Value::text(name)];
+                if let Some(held) = bound {
+                    let worth = self.apply_class_member(held.clone(), Vec::new())?;
+                    given.push(Value::Couple(Rc::new((Value::text("bound"), worth))));
+                }
+                items.push(self.apply_class_member(maker.clone(), given)?);
             }
         }
         Ok(Value::tuple(items))
@@ -1983,7 +2002,7 @@ impl<'a> Machine<'a> {
             }
             if key==self.detail("name"){return Ok(self.routine_kept(&value,key,Value::text(&code.ident)));}
             if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(self.routine_kept(&value,key,Value::text(&qualified)));}
-            if key==self.detail("doc"){return Ok(code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));}
+            if key==self.detail("doc"){let fresh=code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d));return Ok(self.routine_kept(&value,key,fresh));}
             if key==self.detail("module"){let place=self.routine_module(&code);return Ok(self.routine_kept(&value,key,place));}
             if key==self.detail("code"){let ran=self.code_run_by(&value);return Ok(self.code_handle(&ran));}
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}

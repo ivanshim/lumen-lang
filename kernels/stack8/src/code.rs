@@ -596,6 +596,9 @@ pub enum Builtin {
     DirList,
     DirMake,
     DirGone,
+    /// One directory taken away where it stands, but only where
+    /// nothing stands under it (ext.builtin.dir.remove).
+    DirRemove,
     /// One directory made to stand where the path given says, with
     /// none made along the way to it (ext.builtin.dir.make_one).
     DirMakeOne,
@@ -921,10 +924,11 @@ pub struct Routine {
     /// nowhere else.
     pub within: Option<Rc<str>>,
     /// The names a declaration wrote between brackets for its type
-    /// parameters, in the order they were written. Empty where it
-    /// wrote none, from which the row of type parameters is made
-    /// the first time it is asked for.
-    pub type_params: Vec<String>,
+    /// parameters, in the order they were written, each with the
+    /// routine answering the bound it was given after a colon, where
+    /// it was given one. Empty where it wrote none, from which the
+    /// row of type parameters is made the first time it is asked for.
+    pub type_params: Vec<(String, Option<Rc<Routine>>)>,
     /// The dictionary of outermost names a routine built by hand was
     /// handed, where one was. Nothing for every routine the program
     /// wrote out under a name, whose names stand where it was read.

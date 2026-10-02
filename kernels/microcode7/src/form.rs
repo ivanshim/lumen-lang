@@ -202,6 +202,7 @@ pub enum Prim {
     DirEntries,
     DirFresh,
     DirWhole,
+    DirDrop,
     /// A single directory raised at the place named, no others
     /// raised on the way there (ext.builtin.dir.make_one).
     DirOne,
@@ -822,7 +823,7 @@ pub struct Routine {
     /// The names a declaration wrote between brackets for its type
     /// parameters, in the order written. Empty where it wrote none,
     /// from which the row of type parameters is made when asked for.
-    pub type_params: Vec<String>,
+    pub type_params: Vec<(String, Option<Value>)>,
     /// The dictionary of outermost names a routine framed by hand was
     /// given, where one was: nothing for a routine the program wrote.
     pub globe: Option<Value>,

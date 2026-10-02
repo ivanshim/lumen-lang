@@ -742,10 +742,16 @@ fn unique_directory_name() -> String {
     String::from_utf8(out).unwrap()
 }
 
+/// The frame a name's address reaches from the one a call stands in:
+/// as far up as the address says, and no farther than the frames go,
+/// since a routine answered bare reaches the outermost one.
 fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
     let mut f = frame;
     for _ in 0..depth {
-        f = f.outer.as_ref().expect("a frame above");
+        match f.outer.as_ref() {
+            Some(above) => f = above,
+            None => break,
+        }
     }
     f
 }
@@ -5841,6 +5847,15 @@ impl<'a> Machine<'a> {
                     // order in which the body named them.
                     let rank=|key:&String|plan.ranking.iter().position(|name|name==key).unwrap_or(usize::MAX);
                     entries.sort_by_key(|(key,_)|rank(key));
+                    // The module the class was written in stands in its
+                    // namespace before the body ever runs, unless the
+                    // body named one of its own.
+                    let module_word=self.detail("module").to_owned();
+                    if !module_word.is_empty()&&entries.iter().all(|(named,_)|*named!=module_word) {
+                        let named=self.loaded_spaces.get(self.written_in.as_ref())
+                            .cloned().unwrap_or_else(||self.detail("main").to_owned());
+                        entries.insert(0,(module_word,Value::text(&named)));
+                    }
                     let mut parents=Vec::new();parents.extend(under);parents.extend(answers);
                     return self.build_class_value(plan.name.clone(),parents,entries);
                 }
@@ -12097,6 +12112,19 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        // A whole number is written out only where it holds no more
+        // figures than the table allows, whichever way of writing it
+        // -- plain, quoted or shown within a collection -- asked.
+        if matches!(subject.settled(), Value::Huge(_)) { self.figures_allowed(subject)?; }
+        // A cell a closure keeps a name in is shown the way the
+        // reference shows it: the place it stands and the kind of what
+        // it holds there, or its emptiness before it holds anything.
+        if let Value::Wrapped(35, items) = subject {
+            return Ok(match self.cell_contents(items) {
+                Some(held) => format!("<cell at 0x1: {} object at 0x1>", held.kind_word()),
+                None => String::from("<cell at 0x1: empty>"),
+            });
+        }
         let celled = match subject {
             Value::Mutable(place, represented) => Some((place.clone(), *represented)),
             Value::Shared(place) => Some((place.clone(), false)),
@@ -15955,6 +15983,14 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
+            }
+            // A single directory lifted away from the place named,
+            // where nothing stands under it: false where it still
+            // holds anything or no such directory stood there.
+            Prim::DirDrop => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_dir(v[0].render(w)).is_ok())
             }
             // A single directory raised at the place named: true
             // when it stands there afterwards, false when it stood
@@ -22417,6 +22453,16 @@ impl Machine<'_> {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
             Quoted => {
                 require(1, 1)?;
+                // A whole number is quoted only where it holds no more
+                // figures than the table allows.
+                if matches!(input[0].settled(), Value::Huge(_)) { self.figures_allowed(&input[0])?; }
+                // A closure's cell keeps its value in a frame, so it is
+                // written by the engine's own walk, which can open that
+                // frame; the plain quoting cannot reach it.
+                if matches!(input[0], Value::Wrapped(35, _)) {
+                    let rendered = self.object_words(&input[0], true)?;
+                    return Ok(Value::text(&rendered));
+                }
                 if portion.is_none() && matches!(input[0], Value::Vector(_) | Value::Tuple(_)) {
                     let rendered = self.object_words(&input[0], true)?;
                     return Ok(Value::text(&rendered));
@@ -22960,7 +23006,13 @@ impl Machine<'_> {
                         if told.is_empty() { return Err(self.core_complaint("core.unready", name)); }
                         return Err(told);
                     }
-                    let found = self.attribute(standing.as_ref().unwrap_or(&input[0]), &word);
+                    let mut found = self.attribute(standing.as_ref().unwrap_or(&input[0]), &word);
+                    // A name the kind keeps no entry under may still be
+                    // one the value answers as a plain read of the name
+                    // does; the two ways of asking never disagree.
+                    if found.is_none() && matches!(op, GetMember | HasAttribute) {
+                        found = self.read_class_member(input[0].clone(), &word, false).ok();
+                    }
                     if op == HasAttribute { return Ok(Value::Flag(found.is_some())); }
                     if let Some(member) = found {
                         return match member {

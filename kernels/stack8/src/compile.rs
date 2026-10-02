@@ -295,7 +295,7 @@ pub struct Compiler<'a> {
     carrying: Vec<usize>,
     /// The type parameters the declaration just read wrote between
     /// brackets, taken by the routine that declaration is making.
-    pending_types: Vec<String>,
+    pending_types: Vec<(String, Option<Rc<Routine>>)>,
     /// How many lines stand before the program's own text.
     before: u32,
     /// Whether the reading has come to the program's own lines, past
@@ -1889,19 +1889,21 @@ impl<'a> Compiler<'a> {
         self.take();
         let mut ends = lang.tuple_marks.clone();
         ends.push(pair.close.clone());
-        let mut written: Vec<String> = Vec::new();
+        let mut written: Vec<(String, Option<Rc<Routine>>)> = Vec::new();
         loop {
             if self.on_any(&lang.carries_words) || self.on_any(&lang.carries_pairs) { self.take(); }
             let parameter = self.look().lexeme.clone();
             self.want_name("as a type parameter")?;
-            written.push(parameter);
+            let mut bound = None;
             if self.on_any(&lang.annotation_marks) {
                 self.take();
-                let mut bound_ends = ends.clone();
-                bound_ends.extend(lang.assign_words.clone());
-                self.annotation_expression(&bound_ends)?;
+                // The bound is kept as a routine answering its value,
+                // worked out in the scope the declaration stands in
+                // when the parameter is first asked for.
+                bound = Some(self.deferred_annotation()?);
             }
             if self.on_assign() { self.take(); self.annotation_expression(&ends)?; }
+            written.push((parameter, bound));
             if !self.on_any(&lang.tuple_marks) { break; }
             self.take();
             if self.at_symbol(&pair.close) { break; }
@@ -6112,13 +6114,22 @@ impl<'a> Compiler<'a> {
         let from = self.mark();
         self.take();
         let mut names = std::collections::HashSet::new();
+        let mut written: Vec<(String, Option<Rc<Routine>>)> = Vec::new();
         loop {
             if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) { self.take(); }
             let name = self.want_name("as a type parameter")?;
             if !lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
-            if !names.insert(name) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
-            if self.on_any(&lang.annotation_marks) { self.take(); self.expr_at(0, false)?; }
+            if !names.insert(name.clone()) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
+            let mut bound = None;
+            if self.on_any(&lang.annotation_marks) {
+                self.take();
+                // The bound is kept as a routine answering its value,
+                // worked out where the declaration stands when the
+                // parameter is first asked for.
+                bound = Some(self.deferred_annotation()?);
+            }
             if self.on_assign() { self.take(); self.expr(0)?; }
+            written.push((name, bound));
             if !self.on_any(&lang.tuple_marks) { break; }
             self.take();
             if self.on_any(&lang.type_params_close) { break; }
@@ -6126,6 +6137,7 @@ impl<'a> Compiler<'a> {
         self.want_sign(&lang.type_params_close[0], "after the type parameters")?;
         self.piece().instrs.truncate(from);
         self.forbids_await = old_rule;
+        self.pending_types = written;
         Ok(())
     }
 
@@ -6323,6 +6335,10 @@ impl<'a> Compiler<'a> {
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
         let asynchronous = self.pos >= 3 && Lang::spells(&self.lang.async_words, &self.tokens[self.pos - 3].lexeme);
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
+        // The type parameters read here stand aside while the
+        // parameters and their defaults are read, so a routine written
+        // within one of those is not handed them instead.
+        let typed = std::mem::take(&mut self.pending_types);
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -6346,6 +6362,7 @@ impl<'a> Compiler<'a> {
                 self.annotation_expression(&lang.block_intros)?;
             }
         }
+        self.pending_types = typed;
         // A method may be named and not written out, in a class of
         // method names only; it answers with nothing. A body on the line
         // after the name is still a body.

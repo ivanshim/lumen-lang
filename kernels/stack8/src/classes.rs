@@ -452,7 +452,7 @@ impl<'a> Engine<'a> {
         for (part, tag) in workings { members.push((self.class_word(part).to_string(), Self::adapter(tag, vec![]))); }
         if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24, vec![]))); }
         if let Some(word) = &self.lang.constructor { members.push((word.clone(), Self::adapter(26, vec![]))); }
-        for part in ["property.fget", "property.fset", "property.fdel", "doc"] {
+        for part in ["property.fget", "property.fset", "property.fdel", "doc", "property.is_abstract"] {
             members.push((self.class_word(part).to_string(), Self::adapter(28, vec![Value::text(Self::accessor_place(part))])));
         }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
@@ -464,7 +464,7 @@ impl<'a> Engine<'a> {
     /// Where a property keeps each accessor among its own members, under
     /// names no program can spell.
     fn accessor_place(part: &str) -> &'static str {
-        match part { "property.fget" => "\0fget", "property.fset" => "\0fset", "property.fdel" => "\0fdel", "doc" => "\0doc", _ => "\0name" }
+        match part { "property.fget" => "\0fget", "property.fset" => "\0fset", "property.fdel" => "\0fdel", "doc" => "\0doc", "property.is_abstract" => "\0abstract", _ => "\0name" }
     }
     /// Whether a value read as a class names the property class: the
     /// builtin's word, read before anything was written to that name.
@@ -545,7 +545,20 @@ impl<'a> Engine<'a> {
     }
     /// What a property's kept accessor reads as: the accessor itself, or
     /// for its first string, the one it was given, else its getter's.
-    fn property_reading(&self, property: &Instance, place: &str) -> Value {
+    fn property_reading(&mut self, property: &Instance, place: &str) -> Value {
+        // Whether the property's getter is one nobody has answered: a
+        // plain yes or no, as the reference gives it, taken from the
+        // getter's own mark and from nothing else.
+        if place == "\0abstract" {
+            let word = self.class_word("property.is_abstract").to_string();
+            let getter = Self::property_accessor(property, "\0fget");
+            let marked = getter.and_then(|held| self.class_get(held, &word, true).ok()).map(|v| v.contents());
+            return Value::Flag(match marked {
+                Some(Value::Flag(answers)) => answers,
+                Some(Value::Null) | Some(Value::Blank) | None => false,
+                Some(_) => true,
+            });
+        }
         if let Some(v) = Self::property_accessor(property, place) { return v; }
         if place == "\0doc" {
             if let Some(Value::Routine(getter)) = Self::property_accessor(property, "\0fget") {
@@ -1555,7 +1568,7 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("name") {return Ok(self.routine_held(&subject,name,Value::text(&f.ident)));}
                 if name==self.class_word("qualified") {return Ok(self.routine_held(&subject,name,Value::text(&f.qualified)));}
-                if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
+                if name==self.class_word("doc") {let fresh=f.doc.clone().map_or(Value::Null,|s|Value::text(&s));return Ok(self.routine_held(&subject,name,fresh));}
                 if name==self.class_word("module") {let home=self.routine_module(f);return Ok(self.routine_held(&subject,name,home));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
@@ -1705,8 +1718,13 @@ impl<'a> Engine<'a> {
         let mut items = Vec::new();
         if !f.type_params.is_empty() {
             let maker = self.type_holder()?;
-            for name in &f.type_params {
-                items.push(self.class_apply(maker.clone(), vec![Value::text(name)])?);
+            for (name, bound) in &f.type_params {
+                let mut given = vec![Value::text(name)];
+                if let Some(held) = bound {
+                    let worth = self.class_apply(Value::Routine(held.clone()), Vec::new())?;
+                    given.push(Value::Tie(Rc::new((Value::text("bound"), worth))));
+                }
+                items.push(self.class_apply(maker.clone(), given)?);
             }
         }
         Ok(Value::tuple(items))

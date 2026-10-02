@@ -6589,6 +6589,10 @@ impl<'a> Engine<'a> {
     }
 
     fn string_conversion(&mut self, value: &Value, repr: bool) -> Res<Value> {
+        // A whole number is written out only where it holds no more
+        // figures than the definition allows, whichever conversion --
+        // writing, representing or quoting -- asked for the text.
+        if matches!(value.contents(), Value::Huge(_)) { self.digits_shown(value)?; }
         let place = if repr || self.special_value(value, 0).is_none() { 1 } else { 0 };
         if let Some(answer) = self.special_call(value, place, Vec::new())? {
             if matches!(answer, Value::Text(_) | Value::Codepoints(_)) || matches!(Self::worth_of(&answer), Some(Value::Text(_) | Value::Codepoints(_))) { return Ok(answer); }
@@ -6611,6 +6615,10 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
+        // A whole number is written out only where it holds no more
+        // figures than the definition allows, whichever conversion --
+        // writing, representing or quoting -- asked for the text.
+        if matches!(value.contents(), Value::Huge(_)) { self.digits_shown(value)?; }
         // Where the definition asks it, a collection reads the same
         // whether or not a representation was asked for: the members
         // inside it are always written as representations, so that text
@@ -9658,6 +9666,16 @@ impl<'a> Engine<'a> {
                     // class shows names them in the order the body
                     // bound them instead.
                     members.sort_by_key(|(named,_)|plan.member_order.iter().position(|o|o==named).unwrap_or(usize::MAX));
+                    // The module the class was written in stands in its
+                    // namespace before the body runs, as the reference
+                    // puts it there, unless the body named one of its
+                    // own.
+                    let module_word = self.class_word("module").to_string();
+                    if !module_word.is_empty() && !members.iter().any(|(named, _)| *named == module_word) {
+                        let named = self.module_slots.get(self.source.as_ref())
+                            .map_or_else(|| self.class_word("main").to_string(), |(_, path)| path.clone());
+                        members.insert(0, (module_word, Value::text(&named)));
+                    }
                     let mut bases=base.into_iter().collect::<Vec<_>>();bases.extend(answers);
                     let result=self.form_class(plan.name.clone(),bases,members)?;
                     self.data.push(result);return Ok(());
@@ -16289,6 +16307,14 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 Value::Flag(std::fs::remove_dir_all(args[0].display(&sp)).is_ok())
             }
+            // One directory taken away where it stands: true when it
+            // is gone afterward, false where it still holds anything
+            // or no such directory stood there at all.
+            Builtin::DirRemove => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::remove_dir(args[0].display(&sp)).is_ok())
+            }
             // One directory made to stand at the path given: true
             // when it stands afterwards, false when it stood there
             // already or the way to it does not stand.
@@ -19354,6 +19380,9 @@ impl Engine<'_> {
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::ByteKind(..) | Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
             Builtin::Repr => {
                 arity(1, 1)?;
+                // A whole number is quoted only where it holds no more
+                // figures than the definition allows.
+                if matches!(args[0].contents(), Value::Huge(_)) { self.digits_shown(&args[0])?; }
                 // A cursor is written by its kind and its identity, and
                 // the writing does not advance it; so is a walk of this
                 // kernel's own making, such as a map walked backwards,
@@ -19884,7 +19913,14 @@ impl Engine<'_> {
                         if told.is_empty() { return Err(self.core_fault("core.unready", name)); }
                         return Err(told);
                     }
-                    let found = self.builtin_member(standing.as_ref().unwrap_or(&args[0]), &word)?;
+                    let mut found = self.builtin_member(standing.as_ref().unwrap_or(&args[0]), &word)?;
+                    // A name the kind keeps no member under is still a
+                    // name the value may answer to as a plain read
+                    // does, so the two roads never disagree about what
+                    // a value has.
+                    if found.is_none() && matches!(b, Builtin::GetAttr | Builtin::HasAttr) {
+                        found = self.class_get(args[0].clone(), &word, false).ok();
+                    }
                     if b == Builtin::HasAttr { return Ok(Value::Flag(found.is_some())); }
                     if let Some(member) = found { return Ok(member); }
                     if args.len() == 3 { return Ok(args[2].clone()); }

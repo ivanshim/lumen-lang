@@ -184,7 +184,7 @@ pub struct Builder<'a> {
     carrying: Vec<usize>,
     /// The type parameters the declaration just read wrote between
     /// brackets, taken by the routine that declaration is making.
-    pending_types: Vec<String>,
+    pending_types: Vec<(String, Option<usize>)>,
     /// Where each bag of members a class may take in begins, by name:
     /// the token just past the mark that opens its body. Its members are
     /// read again wherever a class takes them in.
@@ -1690,7 +1690,8 @@ impl<'a> Builder<'a> {
 
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
-        let type_params = std::mem::take(&mut self.pending_types);
+        let sites = std::mem::take(&mut self.pending_types);
+        let type_params = self.typed_bounds(sites)?;
         let annotator = self.build_annotator()?;
         let began = self.pos;
         let mut start = self.pos;
@@ -4930,22 +4931,62 @@ impl<'a> Builder<'a> {
         let earlier = std::mem::replace(&mut self.forbids_await, true);
         self.advance();
         let table = self.table;
-        let mut declared = Vec::new();
+        let mut declared: Vec<(String, Option<usize>)> = Vec::new();
         loop {
             if ["ext.stmt.function.carries", "ext.stmt.function.carries.pairs"].iter().any(|key| self.on_any(key)) { self.advance(); }
             let parameter = self.need_word("among the type parameters")?;
             if table.has_any("ext.builtin.exceptions.syntax") && parameter == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
-            if declared.contains(&parameter) { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
-            declared.push(parameter);
-            if self.on_any("ext.stmt.annotation") { self.advance(); self.expr_at(0, false)?; }
+            if declared.iter().any(|(named, _)| named == &parameter) { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
+            let mut bound = None;
+            if self.on_any("ext.stmt.annotation") {
+                self.advance();
+                // The bound's own place is kept: the routine answering
+                // its value is built beside the routine being declared,
+                // where the names in it reach what they reached here.
+                bound = Some(self.pos);
+                self.put_by_annotation(&["stmt.assign", "ext.op.tuple", "ext.stmt.type_params.close"])?;
+            }
             if self.on_assign() { self.advance(); self.expr(0)?; }
+            declared.push((parameter, bound));
             if self.on_any("ext.stmt.type_params.close") { break; }
             self.need_sign(table.single("syntax.call.separator").unwrap(), "between type parameters")?;
             if self.on_any("ext.stmt.type_params.close") { break; }
         }
         self.need_sign(table.single("ext.stmt.type_params.close").unwrap(), "after the type parameters")?;
         self.forbids_await = earlier;
+        self.pending_types = declared;
         Ok(())
+    }
+
+    /// The bounds the type parameters were given after their colons,
+    /// each a routine answering its value. They are built here, where
+    /// the routine around them is being built, so that the names in a
+    /// bound reach what they reached where it was written.
+    fn typed_bounds(&mut self, sites: Vec<(String, Option<usize>)>) -> Res<Vec<(String, Option<Value>)>> {
+        let mut kept = Vec::new();
+        for (name, at) in sites {
+            let mut bound = None;
+            if let Some(at) = at {
+                let resume = self.pos;
+                let taking = self.taking.take();
+                let kinds = std::mem::take(&mut self.formal_kinds);
+                let said = std::mem::take(&mut self.annotation_sites);
+                self.pos = at;
+                let made = self.routine(&self.table.strings("ext.stmt.function.anonymous").first().cloned().unwrap_or_default(), Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
+                    b.expr_at(0, false)
+                });
+                self.pos = resume;
+                self.taking = taking;
+                self.formal_kinds = kinds;
+                self.annotation_sites = said;
+                match made? {
+                    Form::Const(value) => bound = Some(value),
+                    _ => return Err("SyntaxError: the bound of a type parameter must be an expression".into()),
+                }
+            }
+            kept.push((name, bound));
+        }
+        Ok(kept)
     }
 
     fn class_decl(&mut self) -> Res<Form> {
@@ -6126,20 +6167,25 @@ impl<'a> Builder<'a> {
         if !self.table.flag("ext.stmt.type_parameters") || !self.on_any("op.index.open") { return Ok(false); }
         let earlier = std::mem::replace(&mut self.forbids_await, true);
         self.advance();
-        let mut written: Vec<String> = Vec::new();
+        let mut written: Vec<(String, Option<usize>)> = Vec::new();
         loop {
             if self.on_any("ext.stmt.function.carries") || self.on_any("ext.stmt.function.carries.pairs") { self.advance(); }
             let parameter = self.look().lexeme.clone();
             self.need_word("among type parameters")?;
-            written.push(parameter);
+            let mut bound = None;
             if self.on_any("ext.stmt.annotation") {
                 self.advance();
+                // The bound's own place is kept: the routine answering
+                // its value is built beside the routine being declared,
+                // where the names in it reach what they reached here.
+                bound = Some(self.pos);
                 self.put_by_annotation(&["stmt.assign", "ext.op.tuple", "op.index.close"])?;
             }
             if self.on_assign() {
                 self.advance();
                 self.put_by_annotation(&["ext.op.tuple", "op.index.close"])?;
             }
+            written.push((parameter, bound));
             if !self.on_any("ext.op.tuple") { break; }
             self.advance();
             if self.on_any("op.index.close") { break; }

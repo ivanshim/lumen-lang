@@ -1507,7 +1507,9 @@ only. The extension labels so far, all from PHP:
   class a program may stand on, whose things keep their accessors and
   answer the protocol with them. `property.fget`, `property.fset` and
   `property.fdel` name the kept accessors, read-only, `property.readonly`
-  refusing a write to one; `property.getter`, `property.deleter` and the
+  refusing a write to one; `property.is_abstract` names the reading that
+  answers whether the property's getter is one nobody has answered; and
+  `property.getter`, `property.deleter` and the
   earlier `property.setter` name the calls making a fresh property with
   one accessor changed; `property.doc` names the argument giving its first
   string, which is otherwise the getter's own. `property.unreadable`,
@@ -2611,6 +2613,10 @@ only. The extension labels so far, all from PHP:
   what a language spelling them expects.
 - `ext.builtin.file.kind`: a builtin answering one for a path naming a
   file, two for a directory, nought for neither.
+- `ext.builtin.dir.remove`: a builtin taking one directory away where it
+  stands, answering whether it is gone afterward. It refuses a directory
+  that still holds anything, where taking the whole tree
+  (`ext.builtin.dir.remove_tree`) would not.
 - `ext.builtin.dir.list`, `.make` and `.remove_tree`: builtins that
   reach outside the run alongside the file ones above — a directory's
   own entries, by name alone; a fresh directory made under one already
@@ -4521,6 +4527,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.dir.list` | - | - | `__list_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.make` | - | - | `__make_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.make_one` | - | - | `__make_dir_one` | - | - | - | - | - | - | - |
+| `ext.builtin.dir.remove` | - | - | `__remove_dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.remove_tree` | - | - | `__remove_tree` | - | - | - | - | - | - | - |
 | `ext.builtin.divmod` | - | - | `divmod` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
@@ -4895,7 +4902,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits` | - | - | `4300` | - | - | - | - | - | - | - |
-| `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.digits.state` | - | - | `sys` `_int_max_str_digits` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
@@ -5259,6 +5266,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.property.fget` | - | - | `fget` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fset` | - | - | `fset` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.getter` | - | - | `getter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.is_abstract` | - | - | `__isabstractmethod__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.readonly` | - | - | `AttributeError: readonly attribute` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.undeletable` | - | - | `AttributeError: property` ` of '` `' object has no deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.unreadable` | - | - | `AttributeError: property` ` of '` `' object has no getter` | - | - | - | - | - | - | - |
