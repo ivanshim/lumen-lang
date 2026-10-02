@@ -170,7 +170,8 @@ class Popen:
                 _wait(10000)
         out = self.stdout.read() if self.stdout is not None else None
         if self._stderr_to_stdout:
-            out = out + self._read_stream(1)
+            if self.stdout is not None:
+                out = out + self._read_stream(1)
             err = None
         else:
             err = self.stderr.read() if self.stderr is not None else None
