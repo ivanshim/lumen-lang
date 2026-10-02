@@ -5742,7 +5742,7 @@ fail before the source runs, with the supported releases listed. Runtime
 `platform.python_version()` report the resolved full pin.
 
 The host merges the selected `label_overlay` object over `python.json` before
-passing it to each kernel. Overlay keys replace existing `ext.*` labels;
+passing it to each kernel. Overlay keys add or replace `ext.*` labels, validated by the kernels;
 the 3.14 overlay is empty. `python/3.15/labels.json` restores explicit
 `lazy import`, already implemented by both full kernels. That directory is
 an unregistered demonstration: it enables nothing until a 3.15 suite and

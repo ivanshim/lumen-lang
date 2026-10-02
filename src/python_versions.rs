@@ -57,7 +57,6 @@ impl PythonVersion {
         let labels: Value = serde_json::from_str(self.labels).map_err(|e| e.to_string())?;
         let object = data.as_object_mut().ok_or("Python definition must be an object")?;
         for (key, value) in labels.as_object().ok_or("Python overlay must be an object")? {
-            if !object.contains_key(key) { return Err(format!("Unknown Python overlay label: {key}")); }
             object.insert(key.clone(), value.clone());
         }
         serde_json::to_string(&data).map_err(|e| e.to_string())
