@@ -10564,6 +10564,7 @@ impl<'a> Builder<'a> {
         let mut begins = self.pos;
         let mut preceding = 0;
         let mut clause_seen = false;
+        let mut clause_position = self.pos;
         let mut binding_names = false;
         for at in self.pos..self.tokens.len() {
             let token = &self.tokens[at];
@@ -10588,9 +10589,8 @@ impl<'a> Builder<'a> {
                 }
                 if word == ")" || (word == "," && !binding_names) {
                     if clause_seen && (preceding != 0 || word == ",") {
-                        let last = &self.tokens[at - 1];
-                        self.range_end = Some((last.column + last.lexeme.chars().count(), last.row));
-                        self.pos = begins;
+                        self.range_end = Some((self.tokens[clause_position].column + 3, self.tokens[clause_position].row));
+                        self.pos = clause_position;
                         return Err("SyntaxError: Generator expression must be parenthesized".to_owned());
                     }
                     if word == ")" { return Ok(()); }
@@ -10598,6 +10598,7 @@ impl<'a> Builder<'a> {
                 }
                 if self.table.spells("ext.op.comprehension.for", word) {
                     clause_seen = true;
+                    clause_position = at;
                     binding_names = true;
                 } else if self.table.spells("ext.op.comprehension.in", word) { binding_names = false; }
             }
