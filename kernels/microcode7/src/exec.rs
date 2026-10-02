@@ -924,7 +924,9 @@ impl<'a> Machine<'a> {
             if let Some(key) = self.table.single(label) { holds.push((key.to_string(), value)); }
         }
         holds.push(("\0raised-values".into(), values));
-        Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: kind, turn: self.made, holds: RefCell::new(holds) }))
+        let instance = Rc::new(Thing {reclassified: RefCell::new(None), of: kind, turn: self.made, holds: RefCell::new(holds) });
+        crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(&instance)));
+        Value::Thing(instance)
     }
 
     /// What was being handled when a value is raised stays with that
@@ -2397,7 +2399,11 @@ impl<'a> Machine<'a> {
         use crate::ghost::{Knot, Web};
         loop {
             let mut web = Web::from_notable();
-            let lost = web.unreachable();
+            let mut lost = web.unreachable();
+            lost.sort_by(|left, right| {
+                let created = |node: &Knot| if let Knot::Held(Value::Thing(thing)) = node { thing.turn } else { usize::MAX };
+                created(left).cmp(&created(right))
+            });
             let mut bade = false;
             for knot in &lost {
                 match knot {
@@ -5369,11 +5375,11 @@ impl<'a> Machine<'a> {
                     let wanted = self.hash_key(&named)?;
                     let mut kept = Vec::new();
                     let mut found = false;
-                    for (stored, held) in Self::attribute_entries(t) {
+                    for (stored, held) in self.attribute_entries(t) {
                         if self.keys_agree(&stored, &wanted)? { found = true; } else { kept.push((stored, held)); }
                     }
                     if !found { return Err(self.bad_answer().into()); }
-                    Self::attribute_restore(t, kept);
+                    self.attribute_restore(t, kept);
                     return Ok(Value::Nil);
                 }
                 if matches!(&target, Value::Dict(entries) if entries.iter().any(|(k, _)| matches!(k, Value::Keyed(..)))) {
@@ -6377,13 +6383,13 @@ impl<'a> Machine<'a> {
                         }
                         if let (Some(raw), Value::Attributes(t)) = (&key, &target) {
                             let wanted = self.hash_key(raw)?;
-                            let mut entries = Self::attribute_entries(t);
+                            let mut entries = self.attribute_entries(t);
                             let mut found = false;
                             for (stored, held) in entries.iter_mut() {
                                 if self.keys_agree(stored, &wanted)? { *held = value.clone(); found = true; break; }
                             }
                             if !found { entries.push((wanted, value.clone())); }
-                            Self::attribute_restore(t, entries);
+                            self.attribute_restore(t, entries);
                             return Ok(Value::Nil);
                         }
                         if let (Some(index), true) = (&key, self.appointed(&target, 12).is_some()) {
@@ -8143,11 +8149,14 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Attributes(owner) = receiver.settled() {
-            let snapshot = Self::attribute_entries(&owner);
+            let snapshot = self.attribute_entries(&owner);
             let storage = Rc::new(RefCell::new(Value::Dict(Rc::new(snapshot.into()))));
             let outcome = self.value_member(&Value::Mutable(storage.clone(), true), name, arguments, keywords);
-            if let Value::Dict(changed) = &*storage.borrow() {
-                Self::attribute_restore(&owner, changed.iter().cloned().collect());
+            let modifies = ["clear", "popitem", "pop", "update", "setdefault"].contains(&name);
+            if modifies {
+                if let Value::Dict(changed) = &*storage.borrow() {
+                    self.attribute_restore(&owner, changed.iter().cloned().collect());
+                }
             }
             return outcome;
         }
@@ -12189,7 +12198,7 @@ impl<'a> Machine<'a> {
         match subject {
             Value::Keyed(value, _) => self.object_words(value, quoted),
             Value::Attributes(t) => {
-                let pairs = Self::attribute_entries(t);
+                let pairs = self.attribute_entries(t);
                 self.object_words(&Value::Dict(Rc::new(pairs.into())), true)
             }
             Value::Thing(t) => {
@@ -12311,11 +12320,18 @@ impl<'a> Machine<'a> {
     /// The entries a thing's own dictionary shows: the names it keeps
     /// as text, in order, and then the keys of any other kind kept
     /// beside them under the hidden name `\0keys`.
-    fn attribute_entries(t: &crate::data::Thing) -> Vec<(Value, Value)> {
+    fn attribute_entries(&self, t: &Rc<Thing>) -> Vec<(Value, Value)> {
+        let namespace = self.namespace_holding(&Value::Thing(t.clone())).is_some();
         let holds = t.holds.borrow();
         let mut entries: Vec<(Value, Value)> = holds.iter()
             .filter(|(name, held)| !name.starts_with('#') && !name.starts_with('\0') && !matches!(held.settled(), Value::Unset))
-            .map(|(name, held)| (Value::text(name), held.clone())).collect();
+            .map(|(name, held)| {
+                let mut value = held.clone();
+                if namespace {
+                    if let Value::Shared(slot) = held { value = slot.borrow().clone(); }
+                }
+                (Value::text(name), value)
+            }).collect();
         if let Some((_, Value::Dict(extra))) = holds.iter().find(|(name, _)| name == "\0keys") {
             entries.extend(extra.iter().cloned());
         }
@@ -12325,7 +12341,28 @@ impl<'a> Machine<'a> {
     /// Write entries back into a thing's dictionary: names written as
     /// text go in among the thing's own holds, keys of any other kind
     /// are kept beside them under `\0keys`.
-    fn attribute_restore(t: &crate::data::Thing, entries: Vec<(Value, Value)>) {
+    fn attribute_restore(&self, t: &Rc<Thing>, entries: Vec<(Value, Value)>) {
+        if self.namespace_holding(&Value::Thing(t.clone())).is_some() {
+            let mut pending = entries;
+            let mut slots = t.holds.borrow_mut();
+            for (key, slot) in slots.iter_mut() {
+                if key.starts_with('\0') { continue; }
+                let position = pending.iter().position(|(label, _)| matches!(label, Value::Text(label) if label.as_ref() == key.as_str()));
+                let next = match position { Some(at) => pending.remove(at).1, None => Value::Unset };
+                if let Value::Shared(cell) = slot {
+                    let unchanged = matches!(&next, Value::Shared(other) if Rc::ptr_eq(cell, other));
+                    if !unchanged { *cell.borrow_mut() = next; }
+                } else { *slot = next; }
+            }
+            slots.retain(|entry| entry.0 != "\0keys");
+            let mut nontext = Vec::new();
+            slots.extend(pending.into_iter().filter_map(|(key, value)| match key {
+                Value::Text(word) => Some((word.to_string(), value)),
+                other => { nontext.push((other, value)); None }
+            }));
+            if !nontext.is_empty() { slots.push((String::from("\0keys"), Value::Dict(Rc::new(nontext.into())))); }
+            return;
+        }
         let mut holds = t.holds.borrow_mut();
         holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
         let mut extra: Vec<(Value, Value)> = Vec::new();
@@ -12339,7 +12376,7 @@ impl<'a> Machine<'a> {
     }
 
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
-        if let Value::Attributes(t) = subject { return Ok(!Self::attribute_entries(t).is_empty()); }
+        if let Value::Attributes(t) = subject { return Ok(!self.attribute_entries(t).is_empty()); }
         if matches!(subject, Value::Refusal(_)) { return Err(self.core_complaint("core.bool.declined", "")); }
         match self.ask_special(subject, 9, &[])? {
             Some(Value::Flag(b)) => return Ok(b),
@@ -12815,7 +12852,7 @@ impl<'a> Machine<'a> {
         if let Some(under) = self.underlying_unless(subject, &[15]) { return self.object_members(&under); }
         match subject {
             Value::Attributes(t) => {
-                Ok(Self::attribute_entries(t).into_iter().map(|(key, _)| match key {
+                Ok(self.attribute_entries(t).into_iter().map(|(key, _)| match key {
                     Value::Keyed(original, _) => original.as_ref().clone(), plain => plain,
                 }).collect())
             },
@@ -13491,7 +13528,7 @@ impl<'a> Machine<'a> {
             (Prim::Contains | Prim::Absent, [needle, Value::Attributes(owner)]) => {
                 let sought = self.hash_key(needle)?;
                 let mut present = false;
-                for (candidate, _) in Self::attribute_entries(owner) {
+                for (candidate, _) in self.attribute_entries(owner) {
                     if self.keys_agree(&candidate, &sought)? { present = true; break; }
                 }
                 Value::Flag(present != (operation == Prim::Absent))
@@ -13618,7 +13655,7 @@ impl<'a> Machine<'a> {
                 // hold, found by the same equality the subscript uses.
                 let wanted = self.hash_key(key)?;
                 let mut found = None;
-                for (stored, value) in Self::attribute_entries(t) {
+                for (stored, value) in self.attribute_entries(t) {
                     if self.keys_agree(&stored, &wanted)? { found = Some(value); break; }
                 }
                 found.ok_or_else(|| self.bad_answer())?
@@ -13627,18 +13664,18 @@ impl<'a> Machine<'a> {
                 let wanted = self.hash_key(key)?;
                 let mut kept = Vec::new();
                 let mut found = false;
-                for (stored, held) in Self::attribute_entries(t) {
+                for (stored, held) in self.attribute_entries(t) {
                     if self.keys_agree(&stored, &wanted)? { found = true; } else { kept.push((stored, held)); }
                 }
                 if !found { return Err(self.bad_answer()); }
-                Self::attribute_restore(t, kept);
+                self.attribute_restore(t, kept);
                 one.clone()
             }
             (Prim::Erase, [one, key]) if self.appointed(one, 13).is_some() => {
                 self.ask_special(one, 13, std::slice::from_ref(key))?;
                 one.clone()
             }
-            (Prim::Length, [Value::Attributes(t)]) => Value::Small(Self::attribute_entries(t).len() as i64),
+            (Prim::Length, [Value::Attributes(t)]) => Value::Small(self.attribute_entries(t).len() as i64),
             (Prim::At | Prim::Fetch, [Value::Dict(entries), key]) => {
                 let hashed = self.hash_key(key)?;
                 if let Ok(address) = hashed.hash_address() {
@@ -14670,6 +14707,25 @@ impl<'a> Machine<'a> {
         if let Prim::Octets(which @ (0 | 1)) = op {
             if let [lone] = v {
                 let plain = lone.settled();
+                if which == 0 {
+                    if let Value::Thing(instance) = &plain {
+                        if let Some(entry) = self.inherited_entry(&instance.blueprint(), "__bytes__") {
+                            let invocation = match self.member_binding(entry, Some(plain.clone()), instance.blueprint().clone()) {
+                                Ok(bound) => self.apply_class_member(bound, vec![]),
+                                Err(problem) => Err(problem),
+                            };
+                            match invocation {
+                                Ok(converted) => {
+                                    let content = Self::underlying(&converted).unwrap_or_else(|| converted.settled());
+                                    if matches!(content, Value::Octets { changeable: false, .. }) { return Ok(converted); }
+                                    return Err(format!("TypeError: __bytes__ returned non-bytes (type {})", Self::type_argument_kind(&converted)));
+                                }
+                                Err(Escape::Error(text)) => return Err(text),
+                                Err(other) => { self.got_away = Some(other); return Err(String::new()); }
+                            }
+                        }
+                    }
+                }
                 let already = matches!(plain, Value::Octets { .. } | Value::Vector(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 if !already {
                     if let Ok(numbers) = self.core_collect(&plain) { return self.octet_routine(which, &[Value::Vector(crate::tuples::Sequence::plain(numbers))]); }
@@ -19078,7 +19134,7 @@ impl<'a> Machine<'a> {
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         if let Value::Attributes(owner) = source {
-            return Ok(Self::attribute_entries(owner).into_iter().map(|(key, _)| match key {
+            return Ok(self.attribute_entries(owner).into_iter().map(|(key, _)| match key {
                 Value::Keyed(value, _) => value.as_ref().clone(), other => other,
             }).collect());
         }
@@ -20607,6 +20663,15 @@ impl<'a> Machine<'a> {
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
+        if op == Prim::WorldBook && self.reading_now.is_none() {
+            let origin = self.frames_named.last().map(|routine| self.routine_home(routine));
+            if let Some(origin) = origin.filter(|name| name != self.detail("main")) {
+                if let Some(namespace) = self.imported.get(&origin).cloned() {
+                    let key = self.detail("namespace").to_owned();
+                    return self.read_class_member(namespace, &key, false).map_err(|error| self.suspension_fault(error));
+                }
+            }
+        }
         let book = if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
             self.book_about(op == Prim::WorldBook)
         } else {
@@ -22694,7 +22759,7 @@ impl Machine<'_> {
             Backwards => {
                 require(1, 1)?;
                 if let Value::Attributes(object) = &input[0] {
-                    let mut names: Vec<Value> = Self::attribute_entries(object).into_iter().map(|(key, _)| key).collect();
+                    let mut names: Vec<Value> = self.attribute_entries(object).into_iter().map(|(key, _)| key).collect();
                     names.reverse();
                     return Ok(Self::cursor_value_walked(IteratorKind::Stored { entries: Rc::new(names).into(), next: 0 }, Some(Rc::from("dict_reversekeyiterator"))));
                 }

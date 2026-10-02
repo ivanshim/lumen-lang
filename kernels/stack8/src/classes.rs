@@ -253,7 +253,7 @@ impl<'a> Engine<'a> {
         let members = entries.iter().map(|(k, v)| (k.plain(), v.clone())).collect();
         self.forge_class(title, parents, members, by, named, plain[1].contents())
     }
-    fn type_argument_kind(value: &Value) -> String {
+    pub(super) fn type_argument_kind(value: &Value) -> String {
         if let Value::Object(object) = value.contents() {
             if let Some(names) = object.class_now().python_names.borrow().as_ref() {
                 return names.0.type_text().plain();
@@ -307,7 +307,12 @@ impl<'a> Engine<'a> {
         let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
-        let module = self.class_word("main").to_string();
+        let active = self.trace_frame.as_ref().and_then(|frame| frame.fields.borrow().iter()
+            .find(|(name, _)| name == "\0routine").map(|(_, value)| value.contents()));
+        let module = match active {
+            Some(Value::Routine(body)) => self.routine_home(&body),
+            _ => self.module_slots.get(&self.source).map(|(_, name)| name.clone()).unwrap_or_else(|| self.class_word("main").to_string()),
+        };
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
             members.push((self.class_word("module").to_string(), Value::text(&module)));
         }
@@ -1165,6 +1170,7 @@ impl<'a> Engine<'a> {
         }
         let Value::Object(o) = &subject else { return answer };
         let Some(reader) = self.lang.reader.as_deref().and_then(|n| self.class_value(&o.class_now(), n)) else { return answer };
+        self.absent_member = None;
         let bound = self.bind_class_value(reader, Some(subject.clone()), o.class_now().clone())?;
         self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name))
     }
@@ -2473,7 +2479,7 @@ impl<'a> Engine<'a> {
             Builtin::ToText=>matches!(value,Value::Text(_) | Value::Codepoints(_)),
             Builtin::AsReal=>matches!(value,Value::Real(_)),
             Builtin::List=>matches!(value,Value::Array(_)),
-            Builtin::SortOf=>matches!(value,Value::Class(_)|Value::Native(..)|Value::ByteKind(..)|Value::SortOf(_))||self.kind_spelled(value).is_some(),
+            Builtin::SortOf=>self.stands_for_kind(value),
             Builtin::Dict=>matches!(value,Value::Map(_)|Value::Fields(_)),
             Builtin::Tuple=>matches!(value,Value::Tuple(_)),
             Builtin::Set=>matches!(value,Value::Set(_))&&!value.set_fixed(),
@@ -2586,7 +2592,7 @@ impl<'a> Engine<'a> {
                 // no member's name keeps one, so it is asked after as
                 // the stand-in text such a row reads as elsewhere.
                 let asked=match &asked {Value::Codepoints(row)=>Value::text(&Value::predicate_text(row)),other=>other.clone()};
-                let Value::Text(name)=&asked else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one.clone(),name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
+                let Value::Text(name)=&asked else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one.clone(),name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{self.absent_member = None; Ok(Value::Flag(false))}else if args.len()==3{self.absent_member = None; Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
                 if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &one, name))?;return self.drop_top().map_err(Fault::Note);}}
                 Err(self.attribute_from_hook(fault, &one, name))},Err(e)=>Err(self.attribute_from_hook(e, &one, name))}},
@@ -2629,7 +2635,7 @@ impl<'a> Engine<'a> {
                     let class_directory=self.lang.class_special.get(75)
                         .and_then(|word| self.class_value(&class,word)).is_some();
                     if (module_kind || self.module_holding(&one).is_some()) && !class_directory {
-                        let entries=Self::fields_entries(module);
+                        let entries=self.fields_entries(module);
                         if let Some(word)=self.lang.class_special.get(75) {
                             if let Some((_,method))=entries.iter().find(|(key,_)| key.plain()==*word) {
                                 let answer=self.class_apply(method.clone(),Vec::new())?;

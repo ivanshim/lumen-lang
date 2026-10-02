@@ -25,6 +25,7 @@ use crate::form::Routine;
 pub enum Ghost {
     StaticKind(Value),
     Thing(Weak<Thing>),
+    Cell(Weak<RefCell<Value>>),
     Blueprint(Weak<Blueprint>),
     Walk(Weak<RefCell<Suspension>>),
     Set(Weak<RefCell<SetStore>>),
@@ -39,6 +40,7 @@ impl Ghost {
         match self {
             Ghost::StaticKind(kind) => Some(kind.clone()),
             Ghost::Thing(w) => w.upgrade().map(Value::Thing),
+            Ghost::Cell(w) => w.upgrade().map(Value::Shared),
             Ghost::Blueprint(w) => w.upgrade().map(Value::Blueprint),
             Ghost::Walk(w) => w.upgrade().map(Value::Generator),
             Ghost::Set(w) => w.upgrade().map(Value::Set),
@@ -216,6 +218,12 @@ pub fn note(ghost: Ghost) {
         }
         n.0.push(ghost);
     });
+}
+
+/// Lists and dictionaries may hold the only path into a finalizer cycle.
+pub fn note_container(storage: &Rc<RefCell<Value>>) {
+    let enabled = FAREWELL_NAME.try_with(|name| name.borrow().is_some()).unwrap_or(false);
+    if enabled { note(Ghost::Cell(Rc::downgrade(storage))); }
 }
 
 /// One place in the web: a value, or a frame, which is no value but

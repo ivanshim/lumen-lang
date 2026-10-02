@@ -351,7 +351,7 @@ impl<'a> Machine<'a> {
         }
         Ok(())
     }
-    fn type_argument_kind(value: &Value) -> String {
+    pub(super) fn type_argument_kind(value: &Value) -> String {
         if let Value::Thing(thing) = value.settled() {
             if let Some(names) = thing.blueprint().type_names.borrow().as_ref() {
                 return names.short.type_text().bare();
@@ -403,7 +403,11 @@ impl<'a> Machine<'a> {
         let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).collect();
         natives.dedup();
         if natives.len()>1 {return Err(self.table.single("ext.stmt.class.layout").unwrap_or(self.detail("unready")).to_owned().into());}
-        let module=self.detail("main").to_owned();
+        let module = if let Some(caller) = self.frames_named.last() {
+            self.routine_home(caller)
+        } else {
+            self.loaded_spaces.get(&self.written_in).cloned().unwrap_or_else(|| self.detail("main").to_owned())
+        };
         if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(&module)));}
         if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
             if !matches!(if self.detail("name").is_empty() { Self::underlying(candidate).unwrap_or_else(|| candidate.settled()) } else { candidate.type_text() }, Value::Text(_) | Value::Unpaired(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", Self::type_argument_kind(candidate)).into()); }
@@ -1607,6 +1611,7 @@ impl<'a> Machine<'a> {
         }
         let Value::Thing(t) = &value else { return sought };
         let Some(fallback)=self.table.single("ext.stmt.class.reader").and_then(|n|self.inherited_entry(&t.blueprint(),n)) else{return sought};
+        self.sought_in_vain.take();
         let bound=self.member_binding(fallback,Some(value.clone()),t.blueprint().clone())?;
         self.apply_class_member(bound,vec![Value::text(key)]).map_err(|escaped| self.explain_absence(escaped, &value, key))
     }
@@ -2604,7 +2609,7 @@ impl<'a> Machine<'a> {
             Prim::AsText=>matches!(value,Value::Text(_) | Value::Unpaired(_)),
             Prim::AsReal=>matches!(value,Value::Frac(r) if r.places.is_some()),
             Prim::Listed=>matches!(value,Value::Vector(_)),
-            Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
+            Prim::SortOf=>self.stands_for_a_kind(value),
             Prim::Dictionary=>matches!(value,Value::Dict(_)|Value::Attributes(_)),
             Prim::Tupling=>matches!(value,Value::Tuple(_)),
             Prim::Uniques=>matches!(value,Value::Set(_))&&!value.set_sealed(),
@@ -2740,7 +2745,10 @@ impl<'a> Machine<'a> {
                 // keeps it in, as the program's own member read does.
                 Ok(v)=>Ok(if op==6{Value::Flag(true)}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
                 Err(escape) if self.missing_member_escape(&escape)=>{
-                    if op==6{Ok(Value::Flag(false))}else if values.len()==3{Ok(values[2].clone())}else{Err(self.explain_absence(escape, &values[0], key))}
+                    if op == 6 || values.len() == 3 {
+                        self.sought_in_vain.take();
+                        Ok(if op == 6 { Value::Flag(false) } else { values[2].clone() })
+                    } else { Err(self.explain_absence(escape, &values[0], key)) }
                 }
                 failed=>failed,
             };
@@ -2788,7 +2796,7 @@ impl<'a> Machine<'a> {
                 let class_directory=self.table.strings("ext.stmt.class.special").get(75)
                     .and_then(|word| self.inherited_entry(&blueprint,word)).is_some();
                 if (module_kind || self.namespace_holding(&values[0]).is_some()) && !class_directory {
-                    let entries=Self::attribute_entries(module);
+                    let entries=self.attribute_entries(module);
                     if let Some(word)=self.table.strings("ext.stmt.class.special").get(75) {
                         if let Some((_,method))=entries.iter().find(|(key,_)| key.bare()==*word) {
                             let answer=self.apply_class_member(method.clone(),Vec::new())?;

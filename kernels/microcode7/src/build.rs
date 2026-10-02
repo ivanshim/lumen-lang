@@ -8809,7 +8809,8 @@ impl<'a> Builder<'a> {
                         let callable = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
                         invoke(callable, extra)
                     }
-                    (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
+                    (true, Some(_), Some(receiver), member) if !self.under_way.is_empty()
+                        && (member.is_none() || self.glance(2).lexeme != open) => {
                         let private = self.parts().completed_class.ident.to_string();
                         let args = vec![self.read(&private), self.read(&receiver)];
                         let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));

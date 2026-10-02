@@ -9211,7 +9211,8 @@ impl<'a> Compiler<'a> {
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
-                if extra == 0 && parent.is_some() && self.method_self.is_some() && member.is_none() && !self.gathered.is_empty() {
+                if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty()
+                    && (member.is_none() || self.look_ahead(2).lexeme != call.open) {
                     let cell = self.gathering().class_cell.clone();
                     self.read(&cell);
                     self.read(&self.method_self.clone().unwrap());

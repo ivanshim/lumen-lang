@@ -25,6 +25,7 @@ use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance,
 pub enum Hold {
     Native(crate::code::Builtin, Rc<str>),
     Object(Weak<Instance>),
+    Container(Weak<RefCell<Value>>),
     Class(Weak<Class>),
     Generator(Weak<RefCell<Generator>>),
     Set(Weak<RefCell<Members>>),
@@ -38,6 +39,7 @@ impl Hold {
         Some(match self {
             Hold::Native(operation, spelling) => Value::Native(*operation, spelling.clone()),
             Hold::Object(w) => Value::Object(w.upgrade()?),
+            Hold::Container(w) => Value::Bond(w.upgrade()?),
             Hold::Class(w) => Value::Class(w.upgrade()?),
             Hold::Generator(w) => Value::Generator(w.upgrade()?),
             Hold::Set(w) => Value::Set(w.upgrade()?),
@@ -50,6 +52,7 @@ impl Hold {
         match self {
             Hold::Native(..) => false,
             Hold::Object(w) => w.strong_count() == 0,
+            Hold::Container(w) => w.strong_count() == 0,
             Hold::Class(w) => w.strong_count() == 0,
             Hold::Generator(w) => w.strong_count() == 0,
             Hold::Set(w) => w.strong_count() == 0,
@@ -260,6 +263,14 @@ pub fn remember(hold: Hold) {
         }
         c.0.push(hold);
     });
+}
+
+/// Mutable containers can be the incoming side of a finalizable cycle.
+/// Keep a weak candidate even when the container has no weakref protocol.
+pub fn track_container(cell: &Rc<RefCell<Value>>) {
+    if LAST_WORD.try_with(|word| word.borrow().is_some()).unwrap_or(false) {
+        remember(Hold::Container(Rc::downgrade(cell)));
+    }
 }
 
 /// One value the graph knows: the strong hold the graph itself keeps,
