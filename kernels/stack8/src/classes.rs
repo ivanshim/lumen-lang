@@ -307,7 +307,7 @@ impl<'a> Engine<'a> {
         let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
-        let module = self.class_word("main").to_string();
+        let module = self.module_slots.get(&self.source).map(|(_, name)| name.clone()).unwrap_or_else(|| self.class_word("main").to_string());
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
             members.push((self.class_word("module").to_string(), Value::text(&module)));
         }
@@ -606,7 +606,7 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
-                9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
+                9 if args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
                 0 => Ok(w.1[0].clone()),
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
@@ -1444,12 +1444,12 @@ impl<'a> Engine<'a> {
                             if let Some((_, value)) = entries.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == name)) { return Ok(value.clone()); }
                         }
                         Value::Fields(view) => {
-                            if let Some((_, value)) = view.fields.borrow().iter().find(|(key, _)| key.as_str() == name) { return Ok(value.clone()); }
+                            if let Some((_, value)) = view.fields.borrow().iter().find(|(key, held)| key.as_str() == name && !matches!(held.contents(), Value::Blank)) { return Ok(value.clone()); }
                         }
                         _ => {}
                     }
                 }
-                if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
+                if let Some((_,v))=o.fields.borrow().iter().find(|(n,v)| n==name && !matches!(v.contents(), Value::Blank)) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class_now().clone());}
                 if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
                     let root = Self::adapter(30, vec![Value::text(name)]);
@@ -2814,7 +2814,11 @@ impl<'a> Engine<'a> {
                 }
                 continue;
             }
-            if let Some(f)=Self::own_class_value(c,name){let mut all=if name==self.class_word("allocate"){vec![]}else{vec![subject.clone()]};all.extend(args);return self.class_apply(f,all);}
+            if let Some(member) = Self::own_class_value(c, name) {
+                let bound = if name == self.class_word("allocate") { member }
+                    else { self.bind_class_value(member, Some(subject.clone()), receiver.clone())? };
+                return self.class_apply(bound, args);
+            }
             if self.exception_class(c) && self.lang.constructor.as_deref() == Some(name) {
                 if let Value::Object(o) = &subject { return self.exception_method(o.clone(), name, &args); }
             }

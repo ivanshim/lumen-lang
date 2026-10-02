@@ -8,3 +8,8 @@ def requires_working_threading(module=False):
 
 def start_threads(threads, unlock=None):
     raise 'NotImplementedError: threads are not supported'
+
+
+def reap_threads(func):
+    # No thread can be started in this runtime, so there are none to join.
+    return func

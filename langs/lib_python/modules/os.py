@@ -33,8 +33,8 @@ def getpid():
     return 1
 
 def urandom(size):
-    # Stub: byte storage is not yet available; no text masquerades as bytes.
-    raise 'NotImplementedError: os.urandom needs byte values'
+    import operator
+    return __crypto(1, operator.index(size))
 
 def listdir(path='.'):
     if _host_file_kind(path) == 1:

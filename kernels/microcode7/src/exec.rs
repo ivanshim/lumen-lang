@@ -4105,6 +4105,7 @@ impl<'a> Machine<'a> {
         if let Some(item) = &self.active_trace { item.holds.borrow_mut()[2].1 = caller_trace.clone().map(Value::Thing).unwrap_or(Value::Nil); }
         let caller_source = self.written_in.clone();
         if let Some(place) = named.as_ref().and_then(|p| p.written_in.as_ref()) { self.written_in = place.clone(); }
+        else if named.is_some() && self.reading_now.is_none() { self.written_in = self.entry_file.clone(); }
         let outcome = self.unfold(&mut state, sent, hurled);
         let outcome = self.traced_result(outcome);
         self.update_watched_locals();
@@ -10178,10 +10179,12 @@ impl<'a> Machine<'a> {
         // A program written in a file of its own runs as being in it: a
         // complaint names that file, and a file it asks for is sought
         // beside it, wherever the call was made.
-        let elsewhere = program.written_in.as_ref().map(|place| {
-            let was = std::mem::replace(&mut self.written_in, place.clone());
-            (was, self.row)
-        });
+        let home = match &program.written_in {
+            Some(place) => Some(place.clone()),
+            None if self.reading_now.is_none() => Some(self.entry_file.clone()),
+            None => None,
+        };
+        let elsewhere = home.map(|home| (std::mem::replace(&mut self.written_in, home), self.row));
         let mut caught: u8 = 0;
         // The names of the frame being run in, kept while it runs, so
         // that text read while the run goes can be built knowing them.
@@ -12287,16 +12290,28 @@ impl<'a> Machine<'a> {
     /// text go in among the thing's own holds, keys of any other kind
     /// are kept beside them under `\0keys`.
     fn attribute_restore(t: &crate::data::Thing, entries: Vec<(Value, Value)>) {
-        let mut holds = t.holds.borrow_mut();
-        holds.retain(|(name, _)| name.starts_with('\0') && name != "\0keys");
-        let mut extra: Vec<(Value, Value)> = Vec::new();
-        for (key, held) in entries {
-            match key {
-                Value::Text(text) => holds.push((text.to_string(), held)),
-                other => extra.push((other, held)),
-            }
+        let mut holdings = t.holds.borrow_mut();
+        let aliases: Vec<_> = holdings.iter().filter_map(|(name, value)| match value {
+            Value::Shared(cell) if !name.starts_with('\0') => Some((name.clone(), cell.clone())),
+            _ => None,
+        }).collect();
+        holdings.retain(|entry| (entry.0.starts_with('\0') && entry.0 != "\0keys") || matches!(entry.1, Value::Shared(_)));
+        for (name, cell) in &aliases {
+            let incoming = entries.iter().find(|entry| matches!(&entry.0, Value::Text(word) if word.as_ref() == name));
+            let replacement = match incoming.map(|entry| &entry.1) {
+                Some(Value::Shared(link)) => link.borrow().clone(),
+                Some(value) => value.clone(),
+                None => Value::Unset,
+            };
+            *cell.borrow_mut() = replacement;
         }
-        if !extra.is_empty() { holds.push(("\0keys".to_string(), Value::Dict(Rc::new(extra.into())))); }
+        let mut foreign_keys = Vec::new();
+        for (key, value) in entries {
+            if let Value::Text(word) = key {
+                if !aliases.iter().any(|entry| entry.0 == word.as_ref()) { holdings.push((word.to_string(), value)); }
+            } else { foreign_keys.push((key, value)); }
+        }
+        if !foreign_keys.is_empty() { holdings.push(("\0keys".to_owned(), Value::Dict(Rc::new(foreign_keys.into())))); }
     }
 
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
@@ -16017,6 +16032,59 @@ impl<'a> Machine<'a> {
                 let named = v[0].render(w);
                 let meta = std::fs::metadata(&named).ok();
                 Value::Small(match meta { Some(m) if m.is_file() => 1, Some(m) if m.is_dir() => 2, _ => 0 })
+            }
+            Prim::CryptoWork => {
+                let first = v.first().ok_or("TypeError: missing cryptographic operation")?;
+                match as_index(first)? {
+                    0 => {
+                        n(14)?;
+                        let name = v[1].render(self.wording());
+                        let input = self.octet_gathered(&v[2], false, false)?;
+                        let output_count = as_index(&v[3])? as usize;
+                        let secret = self.octet_gathered(&v[4], false, false)?;
+                        let seasoning = self.octet_gathered(&v[5], false, false)?;
+                        let personal = self.octet_gathered(&v[6], false, false)?;
+                        let mut tree = Vec::with_capacity(7);
+                        for field in &v[7..] {
+                            tree.push(field.as_big()?.to_u64().ok_or("OverflowError: int too big to convert")?);
+                        }
+                        let result = crate::crypto::calculate(&name, &input, output_count, &tree, &secret, &seasoning, &personal)?;
+                        self.octets(result, false)
+                    }
+                    1 => {
+                        n(2)?;
+                        let requested = v[1].as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C ssize_t")?;
+                        if requested < 0 { return Err(String::from("ValueError: negative argument not allowed")); }
+                        use std::io::Read;
+                        let mut entropy = std::fs::File::open("/dev/urandom").map_err(|err| format!("OSError: {err}"))?;
+                        let mut result = Vec::new();
+                        if result.try_reserve_exact(requested as usize).is_err() { return Err(String::from("MemoryError: ")); }
+                        result.resize(requested as usize, 0_u8);
+                        entropy.read_exact(&mut result).map_err(|err| format!("OSError: {err}"))?;
+                        self.octets(result, false)
+                    }
+                    2 => {
+                        n(3)?;
+                        let left = self.octet_gathered(&v[1], false, false)?;
+                        let right = self.octet_gathered(&v[2], false, false)?;
+                        Value::Flag(crate::crypto::constant_time(&left, &right))
+                    }
+                    3 => {
+                        n(2)?;
+                        let content = self.octet_gathered(&v[1], false, false)?;
+                        let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, content);
+                        self.octets(encoded.as_bytes().into(), false)
+                    }
+                    4 => {
+                        n(2)?;
+                        match v[1].settled() {
+                            Value::Blueprint(kind) => kind.sealed.set(true),
+                            _ => return Err(String::from("TypeError: expected a type")),
+                        }
+                        Value::Nil
+                    }
+                    _ => return Err(String::from("NotImplementedError: unsupported cryptographic operation")),
+                }
             }
             Prim::HostRow => {
                 n(0)?;
@@ -20557,6 +20625,10 @@ impl<'a> Machine<'a> {
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
+        if self.reading_now.is_none() && (op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost)) {
+            let owner = self.loaded_spaces.get(&self.written_in).and_then(|name| self.imported.get(name));
+            if let Some(Value::Thing(namespace)) = owner { return Ok(Value::Attributes(namespace.clone())); }
+        }
         let book = if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
             self.book_about(op == Prim::WorldBook)
         } else {
@@ -20850,6 +20922,10 @@ impl<'a> Machine<'a> {
         match op {
             Prim::WorldBook | Prim::HereBook => {
                 if !v.is_empty() { return Err(self.core_complaint("core.arity", name)); }
+                if op == Prim::WorldBook && self.reading_now.is_none() {
+                    let origin = self.loaded_spaces.get(&self.written_in).and_then(|path| self.imported.get(path));
+                    if let Some(Value::Thing(thing)) = origin { return Ok(Value::Attributes(thing.clone())); }
+                }
                 Ok(Value::Shared(self.book_about(op == Prim::WorldBook)))
             }
             // __import__(name, globals=None, locals=None, fromlist=(),

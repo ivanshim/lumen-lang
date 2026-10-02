@@ -23,6 +23,7 @@ pub mod code;
 pub mod faint;
 mod core;
 mod complex;
+mod crypto;
 pub mod tuples;
 
 use lang::Lang;

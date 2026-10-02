@@ -403,7 +403,7 @@ impl<'a> Machine<'a> {
         let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).collect();
         natives.dedup();
         if natives.len()>1 {return Err(self.table.single("ext.stmt.class.layout").unwrap_or(self.detail("unready")).to_owned().into());}
-        let module=self.detail("main").to_owned();
+        let module = match self.loaded_spaces.get(&self.written_in) { Some(name) => name.clone(), None => self.detail("main").to_owned() };
         if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(&module)));}
         if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
             if !matches!(if self.detail("name").is_empty() { Self::underlying(candidate).unwrap_or_else(|| candidate.settled()) } else { candidate.type_text() }, Value::Text(_) | Value::Unpaired(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", Self::type_argument_kind(candidate)).into()); }
@@ -708,7 +708,7 @@ impl<'a> Machine<'a> {
             Value::Blueprint(c)=>self.construct_ordered(c,values),
             Value::Wrapped(tag,kept)=>{
                 match tag {
-                    9 if kept.is_empty() && values.len() == 2 && matches!(values[0], Value::Blueprint(_)) => Ok(Value::Wrapped(9, Rc::new(values).into())),
+                    9 if values.len() == 2 && matches!(values[0], Value::Blueprint(_)) => Ok(Value::Wrapped(9, Rc::new(values).into())),
                     0=>Ok(kept[0].clone()),
                     1 if !values.is_empty()=>{
                         let Some(Value::Blueprint(c))=values.first() else{return Err(self.class_unready())};
@@ -1850,7 +1850,7 @@ impl<'a> Machine<'a> {
                 // by handing one `__dict__` to another; the name is read
                 // out of those holds then.
                 if let Value::Attributes(view) = mapping.settled() {
-                    if let Some((_, held)) = view.holds.borrow().iter().find(|(name, _)| name.as_str() == key) { return Ok(held.clone()); }
+                    if let Some((_, held)) = view.holds.borrow().iter().find(|(name, held)| name.as_str() == key && !matches!(held.settled(), Value::Unset)) { return Ok(held.clone()); }
                 }
                 let native = Self::underlying(&mapping).unwrap_or(mapping);
                 if let Value::Dict(entries) = native.settled() {
@@ -1859,7 +1859,7 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone());
+            let own=t.holds.borrow().iter().find(|(k,v)|k==key && !matches!(v.settled(), Value::Unset)).map(|(_,v)|v.clone());
             if let Some(v)=own{return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.blueprint().clone());}
             if self.is_fault_kind(&t.blueprint()) && self.fault_method_word(key) { return Ok(Value::Member(Rc::new(value.clone()), key.to_owned())); }
@@ -2892,7 +2892,11 @@ impl<'a> Machine<'a> {
                 }
                 continue;
             }
-            if let Some(f)=Self::own_entry(b,key){if key!=self.detail("allocate"){args.insert(0,receiver.clone());}return self.apply_class_member(f,args);}
+            if let Some(entry) = Self::own_entry(b, key) {
+                if key == self.detail("allocate") { return self.apply_class_member(entry, args); }
+                let method = self.member_binding(entry, Some(receiver.clone()), class.clone())?;
+                return self.apply_class_member(method, args);
+            }
             if self.table.single("ext.stmt.class.constructor") == Some(key) && self.is_fault_kind(b) {
                 if let Value::Thing(t) = &receiver { return self.fault_method(t.clone(), key, &args); }
             }

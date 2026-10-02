@@ -3591,8 +3591,11 @@ impl<'a> Engine<'a> {
         // A routine written in a file of its own is run as being in it:
         // a complaint names that file, and a file the routine asks for
         // is looked for beside it, wherever the call was made.
-        let elsewhere = program.written_in.as_ref().map(|place| {
-            let was = std::mem::replace(&mut self.source, place.clone());
+        let destination = program.written_in.clone().or_else(|| {
+            self.reading_in.is_none().then(|| self.root_source.clone())
+        });
+        let elsewhere = destination.map(|place| {
+            let was = std::mem::replace(&mut self.source, place);
             (was, self.line)
         });
         let caller_frame = self.trace_frame.take();
@@ -4560,6 +4563,7 @@ impl<'a> Engine<'a> {
         let source = self.source.clone();
         let line = self.line;
         if let Some(place) = &program.written_in { self.source = place.clone(); }
+        else if self.reading_in.is_none() { self.source = self.root_source.clone(); }
         self.inside.push(program.within.clone());
         let caller_frame = std::mem::replace(&mut self.trace_frame, kept.trace_frame.take());
         if let Some(active) = &self.trace_frame { active.fields.borrow_mut()[2].1 = caller_frame.clone().map_or(Value::Null, Value::Object); }
@@ -8548,11 +8552,26 @@ impl<'a> Engine<'a> {
     /// are kept beside them under `\0keys`.
     fn fields_restore(o: &crate::value::Instance, entries: Vec<(Value, Value)>) {
         let mut fields = o.fields.borrow_mut();
-        fields.retain(|(key, _)| key.starts_with('\0') && key != "\0keys");
-        let mut extra: Vec<(Value, Value)> = Vec::new();
+        // A module's addresses outlive dictionary mutations. Keep those
+        // cells, including not-yet-bound names, so later writes still arrive.
+        fields.retain(|(key, value)| (key.starts_with('\0') && key != "\0keys") || matches!(value, Value::Bond(_)));
+        for (key, value) in fields.iter() {
+            if key.starts_with('\0') { continue; }
+            if let Value::Bond(cell) = value {
+                if !entries.iter().any(|(name, _)| matches!(name, Value::Text(text) if text.as_ref() == key)) {
+                    *cell.borrow_mut() = Value::Blank;
+                }
+            }
+        }
+        let mut extra = Vec::new();
         for (key, held) in entries {
             match key {
-                Value::Text(text) => fields.push((text.to_string(), held)),
+                Value::Text(text) => {
+                    if let Some((_, Value::Bond(cell))) = fields.iter().find(|(name, _)| name == text.as_ref()) {
+                        let value = match &held { Value::Bond(link) => link.borrow().clone(), _ => held };
+                        *cell.borrow_mut() = value;
+                    } else { fields.push((text.to_string(), held)); }
+                }
                 other => extra.push((other, held)),
             }
         }
@@ -16355,6 +16374,53 @@ impl<'a> Engine<'a> {
             // The working directory (or nothing), the word for the
             // system, the word for the machine, and the environment as
             // a map, in that order.
+            Builtin::Crypto => {
+                let operation = as_index(args.first().ok_or("TypeError: missing cryptographic operation")?)?;
+                match operation {
+                    0 => {
+                        arity(14)?;
+                        let Value::Text(name) = args[1].contents() else { return Err("TypeError: hash name must be str".into()) };
+                        let data = self.byte_row(&args[2].contents(), false)?;
+                        let length = as_index(&args[3])? as usize;
+                        let key = self.byte_row(&args[4].contents(), false)?;
+                        let salt = self.byte_row(&args[5].contents(), false)?;
+                        let person = self.byte_row(&args[6].contents(), false)?;
+                        let tree = args[7..].iter().map(|v| v.as_big()?.to_u64().ok_or_else(|| "OverflowError: int too big to convert".to_string())).collect::<Result<Vec<_>, String>>()?;
+                        let flags = tree;
+                        self.byte_make(crate::crypto::hash(&name, &data, length, &flags, &key, &salt, &person)?, false)
+                    }
+                    1 => {
+                        arity(2)?;
+                        let count = args[1].as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C ssize_t")?;
+                        if count < 0 { return Err("ValueError: negative argument not allowed".into()); }
+                        let mut bytes = Vec::new();
+                        bytes.try_reserve_exact(count as usize).map_err(|_| "MemoryError: ".to_string())?;
+                        bytes.resize(count as usize, 0);
+                        use std::io::Read as _;
+                        std::fs::File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut bytes)).map_err(|e| format!("OSError: {e}"))?;
+                        self.byte_make(bytes, false)
+                    }
+                    2 => {
+                        arity(3)?;
+                        let a = self.byte_row(&args[1].contents(), false)?;
+                        let b = self.byte_row(&args[2].contents(), false)?;
+                        Value::Flag(crate::crypto::equal(&a, &b))
+                    }
+                    3 => {
+                        arity(2)?;
+                        use base64::Engine as _;
+                        let bytes = self.byte_row(&args[1].contents(), false)?;
+                        self.byte_make(base64::engine::general_purpose::STANDARD.encode(bytes).into_bytes(), false)
+                    }
+                    4 => {
+                        arity(2)?;
+                        let Value::Class(class) = args[1].contents() else { return Err("TypeError: expected a type".into()) };
+                        class.sealed.set(true);
+                        Value::Null
+                    }
+                    _ => return Err("NotImplementedError: unsupported cryptographic operation".into()),
+                }
+            }
             Builtin::HostFacts => {
                 arity(0)?;
                 let directory = std::env::current_dir().ok().and_then(|d| d.to_str().map(Value::text)).unwrap_or(Value::Null);
@@ -20651,6 +20717,13 @@ impl Engine<'_> {
         if kind == Builtin::ClassLocalsPlace {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
+        if self.reading_in.is_none() && (kind == Builtin::OuterNames || program.body_of_all) {
+            if let Some((_, path)) = self.module_slots.get(&self.source) {
+                if let Some(Value::Object(module)) = self.modules.get(path) {
+                    return Ok(Value::Fields(module.clone()));
+                }
+            }
+        }
         let book = if kind == Builtin::OuterNames || program.body_of_all {
             self.book_here(kind == Builtin::OuterNames)
         } else {
@@ -20944,6 +21017,11 @@ impl Engine<'_> {
         match builtin {
             Builtin::OuterNames | Builtin::NearNames => {
                 if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
+                if builtin == Builtin::OuterNames && self.reading_in.is_none() {
+                    if let Some((_, path)) = self.module_slots.get(&self.source) {
+                        if let Some(Value::Object(module)) = self.modules.get(path) { return Ok(Value::Fields(module.clone())); }
+                    }
+                }
                 Ok(Value::Bond(self.book_here(builtin == Builtin::OuterNames)))
             }
             // A dictionary fresh and empty every time it is asked for,

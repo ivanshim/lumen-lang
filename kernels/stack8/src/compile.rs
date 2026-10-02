@@ -9169,6 +9169,11 @@ impl<'a> Compiler<'a> {
                 }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
+                if extra > 0 && !lang.class_details.is_empty() {
+                    self.constant(PARENT_CALLABLE.with(Clone::clone));
+                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
+                    return self.indexing(from);
+                }
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));

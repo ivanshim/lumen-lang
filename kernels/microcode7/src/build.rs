@@ -8800,6 +8800,10 @@ impl<'a> Builder<'a> {
                 let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
+                    (false, _, _, _) if table.has_any("ext.stmt.class.detail.root") => {
+                        let callable = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
+                        invoke(callable, extra)
+                    }
                     (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
                         let private = self.parts().completed_class.ident.to_string();
                         let args = vec![self.read(&private), self.read(&receiver)];

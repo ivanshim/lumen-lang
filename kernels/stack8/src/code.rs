@@ -621,6 +621,7 @@ pub enum Builtin {
     FileKind,
     /// The host's own facts: working directory, system, machine, environment.
     HostFacts,
+    Crypto,
     /// A command handed to the host's own shell, answering with all
     /// that the shell wrote where a run writes (ext.builtin.shell).
     /// Only a language that spells this may start another program at

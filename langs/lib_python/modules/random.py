@@ -206,3 +206,40 @@ class Random:
         while index >= n:
             index = self.getrandbits(k)
         return sequence[index]
+
+
+class SystemRandom(Random):
+    """Random source backed by operating-system entropy."""
+    def seed(self, *args, **kwargs):
+        pass
+
+    def random(self):
+        import os
+        return (int.from_bytes(os.urandom(7)) >> 3) * (2 ** -53)
+
+    def getrandbits(self, k):
+        import operator
+        import os
+        k = operator.index(k)
+        if k < 0:
+            raise ValueError('number of bits must be non-negative')
+        if k == 0:
+            return 0
+        numbytes = (k + 7) // 8
+        return int.from_bytes(os.urandom(numbytes)) >> (numbytes * 8 - k)
+
+    def randbytes(self, n):
+        import os
+        return os.urandom(n)
+
+    def _randbelow(self, n):
+        k = n.bit_length()
+        r = self.getrandbits(k)
+        while r >= n:
+            r = self.getrandbits(k)
+        return r
+
+    def getstate(self, *args, **kwargs):
+        raise NotImplementedError('System entropy source does not have state.')
+
+    setstate = getstate

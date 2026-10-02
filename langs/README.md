@@ -4511,6 +4511,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.unsized` | - | - | `TypeError: object of type '` `' has no len()` | - | - | - | - | - | - | - |
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
 | `ext.builtin.core.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
+| `ext.builtin.crypto` | - | - | `__crypto` | - | - | - | - | - | - | - |
 | `ext.builtin.default` | - | - | `default` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
@@ -5716,3 +5717,5 @@ were introduced after 3.14. Integer math arguments use the index protocol,
 including int subclasses and objects implementing __index__.
 Percent-format type errors follow the release wording; successful ordered
 unittest assertions do not stringify their operands.
+
+`ext.builtin.crypto` supplies Python digest computation, constant-time byte comparison, OS entropy and base64 encoding through `__crypto`. Only Python binds this host primitive.
