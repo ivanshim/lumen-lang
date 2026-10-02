@@ -10762,6 +10762,9 @@ impl<'a> Compiler<'a> {
             }
         }
         if let Some(clause) = self.comprehension_ahead() {
+            if self.lang.python_numbers && self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread }) {
+                return Err(if map { "SyntaxError: dict unpacking cannot be used in dict comprehension" } else { "SyntaxError: iterable unpacking cannot be used in comprehension" }.into());
+            }
             return self.comprehension(pair, clause, map);
         }
         self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);

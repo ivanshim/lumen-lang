@@ -10158,6 +10158,10 @@ impl<'a> Builder<'a> {
             }
         }
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
+            if self.table.flag("ext.op.arithmetic.python_numbers") && self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" }) {
+                let problem = if mapped { "dict unpacking cannot be used in dict comprehension" } else { "iterable unpacking cannot be used in comprehension" };
+                return Err(format!("SyntaxError: {problem}"));
+            }
             return self.gather_comprehension(next, &closing, mapped);
         }
         let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
