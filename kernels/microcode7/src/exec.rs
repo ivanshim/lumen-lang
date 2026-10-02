@@ -21650,7 +21650,7 @@ impl Machine<'_> {
         }
         if let Value::Generator(handle) = subject {
             let frame = handle.borrow();
-            if frame.walked.is_none() || frame.of.is_some() { return Err("TypeError: cannot pickle generator object".to_owned()); }
+            if frame.walked.is_none() || frame.of.is_some() { return Err("TypeError: cannot pickle 'generator' object".to_owned()); }
             let entries = frame.members.as_ref().map(|items| items.as_slice().to_vec()).unwrap_or_default();
             return Ok(tuple(vec![builtin(Prim::Iterator), tuple(vec![Value::Vector(crate::tuples::Sequence::plain(entries))])]));
         }

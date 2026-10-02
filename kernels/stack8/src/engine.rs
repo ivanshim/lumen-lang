@@ -18583,7 +18583,7 @@ impl Engine<'_> {
         }
         if let Value::Generator(cell) = value {
             let held = cell.borrow();
-            if held.walked.is_none() || held.program.is_some() { return Err("TypeError: cannot pickle generator object".into()); }
+            if held.walked.is_none() || held.program.is_some() { return Err("TypeError: cannot pickle 'generator' object".into()); }
             let iter = self.builtin_named("iter")?.ok_or_else(|| "AttributeError: iter".to_string())?;
             let entries = if held.closed { Vec::new() } else { held.items.get(held.pc..).unwrap_or_default().to_vec() };
             return Ok(pack(vec![iter, pack(vec![Value::array(entries)])]));

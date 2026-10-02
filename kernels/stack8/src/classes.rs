@@ -59,7 +59,7 @@ impl<'a> Engine<'a> {
             let names = self.kind_member_names(&sample);
             for name in names {
                 if matches!(name.as_str(), "start" | "stop" | "step" | "real" | "imag" | "numerator" | "denominator" | "__reduce_ex__" | "__dir__") { continue; }
-                if word == "generator" && matches!(name.as_str(), "__reduce__" | "__setstate__") { continue; }
+                if word == "generator" && name == "__setstate__" { continue; }
                 if c.shared.borrow().iter().any(|(key, _)| key == &name) { continue; }
                 if let Some(descriptor) = self.loose_kind_member(&Value::Class(c.clone()), &name) {
                     c.shared.borrow_mut().push((name, descriptor));

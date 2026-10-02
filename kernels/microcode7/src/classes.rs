@@ -70,7 +70,7 @@ impl<'a> Machine<'a> {
             let known = self.native_directory(&representative);
             let descriptors = known.into_iter().filter(|name|
                 !["real", "imag", "numerator", "denominator", "start", "stop", "step", "__dir__", "__reduce_ex__"].contains(&name.as_str())
-                && !(word == "generator" && matches!(name.as_str(), "__reduce__" | "__setstate__"))
+                && !(word == "generator" && name == "__setstate__")
                 && !kind.shared.borrow().iter().any(|(key, _)| key == name))
                 .filter_map(|name| self.carried_by_kind(&owner, &name).map(|entry| (name, entry))).collect::<Vec<_>>();
             kind.shared.borrow_mut().extend(descriptors);
