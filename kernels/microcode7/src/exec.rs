@@ -806,6 +806,39 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// What a body was handling when it slept, standing above the
+    /// caller's held faults: a value raised into the body stands behind
+    /// the innermost of those, with the same cycle handling a raise's
+    /// chaining asks for. Nothing the body was handling, no chaining at
+    /// all.
+    fn keep_context_above(&self, raised: &Value, base: usize) {
+        let Some(key) = self.table.single("ext.builtin.exceptions.context") else { return };
+        let Some(Value::Thing(handled)) = self.holding_fault.get(base..).and_then(|tail| tail.last()).map(Value::settled) else { return };
+        let Value::Thing(thing) = raised.settled() else { return };
+        if Rc::ptr_eq(&handled, &thing) { return; }
+        let context_of = |of: &Rc<Thing>| of.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.settled());
+        let mut step = handled.clone();
+        let mut runner = handled.clone();
+        let mut alternate = false;
+        while let Some(Value::Thing(older)) = context_of(&step) {
+            if Rc::ptr_eq(&older, &thing) {
+                if let Some((_, slot)) = step.holds.borrow_mut().iter_mut().find(|(k, _)| k == key) { *slot = Value::Nil; }
+                break;
+            }
+            step = older;
+            if Rc::ptr_eq(&step, &runner) { break; }
+            if alternate {
+                if let Some(Value::Thing(ahead)) = context_of(&runner) { runner = ahead; }
+            }
+            alternate = !alternate;
+        }
+        let mut holds = thing.holds.borrow_mut();
+        match holds.iter_mut().find(|(k, _)| k == key) {
+            Some((_, slot)) => *slot = Value::Thing(handled),
+            None => holds.push((key.to_string(), Value::Thing(handled))),
+        }
+    }
+
     /// A fault of the kernel's own, met where exceptions are furnished,
     /// is raised as a value of the class the table names for it, so a
     /// clause may take it; every other outcome passes as it came.
@@ -4214,9 +4247,11 @@ impl<'a> Machine<'a> {
         state.receiving = false;
         match hurled {
             Some(value) => {
-                // Raised where the body left off, keeping whatever it
-                // already stands behind, the way the reference's own
-                // throw leaves a value's context alone.
+                // Raised where the body left off: what the body itself
+                // was handling when it slept stands behind the value,
+                // with the cycle handling any context chain asks for,
+                // as the reference's own throw chains it.
+                self.keep_context_above(&value, self.holding_below);
                 self.unwind(state, Escape::Thrown(value))?;
             }
             None => if taking { state.found.push(sent.clone()); },

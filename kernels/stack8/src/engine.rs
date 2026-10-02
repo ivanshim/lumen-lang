@@ -599,6 +599,38 @@ impl<'a> Engine<'a> {
     /// chain of contexts that would come back round to the raised value
     /// is cut where it would, so that no exception ever stands behind
     /// itself.
+    /// What a body was handling when it slept, standing above the
+    /// caller's handled faults: a value raised into the body stands
+    /// behind the innermost of those, with the same cycle handling a
+    /// raise's chaining asks for. Nothing the body was handling, no
+    /// chaining at all.
+    fn chain_context_from(&self, raised: &Value, base: usize) {
+        let Some(name) = &self.lang.exception_context else { return };
+        let Some(Value::Object(handling)) = self.caught.get(base..).and_then(|tail| tail.last()).map(Value::contents) else { return };
+        let Value::Object(object) = raised.contents() else { return };
+        if Rc::ptr_eq(&handling, &object) { return; }
+        let behind = |link: &Rc<Instance>| link.fields.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.contents());
+        let mut link = handling.clone();
+        let mut hare = handling.clone();
+        let mut alternate = false;
+        while let Some(Value::Object(further)) = behind(&link) {
+            if Rc::ptr_eq(&further, &object) {
+                if let Some((_, held)) = link.fields.borrow_mut().iter_mut().find(|(n, _)| n == name) { *held = Value::Null; }
+                break;
+            }
+            link = further;
+            if Rc::ptr_eq(&link, &hare) { break; }
+            if alternate {
+                if let Some(Value::Object(ahead)) = behind(&hare) { hare = ahead; }
+            }
+            alternate = !alternate;
+        }
+        let mut fields = object.fields.borrow_mut();
+        match fields.iter_mut().find(|(n, _)| n == name) {
+            Some((_, held)) => *held = Value::Object(handling),
+            None => fields.push((name.clone(), Value::Object(handling))),
+        }
+    }
     fn chain_context(&self, raised: &Value) {
         let Some(name) = &self.lang.exception_context else { return };
         let Value::Object(object) = raised.contents() else { return };
@@ -4216,9 +4248,11 @@ impl<'a> Engine<'a> {
             }
         }
         if let Some(value) = hurled {
-            // Raised where the body left off, keeping whatever it
-            // already stands behind, the way the reference's own throw
-            // leaves a value's context alone.
+            // Raised where the body left off: what the body itself was
+            // handling when it slept stands behind the value, with the
+            // cycle handling any context chain asks for, as the
+            // reference's own throw chains it.
+            self.chain_context_from(&value, self.held_base);
             return Err(Fault::Thrown(value));
         }
         let mut counted = 0u32;
