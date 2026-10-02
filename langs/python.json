@@ -2548,9 +2548,9 @@
     "ValueError: cannot convert float NaN to integer"
   ],
   "ext.op.rem.format.number": [
-    "TypeError: format argument",
-    ": %",
-    " requires a real number, not "
+    "TypeError: ",
+    "%",
+    " format: a real number is required, not "
   ],
   "ext.op.rem.format.real": [
     "TypeError: format argument",
@@ -3203,7 +3203,7 @@
     "SyntaxError: invalid parameter list"
   ],
   "ext.stmt.function.parameters.duplicate": [
-    "SyntaxError: duplicate parameter '",
+    "SyntaxError: duplicate argument '",
     "' in function definition"
   ],
   "ext.stmt.function.positional_only": [

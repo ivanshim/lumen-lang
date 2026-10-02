@@ -7002,7 +7002,7 @@ impl<'a> Engine<'a> {
         match value {
             Value::Object(o) => {
                 let class = o.class_now();
-                if matches!(code, 'o' | 'x' | 'X') {
+                if matches!(code, 'd' | 'i' | 'u' | 'o' | 'x' | 'X') {
                     return class.python_names.borrow().as_ref().map(|names| names.0.plain()).unwrap_or_else(|| class.name.clone());
                 }
                 if code == 'c' { if let Some(title) = class.python_qualified_title() { return title; } }

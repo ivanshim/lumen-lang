@@ -23981,7 +23981,7 @@ impl crate::formatting::Elsewhere for Machine<'_> {
             _ => None,
         };
         let named = |other: &Value| {
-            if ['o', 'x', 'X'].contains(&code) {
+            if "diuoxX".contains(code) {
                 if let Value::Thing(object) = other {
                     let class = object.blueprint();
                     return class.type_names.borrow().as_ref().map_or_else(|| class.name.clone(), |names| names.short.type_text().bare());
