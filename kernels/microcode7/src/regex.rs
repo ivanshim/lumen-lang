@@ -53,8 +53,33 @@ fn capture_offsets(mapping: &Value, number: i64) -> Option<(usize, usize)> {
     }
     None
 }
+fn span_state(parameters: &[Value]) -> Option<Value> {
+    let Value::Text(input) = parameters.get(3)?.settled() else { return None };
+    if !input.is_ascii() { return None; }
+    let Value::Small(number) = parameters.get(4)?.settled() else { return None };
+    let begin = usize::try_from(number).ok()?.min(input.len());
+    if let Some(parts) = sequence(parameters.get(1)?) {
+        let (Value::Small(minimum), Value::Small(maximum), Value::Text(alphabet)) = (parts.get(1)?.settled(), parts.get(2)?.settled(), parts.get(4)?.settled()) else { return None };
+        let available = if maximum < 0 { input.len() - begin } else { (input.len() - begin).min(maximum as usize) };
+        let wanted = if parts.get(3)?.is_true() { available } else { available.min(minimum.max(0) as usize) };
+        let taken = input.as_bytes()[begin..begin + wanted].iter().take_while(|byte| alphabet.as_bytes().contains(byte)).count();
+        if taken < minimum.max(0) as usize { return Some(Value::Flag(false)); }
+        return Some(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Small((begin + taken) as i64), Value::Dict(std::rc::Rc::new(Vec::new().into()))])));
+    }
+    let plan = sequence(parameters.get(2)?)?;
+    let (Value::Small(a), Value::Small(b), Value::Text(accepted), Value::Text(passed)) = (plan.first()?.settled(), plan.get(1)?.settled(), plan.get(3)?.settled(), plan.get(4)?.settled()) else { return None };
+    let skipped = input.as_bytes()[begin..].iter().take_while(|byte| passed.as_bytes().contains(byte)).count();
+    let boundary = begin + skipped;
+    let Some(byte) = input.as_bytes().get(boundary) else { return Some(Value::Flag(false)) };
+    if !accepted.as_bytes().contains(byte) { return Some(Value::Flag(false)); }
+    let pair = |lo, hi| Value::Vector(crate::tuples::Sequence::plain(vec![Value::Small(lo as i64), Value::Small(hi as i64)]));
+    let entries = vec![(Value::Small(a), pair(begin, boundary)), (Value::Small(b), pair(boundary, boundary + 1))];
+    Some(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Small((boundary + 1) as i64), Value::Dict(std::rc::Rc::new(entries.into()))])))
+}
+
 pub(crate) fn apply(values: &[Value]) -> Result<Value, String> {
     let task = values.first().map(Value::bare).unwrap_or_default();
+    if task == "match" && values.len() == 5 { return Ok(span_state(values).unwrap_or(Value::Nil)); }
     if task == "ascii" && values.len() == 4 {
         let Some(settings) = sequence(&values[2]) else { return Ok(Value::Nil) };
         let excluded = values[3].is_true();

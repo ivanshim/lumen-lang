@@ -6,9 +6,21 @@ functions. Container callbacks and hooks retain the decoder's public API.
 import re
 import sys
 
+_string_scan = __json_string_scan
+
 _escapes = {'"': '"', '\\': '\\', '/': '/', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t'}
 _quotes = {'"': '\\"', '\\': '\\\\', '\b': '\\b', '\f': '\\f', '\n': '\\n', '\r': '\\r', '\t': '\\t'}
 _number = re.compile(r'(-?(?:0|[1-9][0-9]*))(\.[0-9]+)?([eE][-+]?[0-9]+)?')
+
+
+def _index(value):
+    import operator
+    try:
+        return operator.index(value)
+    except TypeError:
+        if getattr(type(value), '__index__', None) is None:
+            raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer") from None
+        raise
 
 
 def _error(message, text, position):
@@ -26,8 +38,8 @@ def _unicode_escape(text, position):
 def scanstring(string, end, strict=True):
     if not isinstance(string, str):
         raise TypeError('first argument must be a string')
-    if not isinstance(end, int):
-        raise TypeError('an integer is required')
+    if type(end) is not int:
+        end = _index(end)
     if end > sys.maxsize or end < -sys.maxsize - 1:
         raise OverflowError('Python int too large to convert to C ssize_t')
     strict = bool(strict)
@@ -110,11 +122,17 @@ class make_scanner:
     def __call__(self, string, index):
         if not isinstance(string, str):
             raise TypeError('first argument must be a string')
-        if not isinstance(index, int):
-            raise TypeError('an integer is required')
+        if type(index) is not int:
+            index = _index(index)
+        if index > sys.maxsize or index < -sys.maxsize - 1:
+            raise OverflowError('Python int too large to convert to C ssize_t')
         if index < 0:
             raise ValueError('idx cannot be negative')
         try:
+            if index < len(string) and string[index] == '"':
+                scanned = _string_scan(string, index + 1)
+                if scanned is not None:
+                    return scanned
             return self._scan(string, index)
         finally:
             self.memo.clear()

@@ -44,9 +44,36 @@ fn bound(captures: &Value, index: i64) -> Option<(usize, usize)> {
     let [Value::Small(start), Value::Small(end)] = parts.as_slice() else { return None };
     Some((usize::try_from(*start).ok()?, usize::try_from(*end).ok()?))
 }
+fn ascii_match(simple: &Value, chunk: &Value, source: &Value, offset: &Value) -> Option<Value> {
+    let (Value::Text(text), Value::Small(first)) = (source.contents(), offset.contents()) else { return None };
+    if !text.is_ascii() { return None; }
+    let start = usize::try_from(first).ok()?.min(text.len());
+    if let Some(rule) = row(simple) {
+        let [_, Value::Small(least), Value::Small(most), greedy, Value::Text(members)] = rule.as_slice() else { return None };
+        let cap = if *most < 0 { text.len() } else { text.len().min(start.saturating_add(*most as usize)) };
+        let limit = if greedy.is_true() { cap } else { cap.min(start.saturating_add((*least).max(0) as usize)) };
+        let mut end = start;
+        while end < limit && members.as_bytes().contains(&text.as_bytes()[end]) { end += 1; }
+        return Some(if end.saturating_sub(start) >= (*least).max(0) as usize {
+            Value::array(vec![Value::Small(end as i64), Value::Map(std::rc::Rc::new(Vec::new().into()))])
+        } else { Value::Flag(false) });
+    }
+    let rule = row(chunk)?;
+    let [Value::Small(left), Value::Small(right), _, Value::Text(ends), Value::Text(skip)] = rule.as_slice() else { return None };
+    let mut stop = start;
+    while stop < text.len() && skip.as_bytes().contains(&text.as_bytes()[stop]) { stop += 1; }
+    if stop == text.len() || !ends.as_bytes().contains(&text.as_bytes()[stop]) { return Some(Value::Flag(false)); }
+    let captures = vec![
+        (Value::Small(*left), Value::array(vec![Value::Small(start as i64), Value::Small(stop as i64)])),
+        (Value::Small(*right), Value::array(vec![Value::Small(stop as i64), Value::Small(stop as i64 + 1)])),
+    ];
+    Some(Value::array(vec![Value::Small(stop as i64 + 1), Value::Map(std::rc::Rc::new(captures.into()))]))
+}
+
 pub(crate) fn shortcut(arguments: &[Value]) -> Result<Value, String> {
     let Some(Value::Text(operation)) = arguments.first().map(Value::contents) else { return Ok(Value::Null) };
     match operation.as_ref() {
+        "match" if arguments.len() == 5 => Ok(ascii_match(&arguments[1], &arguments[2], &arguments[3], &arguments[4]).unwrap_or(Value::Null)),
         "ascii" if arguments.len() == 4 => {
             let Some(flags) = row(&arguments[2]) else { return Ok(Value::Null) };
             let inverse = arguments[3].is_true(); let mut characters = String::new();

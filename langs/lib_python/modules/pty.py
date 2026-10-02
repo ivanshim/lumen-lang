@@ -24,7 +24,7 @@ def openpty():
 
 
 def fork():
-    raise 'NotImplementedError: pty.fork needs to fork a process, which this runtime cannot do'
+    raise OSError(38, 'pty.fork is not implemented by this runtime')
 
 
 def spawn(argv, master_read=None, stdin_read=None):

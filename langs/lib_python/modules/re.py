@@ -374,11 +374,11 @@ def _word(letter, ascii_only=False):
 def _accept(node, letter, ignorecase, ascii_only=False):
     kind = node[0]
     if kind == 'lit':
-        if ignorecase:
+        if ignorecase and not (0xd800 <= ord(letter) <= 0xdfff or 0xd800 <= ord(node[1]) <= 0xdfff):
             return letter.lower() == node[1].lower()
         return letter == node[1]
     if kind == 'range':
-        if ignorecase:
+        if ignorecase and not 0xd800 <= ord(letter) <= 0xdfff:
             for candidate in [letter, letter.lower(), letter.upper()]:
                 if ord(node[1]) <= ord(candidate) and ord(candidate) <= ord(node[2]):
                     return True
@@ -701,8 +701,8 @@ class Pattern:
         self.multiline = (flags & MULTILINE) != 0
         self.dotall = (flags & DOTALL) != 0
         self.verbose = (flags & VERBOSE) != 0
-        self._bytes = isinstance(pattern, bytes)
-        source = pattern.decode('latin-1') if self._bytes else pattern
+        self._bytes = self.is_bytes
+        source = pattern
         text = _strip_verbose(source) if self.verbose else source
         reader = _Reader(text)
         self.tree = reader.choice()
@@ -760,6 +760,9 @@ class Pattern:
         if endpos is not None:
             string = string[:max(0, _position(endpos))]
         text = string.decode('latin-1') if self._bytes else string
+        state = _host_regex_shortcut('match', self._simple, self._chunk, text, pos)
+        if state is not None:
+            return Match(self, string, pos, state) if state else None
         if self._simple is not None:
             atom, minimum, maximum, greedy, ascii_members = self._simple
             end = pos

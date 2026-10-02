@@ -5831,8 +5831,18 @@ impl<'a> Engine<'a> {
     fn file_descriptor_operation(&mut self, args: &[Value]) -> Option<Res<Value>> {
         use std::os::fd::AsRawFd;
         use std::io::{Seek, SeekFrom};
-        extern "C" { fn fcntl(fd: i32, command: i32, ...) -> i32; }
+        extern "C" { fn fcntl(fd: i32, command: i32, ...) -> i32; fn isatty(fd: i32) -> i32; fn pipe(fds: *mut i32) -> i32; }
         let error = |fault: std::io::Error| Value::tuple(vec![Value::Small(fault.raw_os_error().unwrap_or(5) as i64), Value::text(fault.to_string().split(" (os error").next().unwrap_or("I/O error"))]);
+        if matches!(args, [Value::Null, Value::Text(action)] if action.as_ref() == "pipe") {
+            use std::os::fd::FromRawFd;
+            let mut ends = [-1i32; 2];
+            if unsafe { pipe(ends.as_mut_ptr()) } != 0 { return Some(Ok(error(std::io::Error::last_os_error()))); }
+            for fd in ends {
+                unsafe { fcntl(fd, 2, 1); }
+                self.opened_descriptors.insert(fd, unsafe { std::fs::File::from_raw_fd(fd) });
+            }
+            return Some(Ok(Value::tuple(ends.into_iter().map(|fd| Value::Small(fd as i64)).collect())));
+        }
         if let [Value::Text(path), Value::Text(mode)] = args {
             let reading = mode.contains('r') || mode.contains('+') || !mode.contains(['w', 'a', 'x']);
             let writing = mode.contains(['w', 'a', 'x', '+']);
@@ -5847,6 +5857,7 @@ impl<'a> Engine<'a> {
             return Some(Ok(if self.opened_descriptors.remove(&fd).is_some() { Value::Null } else { error(std::io::Error::from_raw_os_error(9)) }));
         }
         let Value::Text(action) = args.get(1)?.contents() else { return None };
+        if action.as_ref() == "isatty" && args.len() == 2 { return Some(Ok(Value::Flag(unsafe { isatty(fd) } != 0))); }
         if action.as_ref() == "seek" && args.len() == 3 {
             let Value::Small(offset) = args[2].contents() else { return Some(Err("TypeError: an integer is required".into())) };
             let outcome = self.opened_descriptors.get_mut(&fd).ok_or_else(|| std::io::Error::from_raw_os_error(9)).and_then(|file| file.seek(SeekFrom::Start(offset.max(0) as u64)));
@@ -5864,7 +5875,9 @@ impl<'a> Engine<'a> {
 
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value.contents() else { return None };
-        if let Some((_, Value::Text(path))) = o.fields.borrow().iter().find(|(key, _)| key == "\0module-owner") { return Some(path.to_string()); }
+        if let Ok(fields) = o.fields.try_borrow() {
+            if let Some((_, Value::Text(path))) = fields.iter().find(|(key, _)| key == "\0module-owner") { return Some(path.to_string()); }
+        }
         self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, &o))).map(|(path, _)| path.clone())
     }
 

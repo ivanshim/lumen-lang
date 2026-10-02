@@ -253,3 +253,24 @@ def set_inheritable(fd, inheritable):
     result = _host_file_kind(fd, 'inheritable', bool(inheritable))
     if isinstance(result, tuple):
         raise OSError(result[0], result[1])
+
+
+def isatty(fd):
+    if not isinstance(fd, int):
+        raise TypeError('an integer is required')
+    return _host_file_kind(fd, 'isatty')
+
+
+def pipe():
+    result = _host_file_kind(None, 'pipe')
+    if isinstance(result[1], str):
+        raise OSError(result[0], result[1])
+    return result
+
+
+def close(fd):
+    if not isinstance(fd, int):
+        raise TypeError('an integer is required')
+    result = _host_file_kind(fd, None)
+    if isinstance(result, tuple):
+        raise OSError(result[0], result[1])

@@ -7987,10 +7987,24 @@ impl<'a> Machine<'a> {
     fn descriptor_action(&mut self, values: &[Value]) -> Option<Result<Value, String>> {
         use std::io::Seek;
         use std::os::fd::AsRawFd;
-        extern "C" { fn fcntl(descriptor: i32, request: i32, ...) -> i32; }
+        extern "C" { fn fcntl(descriptor: i32, request: i32, ...) -> i32; fn isatty(descriptor: i32) -> i32; fn pipe(output: *mut i32) -> i32; }
         fn failed(error: std::io::Error) -> Value {
             let text = error.to_string();
             Value::tuple(vec![Value::Small(error.raw_os_error().unwrap_or(5) as i64), Value::text(text.split(" (os error").next().unwrap_or(&text))])
+        }
+        if let [Value::Nil, Value::Text(word)] = values {
+            if word.as_ref() == "pipe" {
+                use std::os::fd::FromRawFd;
+                let mut descriptors = [0i32, 0i32];
+                let result = unsafe { pipe(descriptors.as_mut_ptr()) };
+                if result < 0 { return Some(Ok(failed(std::io::Error::last_os_error()))); }
+                for descriptor in descriptors.iter().copied() {
+                    unsafe { fcntl(descriptor, 2, 1); }
+                    let owned = unsafe { std::fs::File::from_raw_fd(descriptor) };
+                    self.descriptor_files.insert(descriptor, owned);
+                }
+                return Some(Ok(Value::tuple(vec![Value::Small(descriptors[0] as i64), Value::Small(descriptors[1] as i64)])));
+            }
         }
         if values.len() == 2 {
             if let (Value::Text(location), Value::Text(options)) = (&values[0], &values[1]) {
@@ -8009,6 +8023,9 @@ impl<'a> Machine<'a> {
         let action = values.get(1)?.settled();
         if matches!(action, Value::Nil) {
             return Some(Ok(match self.descriptor_files.remove(&descriptor) { Some(_) => Value::Nil, None => failed(std::io::Error::from_raw_os_error(9)) }));
+        }
+        if action.bare() == "isatty" && values.len() == 2 {
+            return Some(Ok(Value::Flag(unsafe { isatty(descriptor) } == 1)));
         }
         if action.bare() == "seek" && values.len() == 3 {
             if let Value::Small(position) = values[2].settled() {
@@ -8030,7 +8047,8 @@ impl<'a> Machine<'a> {
 
     pub(super) fn namespace_holding(&self, value: &Value) -> Option<String> {
         let Value::Thing(thing) = value.settled() else { return None };
-        let origin = thing.holds.borrow().iter().find_map(|(key, held)| if key == "\0namespace-origin" { Some(held.bare()) } else { None });
+        let origin = thing.holds.try_borrow().ok().and_then(|attributes| attributes.iter()
+            .find_map(|(key, held)| (key == "\0namespace-origin").then(|| held.bare())));
         if origin.is_some() { return origin; }
         self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(other) if Rc::ptr_eq(other, &thing))).map(|(path, _)| path.clone())
     }
