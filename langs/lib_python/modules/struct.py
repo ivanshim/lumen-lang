@@ -31,15 +31,21 @@ def pack(format, *values):
         return bits.to_bytes(8, 'little' if format == '<d' else 'big')
     layout = _int_layout(format)
     if layout is not None:
-        endian, pieces = layout
+        endian, pieces, extent = layout
         if len(values) != len(pieces):
             raise error('pack expected ' + str(len(pieces)) + ' items for packing (got ' + str(len(values)) + ')')
         out = b''
-        for (size, signed), value in zip(pieces, values):
+        at = 0
+        for (size, signed, code, place), value in zip(pieces, values):
+            while at < place:
+                out += b'\x00'
+                at += 1
+            number = _whole(value)
             try:
-                out += int(value).to_bytes(size, endian, signed=signed)
+                out += number.to_bytes(size, endian, signed=signed)
             except OverflowError:
-                raise error('argument out of range')
+                raise error(_int_range(code, size, signed))
+            at += size
         return out
     raise 'NotImplementedError: struct.pack needs byte values'
 
@@ -84,49 +90,77 @@ def unpack(format, buffer):
         return (-value if negative else value,)
     layout = _int_layout(format)
     if layout is not None:
-        endian, pieces = layout
-        total = 0
-        for size, signed in pieces:
-            total += size
-        if len(buffer) != total:
-            raise error('unpack requires a buffer of ' + str(total) + ' bytes')
+        endian, pieces, extent = layout
+        if len(buffer) != extent:
+            raise error('unpack requires a buffer of ' + str(extent) + ' bytes')
         values = []
-        at = 0
-        for size, signed in pieces:
-            values.append(int.from_bytes(buffer[at:at + size], endian, signed=signed))
-            at += size
+        for size, signed, code, place in pieces:
+            values.append(int.from_bytes(buffer[place:place + size], endian, signed=signed))
         return tuple(values)
     raise 'NotImplementedError: struct.unpack needs byte values'
 
 _INT_SIZES = {'b': (1, True), 'B': (1, False), 'h': (2, True), 'H': (2, False),
-              'i': (4, True), 'I': (4, False), 'l': (4, True), 'L': (4, False),
-              'q': (8, True), 'Q': (8, False)}
+              'i': (4, True), 'I': (4, False), 'q': (8, True), 'Q': (8, False)}
+_INT_WORDS = {'b': 'byte', 'B': 'ubyte', 'h': 'short', 'H': 'ushort'}
 
 def _int_layout(format):
-    # The pieces an integer-only format packs to, in order, with the
-    # prefix's endianness; None where a format has anything else.
-    endian = None
+    # The pieces an integer-only format packs to, in order, each with
+    # the place it stands at: (endian, [(size, signed, code, at)],
+    # extent). A native prefix takes the platform's own sizes -- l and
+    # L are eight bytes here -- and pads each piece to its own
+    # alignment, the way the platform's compiler would lay the fields
+    # out; None where a format has anything else.
+    native = True
+    endian = 'little'
     if format[:1] in ('@', '=', '<', '>', '!'):
-        endian = 'little' if format[0] in ('<', '=', '@') else 'big'
+        head = format[0]
         format = format[1:]
-    if endian is None:
-        endian = 'little'
+        native = head == '@'
+        endian = 'little' if head in ('<', '=', '@') else 'big'
     pieces = []
     count = ''
+    at = 0
     for code in format:
         if code in '0123456789':
             count += code
             continue
         if code in ' \t\n\r\v\f' and not count:
             continue
-        if code not in _INT_SIZES:
+        if code == 'l' or code == 'L':
+            entry = (8 if native else 4, code == 'l')
+        elif code in _INT_SIZES:
+            entry = _INT_SIZES[code]
+        else:
             return None
         for _ in range(int(count) if count else 1):
-            pieces.append(_INT_SIZES[code])
+            size, signed = entry
+            if native and at % size:
+                at += size - at % size
+            pieces.append((size, signed, code, at))
+            at += size
         count = ''
     if count:
         return None
-    return (endian, pieces)
+    return (endian, pieces, at)
+
+def _whole(value):
+    # The integer index protocol: a whole number, or an object
+    # answering __index__; anything else is refused the way the
+    # reference refuses it, float included.
+    if type(value) == type(1) or type(value) == type(True):
+        return int(value)
+    ask = getattr(value, '__index__', None)
+    if ask is not None:
+        return int(ask())
+    raise error('required argument is not an integer')
+
+def _int_range(code, size, signed):
+    if code in _INT_WORDS:
+        if signed:
+            edge = 1 << (size * 8 - 1)
+            return _INT_WORDS[code] + ' format requires ' + str(-edge) + ' <= number <= ' + str(edge - 1)
+        return _INT_WORDS[code] + ' format requires 0 <= number <= ' + str((1 << (size * 8)) - 1)
+    return 'argument out of range'
 
 def calcsize(format):
     if not isinstance(format, str):

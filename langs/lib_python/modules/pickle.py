@@ -539,10 +539,13 @@ def _read_protocol(data, encoding='ASCII'):
             del stack[mark:]
             stack.append(value)
         elif op == 97:
-            stack[-1].append(stack.pop())
+            # The value comes off first: the list beneath it appends it.
+            value = stack.pop()
+            stack[-1].append(value)
         elif op == 101:
             mark = marks.pop()
-            stack[-1].extend(stack[mark:])
+            target = stack[mark - 1]
+            target.extend(stack[mark:])
             del stack[mark:]
         elif op == 100:
             mark = marks.pop()

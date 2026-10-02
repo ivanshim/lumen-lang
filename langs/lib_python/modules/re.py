@@ -541,6 +541,10 @@ class Match:
                 values.append(None)
         return values[0] if len(values) == 1 else values
 
+    def __getitem__(self, group):
+        # m[n] is m.group(n), as the reference spells it.
+        return self.group(group)
+
     def start(self, group=0):
         group = self._index(group)
         return self.captures[group][0] if group in self.captures else -1
