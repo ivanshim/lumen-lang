@@ -39,6 +39,7 @@ class _Params:
 _repr_running = []
 
 def __create_fn__(cls, specifications, params):
+    frozen = params.frozen
     original_hash = cls.__dict__.get('__hash__', MISSING)
     explicit_hash = original_hash is not MISSING and not (original_hash is None and '__eq__' in cls.__dict__)
     def __init__(self, *args, **kwargs):
@@ -67,7 +68,10 @@ def __create_fn__(cls, specifications, params):
                 continue
             else:
                 raise TypeError('missing required argument ' + repr(f.name))
-            object.__setattr__(self, f.name, value)
+            if frozen:
+                object.__setattr__(self, f.name, value)
+            else:
+                setattr(self, f.name, value)
         if hasattr(self, '__post_init__'):
             self.__post_init__()
     def __repr__(self):
@@ -83,9 +87,17 @@ def __create_fn__(cls, specifications, params):
             _repr_running.remove(key)
     wrapped_repr.__wrapped__ = __repr__
     def __eq__(self, other):
+        if self is other:
+            return True
         if type(other) is not type(self):
             return NotImplemented
-        return tuple(getattr(self, f.name) for f in specifications if f.compare) == tuple(getattr(other, f.name) for f in specifications if f.compare)
+        result = True
+        for f in specifications:
+            if f.compare:
+                if not result:
+                    return result
+                result = getattr(self, f.name) == getattr(other, f.name)
+        return result
     def __hash__(self):
         return hash(tuple(getattr(self, f.name) for f in specifications if f.compare))
     def __setattr__(self, name, value):
