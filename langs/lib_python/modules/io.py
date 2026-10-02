@@ -1,4 +1,4 @@
-# Only an in-memory text stream is carried here.
+# Only in-memory streams are carried here: a text one and a binary one.
 class StringIO:
     def __init__(self, initial_value='', newline='\n'):
         if newline != "\n":
@@ -100,6 +100,105 @@ class StringIO:
     def __next__(self):
         line = self.readline()
         if line == '':
+            raise StopIteration
+        return line
+
+    def _check(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+
+class BytesIO:
+    def __init__(self, initial_value=b''):
+        self.data = initial_value
+        self.position = 0
+        self.closed = False
+
+    def write(self, value):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+        value = bytes(value)
+        while len(self.data) < self.position:
+            self.data += b"\0"
+        self.data = self.data[:self.position] + value + self.data[self.position + len(value):]
+        self.position += len(value)
+        return len(value)
+
+    def getvalue(self):
+        self._check()
+        return self.data
+
+    def read(self, size=-1):
+        self._check()
+        if size < 0:
+            size = len(self.data) - self.position
+        value = self.data[self.position:self.position + size]
+        self.position += len(value)
+        return value
+
+    def seek(self, offset, whence=0):
+        self._check()
+        if whence not in [0, 1, 2]:
+            raise 'ValueError: invalid whence'
+        if whence != 0 and offset != 0:
+            raise 'OSError: cannot do nonzero cur-relative seeks'
+        if whence == 2:
+            offset += len(self.data)
+        elif whence == 1:
+            offset += self.position
+        if offset < 0:
+            raise 'ValueError: negative seek position'
+        self.position = offset
+        return offset
+
+    def tell(self):
+        self._check()
+        return self.position
+
+    def flush(self):
+        self._check()
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        self._check()
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.close()
+        return False
+
+    def readline(self, size=-1):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+        result = b''
+        while self.position < len(self.data) and (size < 0 or len(result) < size):
+            letter = self.read(1)
+            result += letter
+            if letter == b'\n':
+                break
+        return result
+
+    def readlines(self, hint=-1):
+        self._check()
+        lines = []
+        length = 0
+        while True:
+            line = self.readline()
+            if line == b'':
+                return lines
+            lines = [*lines, line]
+            length += len(line)
+            if hint > 0 and length > hint:
+                return lines
+
+    def __iter__(self):
+        self._check()
+        return self
+
+    def __next__(self):
+        line = self.readline()
+        if line == b'':
             raise StopIteration
         return line
 
