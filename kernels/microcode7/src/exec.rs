@@ -3099,6 +3099,20 @@ impl<'a> Machine<'a> {
     }
 
     fn fetch(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
+        let held = self.fetch_raw(slot, frame)?;
+        let request = match &held { Value::Shared(place) => place.borrow().clone(), other => other.clone() };
+        if let Value::Wrapped(61, parts) = request {
+            let Value::Mutable(saved, _) = &parts[3] else { unreachable!("lazy module cache") };
+            let previous = saved.borrow().clone();
+            if !matches!(previous, Value::Unset) { return Ok(previous); }
+            let loaded = self.prim_values(Prim::BringModule, "", &parts[..3])?;
+            *saved.borrow_mut() = loaded.clone();
+            return Ok(loaded);
+        }
+        Ok(held)
+    }
+
+    fn fetch_raw(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
@@ -7470,7 +7484,8 @@ impl<'a> Machine<'a> {
                 Value::Mutable(cell, _) | Value::Shared(cell) => match &*cell.borrow() { Value::Window(owner, _) => Some(owner.clone()), _ => None },
                 _ => None,
             };
-            if let Some(owner) = raw { return Ok(Value::Window(owner, 'm')); }
+            // Each proxy retains a separate allocation around the live dictionary.
+            if let Some(owner) = raw { return Ok(Value::Window(Rc::new(owner.as_ref().clone()), 'm')); }
         }
         if ["numerator", "denominator", "real", "imag"].contains(&operation) {
             match receiver.settled() {
@@ -13060,6 +13075,9 @@ impl<'a> Machine<'a> {
         // reach no other name for the holder.
         if let (Prim::Of, [subject, word]) = (op, v) {
             let called = word.bare();
+            if self.rules.specials.get(35).is_some_and(|spelling| spelling == &called) {
+                return self.dispatch_primitive(Prim::SortOf, &called, &[subject.clone()]);
+            }
             if self.native_member(subject, &called) { return Ok(Value::Member(Rc::new(subject.clone()), called)); }
         }
         // A window upon a map is asked whether it has a special member
@@ -13102,6 +13120,20 @@ impl<'a> Machine<'a> {
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Selfsame | Prim::Unlike) && self.rules.has_any_ext_op_identical_negated && v.len() == 2 {
+            fn window(value: &Value) -> Option<(Rc<Value>, char)> {
+                match value {
+                    Value::Window(held, portion) => Some((held.clone(), *portion)),
+                    Value::Shared(place) | Value::Mutable(place, _) => window(&place.borrow()),
+                    _ => None,
+                }
+            }
+            let pair = (window(&v[0]), window(&v[1]));
+            if pair.0.is_some() || pair.1.is_some() {
+                let same = matches!(pair, (Some((ref x, xp)), Some((ref y, yp))) if xp == yp && Rc::ptr_eq(x, y));
+                return Ok(Value::Flag(if op == Prim::Unlike { !same } else { same }));
+            }
+        }
         if self.reads_manners() && matches!(op, Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
             return self.text_operation(op, name, v);
         }
@@ -13936,6 +13968,14 @@ impl<'a> Machine<'a> {
                 };
                 Value::Adorned(Rc::new(member))
             }
+            Prim::DeferModule => {
+                n(3)?;
+                let mut request = v.to_vec();
+                let name = request[0].bare();
+                if name.starts_with('.') { request[0] = Value::text(&self.relative_namespace(&name)?); }
+                request.push(Value::Mutable(Rc::new(RefCell::new(Value::Unset)), false));
+                Value::Wrapped(61, Rc::new(request).into())
+            }
             Prim::BringModule => {
                 let path = v[0].bare();
                 let namespace = self.load_namespace(&path)?;
@@ -13984,6 +14024,13 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Nil
+            }
+            Prim::TemplateField | Prim::TemplateParts => {
+                let module = self.load_namespace("string.templatelib")?;
+                let key = if op == Prim::TemplateField { "Interpolation" } else { "Template" };
+                let constructor = self.namespace_item(&module, "string.templatelib", key)?;
+                let Value::Blueprint(kind) = constructor else { return Err("invalid template constructor".to_owned()); };
+                self.make_instance(kind, v.to_vec()).map_err(|fault| self.suspension_fault(fault))?
             }
             Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
             Prim::MakeHeir => {
@@ -15659,6 +15706,7 @@ impl<'a> Machine<'a> {
                     // Every read of a method ties it afresh: two reads are never one value.
                     (Value::Method(..), Value::Method(..)) => false,
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
+                    (Value::Member(owner, operation), Value::Member(other, action)) => operation == action && Rc::ptr_eq(owner, other),
                     (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Text(_), Value::Thing(_)) | (Value::Thing(_), Value::Text(_)) => false,
@@ -18469,7 +18517,33 @@ impl Machine<'_> {
 
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
+    fn relative_namespace(&self, request: &str) -> Result<String, String> {
+        let own = self.loaded_spaces.get(&self.written_in).ok_or_else(|| "ImportError: attempted relative import with no known parent package".to_owned())?;
+        let mut parent = if self.written_in.ends_with("/__init__.py") { own.clone() } else { own.rsplit_once('.').map_or(String::new(), |(head, _)| head.to_owned()) };
+        let levels = request.len() - request.trim_start_matches('.').len();
+        if parent.is_empty() { return Err("ImportError: attempted relative import with no known parent package".to_owned()); }
+        for _ in 1..levels {
+            parent = parent.rsplit_once('.').map(|(head, _)| head.to_owned()).ok_or_else(|| "ImportError: attempted relative import beyond top-level package".to_owned())?;
+        }
+        let suffix = &request[levels..];
+        if !suffix.is_empty() { parent.push('.'); parent.push_str(suffix); }
+        Ok(parent)
+    }
+
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+        let names = self.table.strings("ext.system.module.cache");
+        if !self.importing.contains(path) && names.len() == 2 {
+            if let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) {
+                let held = namespace.holds.borrow().iter().find(|(key, _)| key == &names[1]).map(|(_, value)| value.settled());
+                if let Some(Value::Dict(values)) = held {
+                    for (name, value) in values.iter() {
+                        if name.bare() == path {
+                            return if matches!(value, Value::Nil) { Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules")) } else { Ok(value.clone()) };
+                        }
+                    }
+                }
+            }
+        }
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is
         // where CPython keeps such a cache, and a program that empties
@@ -18480,7 +18554,8 @@ impl Machine<'_> {
             if self.import_cache_names(path) { return Ok(value.clone()); }
         }
         if path.starts_with('.') {
-            return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_string());
+            let full_name = self.relative_namespace(path)?;
+            return self.load_namespace(&full_name);
         }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
@@ -18576,7 +18651,7 @@ impl Machine<'_> {
         self.importing.remove(path);
         if let Err(stopped) = stopped {
             self.imported.remove(path);
-            self.refresh_import_table();
+            self.refresh_import_table(path);
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
         }
         if let Some((owner, name)) = split {
@@ -18588,7 +18663,7 @@ impl Machine<'_> {
                 } else { holdings.push((name.into(), value.clone())); }
             }
         }
-        self.refresh_import_table();
+        self.refresh_import_table(path);
         Ok(value)
     }
 
@@ -20635,6 +20710,16 @@ impl Machine<'_> {
         // one; the value is kept before it settles into a copy.
         let reverse_owner = if op == Prim::Backwards { input.first().cloned() } else { None };
         let standing = if op == Prim::GetMember { input.first().cloned() } else { None };
+        if op == Prim::Dictionary && input.len() == 1 {
+            fn mapping_contents(source: &Value) -> Option<Value> {
+                match source {
+                    Value::Window(owner, 'm') => Some(owner.settled()),
+                    Value::Mutable(cell, _) | Value::Shared(cell) => mapping_contents(&cell.borrow()),
+                    _ => None,
+                }
+            }
+            if let Some(contents) = mapping_contents(&input[0]) { input[0] = contents; }
+        }
         if op != Prim::IdentityOf {
             for (position, item) in input.iter_mut().enumerate() {
                 if op == Prim::SetMember && position == 2 { continue; }
@@ -20826,12 +20911,13 @@ impl Machine<'_> {
                         inner => inner.clone(),
                     },
                     Value::Mutable(cell, _) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
-                    // A window is known by the map it reads, which stays
-                    // put: settled() would hand back a fresh row each ask.
-                    Value::Window(owner, _) => return Ok(Value::Small(Rc::as_ptr(owner) as usize as i64)),
+                    Value::Window(..) => input[0].clone(),
                     other => other.settled(),
                 };
                 let address: u64 = match &held {
+                    // Windows own their retained allocation, including through a shared name.
+                    Value::Window(retained, _) => Rc::as_ptr(retained) as usize as u64,
+                    Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
                     Value::Ellipsis => 5,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
@@ -21358,24 +21444,29 @@ impl Machine<'_> {
         if names.len() != 2 { return true; }
         let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) else { return true };
         let Some((_, held)) = namespace.holds.borrow().iter().find(|(key, _)| key == &names[1]).cloned() else { return true };
-        let cache = match held { Value::Shared(cell) => cell.borrow().clone(), other => other };
+        let cache = held.settled();
         match cache {
             Value::Dict(entries) => entries.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
             _ => true,
         }
     }
 
-    fn refresh_import_table(&self) {
+    fn refresh_import_table(&self, path: &str) {
         let names = self.table.strings("ext.system.module.cache");
         if names.len() != 2 { return; }
-        if let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) {
-            let dictionary = Value::Dict(Rc::new(self.imported.iter().map(|(key, worth)| (Value::text(key), worth.clone())).collect()));
-            for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
-                if key == &names[1] {
-                    if let Value::Shared(cell) = worth { *cell.borrow_mut() = dictionary; }
-                    else { *worth = dictionary; }
-                    break;
-                }
+        let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) else { return };
+        let old = namespace.holds.borrow().iter().find(|(key, _)| key == &names[1]).map(|(_, value)| value.settled());
+        let mut entries = match old {
+            Some(Value::Dict(prior)) if path != names[0] => prior.to_vec(),
+            _ => self.imported.iter().map(|(key, value)| (Value::text(key), value.clone())).collect::<Vec<_>>(),
+        };
+        entries.retain(|(key, _)| key.bare() != path);
+        if let Some(value) = self.imported.get(path) { entries.push((Value::text(path), value.clone())); }
+        let dictionary = Value::Dict(Rc::new(entries.into())).keep(true);
+        for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
+            if key == &names[1] {
+                if let Value::Shared(cell) = worth { *cell.borrow_mut() = dictionary; } else { *worth = dictionary; }
+                break;
             }
         }
     }

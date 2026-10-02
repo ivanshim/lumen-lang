@@ -80,6 +80,7 @@ pub enum Prim {
     /// Mark a class unchangeable: no member writes, no standing as a base.
     ClassSeal,
     BringModule,
+    DeferModule,
     SpreadModule,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
@@ -149,6 +150,8 @@ pub enum Prim {
     AsChars,
     /// The value, specification and conversion of a field in text.
     RenderField,
+    TemplateField,
+    TemplateParts,
     /// Stop upon reaching a character the run cannot represent.
     UnheldText,
     /// The value made a flag.

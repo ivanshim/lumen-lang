@@ -14,6 +14,7 @@ pub enum Shape {
     Woven,
     WovenEnd,
     Field,
+    FieldText,
     Unheld,
     CharacterRow,
     EscapeNotice,
@@ -1035,6 +1036,7 @@ impl Quotation<'_> {
             return Err(self.field_fault(issue, &[]));
         }
         self.token(Shape::Field, convert);
+        self.token(Shape::FieldText, code.clone());
         let left = self.table.single("syntax.group.open").ok_or_else(|| self.bad())?.to_owned();
         let right = self.table.single("syntax.group.close").ok_or_else(|| self.bad())?.to_owned();
         self.token(Shape::Sign, left);
@@ -1061,7 +1063,7 @@ impl Quotation<'_> {
             t
         }));
         self.token(Shape::Sign, right);
-        self.token(Shape::Woven, template.map(|c| c.to_string()).unwrap_or_default());
+        self.token(Shape::Woven, String::new());
         let mut noticed = false;
         let mut specification = String::new();
         let mut missing = false;

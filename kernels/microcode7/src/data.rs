@@ -703,6 +703,8 @@ impl Value {
             // is kept as: two readings of the same member, and of the
             // same member on the same kind, are the one address.
             Value::Wrapped(60, parts) => Ok(format!("descriptor:{:p}", Rc::as_ptr(parts))),
+            Value::Intrinsic(_, word) => Ok(format!("intrinsic:{word}")),
+            Value::OctetKind { changeable, .. } => Ok(format!("octetkind:{changeable}")),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
                 // Nothing under the line marks a worth off the scale.

@@ -3368,7 +3368,11 @@ impl<'a> Compiler<'a> {
                     return Err(if original == "braces" { "SyntaxError: not a chance".into() } else { format!("SyntaxError: future feature {original} is not defined") });
                 }
                 if lang.import_values {
-                    self.act(Action::Import(if from { module.clone() } else { original.clone() }, from.then_some(original), !from && !aliased), 0);
+                    let path = if from { module.clone() } else { original.clone() };
+                    let member = from.then_some(original);
+                    let root = !from && !aliased;
+                    let operation = if self.in_lazy_from { Action::LazyImport(path, member, root) } else { Action::Import(path, member, root) };
+                    self.act(operation, 0);
                 } else { self.constant(Value::Null); }
                 self.claim(&bound);
                 self.importing = true;
@@ -8787,18 +8791,25 @@ impl<'a> Compiler<'a> {
                 self.act(Action::StringFault, 1);
             }
             Shape::StringBegin => {
-                self.constant(Value::text(""));
+                let template = token.lexeme.chars().next().is_some_and(|prefix| self.lang.template_prefixes.contains(&prefix));
+                if !template { self.constant(Value::text("")); }
+                let mut count = 0;
                 while self.look().shape != Shape::StringEnd {
                     if self.look().shape == Shape::StringField {
                         let field = self.take();
+                        let expression = self.take().lexeme;
                         self.expr(0)?;
                         self.string_piece()?;
-                        self.constant(Value::text(&field.lexeme));
-                        self.act(Action::StringRender, 3);
+                        self.constant(if template && field.lexeme.is_empty() { Value::Null } else { Value::text(&field.lexeme) });
+                        if template {
+                            self.constant(Value::text(&expression));
+                            self.act(Action::Interpolation, 4);
+                        } else { self.act(Action::StringRender, 3); }
                     } else { self.string_piece()?; }
-                    self.act(Action::Join, 2);
+                    if template { count += 1; } else { self.act(Action::Join, 2); }
                 }
                 self.take();
+                if template { self.act(Action::TemplateMake, count); }
             }
             _ => return Err(self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())),
         }
@@ -10286,6 +10297,8 @@ impl<'a> Compiler<'a> {
                     self.discard();
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
                     self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                } else if native.is_none() && call.is_none() && lang.class_special.iter().any(|word| word == &named) {
+                    self.act(Action::Grab(Rc::from(named.as_str())), 1);
                 } else if native.is_none() && lang.member_amiss.is_some() {
                     // The receiver's kind answers to no such name, and a
                     // definition wording that complaint has no pipe to

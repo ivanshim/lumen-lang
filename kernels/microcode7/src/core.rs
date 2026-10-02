@@ -266,6 +266,8 @@ impl Value {
                 }
                 code
             }
+            Self::Intrinsic(_, name) => return Self::text(name).hash_number(),
+            Self::OctetKind { changeable, .. } => i64::from(*changeable),
             _ => return None,
         };
         Some(if raw == -1 { -2 } else { raw })

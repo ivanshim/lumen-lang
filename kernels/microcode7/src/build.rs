@@ -3176,7 +3176,7 @@ impl<'a> Builder<'a> {
                     return Err(format!("SyntaxError: {complaint}"));
                 }
                 let worth = if self.table.flag("ext.stmt.import.value") {
-                    prim_call(Prim::BringModule, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
+                    prim_call(if self.in_lazy_from { Prim::DeferModule } else { Prim::BringModule }, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
                 } else { constant(Value::Nil) };
                 self.claim(&local);
                 self.importing = true;
@@ -8463,18 +8463,23 @@ impl<'a> Builder<'a> {
         if start.shape != Shape::Woven {
             return Err(self.table.single("ext.lexical.string.amiss").unwrap_or("Invalid string literal").to_owned());
         }
-        let mut result = constant(Value::text(""));
-        loop {
-            if self.look().shape == Shape::WovenEnd { self.advance(); break; }
-            let piece = if self.look().shape == Shape::Field {
+        let keeps_fields = start.lexeme.chars().next().is_some_and(|lead| self.table.spells("ext.lexical.string.prefix.template", &lead.to_string()));
+        let mut fragments = Vec::new();
+        while self.look().shape != Shape::WovenEnd {
+            let fragment = if self.look().shape == Shape::Field {
                 let conversion = self.advance().lexeme;
+                let expression = self.advance().lexeme;
                 let value = self.expr(0)?;
                 let spec = self.quotation()?;
-                prim_call(Prim::RenderField, vec![value, spec, constant(Value::text(&conversion))])
+                if keeps_fields {
+                    prim_call(Prim::TemplateField, vec![value, constant(Value::text(&expression)), constant(if conversion.is_empty() { Value::Nil } else { Value::text(&conversion) }), spec])
+                } else { prim_call(Prim::RenderField, vec![value, spec, constant(Value::text(&conversion))]) }
             } else { self.quotation()? };
-            result = prim_call(Prim::Join, vec![result, piece]);
+            fragments.push(fragment);
         }
-        Ok(result)
+        self.advance();
+        if keeps_fields { return Ok(prim_call(Prim::TemplateParts, fragments)); }
+        Ok(fragments.into_iter().fold(constant(Value::text("")), |text, fragment| prim_call(Prim::Join, vec![text, fragment])))
     }
 
     fn monadic_piece(&mut self) -> Res<Form> {

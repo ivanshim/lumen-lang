@@ -634,7 +634,9 @@ only. The extension labels so far, all from PHP:
   than text. The letters read as format letters everywhere a prefix is
   classified; the string's opening token keeps the letter it opened
   with, so a reader can tell a template's pieces apart from a format
-  string's. Nothing here yet makes the value a template of its own kind.
+  string's. The full kernels retain the literal runs and interpolation
+  values in `string.templatelib` objects, with expressions, conversions
+  and rendered format specifications kept separately.
 - `ext.lexical.string.prefix.incompatible`: what the language says of a
   run of prefix letters that names two kinds that cannot stand
   together (raw and plain, byte and plain, byte and format), a word on
@@ -3457,7 +3459,9 @@ only. The extension labels so far, all from PHP:
   module, and giving a wanted name another name here.
   `ext.stmt.import.lazy` names the word that may stand before either
   asking (`lazy import os`, `lazy from sys import path`); the asking is
-  read as it would be without the word, and answered at once. A module path
+  deferred until its binding is read, then cached. Relative imports use
+  the importing module's package context, retained by deferred bindings.
+  A module path
   is a name with dots in it, using the pipe spelling as its divider,
   never a pipe expression. A plain import binds the first word of
   each path, or its alias; a from-import binds each wanted name, or
@@ -3575,6 +3579,8 @@ only. The extension labels so far, all from PHP:
 - `ext.system.module.cache`: two names, the module keeping the cache
   and the member under which it keeps it. That member is refreshed as a
   map of imported names to their namespaces whenever a load finishes.
+  Reads honor entries supplied by Python, including `None` entries that
+  block imports; a load updates only its own cache entry.
 - `ext.system.module.name`: a list of names bound to the text
   `"__main__"` before the file runs. These are ordinary bindings and
   may be written anew by the program.

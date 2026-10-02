@@ -172,6 +172,7 @@ pub enum Action {
     AsyncContextEnter,
     SettleObjects,
     Import(String, Option<String>, bool),
+    LazyImport(String, Option<String>, bool),
     ImportAll,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
@@ -201,6 +202,8 @@ pub enum Action {
     Join,
     /// A field rendered with its specification and conversion.
     StringRender,
+    Interpolation,
+    TemplateMake,
     BindValueMethod(Rc<str>),
     /// Text whose reading succeeded but whose value cannot be held.
     StringFault,
