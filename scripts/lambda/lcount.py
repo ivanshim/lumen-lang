@@ -26,3 +26,6 @@ with ThreadPoolExecutor(len(runs) or 1) as pool:
             dest.write_text("###EXIT %d\n###SECONDS %.1f\n" % (r["rc"], r["s"]) + r["out"] + "\n###STDERR\n" + r["err"])
         slow = max(slow, (r["s"], f"{stem} {r['k']}"))
 print("counted %d runs; wall %.0fs; slowest %.0fs %s" % (len(runs), time.time() - t0, *slow))
+
+# Each input path retains the full release from the version table.
+print("suites: " + ", ".join(sorted({str(pathlib.Path(t).parent) for t in tests})))

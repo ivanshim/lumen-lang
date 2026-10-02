@@ -248,7 +248,7 @@ label of its definition is compared with the other languages in
 Set `LUMEN_ROOT` to the repository root when running a copied binary with
 stack8 or microcode7. Library `__file__` paths then use
 `$LUMEN_ROOT/langs/lib_python/modules`, and `test.support` finds reference
-files under `$LUMEN_ROOT/tests/python`. Module source remains embedded in
+files under `$LUMEN_ROOT/<tests directory from langs/python/versions.json>`. Module source remains embedded in
 the binary; the matching files must exist at that root. Relative roots
 are resolved at startup. When unset, the original build-time path is used.
 
@@ -357,7 +357,7 @@ person in one sitting.
 
 MIT, for the project's own code: see [LICENSE](LICENSE). The reference suites
 under `tests/` are copied unchanged from php-src and CPython and keep their own
-licences (`tests/php/LICENSE`, `tests/python/LICENSE`).
+licences (`tests/php/LICENSE`, `tests/python-3.14.8/LICENSE`).
 
 ## Attribution
 

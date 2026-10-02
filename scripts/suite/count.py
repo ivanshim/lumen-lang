@@ -11,6 +11,13 @@ def read(d):
         out[(stem, k)] = (line, int(ran.group(1)) if ran else 0, "TIMEOUT" in t)
     return out
 new, old = read(sys.argv[1]), read(sys.argv[2]) if len(sys.argv) > 2 else {}
+metadata = pathlib.Path(sys.argv[1]) / 'suite.json'
+if metadata.exists():
+    release = __import__('json').loads(metadata.read_text())['release']
+else:
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+    from python_versions import select
+    release = select()['release']
 for k in ("stack8", "microcode7"):
     p = r = files = nothing = 0
     for (stem, kk), (line, ran, to) in new.items():
@@ -28,4 +35,4 @@ for k in ("stack8", "microcode7"):
                 print("  length changed", stem, k, len(ol), "->", len(line))
             if line.count(".") != ol.count("."): print("  %-20s %-10s %d -> %d" % (stem, k, ol.count("."), line.count(".")))
         elif line: print("  NEW RUNNING", stem, k, line.count("."), "of", ran)
-    print("%s: %d pass of %d ran, %d files, %d run nothing" % (k, p, r, files, nothing))
+    print("%s: %d pass of %d ran, %d files, %d run nothing · CPython %s suite" % (k, p, r, files, nothing, release))
