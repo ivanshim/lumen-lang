@@ -36,6 +36,18 @@ pub enum NumberAnswer {
 
 impl Layout<'_> {
     pub fn complain(&self, label: &str, inserts: &[&str]) -> String {
+        if self.table.flag("ext.op.arithmetic.python_numbers") && label == "ext.op.rem.format.character" && inserts.len() == 3 {
+            let required = if inserts[1] == "an integer or a unicode character" { "an int or a unicode character" } else { inserts[1] };
+            return format!("TypeError: %c requires {}, not {}", required, inserts[2]);
+        }
+        if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(label, "ext.op.rem.format.number" | "ext.op.rem.format.real") && inserts.len() == 3 {
+            let kind = inserts[2].rsplit('.').next().unwrap_or(inserts[2]);
+            return format!("TypeError: %{} format: a real number is required, not {}", inserts[1], kind);
+        }
+        if self.table.flag("ext.op.arithmetic.python_numbers") && label == "ext.op.rem.format.integer" && inserts.len() == 3 {
+            let kind = inserts[2].rsplit('.').next().unwrap_or(inserts[2]);
+            return format!("TypeError: %{} format: an integer is required, not {}", inserts[1], kind);
+        }
         self.table.strings(label).iter().enumerate().map(|(n, word)| {
             let mut fragment = word.clone();
             fragment.push_str(inserts.get(n).copied().unwrap_or(""));

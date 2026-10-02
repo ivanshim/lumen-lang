@@ -57,4 +57,40 @@ y = copy.deepcopy(x)
 assert y is not x and y['self'] is y
 assert {} is not []
 compile('from . lazy import value', '<probe>', 'exec')
+class PseudoFloat:
+    def __float__(self):
+        return 3.14
+try:
+    '%x' % PseudoFloat()
+except TypeError as error:
+    assert str(error) == '%x format: an integer is required, not PseudoFloat'
+else:
+    raise AssertionError('hex formatting accepted a float protocol')
+try:
+    '%u' % 3j
+except TypeError as error:
+    assert str(error) == '%u format: a real number is required, not complex'
+else:
+    raise AssertionError('decimal formatting accepted complex')
+try:
+    '%c' % PseudoFloat()
+except TypeError as error:
+    assert '%c requires an int or a unicode character, not ' in str(error)
+else:
+    raise AssertionError('character formatting accepted a float protocol')
+import unittest
+check = unittest.TestCase()
+big = 10**5001
+check.assertLess(big, big + 1)
+check.assertLessEqual(big, big)
+check.assertGreater(big + 1, big)
+check.assertGreaterEqual(big, big)
+with check.assertRaises(AssertionError):
+    check.assertLess(2, 1)
+try:
+    '%x' % 3.14
+except TypeError as error:
+    assert str(error) == '%x format: an integer is required, not float'
+else:
+    raise AssertionError('hex formatting accepted a float')
 print('Python 3.14.8 reporting, APIs, argument expansion, and constructor keys agree')
