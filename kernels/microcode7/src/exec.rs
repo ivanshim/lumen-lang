@@ -7806,21 +7806,8 @@ impl<'a> Machine<'a> {
             .any(|part| self.table.spells(&format!("ext.stmt.yield.{part}"), name)) {
             return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
         }
-        if name == self.table.single("ext.stmt.class.detail.namespace").unwrap_or("") {
-            let actual=value.settled();
-            let named=match &actual {
-                Value::Intrinsic(op, word) if Self::names_a_kind(op) => Some(word.clone()),
-                other => self.kind_spelling(other),
-            };
-            if let Some(word)=named {
-                let mut methods=self.kind_member_names(&word);
-                methods.push(name.to_owned());
-                let entries:Vec<(Value,Value)>=methods.into_iter().map(|member| {
-                    let detail=format!("<attribute '{member}' of '{word}' objects>");
-                    (Value::text(&member),Value::text(&detail))
-                }).collect();
-                return Some(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))),'m'));
-            }
+        if name == self.detail("namespace") && (matches!(value.settled(),Value::Intrinsic(op,_) if Self::names_a_kind(&op)) || self.kind_spelling(value).is_some()) {
+            return self.read_class_member(value.clone(),name,true).ok();
         }
         if let Some(answer) = self.integer_attribute(value, name) { return Some(answer); }
         if matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_))
@@ -15018,7 +15005,7 @@ impl<'a> Machine<'a> {
         // answers to as a set does, needs the view whole to tell that
         // apart from a view of its values, which answers to no set
         // working at all.
-        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14));
+        let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::At | Prim::Apart | Prim::Toward);
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()) {
@@ -18914,6 +18901,7 @@ impl<'a> Machine<'a> {
                 }
             };
         }
+        if let Value::Window(owner, 'm') = target { return self.element(&owner.settled(), at, how); }
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;

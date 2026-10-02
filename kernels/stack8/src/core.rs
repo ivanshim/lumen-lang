@@ -66,6 +66,7 @@ impl Value {
             }),
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
+            Value::Native(crate::code::Builtin::Text(work), word) if word.contains('.') && *work != crate::strings::TextOp::Maketrans => "method_descriptor",
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             // A method or a data member read off a builtin kind's own
             // word, rather than off a value of it, is a descriptor: a
@@ -78,7 +79,9 @@ impl Value {
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
             Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
-            Value::Adapter(w) if w.0 == 119 => "wrapper_descriptor",
+            Value::Adapter(w) if w.0 == 119 || w.0 == 2 => "wrapper_descriptor",
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Routine(_))) => "method",
+            Value::Adapter(w) if w.0 == 3 => "method-wrapper",
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
             Value::Adapter(w) if w.0 == 31 => "cell",

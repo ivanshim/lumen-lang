@@ -1490,6 +1490,7 @@ impl Value {
     /// attribute; `complex`, `range` and `slice` show a member, as
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
         match kind {
             "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
             "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),

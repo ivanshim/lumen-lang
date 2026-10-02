@@ -44,7 +44,10 @@ def reduce(value, protocol=0):
         arguments = (cls, args, kwargs)
     else:
         new_args = getattr(value, '__getnewargs__', None)
-        args = () if new_args is None else new_args()
+        if new_args is None and isinstance(value, tuple):
+            args = (tuple(value),)
+        else:
+            args = () if new_args is None else new_args()
         if not isinstance(args, tuple):
             raise TypeError('__getnewargs__ should return a tuple')
         maker = copyreg.__newobj__

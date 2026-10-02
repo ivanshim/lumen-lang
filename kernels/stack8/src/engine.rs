@@ -11696,6 +11696,7 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(a, Value::View(view) if view.1 == "mapping") && matches!(op, Action::At) { return self.element(a,b,Reading::Plain); }
         if matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_)) {
             if let (Some(mut left), Some(right)) = (a.text_codes(), b.text_codes()) {
                 if matches!(op, Action::Add | Action::Join) { left.extend(right); return Ok(Value::from_codes(left)); }
@@ -13097,6 +13098,7 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::View(view) = target { if view.1 == "mapping" { return self.element(&view.0.contents(), at, how); } }
         if matches!(target, Value::Collection(..) | Value::Bond(_) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if let Some(cell) = self.walked_set(target)? {
             let held = cell.borrow();

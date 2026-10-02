@@ -808,7 +808,7 @@ impl<'a> Machine<'a> {
                             return Err("TypeError: int.__new__(bool) is not safe, use bool.__new__()".to_owned().into());
                         }
                         let Value::Blueprint(c)=target else{return Err(self.class_unready());};
-                        if self.table.prims.get(&word) == Some(&Prim::Uniques) { values.clear(); }
+                        if matches!(self.table.prims.get(&word), Some(Prim::Uniques | Prim::Listed | Prim::Dictionary)) { values.clear(); }
                         self.thing_over_native(c,&word,values)
                     }
                     120 if values.len() == 1 => {
@@ -842,6 +842,16 @@ impl<'a> Machine<'a> {
                         // it, so a member that writes writes into the
                         // very one the caller named.
                         let subject=values.remove(0).keep(false);
+                        let class_entry=Value::loose_member_descriptor(&word,&entry).map_or(false,|(_,kind)|kind=="classmethod_descriptor");
+                        if class_entry {
+                            let subject=subject.settled();
+                            let owner=self.kind_by_word(&word).ok_or_else(||self.class_unready())?;
+                            if !self.is_beneath(&subject,&owner,true)? { return Err(self.class_unready()); }
+                            let working=self.value_method_named(&entry).ok_or_else(||self.class_unready())?;
+                            let bound=Value::Member(Rc::new(subject.clone()),working);
+                            return self.apply_class_member(bound,values);
+                        }
+
                         // A thing of a class standing on the very kind
                         // this word names answers as its worth would,
                         // since the loose entry is the kind's own and
@@ -965,7 +975,15 @@ impl<'a> Machine<'a> {
     /// Making a thing of a class. A class built by a metaclass is called
     /// through that metaclass's own call, which says what comes of it.
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
-        if class.name == "FunctionType" && self.table.has_any("ext.builtin.exceptions.traceback") && matches!(given.first().map(Value::settled), Some(Value::Wrapped(7, _))) {
+        if Self::native_word(&class).as_deref() == Some("method") && self.table.has_any("ext.builtin.exceptions.traceback") {
+            let (given,named)=self.open_arguments(given)?;
+            if !named.is_empty() { return Err("TypeError: method() takes no keyword arguments".to_owned().into()); }
+            if given.len() != 2 { return Err(format!("TypeError: method expected 2 arguments, got {}",given.len()).into()); }
+            if !self.work_on_class(2,vec![given[0].clone()])?.is_true() { return Err("TypeError: first argument must be callable".to_owned().into()); }
+            if matches!(given[1].settled(), Value::Nil) { return Err("TypeError: instance must not be None".to_owned().into()); }
+            return Ok(Self::wrap(3, given));
+        }
+        if (class.name == "FunctionType" || Self::native_word(&class).as_deref() == Some("function")) && self.table.has_any("ext.builtin.exceptions.traceback") && matches!(given.first().map(Value::settled), Some(Value::Wrapped(7, _))) {
             let (positional, keywords) = self.open_arguments(given)?;
             let mut options = vec![None; 5];
             for (slot, value) in positional.into_iter().enumerate() {
@@ -1749,11 +1767,15 @@ impl<'a> Machine<'a> {
             };
             if let Some(word)=native {
                 let mut names=self.kind_member_names(&word);
-                names.push(key.to_owned());
-                let pairs:Vec<(Value,Value)>=names.into_iter().map(|entry| {
-                    let shown=format!("<attribute '{entry}' of '{word}' objects>");
-                    (Value::text(&entry),Value::text(&shown))
-                }).collect();
+                if self.table.prims.get(word.as_ref())==Some(&Prim::Dictionary) { names.extend(self.table.strings("ext.builtin.method.fromkeys").iter().filter(|name| !name.contains('.')).cloned()); }
+                let mut pairs=Vec::new();
+                for entry in names {
+                    if entry==key { continue; }
+                    let member=if self.table.spells("ext.builtin.method.fromkeys",&entry) {
+                        Some(Self::wrap(60,vec![Value::text(&word),Value::text(&entry)]))
+                    } else { self.seek_class_member(value.clone(),&entry,true).ok() };
+                    if let Some(found)=member { pairs.push((Value::text(&entry),found)); }
+                }
                 return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(pairs.into()))),'m'));
             }
         }
@@ -1775,6 +1797,9 @@ impl<'a> Machine<'a> {
             if let Some(tag) = operation { return Ok(Self::wrap(tag, Vec::new())); }
         }
         // A native kind's word read as a class: its maker, and its name.
+        if matches!(&value, Value::OctetKind { .. }) {
+            if let Some(member) = self.carried_by_kind(&value, key) { return Ok(member); }
+        }
         if let Value::Intrinsic(op,word)=&value {
             if *op == Prim::AsReal && self.table.strings("ext.builtin.method.from_number").iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
@@ -1912,6 +1937,9 @@ impl<'a> Machine<'a> {
                 }
             }
             if let Some(entry)=self.carried_by_kind(&value,key){return Ok(entry);}
+            if key == self.detail("allocate") {
+                if let Some(word) = Self::native_beneath(b) { return Ok(Self::wrap(14, vec![Value::text(&word)])); }
+            }
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
             // method is bound to the thing.
@@ -2618,6 +2646,7 @@ impl<'a> Machine<'a> {
         // is of the descriptor kind CPython gives it.
         if let [Value::Wrapped(3|7|14|35|60|62|120,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
+        if matches!(values.as_slice(), [Value::Wrapped(..)]) { return Ok(self.kind_named_after(&values[0])); }
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind
         // primitive itself, under whatever word the table spells it by.
@@ -2786,7 +2815,11 @@ impl<'a> Machine<'a> {
                 let Value::Text(word)=&names[0] else{return Err(self.not_a_class(amiss));};
                 let Some(op)=self.table.prims.get(word.as_ref()).copied().filter(Self::names_a_kind) else{return Err(self.not_a_class(amiss));};
                 if class_only{
-                    if let Value::Blueprint(b)=subject{return Ok(Self::native_beneath(b).as_deref()==Some(word.as_ref()));}
+                    if let Value::Blueprint(b)=subject{
+                        let inherited=if op==Prim::SortOf { std::iter::once(b).chain(b.ancestry.iter()).any(|base|self.builds_classes(base)) }
+                            else { Self::native_among(b,word) };
+                        return Ok(inherited);
+                    }
                     let Some(under)=self.kind_spelling(subject) else{return Err(self.not_a_class("core.issubclass.subject"));};
                     return Ok(self.kind_under(&under,word));
                 }

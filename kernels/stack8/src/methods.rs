@@ -105,6 +105,7 @@ pub fn answered(value: &Value, operation: &str) -> bool {
     let names: &[&str] = match value.contents() {
         Value::Text(_) | Value::Codepoints(_) => TEXT,
         Value::Array(_) => ROW,
+        Value::Bytes(_, true, _) => &["copy"],
         Value::Map(_) | Value::Fields(_) => PAIRS,
         Value::Tuple(_) | Value::Counted(_) => PLACES,
         Value::Small(_) | Value::Huge(_) | Value::Flag(_) => WHOLE,
@@ -144,6 +145,10 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         return Ok(Value::Map(Rc::new(pairs.into())).held(false));
     }
     match &held {
+        Value::Bytes(bytes, true, word) if op == "copy" => {
+            arity(0,0)?;
+            Ok(Value::Bytes(Rc::new(std::cell::RefCell::new(bytes.borrow().clone())),true,word.clone()))
+        }
         // A real read from its hexadecimal spelling, as float.fromhex reads it.
         // A held surrogate answers the six category questions from a
         // stand-in text built for exactly this reading; every other

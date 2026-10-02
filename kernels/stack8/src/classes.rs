@@ -715,7 +715,7 @@ impl<'a> Engine<'a> {
                         }
                     }
                     let Value::Class(c) = kind else { return Err(self.class_refusal()); };
-                    let given = if self.lang.builtins.get(&word) == Some(&Builtin::Set) { Vec::new() } else { args };
+                    let given = if matches!(self.lang.builtins.get(&word), Some(Builtin::Set | Builtin::List | Builtin::Dict)) { Vec::new() } else { args };
                     self.thing_of_kind(c, &word, given)
                 }
                 119 if args.len() == 1 => {
@@ -745,6 +745,14 @@ impl<'a> Engine<'a> {
                         };
                     }
                     let subject = args.remove(0);
+                    if Value::loose_member_descriptor(&word,&member).is_some_and(|(_,kind)|kind=="classmethod_descriptor") {
+                        let subject=subject.contents();
+                        let owner=self.spelled_kind(&word).ok_or_else(||self.class_refusal())?;
+                        if !self.beneath(&subject,&owner,true)? { return Err(self.class_refusal()); }
+                        let bound=Value::ValueMethod(Rc::new((subject.clone(),self.lang.value_methods.get(&member).cloned().ok_or_else(||self.class_refusal())?)));
+                        return self.class_apply(bound,args);
+                    }
+
                     // A thing of a class standing on the very kind this
                     // word names answers as its worth would, since the
                     // loose member is the kind's own and not the
@@ -872,10 +880,22 @@ impl<'a> Engine<'a> {
     /// Making a thing of a class. A class made by a metaclass is called
     /// through that metaclass's own call, which decides what comes of it.
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if Self::own_kind(&c).as_deref() == Some("method") && self.lang.trace_fields.len() > 18 {
+            let mut plain=Vec::new();
+            for (key,value) in self.call_items(args)? {
+                if key.is_some() { return Err("TypeError: method() takes no keyword arguments".into()); }
+                plain.push(value);
+            }
+            let args=plain;
+            let [function, receiver] = args.as_slice() else { return Err(format!("TypeError: method expected 2 arguments, got {}",args.len()).into()); };
+            if !self.class_work(2,vec![function.clone()])?.is_true() { return Err("TypeError: first argument must be callable".into()); }
+            if matches!(receiver.contents(), Value::Null) { return Err("TypeError: instance must not be None".into()); }
+            return Ok(Self::adapter(3, vec![function.clone(), receiver.clone()]));
+        }
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
         }
-        if c.name == "FunctionType" && self.lang.trace_fields.len() > 18 && matches!(args.first().map(Value::contents), Some(Value::Adapter(code)) if code.0 == 7) {
+        if (c.name == "FunctionType" || Self::own_kind(&c).as_deref() == Some("function")) && self.lang.trace_fields.len() > 18 && matches!(args.first().map(Value::contents), Some(Value::Adapter(code)) if code.0 == 7) {
             let mut parts = vec![None; 5];
             let mut next = 0;
             for (named, value) in self.call_items(args)? {
@@ -1332,10 +1352,15 @@ impl<'a> Engine<'a> {
             };
             if let Some(word)=builtin {
                 let mut listed=self.kind_special_names(&word);
-                listed.push(name.to_string());
-                let pairs:Vec<(Value,Value)>=listed.into_iter().map(|entry| {
-                    (Value::text(&entry),Value::text(&format!("<attribute '{entry}' of '{word}' objects>")))
-                }).collect();
+                if self.lang.builtins.get(word.as_ref())==Some(&Builtin::Dict) { listed.extend(self.lang.value_methods.iter().filter(|(_,op)|op.as_str()=="fromkeys").map(|(name,_)|name.clone())); }
+                let mut pairs=Vec::new();
+                for entry in listed {
+                    if entry==name { continue; }
+                    let member=if self.lang.value_methods.get(&entry).map(String::as_str)==Some("fromkeys") {
+                        Some(Self::adapter(29,vec![Value::text(&word),Value::text(&entry)]))
+                    } else { self.class_get(subject.clone(),&entry,true).ok() };
+                    if let Some(member)=member { pairs.push((Value::text(&entry),member)); }
+                }
                 return Ok(Value::View(Rc::new((Value::Map(Rc::new(pairs.into())),"mapping".to_string()))));
             }
         }
@@ -1362,6 +1387,9 @@ impl<'a> Engine<'a> {
                 else if name == self.class_word("remove") { Some(12) }
                 else { None };
             if let Some(tag) = tag { return Ok(Self::adapter(tag, vec![])); }
+        }
+        if matches!(&subject, Value::ByteKind(..)) {
+            if let Some(member) = self.loose_kind_member(&subject, name) { return Ok(member); }
         }
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
@@ -1473,6 +1501,11 @@ impl<'a> Engine<'a> {
                         if self.loose_kind_member(&Value::Class(base.clone()), name).is_some() {
                             return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
                         }
+                    }
+                }
+                if name == self.class_word("allocate") {
+                    if let Some(word) = Self::kind_beneath(c) {
+                        return Ok(Self::adapter(14, vec![Value::text(&word)]));
                     }
                 }
                 // A class also reads what the metaclass that made it
@@ -2475,7 +2508,7 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
-            [Value::Adapter(w)] if matches!(w.0,7|14|31|32|119)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(_)]=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){parents.push(self.type_base(b)?);}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}
@@ -2635,7 +2668,10 @@ impl<'a> Engine<'a> {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
                 let Some(builtin)=self.lang.builtins.get(word.as_ref()).copied().filter(Self::kind_builtin) else{return Err(self.unclassed(amiss));};
                 if subclass{
-                    if let Value::Class(c)=value{return Ok(Self::kind_beneath(c).as_deref()==Some(word.as_ref()));}
+                    if let Value::Class(c)=value{
+                        if builtin==Builtin::SortOf { return Ok(self.is_metaclass_root(c)||c.lineage.iter().any(|base|self.is_metaclass_root(base))); }
+                        return Ok(Self::kind_among(c,word));
+                    }
                     let Some(under)=self.kind_spelled(value) else{return Err(self.unclassed("core.issubclass.subject"));};
                     return Ok(self.kinds_beneath(&under,word));
                 }

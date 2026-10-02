@@ -29,6 +29,7 @@ const KIND_MEMBERS: &[(&str, &str)] = &[
              isdigit isalpha isalnum isspace islower isupper center ljust rjust zfill format encode"),
     ("list", "append extend insert pop remove sort reverse copy clear index count"),
     ("dict", "get keys values items setdefault update pop popitem copy clear fromkeys"),
+    ("bytearray", "copy"),
     ("tuple", "index count"),
     ("range", "index count"),
     ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
@@ -110,6 +111,11 @@ impl Request<'_> {
             return Ok(Value::Dict(Rc::new(entries.into())).keep(false));
         }
         match self.target.settled(){
+            Value::Octets { cell, changeable: true, lead } if self.operation=="copy" => {
+                self.takes(0,0)?;
+                let copied=cell.borrow().to_vec();
+                Ok(Value::Octets { cell:Rc::new(std::cell::RefCell::new(copied)),changeable:true,lead })
+            },
             Value::Text(chars)=>self.on_text(&chars),
             // A row of numbers holding a stowed surrogate half still
             // answers the six category questions, each of which
