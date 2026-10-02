@@ -13274,8 +13274,10 @@ impl<'a> Machine<'a> {
             }
             let mapping_comparison = matches!(operation, Prim::Eq | Prim::Ne) && settled.len() == 2
                 && settled.iter().all(|value| matches!(value.settled(), Value::Dict(_)));
-            if mapping_comparison { settled = settled.iter().map(Value::settled).collect(); }
-            if changed && (mapping_comparison || !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
+            let mapping_access = matches!(operation, Prim::At | Prim::Fetch)
+                && matches!(settled.first().map(Value::settled), Some(Value::Dict(_)));
+            if mapping_comparison || mapping_access { settled = settled.iter().map(Value::settled).collect(); }
+            if changed && (mapping_comparison || mapping_access || !settled.iter().any(|v| (if writes { Self::carries_instance(v) } else { Self::operand_carries_instance(v) }) || matches!(v, Value::Cursor(_)))) {
                 // A thing over a value that is not a number hashes as
                 // itself, the way CPython's own hash of a NaN does, and
                 // not as the worth that stood in for it here.
