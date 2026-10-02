@@ -7148,9 +7148,14 @@ impl<'a> Machine<'a> {
             let former_book = self.text_caller_book.take();
             let Value::Shared(book) = self.names_here(caller, Prim::WorldBook)? else { return Err(self.bad_answer().into()) };
             self.text_caller_book = Some(book);
-            let (positioned, named) = self.open_arguments(values)?;
+            let (mut positioned, named) = self.open_arguments(values)?;
             let spelling = match callable { Value::Intrinsic(_, name) => name.to_string(), _ => match primitive { Prim::Weigh => "eval".into(), _ => "exec".into() } };
-            let result = self.core_primitive(primitive, &spelling, positioned, named).map_err(Escape::Error);
+            let mut result = match self.builtin_names(primitive, &spelling, &mut positioned, named) {
+                Ok(Some(answer)) => Ok(answer),
+                Ok(None) => self.prim(primitive, &spelling, &positioned).map_err(Escape::Error),
+                Err(escaped) => Err(escaped),
+            };
+            if let Some(escaped) = self.got_away.take() { result = Err(escaped); }
             self.text_within = previous;
             self.text_caller_book = former_book;
             result
@@ -7800,6 +7805,14 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if name == self.detail("receiver") {
+            match value {
+                Value::Member(owner, _) => return Some(owner.as_ref().clone()),
+                Value::TextCall { subject, .. } => return Some(Value::Text(subject.clone())),
+                _ => {},
+            }
+        }
+
         if name == self.rules.detail_kind && name.len() > 0 {
             return self.prim(Prim::SortOf, "type", &[value.settled()]).ok();
         }
@@ -22975,6 +22988,11 @@ impl Machine<'_> {
     }
 
     fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
+        if self.spells_property_kind(expected) {
+            let canonical = self.property_blueprint();
+            return self.core_belongs(item, &Value::Blueprint(canonical));
+        }
+
         if matches!(expected.settled(), Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned());
         }
@@ -23087,7 +23105,7 @@ impl Machine<'_> {
                 let job = if op == Prim::SetMember { 4 } else { 5 };
                 return self.work_on_class(job, input).map_err(|fault| self.suspension_fault(fault));
             }
-            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || matches!(op, Prim::GetMember | Prim::HasAttribute | Prim::MembersOf) && matches!(v, Value::Intrinsic(work, _) if work.names_a_kind()) || (matches!(op, Prim::SetMember | Prim::DropMember) && self.stands_for_a_kind(v))) {
+            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..) | Value::Member(..) | Value::TextCall { .. }) || matches!(op, Prim::GetMember | Prim::HasAttribute | Prim::MembersOf) && matches!(v, Value::Intrinsic(work, _) if work.names_a_kind()) || (matches!(op, Prim::SetMember | Prim::DropMember) && self.stands_for_a_kind(v))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
                 if let Some(job) = job {
                     let outcome = self.work_on_class(job, input);

@@ -1247,6 +1247,7 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+
         let subject = if !self.lang.class_builder.is_empty() {
             match subject { Value::Bond(cell) => cell.borrow().clone(), Value::Binding(cell) => cell.borrow().clone(), value => value }
         } else { subject };
@@ -1283,6 +1284,14 @@ impl<'a> Engine<'a> {
         self.class_apply(bound, vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &subject, name))
     }
     fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if let Value::ValueMethod(method) = &subject {
+            if name == self.class_word("receiver") { return Ok(method.0.clone()); }
+        }
+        if name == self.class_word("receiver") {
+            if let Value::TextMethod(text, _, _) = &subject { return Ok(Value::Text(text.clone())); }
+        }
+
+
         let raw = subject.contents();
         if name == self.class_word("kind") && !name.is_empty()
             && matches!(raw, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_) | Value::Text(_) | Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Complex(_) | Value::Bytes(..) | Value::Null | Value::Set(_)) {
@@ -1308,15 +1317,13 @@ impl<'a> Engine<'a> {
                 }
             }
             let index = self.lang.trace_fields.iter().position(|key| key == name);
-            if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 25)) {
-                if index == Some(25) && generator.try_borrow().is_err() { return Ok(Value::text("GEN_RUNNING")); }
+            if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24)) {
                 let kept = generator.try_borrow().map_err(|_| self.class_refusal())?;
                 match index {
                     Some(14 | 19 | 20) => return Ok(if kept.closed { Value::Null } else { kept.trace_frame.clone().map_or(Value::Null, Value::Object) }),
                     Some(21 | 22) => return Ok(Value::Flag(kept.started && !kept.closed)),
                     Some(23) => return Ok(Value::Flag(false)),
                     Some(24) => return Ok(kept.delegate.clone().unwrap_or(Value::Null)),
-                    Some(25) => return Ok(Value::text(if kept.closed { "GEN_CLOSED" } else if kept.started { "GEN_SUSPENDED" } else { "GEN_CREATED" })),
                     _ => if let Some(program) = &kept.program { return Ok(self.routine_code(program)); },
                 }
             }

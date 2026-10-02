@@ -1705,6 +1705,11 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+
+        if key == self.detail("receiver") {
+            if let Value::Member(owner, _) = &value { return Ok(owner.as_ref().clone()); }
+        }
+
         if let Value::Wrapped(143, payload) = value.settled() {
             for (word, position) in [("code", 0), ("globals", 1), ("name", 2), ("qualified", 2)] {
                 if key == self.detail(word) { return Ok(payload[position].clone()); }
