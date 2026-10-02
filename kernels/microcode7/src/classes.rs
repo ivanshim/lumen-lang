@@ -2745,7 +2745,7 @@ impl<'a> Machine<'a> {
             return match read {
                 // A member read by name reads through the cell a namespace
                 // keeps it in, as the program's own member read does.
-                Ok(v)=>Ok(if op==6{Value::Flag(true)}else if self.table.has_any("ext.builtin.exceptions.syntax"){v}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
+                Ok(v)=>Ok(if op==6{Value::Flag(true)}else if self.table.has_any("ext.builtin.exceptions.syntax"){let keep=match &v{Value::Shared(cell)=>matches!(&*cell.borrow(),Value::Vector(_)|Value::Set(_)|Value::SetCursor{..}|Value::Dict(_)|Value::Thing(_)|Value::Octets{..}),_=>false};if keep{v}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
                 Err(escape) if self.missing_member_escape(&escape)=>{
                     if op==6{Ok(Value::Flag(false))}else if values.len()==3{Ok(values[2].clone())}else{Err(self.explain_absence(escape, &values[0], key))}
                 }

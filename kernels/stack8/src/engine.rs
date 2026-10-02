@@ -19910,7 +19910,7 @@ impl Engine<'_> {
                     // A member read by name reads through the cell a
                     // module keeps it in, as a member read in the
                     // program does.
-                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else if self.lang.syntax_members.is_empty() { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } else { fields[at].1.clone() } }
+                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else if self.lang.syntax_members.is_empty() { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } else { let keep = match &fields[at].1 { Value::Bond(cell) => matches!(&*cell.borrow(), Value::Array(_) | Value::Set(_) | Value::SetWalk(..) | Value::Map(_) | Value::Object(_) | Value::Fields(_) | Value::Bytes(..)), _ => false }; if keep { fields[at].1.clone() } else { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } } }
                         else if b == Builtin::GetAttr && args.len() == 3 { args[2].clone() }
                         else { let words = &self.lang.core_words["core.attribute"]; return Err(format!("{}{}{}{}{}", words[0], o.class_now().name, words[1], attr, words[2])); },
                 }
