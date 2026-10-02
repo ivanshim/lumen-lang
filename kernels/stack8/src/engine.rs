@@ -96,6 +96,7 @@ fn watch_host_signals() {
 
 pub struct Engine<'a> {
     trace_frame: Option<Rc<Instance>>,
+    running_routine: Option<Rc<Routine>>,
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
@@ -137,6 +138,7 @@ pub struct Engine<'a> {
     /// itself is handed, with the dictionary of builtin words kept
     /// under its own namespace, made the first time it is asked for.
     builtins_view: Option<Value>,
+    class_body_capture: Option<(Rc<Routine>, Option<Value>)>,
     code_class: Option<Rc<Class>>,
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
@@ -1241,6 +1243,7 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             trace_frame: None,
+            running_routine: None,
             inline_comp: None,
             location: None,
             frame_class: None,
@@ -1287,6 +1290,7 @@ impl<'a> Engine<'a> {
             text_within: None,
             natives: None,
             builtins_view: None,
+            class_body_capture: None,
             code_class: None,
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
@@ -2410,6 +2414,12 @@ impl<'a> Engine<'a> {
     }
 
     fn what_it_spells(&self, v: Value) -> Value {
+        if !self.lang.class_builder.is_empty() {
+            if let Value::Bond(cell) | Value::Binding(cell) = &v {
+                let held = cell.borrow().clone();
+                if !matches!(held, Value::Array(_) | Value::Map(_)) { return self.what_it_spells(held); }
+            }
+        }
         let Value::Text(name) = &v else { return v };
         if !self.lang.spelled_stands {
             return v;
@@ -3611,12 +3621,13 @@ impl<'a> Engine<'a> {
         let caller_line = self.line;
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
+        let caller_routine = self.running_routine.replace(program.clone());
         let outcome = self.run_instrs(program, &mut frame);
         // A signal still left pending as the outermost body's own last
         // statement is done is taken up here, while the body's frame
         // and line still stand: what it raises is the run's ending,
         // exactly as though the last statement had raised it.
-        let outcome = match outcome {
+        let mut outcome = match outcome {
             Ok(()) if program.body_of_all && self.lang.signals_between_statements => match self.deliver_signals() {
                 Ok(()) => Ok(()),
                 Err(fault) => {
@@ -3633,6 +3644,28 @@ impl<'a> Engine<'a> {
             },
             other => other,
         };
+        self.running_routine = caller_routine;
+        let mut body_namespace = None;
+        if outcome.is_ok() {
+            if let Some((book_name, cell_name)) = &program.class_namespace {
+                let book_at = program.idents.iter().position(|name| name == book_name).expect("class locals slot");
+                let cell_at = cell_name.as_ref().map(|cell_name| program.idents.iter().position(|name| name == cell_name).expect("class cell slot"));
+                let book = match &frame[book_at] { Value::Bond(cell) | Value::Binding(cell) => cell.borrow().clone(), held => held.clone() };
+                let cell = cell_at.map_or(Value::Null, |at| frame[at].clone());
+                if matches!(cell, Value::Bond(_) | Value::Binding(_)) {
+                    let wrapped = Self::adapter(31, vec![cell.clone()]);
+                    let word = self.class_word("classcell").to_owned();
+                    let written = match &book { Value::Collection(storage, _) | Value::Bond(storage) | Value::Binding(storage) => self.book_put(storage, &word, Some(wrapped.clone())), _ => self.dyn_write(&book, &word, Some(wrapped.clone())) };
+                    if let Err(fault) = written { outcome = Err(fault); }
+                    else { self.data.truncate(base); self.data.push(wrapped); }
+                }
+                body_namespace = Some(Value::tuple(vec![book, cell]));
+            }
+        }
+        if outcome.is_ok() && self.class_body_capture.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, program)) {
+            let namespace = match body_namespace { Some(namespace) => namespace, None => self.names_about(program, &frame, Builtin::NearNames)? };
+            if let Some((_, captured)) = &mut self.class_body_capture { *captured = Some(namespace); }
+        }
         self.trace_frame = caller_frame;
         self.inline_comp = previous_comp;
         self.refresh_observed_frame();
@@ -5019,6 +5052,12 @@ impl<'a> Engine<'a> {
                             self.as_they_stand(program, frame);
                             self.perform(op, *argc)
                         }
+                        Action::Invoke(_) if *argc == 1 && !self.lang.class_builder.is_empty()
+                            && self.data.last().is_some_and(|held| matches!(self.what_it_spells(held.clone()), Value::Native(Builtin::ClassTool(8) | Builtin::NearNames | Builtin::Vars | Builtin::OuterNames, _))) => {
+                            let callable = self.data.pop().expect("the callable");
+                            let Value::Native(kind, _) = self.what_it_spells(callable) else { unreachable!() };
+                            self.names_about(program, frame, kind).map(|names| self.data.push(names))
+                        }
                         _ => self.perform(op, *argc),
                     };
                     if let Err(fault) = done {
@@ -6115,11 +6154,14 @@ impl<'a> Engine<'a> {
             }
         }
         // A set answers some of its methods through builtins that take
-        // the receiver first, so the member bound to the value is the
-        // word itself with the value behind it. A set that cannot be
-        // changed answers none of the methods that would alter it.
-        if matches!((&held, self.lang.builtins.get(name)), (Value::Set(_), Some(word)) if word.set_method() && !(word.set_alters() && held.set_fixed())) {
-            return Ok(Some(Value::Adapter(Rc::new((3, vec![Value::text(name), held])))));
+        // the receiver first. Python keeps the native callable with
+        // its receiver, rather than treating its spelling as callable.
+        // A fixed set answers none of the methods that would alter it.
+        let operation = self.lang.builtins.get(name).copied().filter(|word| matches!(&held, Value::Set(_)) && word.set_method() && !(word.set_alters() && held.set_fixed()));
+        if let Some(operation) = operation {
+            let callable = if self.lang.class_builder.is_empty() { Value::text(name) }
+                else { Value::Native(operation, Rc::from(name)) };
+            return Ok(Some(Value::Adapter(Rc::new((3, vec![callable, held])))));
         }
         let Some(operation) = self.lang.value_methods.get(name).cloned() else { return Ok(None) };
         if !crate::methods::answered(&held, &operation) { return Ok(None); }
@@ -7602,6 +7644,14 @@ impl<'a> Engine<'a> {
             if let Some(answer) = self.special_call(b, 14, vec![a.clone()])? {
                 return Ok(Value::Flag(self.special_truth(&answer)? != matches!(op, Action::Lacks)));
             }
+            // A subclass inherits its container's membership slot even
+            // when it overrides iteration or item reads. Consult that
+            // slot before falling back to a user-defined walk.
+            if let Some(native) = Self::worth_of(b).map(|value| value.contents()) {
+                if Self::native_family(&native).is_some_and(|family| Self::family_answers(family, 14)) {
+                    return self.special_dyad(op, a, &native);
+                }
+            }
             // A thing that says nothing of membership but says how it
             // is walked is searched by walking it, and the walk stops
             // at the first member equal to the one sought.
@@ -8654,6 +8704,9 @@ impl<'a> Engine<'a> {
             let at = self.data.len().saturating_sub(argc);
             if let Some(value) = self.data.get_mut(at) { *value = collection_contents(value); }
         }
+        if !self.lang.class_builder.is_empty() && matches!(op, Action::Grab(_)) {
+            if let Some(value) = self.data.pop() { let value = self.what_it_spells(value); self.data.push(value); }
+        }
         if self.fuller_classes() {
             let result = match op {
                 Action::Grab(name) if self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name.as_ref()))
@@ -8674,6 +8727,7 @@ impl<'a> Engine<'a> {
                 Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc != 1 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
                     let supplied=self.drop_many(argc)?;let mut args=Vec::new();
                     // The property builtin takes its accessors by name; the making of the property sorts them.
+                    if *builtin == Builtin::ClassTool(13) { let made = self.class_work(13, supplied)?; self.data.push(made); return Ok(()); }
                     if *builtin==Builtin::ClassTool(11) && !self.class_word("descriptor.get").is_empty() { let made=self.class_work(11,supplied)?; self.data.push(made); return Ok(()); }
                     for (key,v) in self.call_items(supplied)? {
                         if key.is_some(){let words=&self.lang.call_builtin_amiss;return Err(format!("{}{}{}",words.first().map_or("",String::as_str),name,words.get(1).map_or("",String::as_str)).into());}
@@ -10312,6 +10366,7 @@ impl<'a> Engine<'a> {
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
+                let subject = if !self.lang.class_builder.is_empty() { self.what_it_spells(subject) } else { subject };
                 if let Value::Generator(held) = subject {
                     let opened = self.call_items(args)?;
                     if opened.iter().any(|(name, _)| name.is_some()) { return Err(self.lang.yield_unsupported[0].clone().into()); }
@@ -13921,6 +13976,10 @@ impl<'a> Engine<'a> {
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         if !self.lang.compile_modes.is_empty() && matches!(builtin, Builtin::RunText | Builtin::Eval | Builtin::ReadyText | Builtin::Summon | Builtin::OuterNames | Builtin::NearNames) {
             return self.text_builtin(builtin, name, items);
+        }
+        if let Builtin::ClassTool(job) = builtin {
+            let supplied = items.into_iter().map(|(key, value)| match key { Some(key) => Value::Tie(Rc::new((Value::text(&key), value))), None => value }).collect();
+            return self.class_work(job, supplied).map_err(|fault| { self.carried = Some(fault); self.lang.stream_failed[0].clone() });
         }
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
@@ -19731,6 +19790,11 @@ impl Engine<'_> {
                 arity(0, 1)?;
                 let mut pairs = match args.first() {
                     Some(Value::Map(p)) => p.to_vec(),
+                    Some(value) if !self.lang.class_builder.is_empty() && self.special_value(value, 15).is_none()
+                        && matches!(Self::worth_of(value).map(|worth| worth.contents()), Some(Value::Map(_))) => {
+                        let Some(Value::Map(entries)) = Self::worth_of(value).map(|worth| worth.contents()) else { unreachable!() };
+                        entries.to_vec()
+                    }
                     Some(v) => {
                         let mut pairs = Vec::new();
                         if let Some(keys_method) = self.member_of(v.clone(), "keys")? {
@@ -20656,7 +20720,7 @@ impl Engine<'_> {
                 // among them, and the builtins are read through it the
                 // very way any other name is.
                 let builtins_value = match self.lang.module_builtins.first() {
-                    Some(word) => match self.book_get(&roots, word) {
+                    Some(word) => match self.book_builtins(&roots, word) {
                         Ok(v) => v,
                         Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
                     },
@@ -20671,9 +20735,13 @@ impl Engine<'_> {
                             None => None,
                         }
                     }
-                    Some(other) => match self.dyn_lookup(&other, name) {
-                        Ok(v) => v,
-                        Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
+                    Some(other) => {
+                        let found = self.as_builtins_dictionary(other)
+                            .and_then(|dictionary| self.dyn_lookup(&dictionary.contents(), name));
+                        match found {
+                            Ok(value) => value,
+                            Err(failure) => { self.carried = Some(failure); return Some(Err(self.special_fault())); }
+                        }
                     },
                     None => match self.native_named(name) {
                         Some(held) => Some(held),
@@ -20695,10 +20763,142 @@ impl Engine<'_> {
                     Some(outer) if book.declared.iter().any(|word| word == name) => outer,
                     _ => &book.near,
                 };
+                let declared_global = book.declared.iter().any(|word| word == name);
+                let deleting_local = value.is_none() && !declared_global;
                 let target = target.clone();
-                if let Err(fled) = self.book_put(&target, name, value) { self.carried = Some(fled); }
+                if let Err(fled) = self.book_put(&target, name, value) {
+                    // DELETE_NAME reports a missing binding when its
+                    // locals mapping refuses deletion; explicit global
+                    // and subscript operations keep their own errors.
+                    self.carried = Some(if deleting_local {
+                        Fault::Note(format!("Undefined variable: {name}"))
+                    } else { fled });
+                }
             }
         }
+    }
+
+    pub(super) fn require_class_builder(&mut self) -> Flow<Value> {
+        let Some(word) = self.lang.class_builder.first().cloned() else { return Ok(Value::Null) };
+        if let Some(born) = self.running_routine.as_ref().and_then(|program| program.born.clone()) {
+            let dictionary = self.as_builtins_dictionary(born)?;
+            if let Some(value) = self.dyn_lookup(&dictionary.contents(), &word)? { return Ok(value); }
+            return Err(self.lang.class_builder.get(1).cloned().unwrap_or_default().into());
+        }
+        if self.reading_in.is_none() {
+            if let Some(module) = self.modules.get(self.home_module_word()).filter(|_| !self.importing.contains(self.home_module_word())).cloned() {
+                return match self.class_get(module, &word, false) {
+                    Err(fault) if self.attribute_fault(&fault) => Err(self.lang.class_builder.get(1).cloned().unwrap_or_default().into()),
+                    result => result,
+                };
+            }
+            let book = self.natives_book();
+            if let Some(value) = self.book_get(&book, &word)? { return Ok(value); }
+            return Err(self.lang.class_builder.get(1).cloned().unwrap_or_default().into());
+        }
+        let outer = self.book_here(true);
+        let builtin_word = self.lang.module_builtins.first().cloned().unwrap_or_default();
+        if let Some(held) = self.book_builtins(&outer, &builtin_word)? {
+            let dictionary = self.as_builtins_dictionary(held)?;
+            if let Some(value) = self.dyn_lookup(&dictionary.contents(), &word)? { return Ok(value); }
+        }
+        Err(self.lang.class_builder.get(1).cloned().unwrap_or_default().into())
+    }
+
+    pub(super) fn class_body_book(&mut self, seed: Value) -> Flow<Value> {
+        let prepared = self.class_body_capture.as_ref().filter(|(body, _)| self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running))).and_then(|(_, book)| book.clone());
+        let captured = self.running_routine.as_ref().and_then(|program| program.globe.clone());
+        let book = prepared.or(captured).unwrap_or_else(|| Value::Bond(self.book_here(true)));
+        if let Value::Map(pairs) = seed.contents() {
+            for (key, value) in pairs.iter() { match &book { Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => self.book_put(cell, &key.plain(), Some(value.clone()))?, _ => self.dyn_write(&book, &key.plain(), Some(value.clone()))? }; }
+        }
+        Ok(book)
+    }
+
+    pub(super) fn class_namespace_read(&mut self, arguments: Vec<Value>) -> Flow<Value> {
+        let found = self.dyn_lookup(&arguments[0].contents(), &arguments[1].plain())?;
+        Ok(Value::tuple(vec![Value::Flag(found.is_some()), found.unwrap_or(Value::Null)]))
+    }
+
+    pub(super) fn class_namespace_remove(&mut self, arguments: Vec<Value>) -> Flow<Value> {
+        let book = &arguments[0];
+        let name = arguments[1].plain();
+        let failure = format!("NameError: name '{}' is not defined", name);
+        let removed = match book {
+            Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) if matches!(cell.borrow().contents(), Value::Map(_)) => {
+                if self.book_get(cell, &name)?.is_none() { return Err(failure.into()); }
+                self.book_put(cell, &name, None)
+            }
+            _ => self.dyn_write(book, &name, None),
+        };
+        match removed {
+            Err(fault) if self.fault_names(&fault, "KeyError") => Err(failure.into()),
+            Err(fault) => Err(fault),
+            Ok(()) => Ok(book.clone()),
+        }
+    }
+
+    pub(super) fn dispatch_class_builder(&mut self, mut arguments: Vec<Value>) -> Flow<Value> {
+        let header = arguments.pop().unwrap_or(Value::Null).contents();
+        let Value::Tuple(header) = header else { return Err(self.class_word("unready").to_string().into()); };
+        let builder = arguments.remove(0);
+        arguments.extend(header.iter().cloned());
+        Ok(self.call_held(builder, arguments)?)
+    }
+
+    pub(super) fn build_body_class(&mut self, arguments: Vec<Value>) -> Flow<Value> {
+        let mut plain = Vec::new(); let mut keywords = Vec::new(); let mut asked = None;
+        for (key, value) in self.call_items(arguments)? {
+            match key {
+                Some(key) if Lang::spells(&self.lang.metaclass_word, &key) => asked = Some(value),
+                Some(key) => keywords.push(Value::Tie(Rc::new((Value::text(&key), value)))),
+                None => plain.push(value),
+            }
+        }
+        if plain.len() < 2 { return Err("TypeError: __build_class__: not enough arguments".into()); }
+        let Value::Routine(program) = plain.remove(0).contents() else { return Err("TypeError: __build_class__: func must be a function".into()) };
+        let Value::Text(name) = plain.remove(0).contents() else { return Err("TypeError: __build_class__: name is not a string".into()) };
+        let implicit = if asked.is_none() && plain.first().is_some_and(|base| !self.stands_for_kind(&base.contents())) {
+            Some(self.call_held(self.kind_maker_word(), vec![plain[0].clone()])?)
+        } else { None };
+        let requested = asked.as_ref().map(Value::contents).or(implicit);
+        let custom = requested.as_ref().is_some_and(|value| match value {
+            Value::Native(Builtin::SortOf, _) => false,
+            Value::Class(class) => !self.is_metaclass_root(class) && !class.lineage.iter().any(|base| self.is_metaclass_root(base)),
+            _ => true,
+        });
+        let parents = if custom { Vec::new() } else { plain.iter().map(|base| self.type_base(base)).collect::<Flow<Vec<_>>>()? };
+        let factory = if custom { requested } else { self.maker_in_force(asked, &parents)?.map(Value::Class) };
+        let bases = Value::tuple(plain);
+        let namespace = if let Some(factory) = &factory {
+            let word = self.class_word("prepare").to_owned();
+            match self.class_get(factory.clone(), &word, false) {
+                Ok(prepare) => { let mut given = vec![Value::Text(name.clone()), bases.clone()]; given.extend(keywords.iter().cloned()); self.class_apply(prepare, given)? }
+                Err(fault) if self.attribute_fault(&fault) => Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true),
+                Err(fault) => return Err(fault),
+            }
+        } else { Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true) };
+        let previous = self.class_body_capture.replace((program.clone(), Some(namespace)));
+        let call = self.class_apply(Value::Routine(program), Vec::new());
+        let captured = self.class_body_capture.take().and_then(|(_, namespace)| namespace);
+        self.class_body_capture = previous;
+        call?;
+        let captured = captured.unwrap_or_else(|| Value::Map(Rc::new(Vec::new().into())));
+        let (namespace, class_cell) = match captured { Value::Tuple(values) if values.len() == 2 => (values[0].clone(), Some(values[1].clone())), value => (value, None) };
+        let result = if let Some(factory) = factory {
+            let mut given = vec![Value::Text(name.clone()), bases, namespace]; given.extend(keywords); self.call_held(factory, given)?
+        } else {
+            let Value::Map(entries) = namespace.contents() else { return Err("TypeError: class namespace must be a mapping".into()); };
+            let mut members = entries.iter().map(|(key, value)| (key.plain(), value.clone())).collect::<Vec<_>>();
+            for (key, value) in self.call_items(keywords)? { if let Some(key) = key { members.push((format!("\0keyword:{key}"), value)); } }
+            self.form_class(name.to_string(), parents, members)?
+        };
+        if let Some(Value::Bond(cell) | Value::Binding(cell)) = class_cell {
+            let held = cell.borrow().contents();
+            if matches!(held, Value::Blank) { return Err(format!("RuntimeError: __class__ not set defining '{}'", name).into()); }
+            if !matches!((held, result.contents()), (Value::Class(a), Value::Class(b)) if Rc::ptr_eq(&a, &b)) { return Err(format!("TypeError: __class__ set to a different value defining '{}'", name).into()); }
+        }
+        Ok(result)
     }
 
     /// The dictionary of every builtin word, made once.
@@ -20736,8 +20936,24 @@ impl Engine<'_> {
     /// the same dictionary every time.
     fn builtins_view(&mut self) -> Flow<Value> {
         if let Some(held) = &self.builtins_view { return Ok(held.clone()); }
-        let module = self.names_module_value()?;
-        let class = match &module { Value::Object(o) => o.class_now(), _ => self.root_class() };
+        let library = self.names_module_value()?;
+        let book = self.natives_book();
+        if let Value::Object(module) = library {
+            let entries = module.fields.borrow().clone();
+            for (name, value) in entries {
+                if Self::public_name(&name) && !matches!(value.contents(), Value::Blank) {
+                    book_write(&book, &name, Some(value.contents()));
+                }
+            }
+        }
+        let class = if let [path, name] = self.lang.module_kind.as_slice() {
+            let (path, name) = (path.clone(), name.clone());
+            let module = self.import_module(&path)?;
+            match self.import_member(&module, &path, &name)?.contents() {
+                Value::Class(class) => class,
+                _ => return Err(self.class_word("unready").to_string().into()),
+            }
+        } else { self.root_class() };
         let dictionary = Value::Bond(self.natives_book());
         self.made += 1;
         let object = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
@@ -20753,7 +20969,7 @@ impl Engine<'_> {
         let word = match self.lang.module_builtins.first() { Some(word) => word.clone(), None => return self.native_dict() };
         if self.reading_in.is_none() { return self.native_dict(); }
         let book = self.book_here(true);
-        if let Ok(Some(held)) = self.book_get(&book, &word) {
+        if let Ok(Some(held)) = self.book_builtins(&book, &word) {
             if !self.our_native_dict(&held) {
                 if let Ok(dictionary) = self.as_builtins_dictionary(held) { return dictionary; }
             }
@@ -20899,7 +21115,13 @@ impl Engine<'_> {
         if kind == Builtin::ClassLocalsPlace {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
-        let book = if kind == Builtin::OuterNames || program.body_of_all {
+        let class_book = program.class_namespace.as_ref().and_then(|(name, _)| program.idents.iter().position(|word| word == name)).map(|at| frame[at].clone());
+        let book = if kind != Builtin::OuterNames && class_book.is_some() {
+            match self.what_it_spells(class_book.unwrap()) {
+                Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
+                value => Rc::new(RefCell::new(value)),
+            }
+        } else if kind == Builtin::OuterNames || program.body_of_all {
             self.book_here(kind == Builtin::OuterNames)
         } else {
             let mut pairs = Vec::new();
@@ -21023,6 +21245,19 @@ impl Engine<'_> {
             }
             Err(words) => Err(self.carried.take().unwrap_or_else(|| Fault::Note(words))),
         }
+    }
+
+    /// Fetching the builtin namespace is an interpreter operation:
+    /// dict subclasses supply their stored entry without invoking a
+    /// user read hook. Ordinary name reads still use book_get.
+    fn book_builtins(&mut self, book: &Rc<RefCell<Value>>, name: &str) -> Flow<Option<Value>> {
+        let value = book.borrow().clone();
+        if let Some(storage) = Self::worth_of(&value) {
+            if matches!(storage.contents(), Value::Map(_)) {
+                return self.dyn_lookup(&storage.contents(), name);
+            }
+        }
+        self.book_get(book, name)
     }
 
     /// A name read out of a cell kept for such a dictionary, whichever
@@ -21620,7 +21855,7 @@ impl Engine<'_> {
         // dictionary of its own is asked for them the very way any
         // other name is asked for, since it need not be a plain map.
         if let Some(word) = self.lang.module_builtins.first() {
-            let existing = match self.book_get(&outer, word) {
+            let existing = match self.book_builtins(&outer, word) {
                 Ok(v) => v,
                 Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
             };
@@ -21632,15 +21867,18 @@ impl Engine<'_> {
             }
             if existing.is_none() {
                 let natives = self.natives_book();
-                if self.book_put(&outer, word, Some(Value::Bond(natives))).is_err() {
-                    // A value with no way to be written into refuses
-                    // this seeding under its own particular words, not
-                    // the plain complaint an ordinary write refused
-                    // gives, since the key here is the module's own and
-                    // not one the program asked to write itself.
-                    let outer_held = outer.borrow().clone();
-                    let kind = match &outer_held { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
+                let owner = outer.borrow().clone();
+                if matches!(&owner, Value::Object(_)) && self.special_value(&owner, 12).is_none() && Self::worth_of(&owner).is_none() {
+                    let kind = match &owner { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
                     return Err(self.core_fault("source.builtins_immutable", &kind));
+                }
+                let target = match Self::worth_of(&owner) {
+                    Some(Value::Bond(cell) | Value::Collection(cell, _)) if matches!(&*cell.borrow(), Value::Map(_)) => cell,
+                    _ => outer.clone(),
+                };
+                if let Err(failure) = self.book_put(&target, word, Some(Value::Bond(natives))) {
+                    self.carried = Some(failure);
+                    return Err(self.special_fault());
                 }
             }
         }
@@ -21732,10 +21970,14 @@ impl Engine<'_> {
         // its own, every builtin word is read as a name, so that the
         // text reaches only what that dictionary holds.
         let roots = near.as_ref().map_or(&outer, |_| &outer);
-        let own_natives = match self.lang.module_builtins.first().and_then(|word| book_entry(roots, word)) {
-            Some(Value::Bond(cell)) => self.natives.as_ref().map_or(true, |natives| !Rc::ptr_eq(&cell, natives)),
-            _ => false,
-        };
+        let builtin_name = self.lang.module_builtins.first().cloned();
+        let own_natives = if let Some(word) = builtin_name {
+            match self.book_builtins(roots, &word) {
+                Ok(Some(held)) => !self.our_native_dict(&held),
+                Ok(None) => false,
+                Err(failure) => { self.carried = Some(failure); return Err(self.special_fault()); }
+            }
+        } else { false };
         if own_natives {
             for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
         }
@@ -21744,7 +21986,7 @@ impl Engine<'_> {
         // that it may answer for both later.
         if let Some(word) = self.lang.module_builtins.first().cloned() {
             let globe = Value::Bond(outer.clone());
-            let born = match self.book_get(&outer, &word) {
+            let born = match self.book_builtins(&outer, &word) {
                 Ok(Some(held)) if !self.our_native_dict(&held) => match self.as_builtins_dictionary(held) {
                     Ok(dictionary) => dictionary,
                     Err(_) => self.native_dict(),

@@ -4440,6 +4440,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
+| `ext.builtin.build_class` | - | - | `__build_class__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
@@ -5216,6 +5217,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.binary.amiss` | - | - | `TypeError: unsupported operand type(s) for ` `: '` `' and '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.class.builder` | - | - | `__build_class__` `NameError: __build_class__ not found` | - | - | - | - | - | - | - |
 | `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` `frozenset` `bytes` `bytearray` `complex` `enumerate` `zip` `map` `filter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.called` | - | - | `__class_call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
@@ -5234,6 +5236,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.cell.contents` | - | - | `cell_contents` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.cell.empty` | - | - | `ValueError: Cell is empty` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.classcell` | - | - | `__classcell__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
@@ -5532,6 +5535,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.module.cache` | - | - | `sys` `modules` | - | - | - | - | - | - | - |
 | `ext.system.module.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
+| `ext.system.module.kind` | - | - | `types` `ModuleType` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.system.module.path` | - | - | `__path__` | - | - | - | - | - | - | - |
 | `ext.system.names.module` | - | - | `builtins` | - | - | - | - | - | - | - |
@@ -5775,3 +5779,8 @@ the ordinary call machinery, preserve raised callback exceptions, and retain
 the original receiver for reduction, identity hashing, and empty formatting.
 The native ownership label activates these rules only for Python definitions;
 other definitions keep their existing native inventory and call behavior.
+
+`ext.system.module.kind` names the library module and class used for the builtin namespace module.
+`ext.builtin.build_class` names the class body builder; `ext.stmt.class.builder` supplies its lookup name and missing-builtin error for class statements.
+
+`ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.

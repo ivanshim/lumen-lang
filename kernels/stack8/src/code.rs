@@ -884,6 +884,8 @@ impl Builtin {
 pub struct Routine {
     pub postponed_annotation: bool,
     pub checks_annotation_format: bool,
+    /// The live class namespace slot and, when used by methods, its class cell.
+    pub class_namespace: Option<(String, Option<String>)>,
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
     pub code_names: Vec<String>,
