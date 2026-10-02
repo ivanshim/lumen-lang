@@ -4885,7 +4885,7 @@ impl<'a> Builder<'a> {
         Ok((word, address))
     }
 
-    fn python_class(&mut self) -> Res<(Form, bool)> {
+    fn python_class(&mut self, generic: bool) -> Res<(Form, bool)> {
         let builder = self.gensym("class_builder");
         let mut setup = vec![Form::Write(builder.clone(), Box::new(prim_call(Prim::ClassWork(14), Vec::new())))];
         self.advance();
@@ -4893,11 +4893,15 @@ impl<'a> Builder<'a> {
         let named = self.need_word("as the class name")?;
         if named == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
-        let args = if self.table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
+        let mut args = if self.table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
             if self.ahead_in_item("ext.op.comprehension.for").is_some() { return Err("SyntaxError: invalid syntax".into()); }
             self.args("syntax.call.close", "syntax.call.separator")?
         } else { Vec::new() };
+        if generic {
+            let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
+            args.push(Form::Apply(Callee::Code(Box::new(maker)), Vec::new()));
+        }
         let header = self.gensym("class_header");
         setup.push(Form::Write(header.clone(), Box::new(prim_call(Prim::MakeTuple, args))));
         let full_name = self.full_name_of(&title);
@@ -5021,7 +5025,7 @@ impl<'a> Builder<'a> {
             let value = Form::Apply(Callee::Code(Box::new(factory)), Vec::new());
             return Ok((self.write(&name, value), false));
         }
-        if self.table.has_any("ext.stmt.class.builder") { return self.python_class(); }
+        if self.table.has_any("ext.stmt.class.builder") { return self.python_class(nested); }
         self.advance();
         let class_title = self.original_words[self.pos].lexeme.clone();
         let named = self.need_word("as the class name")?;

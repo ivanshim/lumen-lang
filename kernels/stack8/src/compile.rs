@@ -6153,7 +6153,7 @@ impl<'a> Compiler<'a> {
         false
     }
 
-    fn python_class(&mut self) -> Res<bool> {
+    fn python_class(&mut self, generic: bool) -> Res<bool> {
         let lang = self.lang;
         self.act(Action::Builtin(Builtin::ClassTool(14), Rc::from("")), 0);
         let builder = self.gensym("class_builder"); self.write(&builder);
@@ -6162,12 +6162,17 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as the class name")?;
         if name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         if self.on_any(&lang.type_params_open) { self.class_type_parameters()?; }
-        let count = if lang.bases_open.as_ref().is_some_and(|open| self.at_symbol(open)) {
+        let mut count = if lang.bases_open.as_ref().is_some_and(|open| self.at_symbol(open)) {
             self.take();
             if self.comprehension_ahead().is_some() { return Err("SyntaxError: invalid syntax".into()); }
             let pair = lang.calling.clone().expect("class arguments");
             self.arguments(&pair)?
         } else { 0 };
+        if generic {
+            self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
+            self.act(Action::Invoke(Rc::from("generic base")), 1);
+            count += 1;
+        }
         self.act(Action::MakeTuple, count);
         let header = self.gensym("class_header"); self.write(&header);
         let qualification = self.qualified(&original_name);
@@ -6295,7 +6300,7 @@ impl<'a> Compiler<'a> {
             self.write(&name);
             return Ok(false);
         }
-        if !lang.class_builder.is_empty() { return self.python_class(); }
+        if !lang.class_builder.is_empty() { return self.python_class(inside_wrapper); }
         self.take();
         let original_name = self.spelled[self.pos].lexeme.clone();
         let name = self.want_name("as the class name")?;
