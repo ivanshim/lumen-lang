@@ -1796,7 +1796,11 @@ impl<'a> Engine<'a> {
             .chain(self.native_exceptions.values()).cloned()
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
             .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
-        crate::faint::Graph::from_candidates(bookkeeping, live)
+        let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live);
+        graph.link_attributes(self.function_members.iter().map(|(function, holder)| {
+            (function.clone(), Value::Object(holder.clone()))
+        }).collect());
+        graph
     }
 
     /// Clear a collection group's weakrefs, call its callbacks, then run

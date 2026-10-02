@@ -2485,7 +2485,12 @@ impl<'a> Machine<'a> {
             .chain(self.world_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .collect();
-        Web::from_notable(bookkeeping, live)
+        let mut web = Web::from_notable(bookkeeping, live);
+        let records = self.routine_members.iter().map(|(work, attributes)| {
+            (work.clone(), Value::Thing(attributes.clone()))
+        }).collect();
+        web.connect_members(records);
+        web
     }
 
     /// Silence the whole lost group before its notices and farewells.

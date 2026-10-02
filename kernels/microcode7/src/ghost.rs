@@ -649,6 +649,27 @@ impl Web {
         Web { strands, bookkeeping }
     }
 
+    /// The routine owns its member record; its side-table hold is the
+    /// physical counterpart of this otherwise absent ownership strand.
+    pub fn connect_members(&mut self, records: Vec<(Value, Value)>) {
+        for (work, members) in records {
+            let destination = Knot::Held(members).place();
+            let Some(destination) = destination else { continue };
+            let reserved = self.bookkeeping.entry(destination).or_default();
+            if *reserved > 0 { *reserved -= 1; }
+            let owner = match work {
+                Value::Bound(body, _) | Value::Method(body, _) => Knot::Held(Value::Routine(body)),
+                value => Knot::Held(value),
+            };
+            if let Some(address) = owner.place() {
+                if let Some(source) = self.strands.get_mut(&address) {
+                    source.onward.push(destination);
+                    if let Some(target) = self.strands.get_mut(&destination) { target.inward += 1; }
+                }
+            }
+        }
+    }
+
     /// Whether a value belongs only to an unreachable round, after
     /// leaving the machine's function bookkeeping out of its holds.
     pub fn unowned(&self, value: &Value) -> bool {

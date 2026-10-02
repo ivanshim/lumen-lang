@@ -648,6 +648,25 @@ impl Graph {
         Graph { nodes, bookkeeping }
     }
 
+    /// Attribute storage belongs to its callable, although the engine
+    /// keeps the physical hold in a side table rather than in the value.
+    pub fn link_attributes(&mut self, bindings: Vec<(Value, Value)>) {
+        for (callable, fields) in bindings {
+            let Some(target) = place_of(&fields) else { continue };
+            if let Some(count) = self.bookkeeping.get_mut(&target) {
+                *count = count.saturating_sub(1);
+            }
+            let origin = match callable {
+                Value::Method(_, routine) => place_of(&Value::Routine(routine)),
+                other => place_of(&other),
+            };
+            if let Some(source) = origin.filter(|source| self.nodes.contains_key(source)) {
+                self.nodes.get_mut(&source).unwrap().reaches.push(target);
+                if let Some(node) = self.nodes.get_mut(&target) { node.inward += 1; }
+            }
+        }
+    }
+
     /// Whether this value is now unreachable once the engine's own
     /// function bookkeeping is left out of the strong holds.
     pub fn unowned(&self, value: &Value) -> bool {
