@@ -1742,6 +1742,8 @@ pub struct Class {
     /// members and cannot stand as a base. Kept out of the members so
     /// that no program write can reach it.
     pub sealed: std::cell::Cell<bool>,
+    /// Instance slot storage established when the class was constructed.
+    pub declares_slots: bool,
 }
 
 impl Class {
