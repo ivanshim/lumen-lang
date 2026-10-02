@@ -5054,8 +5054,7 @@ impl<'a> Engine<'a> {
                     // names, as the reference has it, and only the
                     // outermost body has none but the globals.
                     let done = match op {
-                        Action::Builtin(native, name) if !self.wildcard_slots.is_empty()
-                            && (program.body_of_all || program.declared_on != 0) && self.wildcard_callable(name, *native).is_some() => {
+                        Action::Builtin(native, name) if (program.body_of_all || program.declared_on != 0) && self.wildcard_callable(name, *native).is_some() => {
                             self.data.push(self.wildcard_callable(name, *native).unwrap());
                             self.perform(&Action::Invoke(name.clone()), argc + 1)
                         }
@@ -20277,7 +20276,11 @@ impl Engine<'_> {
     }
 
     fn wildcard_callable(&self, name: &str, native: Builtin) -> Option<Value> {
-        let held = self.wildcard_value(name)?;
+        let held = self.wildcard_value(name).or_else(|| {
+            let Value::Object(module) = self.modules.get("builtins")? else { return None };
+            module.fields.borrow().iter().find(|(word, _)| word == name)
+                .map(|(_, item)| item.contents()).filter(|item| !matches!(item, Value::Blank))
+        })?;
         if matches!(&held, Value::Native(operation, _) if *operation == native) { return None; }
         if matches!((&held, native), (Value::ByteKind(changeable, _), Builtin::Bytes(tag @ 0..=1)) if *changeable == (tag == 1)) { return None; }
         Some(held)

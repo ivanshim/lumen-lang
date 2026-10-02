@@ -6213,8 +6213,7 @@ impl<'a> Machine<'a> {
                 if let Some(previous) = earlier { self.world_book = previous; }
                 outcome
             }
-            Form::Apply(Callee::Prim(op, name), args) if !self.wildcard_names.is_empty()
-                && self.spread_override(name, *op).is_some() => {
+            Form::Apply(Callee::Prim(op, name), args) if self.spread_override(name, *op).is_some() => {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
             }
@@ -20446,7 +20445,15 @@ impl Machine<'_> {
     }
 
     fn spread_override(&self, word: &str, operation: Prim) -> Option<Value> {
-        let value = self.spread_value(word)?;
+        let value = self.spread_value(word).or_else(|| {
+            if self.table.prims.get(word).copied() != Some(operation) { return None; }
+            match self.imported.get("builtins") {
+                Some(Value::Thing(module)) => module.holds.borrow().iter()
+                    .find_map(|(name, held)| (name == word).then(|| held.settled()))
+                    .filter(|held| !matches!(held, Value::Unset)),
+                _ => None,
+            }
+        })?;
         match (&value, operation) {
             (Value::Intrinsic(found, _), _) if *found == operation => None,
             (Value::OctetKind { changeable, .. }, Prim::Octets(tag @ 0..=1)) if *changeable == (tag != 0) => None,
