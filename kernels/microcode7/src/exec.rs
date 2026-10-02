@@ -14321,10 +14321,13 @@ impl<'a> Machine<'a> {
                     };
                     return Ok(Value::Flag(truth));
                 }
-                // Exact native strings cannot override Python comparison.
-                // Their Unicode order needs no general method dispatch.
-                if let (Value::Text(left), Value::Text(right)) = (&a[position], &b[position]) {
-                    let order = left.cmp(right);
+                // Exact immutable atoms cannot override Python comparison.
+                let atom_order = match (&a[position], &b[position]) {
+                    (Value::Text(left), Value::Text(right)) => Some(left.cmp(right)),
+                    (Value::Small(left), Value::Small(right)) => Some(left.cmp(right)),
+                    _ => None,
+                };
+                if let Some(order) = atom_order {
                     if order.is_eq() { position += 1; continue; }
                     let answer = match operation {
                         Prim::Eq => false, Prim::Ne => true,
@@ -14351,8 +14354,12 @@ impl<'a> Machine<'a> {
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if self.rules.has_any_ext_stmt_class_special && matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
-            if let [Value::Text(left), Value::Text(right)] = v {
-                let ordering = left.cmp(right);
+            let native_order = match v {
+                [Value::Text(a), Value::Text(b)] => Some(a.cmp(b)),
+                [Value::Small(a), Value::Small(b)] => Some(a.cmp(b)),
+                _ => None,
+            };
+            if let Some(ordering) = native_order {
                 let yes = match op {
                     Prim::Eq => ordering.is_eq(), Prim::Ne => !ordering.is_eq(),
                     Prim::Lt => ordering.is_lt(), Prim::Le => !ordering.is_gt(),
