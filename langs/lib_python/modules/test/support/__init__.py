@@ -276,6 +276,9 @@ import re
 TEST_HOME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))), 'tests', 'python')
 _header = 'nP'
 _align = '0n'
+LOOPBACK_TIMEOUT = 10.0
+INTERNET_TIMEOUT = 60.0
+SHORT_TIMEOUT = 30.0
 LONG_TIMEOUT = 300.0
 max_memuse = 0
 real_max_memuse = 0

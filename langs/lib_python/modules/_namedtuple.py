@@ -1,10 +1,14 @@
 # Runtime adapter derived from CPython Lib/collections/__init__.py at v3.14.8 / 8e6e75d9102e; PSF License.
 import sys as _sys
 from keyword import iskeyword as _iskeyword
-def _tuplegetter(index, doc):
-    def getter(self):
-        return self[index]
-    return property(getter, doc=doc)
+class _tuplegetter:
+    def __init__(self, index, doc):
+        self._index = index
+        self.__doc__ = doc
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        return instance[self._index]
 def namedtuple(typename, field_names, *, rename=False, defaults=None, module=None):
     """Returns a new subclass of tuple with named fields.
 
