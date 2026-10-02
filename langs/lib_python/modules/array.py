@@ -65,7 +65,7 @@ class array:
                 raise TypeError('array item must be unicode character')
             return _native(1, '@I', (ord(value),))
         if self._typecode in 'fd':
-            if isinstance(value, (str, bytes, bytearray)):
+            if not isinstance(value, (int, float)) and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
                 raise TypeError('must be real number, not ' + type(value).__name__)
             value = float(value)
         else:
@@ -249,6 +249,26 @@ class array:
     def __bytes__(self):
         return self.tobytes()
 
+    def __buffer__(self, flags, /):
+        if not isinstance(flags, int) and not hasattr(type(flags), "__index__"):
+            raise TypeError("'" + type(flags).__name__ + "' object cannot be interpreted as an integer")
+        flags = operator.index(flags)
+        if flags < -2147483648 or flags > 2147483647:
+            raise OverflowError('buffer flags out of range')
+        view = memoryview(self)
+        if not flags & 4:
+            view._format = 'B'
+        return view
+
+    def __release_buffer__(self, view, /):
+        if not isinstance(view, memoryview):
+            raise TypeError('expected a memoryview object')
+        if view._released:
+            raise ValueError("memoryview's buffer has already been released")
+        if view._source is not self:
+            raise ValueError("memoryview's buffer is not this object")
+        view.release()
+
     def frombytes(self, values):
         if isinstance(values, (bytes, bytearray)):
             raw = bytes(values)
@@ -281,7 +301,7 @@ class array:
 
     def fromunicode(self, values):
         if self._typecode not in 'uw':
-            raise ValueError('fromunicode() may only be called on unicode type arrays')
+            raise ValueError("fromunicode() may only be called on unicode type arrays ('u' or 'w')")
         if not isinstance(values, str):
             raise TypeError('fromunicode() argument must be str')
         raw = _native(1, '@' + str(len(values)) + 'I', tuple(map(ord, values)))
@@ -289,7 +309,7 @@ class array:
 
     def tounicode(self):
         if self._typecode not in 'uw':
-            raise ValueError('tounicode() may only be called on unicode type arrays')
+            raise ValueError("tounicode() may only be called on unicode type arrays ('u' or 'w')")
         points = _native(2, '@' + str(len(self)) + 'I', self._buffer)
         return ''.join(map(chr, points))
 

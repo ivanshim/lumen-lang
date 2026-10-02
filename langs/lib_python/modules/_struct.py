@@ -95,14 +95,14 @@ class Struct:
                         raise error('required argument is not an integer')
                     value = operator.index(value)
                 elif code in 'efd':
-                    if isinstance(value, (str, bytes, bytearray)):
+                    if not isinstance(value, (int, float)) and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
                         raise error('required argument is not a float')
                     try:
                         value = float(value)
                     except (TypeError, ValueError):
                         raise error('required argument is not a float')
                 elif code in 'FD':
-                    if isinstance(value, (str, bytes, bytearray)):
+                    if not isinstance(value, (int, float, complex)) and not hasattr(type(value), '__complex__') and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
                         raise error('required argument is not a complex')
                     try:
                         value = complex(value)

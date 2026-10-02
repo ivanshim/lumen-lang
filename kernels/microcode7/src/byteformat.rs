@@ -211,7 +211,7 @@ pub fn perform(given: &[Value]) -> Result<Value,String> {
                 let member=entry.next().unwrap().settled();
                 let mut row=match symbol {
                     b'?' => vec![u8::from(member.is_true())],
-                    b'c' => match member {Value::Octets {cell: data,..} if data.borrow().len()==1=>data.borrow().clone(),_=>return Err(invalid("char format requires a bytes object of length 1"))},
+                    b'c' => match member {Value::Octets {cell: data,changeable:false,..} if data.borrow().len()==1=>data.borrow().clone(),_=>return Err(invalid("char format requires a bytes object of length 1"))},
                     b'e'|b'f'|b'd' => real_bytes(decimal(&member)?,symbol)?,
                     b'F'|b'D' => {let Value::Tuple(pair)=member else {return Err(invalid("required argument is not a complex"));};let mut pairbytes=real_bytes(decimal(&pair[0])?,symbol)?;pairbytes.extend(real_bytes(decimal(&pair[1])?,symbol)?);pairbytes},
                     _=>integer(&member,symbol,width)?,

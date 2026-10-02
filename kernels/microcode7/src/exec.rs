@@ -9391,6 +9391,23 @@ impl<'a> Machine<'a> {
         Ok(None)
     }
 
+    fn numeric_octets(&mut self, subject: &Value) -> Result<Option<Vec<u8>>, String> {
+        let Value::Thing(thing) = subject else { return Ok(None); };
+        let titles = self.table.strings("ext.builtin.buffer.hooks");
+        let [obtain, relinquish] = titles else { return Ok(None); };
+        let Some(obtain) = self.inherited_entry(&thing.blueprint(), obtain) else { return Ok(None); };
+        let window = self.apply_class_member(obtain, vec![subject.clone(), Value::Small(0)])
+            .map_err(|escape| self.suspension_fault(escape))?;
+        let bytes = self.octet_argument(&window);
+        let interrupted = self.got_away.take();
+        if let Some(done) = self.inherited_entry(&thing.blueprint(), relinquish) {
+            let finished = self.apply_class_member(done, vec![subject.clone(), window]);
+            if bytes.is_ok() { finished.map_err(|escape| self.suspension_fault(escape))?; }
+        }
+        if let Some(interrupted) = interrupted { self.got_away = Some(interrupted); }
+        bytes
+    }
+
     fn whole_from_call(&mut self, values: &[Value]) -> Result<Value, String> {
         if values.len() > 2 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
         if values.is_empty() { return Ok(Value::Small(0)); }
@@ -9467,7 +9484,13 @@ impl<'a> Machine<'a> {
             Value::Frac(ratio) if ratio.past_numbers() && self.table.has_any(if ratio.answers_none() { "ext.builtin.to_int.nan" } else { "ext.builtin.to_int.infinity" }) => {
                 Err(self.table.single(if ratio.answers_none() { "ext.builtin.to_int.nan" } else { "ext.builtin.to_int.infinity" }).unwrap_or_default().to_owned())
             }
-            other => math::whole_part(other).map(Value::from_big).ok_or_else(|| self.argument_fault("ext.syntax.call.amiss", None)),
+            other => {
+                if let Some(number) = math::whole_part(other) { return Ok(Value::from_big(number)); }
+                match self.numeric_octets(other)? {
+                    Some(content) => self.whole_from_call(&[self.octets(content, false)]),
+                    None => Err(self.argument_fault("ext.syntax.call.amiss", None)),
+                }
+            },
         }
     }
 
@@ -17685,7 +17708,17 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     x @ Value::Frac(e) if e.places.is_some() => x.clone(),
                     x => {
-                        let exact = math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("TypeError: float() argument must be a string or a real number, not '{}'", x.kind_word()))?;
+                        let exact = if let Some(number) = math::to_decimal(x, math::DEFAULT_PLACES) { number }
+                        else {
+                            if let Some(octets) = self.numeric_octets(x)? {
+                                let buffer = self.octets(octets, false);
+                                let interpreted = self.prim(Prim::AsReal, name, &[buffer]);
+                                if interpreted.is_ok() { return interpreted; }
+                                let printed = self.object_words(x, true)?;
+                                return Err(format!("ValueError: could not convert string to float: {printed}"));
+                            }
+                            return Err(format!("TypeError: float() argument must be a string or a real number, not '{}'", x.kind_word()));
+                        };
                         if let Value::Frac(e) = &exact {
                             if !e.above.is_zero() && crate::data::nearest_binary(&e.above, &e.beneath).is_infinite() {
                                 return Err("OverflowError: int too large to convert to float".to_string());

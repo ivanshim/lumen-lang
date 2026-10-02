@@ -482,7 +482,7 @@ class memoryview:
         import struct
         if self._format == 'w':
             raise NotImplementedError('memoryview: format w not supported')
-        return struct.unpack('@' + self._format, raw)[0]
+        return struct.unpack('@' + self._format, raw[:struct.calcsize('@' + self._format)])[0]
 
     def __setitem__(self, key, value):
         self._check()
@@ -526,7 +526,7 @@ class memoryview:
                 if self._format != 'f':
                     raise
                 raw = struct.pack('@f', float('-inf') if value < 0 else float('inf'))
-            for i in range(self._itemsize):
+            for i in range(len(raw)):
                 self._put_byte(first + i, raw[i])
 
     def tolist(self):

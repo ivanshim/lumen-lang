@@ -4421,6 +4421,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
+| `ext.builtin.buffer.hooks` | - | - | `__buffer__` `__release_buffer__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
@@ -5722,3 +5723,5 @@ unittest assertions do not stringify their operands.
 `ext.builtin.struct_native` selects Python binary format compilation and byte-exact packing and unpacking for `_struct` and `array`.
 
 `ext.builtin.file_read.bytes` reads binary file contents without decoding, for Python buffer consumers such as `array.fromfile`.
+
+`ext.builtin.buffer.hooks` names Python buffer acquisition and release methods used by numeric constructors to read actual exported bytes.

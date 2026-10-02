@@ -154,7 +154,7 @@ pub fn apply(args: &[Value]) -> Result<Value,String> {
             for j in 0..field.count {
                 let value=values[next].contents(); next+=1;
                 let mut encoded=match field.code {
-                    b'c' => { let Value::Bytes(data,..)=value else {return Err(complaint("char format requires a bytes object of length 1"));}; if data.borrow().len()!=1 {return Err(complaint("char format requires a bytes object of length 1"));} let out=data.borrow().clone(); out },
+                    b'c' => { let Value::Bytes(data,false,_)=value else {return Err(complaint("char format requires a bytes object of length 1"));}; if data.borrow().len()!=1 {return Err(complaint("char format requires a bytes object of length 1"));} let out=data.borrow().clone(); out },
                     b'?' => vec![u8::from(value.is_true())],
                     b'e'|b'f'|b'd' => pack_float(floating(&value)?,field.code)?,
                     b'F'|b'D' => { let Value::Tuple(pair)=value else {return Err(complaint("required argument is not a complex"));}; let mut out=pack_float(floating(&pair[0])?,field.code)?; out.extend(pack_float(floating(&pair[1])?,field.code)?); out },

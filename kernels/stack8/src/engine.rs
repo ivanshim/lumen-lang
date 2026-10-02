@@ -14614,6 +14614,32 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    fn number_buffer(&mut self, value: &Value) -> Res<Option<Vec<u8>>> {
+        let Value::Object(object) = value else { return Ok(None) };
+        let hooks = self.lang.buffer_hooks.clone();
+        if hooks.len() != 2 { return Ok(None); }
+        let Some(getter) = self.class_value(&object.class_now(), &hooks[0]) else { return Ok(None); };
+        let view = match self.class_apply(getter, vec![value.clone(), Value::Small(0)]) {
+            Ok(view) => view,
+            Err(Fault::Note(words)) => return Err(words),
+            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+        };
+        let content = self.bytes_argument(&view);
+        let pending = self.carried.take();
+        if let Some(release) = self.class_value(&object.class_now(), &hooks[1]) {
+            let released = self.class_apply(release, vec![value.clone(), view]);
+            if content.is_ok() {
+                match released {
+                    Ok(_) => (),
+                    Err(Fault::Note(words)) => return Err(words),
+                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                }
+            }
+        }
+        if pending.is_some() { self.carried = pending; }
+        content
+    }
+
     fn integer_call(&mut self, args: &[Value]) -> Res<Value> {
         if args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
         let Some(value) = args.first() else { return Ok(Value::Small(0)) };
@@ -14646,7 +14672,11 @@ impl<'a> Engine<'a> {
                     if let Some(said) = said { return Err(said.clone()); }
                 }
             }
-            return arith::whole_of(value).map(Value::of_big).ok_or_else(|| self.lang.call_amiss[0].clone());
+            if let Some(whole) = arith::whole_of(value) { return Ok(Value::of_big(whole)); }
+            if let Some(content) = self.number_buffer(value)? {
+                return self.integer_call(&[self.byte_make(content, false)]);
+            }
+            return Err(self.lang.call_amiss[0].clone());
         };
         let invalid = || {
             if self.lang.integer_text_detail.len() == 2 {
@@ -17409,7 +17439,22 @@ impl<'a> Engine<'a> {
                 match &args[0] {
                     v @ Value::Real(_) => v.clone(),
                     v => {
-                        let exact = arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("TypeError: float() argument must be a string or a real number, not '{}'", v.core_kind()))?;
+                        let exact = match arith::to_real(v, arith::DEFAULT_PLACES) {
+                            Some(exact) => exact,
+                            None => {
+                                if let Some(content) = self.number_buffer(v)? {
+                                    let mut forwarded = vec![self.byte_make(content, false)];
+                                    return match self.builtin(Builtin::AsReal, name, &mut forwarded) {
+                                        Ok(number) => Ok(number),
+                                        Err(_) => {
+                                            let original = self.special_text(v, true)?;
+                                            Err(format!("ValueError: could not convert string to float: {original}"))
+                                        }
+                                    };
+                                }
+                                return Err(format!("TypeError: float() argument must be a string or a real number, not '{}'", v.core_kind()));
+                            }
+                        };
                         if let Value::Real(r) = &exact {
                             if !r.p.is_zero() && crate::value::as_binary(&r.p, &r.q).is_infinite() {
                                 return Err("OverflowError: int too large to convert to float".to_string());
