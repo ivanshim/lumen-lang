@@ -1,1 +1,1 @@
-ValueError: unsupported format %q at position 0
+ValueError: unsupported format character 'q' (0x71) at index 1
