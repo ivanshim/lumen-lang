@@ -413,7 +413,7 @@ class memoryview:
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
-        elif isinstance(object, array) and object.typecode in ('B', 'i'):
+        elif isinstance(object, array) and object.typecode in ('B', 'b', 'i'):
             self._source = object
             self._offsets = list(range(0, len(object.data) * object.itemsize, object.itemsize))
             self._format = object.typecode
@@ -433,8 +433,9 @@ class memoryview:
         if isinstance(self._source, array):
             if self._source.typecode == 'B':
                 return self._source.data[offset]
-            word = self._source.data[offset // 4]
-            return word.to_bytes(4, 'little', signed=True)[offset % 4]
+            width = self._source.itemsize
+            word = self._source.data[offset // width]
+            return word.to_bytes(width, 'little', signed=True)[offset % width]
         return self._source[offset]
 
     def _put_byte(self, offset, value):
@@ -443,9 +444,10 @@ class memoryview:
             if self._source.typecode == 'B':
                 self._source.data[offset] = value
             else:
-                index = offset // 4
-                data = bytearray(self._source.data[index].to_bytes(4, 'little', signed=True))
-                data[offset % 4] = value
+                width = self._source.itemsize
+                index = offset // width
+                data = bytearray(self._source.data[index].to_bytes(width, 'little', signed=True))
+                data[offset % width] = value
                 self._source.data[index] = int.from_bytes(data, 'little', signed=True)
         else:
             self._source[offset] = value
