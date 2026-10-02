@@ -3109,6 +3109,7 @@ impl<'a> Compiler<'a> {
                     }
                     keyed.push(at);
                     self.act(Action::At, 2);
+                    if !self.lang.class_special.is_empty() { on_call = false; }
                     continue;
                 }
                 let mut parts = 0;
@@ -3138,6 +3139,7 @@ impl<'a> Compiler<'a> {
                 }
                 keyed.push(at);
                 self.act(Action::At, 2);
+                    if !self.lang.class_special.is_empty() { on_call = false; }
             } else { break; }
         }
         // A chain still standing on a call has no cell to be reached
@@ -3937,6 +3939,10 @@ impl<'a> Compiler<'a> {
         self.act(Action::WalkMore, 2);
         self.loop_back(top);
         self.complete_cycle(again)?;
+        if !lang.class_special.is_empty() && !shared {
+            self.let_go(&over);
+            if bag.starts_with('#') { self.let_go(bag); }
+        }
         // The walk lets its last item go once it is over, so that the
         // place holding it is a place two names share only while some
         // name of the program's own still holds it.
@@ -5981,6 +5987,15 @@ impl<'a> Compiler<'a> {
         self.class_globals.push((self.pieces.len(), Vec::new()));
         self.class_seen.push(Vec::new());
         let mut shared: Vec<(String, String)> = carried_words;
+        if !lang.class_special.is_empty() {
+            if let Some(word) = lang.class_details.get("module").and_then(|v| v.first()) {
+                let module_name = self.global_cell("__name__").unwrap_or_else(|| Cell { free: false, ident: Rc::from("__name__"), near: Vec::new(), far: self.registry.slot("__name__"), moving: false });
+                self.put(Instr::Read(module_name));
+                let module = self.gensym("class_module");
+                self.write(&module);
+                shared.push((word.clone(), module));
+            }
+        }
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
         }
@@ -6103,6 +6118,7 @@ impl<'a> Compiler<'a> {
             self.write(&private);
             self.class_names.last_mut().expect("the enclosing class").1.insert(name, private);
         } else { self.write(&name); }
+        self.let_go(&class_cell);
         Ok(unready)
     }
 
@@ -6364,6 +6380,7 @@ impl<'a> Compiler<'a> {
         let previous = self.method_self.clone();
         self.method_self = formals.first().cloned();
         let built = self.routine(name, formals, least, true, |a| {
+            a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
@@ -7637,6 +7654,7 @@ impl<'a> Compiler<'a> {
                 let value = self.gensym("chain");
                 self.write(&value);
                 for name in names { self.read(&value); self.write(&name); }
+                self.let_go(&value);
                 return Ok(());
             }
         }
@@ -7651,6 +7669,7 @@ impl<'a> Compiler<'a> {
                 let after = self.pos;
                 self.pos = target_at;
                 self.bind_for_targets(&held)?;
+                self.let_go(&held);
                 self.pos = after;
                 return Ok(());
             }
@@ -7672,7 +7691,7 @@ impl<'a> Compiler<'a> {
         let temporary_index = keys.first().map_or(false, |at| {
             matches!(instructions.get(at - 1), Some(Instr::Act(Action::Invoke(_), _)))
         });
-        if (dotted && self.lang.member_mark.is_none() || temporary_index)
+        if (dotted && self.lang.member_mark.is_none() || (temporary_index && self.lang.class_special.is_empty()))
             && !self.lang.scope_unready.is_empty() && self.on_writing() {
             self.take();
             self.scope_value()?;
@@ -7978,9 +7997,10 @@ impl<'a> Compiler<'a> {
                 }
                 self.put(Instr::Hush(true));
                 let at = self.mark();
-                for w in relocated(base.clone(), at as i64 - from as i64) {
-                    self.put(w);
-                }
+                let shared_target = self.lang.bind_names && !self.lang.class_special.is_empty()
+                    && matches!(base.last(), Some(Instr::Read(_) | Instr::Act(Action::Grab(_) | Action::At, _)));
+                if shared_target { self.footing_cell(&base, from)?; }
+                else { for w in relocated(base.clone(), at as i64 - from as i64) { self.put(w); } }
                 self.put(Instr::Hush(false));
                 self.write(&inner[0]);
                 for i in 0..deep {
@@ -8024,7 +8044,7 @@ impl<'a> Compiler<'a> {
                 // to the footing below that restores `self.waiting` and
                 // any hush/mute marks, rather than returning out of the
                 // whole statement with those left disturbed.
-                if names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
+                if shared_target || names_handed || (self.lang.bind_names && matches!(base.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..) | Action::Send(_), _)))) {
                     Ok(())
                 } else {
                     // What it stood on is written back into, read again
@@ -8658,6 +8678,7 @@ impl<'a> Compiler<'a> {
                             self.write(TEMP_CELL);
                             self.read(&cell.ident);
                             self.read(TEMP_CELL);
+                            if !lang.class_special.is_empty() { self.let_go(TEMP_CELL); }
                         }
                         None => {}
                     }
@@ -9828,6 +9849,10 @@ impl<'a> Compiler<'a> {
                 self.put(Instr::Hush(true));
                 self.act(Action::BondWithin(keys.len()), keys.len() + 1);
                 self.put(Instr::Hush(false));
+            }
+            _ if !self.lang.class_special.is_empty() && matches!(read.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..), _))) => {
+                let here = self.mark();
+                for word in relocated(read.to_vec(), here as i64 - from as i64) { self.put(word); }
             }
             _ => return Err("Only a place in a named array has a cell to share".to_string()),
         }

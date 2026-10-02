@@ -295,6 +295,12 @@ pub struct Traceback {
     pub next: Value,
 }
 
+#[derive(Debug)]
+pub struct MethodStamp;
+impl Drop for MethodStamp {
+    fn drop(&mut self) { crate::faint::plain_departing(); }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Codepoints(Rc<Vec<u32>>),
@@ -349,7 +355,7 @@ pub enum Value {
     /// gathered into a map.
     Tie(Rc<(Value, Value)>),
     Routine(Rc<Routine>),
-    Method(Rc<Instance>, Rc<Routine>),
+    Method(Rc<Instance>, Rc<Routine>, Rc<MethodStamp>),
     Descriptor(Rc<Descriptor>),
     /// A weak hold on a value behind a pointer: it keeps nothing
     /// alive, and answers the value only while it is still there.
@@ -732,6 +738,8 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
 }
 
 impl Value {
+    pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp)) }
+
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }
 
     pub fn keeps_point(&self) -> bool {
@@ -1033,7 +1041,7 @@ impl Value {
             Value::Native(_, word) => Ok(format!("builtin:{word}")),
             Value::Class(kind) => Ok(format!("class:{:p}", Rc::as_ptr(kind))),
             Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
-            Value::Method(owner, code) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
+            Value::Method(owner, code, _) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
 
             Value::Null => Ok("nil".into()),
             Value::Ellipsis => Ok("dots".into()),
@@ -1235,7 +1243,7 @@ impl Value {
             (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Descriptor(a), Value::Descriptor(b)) => Rc::ptr_eq(a, b),
-            (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
+            (Value::Method(a, p, _), Value::Method(b, q, _)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             // Two readings of a value's own method come to the same
             // method where the word is the word and the value read is
             // the very value, not merely one equal to it.
@@ -1536,7 +1544,7 @@ impl Value {
                 let named = if p.qualified.is_empty() { p.ident.as_str() } else { p.qualified.as_str() };
                 format!("<function {named} at 0x1>")
             }
-            Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Method(_, p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => {
                 if let Some(title) = c.python_title() { return format!("<class '{title}'>"); }
@@ -1642,7 +1650,7 @@ impl Value {
                 into.push(')');
             }
             Value::Descriptor(d) => { let _ = write!(into, "d{:p}", Rc::as_ptr(d)); }
-            Value::Method(o, p) => {
+            Value::Method(o, p, _) => {
                 let _ = write!(into, "m{:p}:{:p}", Rc::as_ptr(o), Rc::as_ptr(p));
             }
             Value::Routine(p) => {

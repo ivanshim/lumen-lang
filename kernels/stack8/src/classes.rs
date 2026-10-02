@@ -307,9 +307,11 @@ impl<'a> Engine<'a> {
         let mut kinds: Vec<String> = lineage.iter().filter_map(|b| Self::own_kind(b)).collect();
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
-        let module = self.class_word("main").to_string();
+        let calling_code = self.trace_frame.as_ref().and_then(|frame| frame.fields.borrow().iter()
+            .find_map(|(key, value)| if key == "\0routine" { match value { Value::Routine(code) => Some(code.clone()), _ => None } } else { None }));
+        let module = calling_code.as_ref().map_or_else(|| Value::text(self.class_word("main")), |code| self.routine_module(code));
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
-            members.push((self.class_word("module").to_string(), Value::text(&module)));
+            members.push((self.class_word("module").to_string(), module));
         }
         if let Some((_, held)) = members.iter().find(|(n, _)| n == self.class_word("qualified")) {
             if !matches!(if self.class_word("name").is_empty() { Self::worth_of(held).unwrap_or_else(|| held.contents()) } else { held.type_text() }, Value::Text(_) | Value::Codepoints(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", Self::type_argument_kind(held)).into()); }
@@ -325,6 +327,7 @@ impl<'a> Engine<'a> {
             Some((title_value, qualified.clone(), self.class_word("module").to_string(), qualified))
         } else { None };
         let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
+        let module = members.iter().find(|(key, _)| key == self.class_word("module")).map(|(_, value)| value.plain()).unwrap_or_default();
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default(),
@@ -598,7 +601,7 @@ impl<'a> Engine<'a> {
             // A method bound to a value of a builtin kind, reached as a
             // value in its own right and then called.
             Value::ValueMethod(bound) => Ok(self.value_method(&bound.0,&bound.1,args,Vec::new())?),
-            Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
+            Value::Method(o, p, _) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A thing called stands on its own call member, which may be
             // a thing again: each such step is counted with the calls
             // standing, so a thing whose call member is a thing of its
@@ -606,6 +609,10 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
+                8 if matches!(w.1.first(), Some(Value::Text(name)) if name.as_ref() == "method") => {
+                    let [Value::Routine(code), Value::Object(receiver)] = args.as_slice() else { return Err(self.class_refusal()); };
+                    Ok(Value::method(receiver.clone(), code.clone()))
+                },
                 9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
                 0 => Ok(w.1[0].clone()),
                 1 => {
@@ -794,6 +801,10 @@ impl<'a> Engine<'a> {
     /// Making a thing of a class. A class made by a metaclass is called
     /// through that metaclass's own call, which decides what comes of it.
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if !self.lang.class_special.is_empty() && Self::own_kind(&c).as_deref() == Some("method") {
+            let [Value::Routine(function), Value::Object(owner)] = args.as_slice() else { return Err("TypeError: method() requires a function and an instance".into()); };
+            return Ok(Value::method(owner.clone(), function.clone()));
+        }
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
         }
@@ -1005,7 +1016,13 @@ impl<'a> Engine<'a> {
     fn root_state(&self, subject: &Value) -> Value {
         let Value::Object(o) = subject else { return Value::Null };
         let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
-        if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) }
+        let dictionary = if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) };
+        let slots: Vec<_> = o.fields.borrow().iter().filter_map(|(key, value)| {
+            let slot = key.strip_prefix("\0slot:")?.rsplit_once(':')?.0;
+            (!matches!(value, Value::Blank)).then(|| (Value::text(slot), value.clone()))
+        }).collect();
+        if slots.is_empty() { dictionary }
+        else { Value::tuple(vec![dictionary, Value::Map(Rc::new(slots.into()))]) }
     }
     pub(super) fn qualified_class(&self, class: &Class) -> String {
         let fields = class.shared.borrow();
@@ -1098,7 +1115,7 @@ impl<'a> Engine<'a> {
             return self.call_descriptor(&value, reader, vec![subject.unwrap_or(Value::Null), Value::Class(class)]);
         }
         match (value,subject) {
-            (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::Method(o,f)),
+            (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::method(o, f)),
             (Value::Routine(f),Some(other)) => Ok(Self::adapter(3, vec![Value::Routine(f), other])),
             (v,_) => Ok(v),
         }
@@ -1141,7 +1158,7 @@ impl<'a> Engine<'a> {
                 if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
                     let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
                     if let Some(Value::Faint(weak)) = weak {
-                        let target = weak.hold.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
+                        let target = weak.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
                         return self.class_get(target, name, plain);
                     }
                 }
@@ -1522,7 +1539,7 @@ impl<'a> Engine<'a> {
                     return Ok(Self::adapter(3,vec![root,receiver]));
                 }
             }
-            Value::Method(o,f) => {
+            Value::Method(o, f, _) => {
                 if name==self.class_word("receiver") {return Ok(Value::Object(o.clone()));}
                 if name==self.class_word("function") {return Ok(Value::Routine(f.clone()));}
                 return self.class_get(Value::Routine(f.clone()),name,true);
@@ -1855,7 +1872,7 @@ impl<'a> Engine<'a> {
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
     fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
-        let (_,members)=self.function_members.iter().find(|(v,_)| v.equals(subject))?;
+        let (_,members)=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject)))?;
         let fields=members.fields.borrow();
         if name==self.class_word("name") || name==self.class_word("qualified") || name==self.class_word("doc") || self.lang.class_annotations.first().map_or(false, |s| s == name) {
             let own=format!("\0{name}");
@@ -1872,7 +1889,7 @@ impl<'a> Engine<'a> {
     }
     /// The names a routine's own namespace holds, for its directory.
     fn routine_member_names(&self, subject: &Value) -> Vec<String> {
-        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.equals(subject)) else {return Vec::new()};
+        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject))) else {return Vec::new()};
         let fields=members.fields.borrow();
         if let Some((_,book))=fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
             let Value::Map(pairs)=book.contents() else {return Vec::new()};
@@ -1924,11 +1941,11 @@ impl<'a> Engine<'a> {
         fresh
     }
     fn function_storage(&mut self, function: &Value) -> usize {
-        if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
+        if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
-        self.function_members.push((function.clone(), fields));
+        self.function_members.push((crate::faint::hold_of(function).expect("function has a weak identity"), fields));
         self.function_members.len() - 1
     }
     fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,v)|(Value::text(n),v.clone())).collect()))}
@@ -1959,7 +1976,7 @@ impl<'a> Engine<'a> {
                 if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
                     let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
                     if let Some(Value::Faint(weak)) = weak {
-                        let target = weak.hold.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
+                        let target = weak.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
                         return self.class_write(target, name, value, plain);
                     }
                 }
@@ -2701,7 +2718,7 @@ impl<'a> Engine<'a> {
                 let word=self.class_word(part);
                 if !word.is_empty() { names.push(word.to_string()); }
             }
-            let routine=match one {Value::Method(_,f)=>Value::Routine(f.clone()),other=>other.clone()};
+            let routine=match one {Value::Method(_, f, _)=>Value::Routine(f.clone()),other=>other.clone()};
             names.extend(self.routine_member_names(&routine));
             names.sort();names.dedup();
             return Value::array(names.iter().map(|n|Value::text(n)).collect());

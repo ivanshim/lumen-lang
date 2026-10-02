@@ -29,7 +29,7 @@ pub enum Hold {
     Generator(Weak<RefCell<Generator>>),
     Set(Weak<RefCell<Members>>),
     Routine(Weak<Routine>),
-    Method(Weak<Instance>, Weak<Routine>),
+    Method(Weak<Instance>, Weak<Routine>, Weak<crate::value::MethodStamp>),
 }
 
 impl Hold {
@@ -42,7 +42,7 @@ impl Hold {
             Hold::Generator(w) => Value::Generator(w.upgrade()?),
             Hold::Set(w) => Value::Set(w.upgrade()?),
             Hold::Routine(w) => Value::Routine(w.upgrade()?),
-            Hold::Method(o, r) => Value::Method(o.upgrade()?, r.upgrade()?),
+            Hold::Method(o, r, stamp) => Value::Method(o.upgrade()?, r.upgrade()?, stamp.upgrade()?),
         })
     }
 
@@ -54,7 +54,7 @@ impl Hold {
             Hold::Generator(w) => w.strong_count() == 0,
             Hold::Set(w) => w.strong_count() == 0,
             Hold::Routine(w) => w.strong_count() == 0,
-            Hold::Method(o, r) => o.strong_count() == 0 || r.strong_count() == 0,
+            Hold::Method(o, r, identity) => identity.strong_count() == 0 || o.strong_count() == 0 || r.strong_count() == 0,
         }
     }
 }
@@ -68,6 +68,33 @@ pub struct Faint {
     pub bearer: Weak<Instance>,
     pub told: RefCell<Option<Value>>,
     pub cached_hash: RefCell<Option<Value>>,
+    pub cleared: Cell<bool>,
+}
+
+
+impl Faint {
+    pub fn revive(&self) -> Option<Value> {
+        if self.cleared.get() { None } else { self.hold.revive() }
+    }
+    pub fn gone(&self) -> bool { self.cleared.get() || self.hold.gone() }
+}
+
+/// Cyclic garbage loses its weak links before finalizers can resurrect it.
+pub fn clear_unreachable(values: &[Value]) {
+    let dead: HashSet<usize> = values.iter().filter_map(place_of).collect();
+    REFERENCES.with(|all| {
+        for reference in all.borrow().iter().filter_map(Weak::upgrade) {
+            let garbage_ref = reference.bearer.upgrade().is_some_and(|o| dead.contains(&(Rc::as_ptr(&o) as usize)));
+            if garbage_ref || reference.revive().and_then(|v| place_of(&v)).is_some_and(|p| dead.contains(&p)) {
+                reference.cleared.set(true);
+                if garbage_ref {
+                    reference.told.borrow_mut().take();
+                }
+                DIED.with(|flag| flag.set(true));
+                PENDING.with(|flag| flag.set(true));
+            }
+        }
+    });
 }
 
 thread_local! {
@@ -210,7 +237,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
             let mut kept = Vec::with_capacity(watched.len());
             for faint in watched.drain(..).rev() {
                 if faint.bearer.strong_count() == 0 { continue; }
-                if !faint.hold.gone() {
+                if !faint.gone() {
                     kept.push(faint);
                     continue;
                 }
@@ -236,7 +263,7 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
         Value::Generator(g) => Some(Hold::Generator(Rc::downgrade(g))),
         Value::Set(s) => Some(Hold::Set(Rc::downgrade(s))),
         Value::Routine(r) => Some(Hold::Routine(Rc::downgrade(r))),
-        Value::Method(o, r) => Some(Hold::Method(Rc::downgrade(o), Rc::downgrade(r))),
+        Value::Method(o, r, stamp) => Some(Hold::Method(Rc::downgrade(o), Rc::downgrade(r), Rc::downgrade(stamp))),
         _ => None,
     }
 }
@@ -245,7 +272,7 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
 /// asks for a word, and its value as one whose going may be noticed.
 pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
     remember(hold.clone());
-    let faint = Rc::new(Faint { hold, bearer, told: RefCell::new(told), cached_hash: RefCell::new(None) });
+    let faint = Rc::new(Faint { hold, bearer, told: RefCell::new(told), cached_hash: RefCell::new(None), cleared: Cell::new(false) });
     REFERENCES.with(|all| {
         let mut all = all.borrow_mut();
         all.retain(|r| r.strong_count() != 0);
@@ -497,7 +524,7 @@ impl Graph {
             for child in children.drain(..) {
                 // A bound method is not a place of its own but two.
                 let parts: Vec<Value> = match child {
-                    Value::Method(o, r) => vec![Value::Object(o), Value::Routine(r)],
+                    Value::Method(o, r, _) => vec![Value::Object(o), Value::Routine(r)],
                     other => vec![other],
                 };
                 for part in parts {
@@ -617,7 +644,7 @@ pub fn references(object: &Value) -> Vec<Value> {
         let mut result = Vec::new();
         for weak in all.borrow().iter().rev() {
             let Some(reference) = weak.upgrade() else { continue };
-            let Some(target) = reference.hold.revive() else { continue };
+            let Some(target) = reference.revive() else { continue };
             if !target.same_place(object) { continue; }
             if let Some(bearer) = reference.bearer.upgrade() { result.push(Value::Object(bearer)); }
         }

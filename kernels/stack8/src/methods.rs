@@ -333,7 +333,8 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(0,0)?;
                     let Some((key,value))=pairs.pop() else {return Err(fault("popitem"));};
                     store(Value::Map(Rc::new(pairs)))?;
-                    return Ok(Value::tuple(vec![key,value]));
+                    let plain = match key { Value::Hashed(pair) => pair.0.clone(), other => other };
+                    return Ok(Value::tuple(vec![plain,value]));
                 }
                 "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs)).held(true));}
                 "clear" => {arity(0,0)?;pairs.clear();}

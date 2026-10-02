@@ -30,7 +30,8 @@ pub enum Ghost {
     Set(Weak<RefCell<SetStore>>),
     Bound(Weak<Routine>, Weak<Env>),
     Routine(Weak<Routine>),
-    Method(Weak<Routine>, Weak<Thing>),
+    Method(Weak<Routine>, Weak<Thing>, Weak<crate::data::MethodMark>),
+    WrappedMethod(Weak<Vec<Value>>),
 }
 
 impl Ghost {
@@ -44,7 +45,8 @@ impl Ghost {
             Ghost::Set(w) => w.upgrade().map(Value::Set),
             Ghost::Bound(p, e) => Some(Value::Bound(p.upgrade()?, e.upgrade()?)),
             Ghost::Routine(w) => w.upgrade().map(Value::Routine),
-            Ghost::Method(p, t) => Some(Value::Method(p.upgrade()?, t.upgrade()?)),
+            Ghost::Method(p, t, identity) => Some(Value::Method(p.upgrade()?, t.upgrade()?, identity.upgrade()?)),
+            Ghost::WrappedMethod(parts) => Some(Value::Wrapped(3, parts.upgrade()?.into())),
         }
     }
 
@@ -61,6 +63,33 @@ pub struct Dim {
     pub bearer: Weak<Thing>,
     pub notify: RefCell<Option<Value>>,
     pub hash: RefCell<Option<Value>>,
+    pub detached: Cell<bool>,
+}
+
+
+impl Dim {
+    pub fn revive(&self) -> Option<Value> {
+        (!self.detached.get()).then(|| self.ghost.revive()).flatten()
+    }
+    pub fn departed(&self) -> bool { self.detached.get() || self.ghost.departed() }
+}
+
+pub fn detach_garbage(knots: &[Knot]) {
+    let places: HashSet<_> = knots.iter().filter_map(Knot::place).collect();
+    REFS.with(|registry| {
+        let watchers: Vec<_> = registry.borrow().iter().filter_map(Weak::upgrade).collect();
+        for dim in watchers {
+            let target = dim.revive().and_then(|v| Knot::Held(v).place());
+            let discarded = dim.bearer.upgrade().is_some_and(|t| places.contains(&(Rc::as_ptr(&t) as usize)));
+            if !discarded && !target.is_some_and(|p| places.contains(&p)) { continue; }
+            dim.detached.set(true);
+            if discarded {
+                *dim.notify.borrow_mut() = None;
+            }
+            LOST.with(|mark| mark.set(true));
+            STIRRED.with(|mark| mark.set(true));
+        }
+    });
 }
 
 thread_local! {
@@ -89,6 +118,8 @@ pub fn bidding() -> bool {
 
 /// Whether the machine has anything to attend to before its next step.
 pub fn stirred() -> bool {
+    let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| listener.departed()))).unwrap_or(false);
+    if gone_method { anything_departing(); }
     STIRRED.try_with(|s| s.get()).unwrap_or(false)
 }
 
@@ -165,7 +196,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
             let mut still = Vec::with_capacity(all.len());
             for dim in all.drain(..).rev() {
                 if dim.bearer.strong_count() == 0 { continue; }
-                if !dim.ghost.departed() {
+                if !dim.departed() {
                     still.push(dim);
                 } else if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), dim.notify.borrow_mut().take()) {
                     notices.push((notify, Value::Thing(bearer)));
@@ -191,7 +222,8 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
         Value::Set(s) => Ghost::Set(Rc::downgrade(s)),
         Value::Bound(p, e) => Ghost::Bound(Rc::downgrade(p), Rc::downgrade(e)),
         Value::Routine(p) => Ghost::Routine(Rc::downgrade(p)),
-        Value::Method(p, t) => Ghost::Method(Rc::downgrade(p), Rc::downgrade(t)),
+        Value::Method(p, t, identity) => Ghost::Method(Rc::downgrade(p), Rc::downgrade(t), Rc::downgrade(identity)),
+        Value::Wrapped(3, parts) => Ghost::WrappedMethod(Rc::downgrade(parts)),
         _ => return None,
     })
 }
@@ -201,7 +233,7 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
 pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     note(ghost.clone());
     let wants_telling = notify.is_some();
-    let held = Rc::new(Dim { ghost, bearer, notify: RefCell::new(notify), hash: RefCell::new(None) });
+    let held = Rc::new(Dim { ghost, bearer, notify: RefCell::new(notify), hash: RefCell::new(None), detached: Cell::new(false) });
     REFS.with(|refs| {
         let mut refs = refs.borrow_mut();
         refs.retain(|weak| weak.strong_count() != 0);
@@ -385,7 +417,7 @@ impl Knot {
     fn parts(self) -> Vec<Knot> {
         match self {
             Knot::Held(Value::Bound(_, env)) => vec![Knot::Frame(env)],
-            Knot::Held(Value::Method(_, thing)) => vec![Knot::Held(Value::Thing(thing))],
+            Knot::Held(Value::Method(_, thing, _)) => vec![Knot::Held(Value::Thing(thing))],
             Knot::Held(Value::Keyed(k, v)) => vec![Knot::Held((*k).clone()), Knot::Held((*v).clone())],
             other => vec![other],
         }
@@ -550,7 +582,7 @@ impl Web {
 pub fn refs_for(subject: &Value) -> Vec<Value> {
     let mut found = REFS.with(|refs| refs.borrow().iter().rev().filter_map(|entry| {
         let dim = entry.upgrade()?;
-        let target = dim.ghost.revive()?;
+        let target = dim.revive()?;
         if !subject.one_place(&target) { return None; }
         dim.bearer.upgrade().map(Value::Thing)
     }).collect::<Vec<_>>());
