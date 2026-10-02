@@ -13,8 +13,6 @@ S = 16
 DOTALL = S
 X = 64
 VERBOSE = X
-A = ASCII = 256
-U = UNICODE = 32
 
 _DIGITS = '0123456789'
 _WORD_LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
@@ -350,16 +348,16 @@ def _strip_verbose(pattern):
         i += 1
     return result
 
-def _word(letter, ascii_only=False):
+def _word(letter):
     if letter == '':
         return False
     if letter in _WORD_LETTERS:
         return True
-    if ord(letter) > 127 and not ascii_only:
+    if ord(letter) > 127:
         return letter.isalpha() or letter.isdecimal()
     return False
 
-def _accept(node, letter, ignorecase, ascii_only=False):
+def _accept(node, letter, ignorecase):
     kind = node[0]
     if kind == 'lit':
         if ignorecase:
@@ -377,32 +375,32 @@ def _accept(node, letter, ignorecase, ascii_only=False):
         if mark in 'dD':
             answer = letter in _DIGITS
         elif mark in 'wW':
-            answer = _word(letter, ascii_only)
+            answer = _word(letter)
         else:
             answer = letter in ' \t\n\r\v\f'
         return not answer if mark in 'DWS' else answer
     return False
 
-def _set_accept(node, letter, ignorecase, ascii_only=False):
+def _set_accept(node, letter, ignorecase):
     kind = node[0]
     if kind == 'class':
         answer = False
         for entry in node[2]:
-            if _accept(entry, letter, ignorecase, ascii_only):
+            if _accept(entry, letter, ignorecase):
                 answer = True
         return not answer if node[1] else answer
     if kind == 'negate':
-        return not _set_accept(node[1], letter, ignorecase, ascii_only)
+        return not _set_accept(node[1], letter, ignorecase)
     if kind == 'setop':
         op = node[1]
-        left = _set_accept(node[2], letter, ignorecase, ascii_only)
+        left = _set_accept(node[2], letter, ignorecase)
         if op == '||':
             if left:
                 return True
-            return _set_accept(node[3], letter, ignorecase, ascii_only)
+            return _set_accept(node[3], letter, ignorecase)
         if not left:
             return False
-        right = _set_accept(node[3], letter, ignorecase, ascii_only)
+        right = _set_accept(node[3], letter, ignorecase)
         return right if op == '&&' else not right
     return False
 
@@ -410,7 +408,7 @@ def _walk(node, text, place, captures, opts):
     kind = node[0]
     if kind == 'scoped':
         flags = node[1]
-        new_opts = (opts[0] or flags[0], opts[1] or flags[1], opts[2] or flags[2], opts[3])
+        new_opts = (opts[0] or flags[0], opts[1] or flags[1], opts[2] or flags[2])
         return _walk(node[2], text, place, captures, new_opts)
     if kind == 'atomic':
         return _walk(node[1], text, place, captures, opts)[:1]
@@ -483,8 +481,8 @@ def _walk(node, text, place, captures, opts):
     if kind == 'end_abs':
         return [[place, captures]] if place == len(text) else []
     if kind == 'boundary':
-        before = _word(text[place - 1], opts[3]) if place > 0 else False
-        after = _word(text[place], opts[3]) if place < len(text) else False
+        before = _word(text[place - 1]) if place > 0 else False
+        after = _word(text[place]) if place < len(text) else False
         return [[place, captures]] if before != after else []
     if place >= len(text):
         return []
@@ -492,9 +490,9 @@ def _walk(node, text, place, captures, opts):
     if kind == 'dot':
         answer = opts[2] or letter != '\n'
     elif kind == 'class' or kind == 'setop' or kind == 'negate':
-        answer = _set_accept(node, letter, opts[0], opts[3])
+        answer = _set_accept(node, letter, opts[0])
     else:
-        answer = _accept(node, letter, opts[0], opts[3])
+        answer = _accept(node, letter, opts[0])
     return [[place + 1, captures]] if answer else []
 
 def _repeat(node, text, place, captures, count, opts):
@@ -636,9 +634,7 @@ class Pattern:
         self.multiline = (flags & MULTILINE) != 0
         self.dotall = (flags & DOTALL) != 0
         self.verbose = (flags & VERBOSE) != 0
-        self._bytes = self.is_bytes
-        raw = pattern
-        text = _strip_verbose(raw) if self.verbose else raw
+        text = _strip_verbose(pattern) if self.verbose else pattern
         reader = _Reader(text)
         self.tree = reader.choice()
         if reader.i != len(text):
@@ -646,24 +642,15 @@ class Pattern:
         self.groups = reader.groups
         self.groupindex = reader.names
         self.pattern = original
-        self._opts = (self.ignorecase, self.multiline, self.dotall, self.is_bytes or (flags & ASCII) != 0)
+        self._opts = (self.ignorecase, self.multiline, self.dotall)
         # Whether the text a match runs against must be checked for
         # non-ASCII letters, computed once here rather than rescanning
         # the pattern's own text on every position a search tries.
         shorthand = False
         for mark in ['\\w', '\\W', '\\d', '\\D', '\\s', '\\S', '\\b']:
-            if mark in raw:
+            if mark in pattern:
                 shorthand = True
         self._shorthand = shorthand
-
-    def _text(self, string):
-        if self._bytes:
-            if not isinstance(string, (bytes, bytearray)):
-                raise TypeError('cannot use a bytes pattern on a string-like object')
-            return bytes(string).decode('latin-1')
-        if not isinstance(string, str):
-            raise TypeError('cannot use a string pattern on a bytes-like object')
-        return string
 
     def _check_text(self, string):
         # Unicode shorthand classes now match the host's letter tables, so
@@ -687,16 +674,18 @@ class Pattern:
         # The part of `match` a caller who already checked the text
         # (`search`, `_next`) may call directly, at every position it
         # tries, without paying for that check again each time.
+        string = self._coerce(string)
         if endpos is not None:
             string = string[:endpos]
-        states = _walk(self.tree, self._text(string), pos, {}, self._opts)
+        states = _walk(self.tree, string, pos, {}, self._opts)
         return Match(self, string, pos, states[0]) if len(states) else None
 
     def fullmatch(self, string, pos=0, endpos=None):
         self._check_text(string)
+        string = self._coerce(string)
         if endpos is not None:
             string = string[:endpos]
-        for state in _walk(self.tree, self._text(string), pos, {}, self._opts):
+        for state in _walk(self.tree, string, pos, {}, self._opts):
             if state[0] == len(string):
                 return Match(self, string, pos, state)
         return None
@@ -715,7 +704,7 @@ class Pattern:
     def _next(self, string, pos, empty_at):
         string = self._coerce(string)
         while pos <= len(string):
-            for state in _walk(self.tree, self._text(string), pos, {}, self._opts):
+            for state in _walk(self.tree, string, pos, {}, self._opts):
                 if pos != empty_at or state[0] != pos:
                     return Match(self, string, pos, state)
             pos += 1
@@ -737,9 +726,9 @@ class Pattern:
                 result.append(found.group())
             elif self.groups == 1:
                 value = found.group(1)
-                result.append((b'' if self._bytes else '') if value is None else value)
+                result.append('' if value is None else value)
             else:
-                result.append(found.groups(b'' if self._bytes else ''))
+                result.append(found.groups(''))
             pos = found.end()
             empty_at = pos if found.start() == pos else -1
         return result
