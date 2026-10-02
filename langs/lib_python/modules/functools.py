@@ -43,17 +43,84 @@ def reduce(function, sequence, *initial):
         raise 'TypeError: reduce() of empty iterable with no initial value'
     return value
 
-class _Partial:
-    def __init__(self, function, args, keywords):
-        self.function = function
+class partial:
+    """New function with partial application of the given arguments
+    and keywords.
+
+    Shaped as CPython's own, without the placeholder machinery 3.14 adds:
+    every argument given is a value to use.
+    """
+
+    __slots__ = ("func", "args", "keywords", "__dict__", "__weakref__")
+
+    def __new__(cls, func, /, *args, **keywords):
+        if not callable(func):
+            raise TypeError("the first argument must be callable")
+        self = object.__new__(cls)
+        self.func = func
         self.args = args
         self.keywords = keywords
+        return self
 
-    def call(self, *args, **keywords):
-        return self.function(*self.args, *args, **{**self.keywords, **keywords})
+    def __call__(self, /, *args, **keywords):
+        return self.func(*self.args, *args, **{**self.keywords, **keywords})
 
-def partial(function, *args, **keywords):
-    return _Partial(function, args, keywords).call
+    def __repr__(self):
+        return f"functools.partial({self.func!r}, {', '.join(repr(a) for a in self.args)}{', ' if self.keywords else ''}{', '.join(f'{k}={v!r}' for k, v in self.keywords.items())})"
+
+
+class partialmethod:
+    """Method descriptor with partial application of the given arguments
+    and keywords.
+
+    Shaped as CPython's own, with the descriptor forms the tests of this
+    runtime reach: a plain callable is bound as an instance method, and a
+    classmethod or staticmethod it wraps is bound as that wrapper binds.
+    """
+
+    __slots__ = ("func", "args", "keywords", "__dict__", "__weakref__")
+
+    def __new__(cls, func, /, *args, **keywords):
+        if not callable(func) and not hasattr(func, "__get__"):
+            raise TypeError(f"{func!r} is not callable or a descriptor")
+        self = object.__new__(cls)
+        self.func = func
+        self.args = args
+        self.keywords = keywords
+        return self
+
+    def _make_unbound_method(self):
+        def _method(cls_or_self, /, *args, **keywords):
+            return self.func(*self.args, *args,
+                             **{**self.keywords, **keywords})
+        _method.__partialmethod__ = self
+        return _method
+
+    def __get__(self, obj, objtype=None):
+        if isinstance(self.func, classmethod):
+            return self.func.__get__(obj, objtype)
+        if isinstance(self.func, staticmethod):
+            return self.func
+        return self._make_unbound_method().__get__(obj, objtype)
+
+
+# Helper functions, CPython's own.
+
+def _unwrap_partial(func):
+    while isinstance(func, partial):
+        func = func.func
+    return func
+
+def _unwrap_partialmethod(func):
+    prev = None
+    while func is not prev:
+        prev = func
+        while isinstance(getattr(func, "__partialmethod__", None), partialmethod):
+            func = func.__partialmethod__
+        while isinstance(func, partialmethod):
+            func = getattr(func, 'func')
+        func = _unwrap_partial(func)
+    return func
 
 # Descriptor and dispatch names are present even where the object
 # protocol cannot yet carry their behaviour.

@@ -5,6 +5,9 @@
 # list of all active calls, so stack() and currentframe() remain unavailable.
 # The helpers below use the available code and frame details.
 
+import functools
+import types
+
 # The flags CPython sets on a compiled body. Code objects expose co_flags
 # so a program can compare these values with a function's compiled flags.
 CO_OPTIMIZED = 1
@@ -143,17 +146,35 @@ def ismethod(object):
     return isinstance(object, _MethodType)
 
 
+def _signature_is_functionlike(obj):
+    # A duck-typed function, the way CPython's helper of this name tells
+    # one: something that is not a class yet carries a code object with
+    # the four bookkeeping members a function has.
+    if isinstance(obj, type):
+        return False
+    code = getattr(obj, '__code__', None)
+    if code is None or not hasattr(code, 'co_flags'):
+        return False
+    for name in ('__defaults__', '__kwdefaults__', '__annotations__'):
+        if not hasattr(obj, name):
+            return False
+    return True
+
+
 def _has_code_flag(f, flag):
-    # True when f, or the function a bound method wraps, carries flag in
-    # its code's flags. The reference also unwraps functools.partial; a
-    # partial is a callable of its own kind in this library, so only
-    # methods unwrap.
+    """Return true if ``f`` is a function (or a method or functools.partial
+    wrapper wrapping a function or a functools.partialmethod wrapping a
+    function) whose code object has the given ``flag``
+    set in its flags."""
+    f = functools._unwrap_partialmethod(f)
     while ismethod(f):
         f = f.__func__
-    code = getattr(f, '__code__', None)
-    if code is None:
+    f = functools._unwrap_partial(f)
+    if not (isfunction(f) or _signature_is_functionlike(f)):
         return False
-    return bool(code.co_flags & flag)
+    # If it's a pure Python function, or an object that is duck type
+    # of a Python function (Cython and Mock functions, for instance), then:
+    return bool(f.__code__.co_flags & flag)
 
 
 def isgeneratorfunction(obj):
@@ -161,14 +182,42 @@ def isgeneratorfunction(obj):
     return _has_code_flag(obj, CO_GENERATOR)
 
 
+# A marker for markcoroutinefunction and iscoroutinefunction.
+_is_coroutine_mark = object()
+
+
+def _has_coroutine_mark(f):
+    while ismethod(f):
+        f = f.__func__
+    f = functools._unwrap_partial(f)
+    return getattr(f, "_is_coroutine_marker", None) is _is_coroutine_mark
+
+
+def markcoroutinefunction(func):
+    """
+    Decorator to ensure callable is recognised as a coroutine function.
+    """
+    if hasattr(func, '__func__'):
+        func = func.__func__
+    func._is_coroutine_marker = _is_coroutine_mark
+    return func
+
+
 def iscoroutinefunction(obj):
-    """Return true if the object is a coroutine function. The reference
-    also honours markcoroutinefunction's mark, which nothing here sets."""
-    return _has_code_flag(obj, CO_COROUTINE)
+    """Return true if the object is a coroutine function.
+
+    Coroutine functions are normally defined with "async def" syntax, but may
+    be marked via markcoroutinefunction.
+    """
+    return _has_code_flag(obj, CO_COROUTINE) or _has_coroutine_mark(obj)
 
 
 def isasyncgenfunction(obj):
-    """Return true if the object is an asynchronous generator function."""
+    """Return true if the object is an asynchronous generator function.
+
+    Asynchronous generator functions are defined with "async def"
+    syntax and have "yield" expressions in their body.
+    """
     return _has_code_flag(obj, CO_ASYNC_GENERATOR)
 
 
@@ -181,20 +230,82 @@ def isabstract(object):
     return bool(getattr(object, '__abstractmethods__', False))
 
 
-def getattr_static(obj, attr, default=_sentinel):
-    """Retrieve an attribute without triggering the descriptor protocol,
-    __getattr__ or __getattribute__.
+def _check_instance(obj, attr):
+    try:
+        instance_dict = object.__getattribute__(obj, "__dict__")
+    except AttributeError:
+        instance_dict = {}
+    return instance_dict.get(attr, _sentinel)
 
-    The reference also reads the instance's own members and, for a
-    class, the metaclass; the questions contextlib asks are of a class's
-    own namespace and the line of classes it stands under, which is what
-    this walks.
+
+def _shadowed_dict(klass):
+    # The __dict__ member a class's own namespace names, or nothing:
+    # CPython reads it through a line of weak references; the class's
+    # own namespace answers the same question directly here.
+    try:
+        return klass.__dict__.get("__dict__", _sentinel)
+    except (AttributeError, TypeError):
+        return _sentinel
+
+
+def _check_class(klass, attr):
+    for entry in getattr(klass, '__mro__', (klass,)):
+        if _shadowed_dict(entry) is _sentinel:
+            try:
+                return entry.__dict__[attr]
+            except (KeyError, AttributeError, TypeError):
+                pass
+    return _sentinel
+
+
+def getattr_static(obj, attr, default=_sentinel):
+    """Retrieve attributes without triggering dynamic lookup via the
+       descriptor protocol,  __getattr__ or __getattribute__.
+
+       Note: this function may not be able to retrieve all attributes
+       that getattr can fetch (like dynamically created attributes)
+       and may find attributes that getattr can't (like descriptors
+       that raise AttributeError). It can also return descriptor objects
+       instead of instance members in some cases. See the
+       documentation for details.
     """
-    klass = obj if isinstance(obj, type) else type(obj)
-    for entry in klass.__mro__:
-        namespace = getattr(entry, '__dict__', None)
-        if namespace is not None and attr in namespace:
-            return namespace[attr]
+    instance_result = _sentinel
+
+    # The reference tells a class from an instance by the metaclass's
+    # own line; the metaclass root here answers no __mro__ of its own,
+    # so the same question is asked of the kind directly.
+    objtype = type(obj)
+    if not isinstance(obj, type):
+        klass = objtype
+        dict_attr = _shadowed_dict(objtype)
+        if (dict_attr is _sentinel or
+            type(dict_attr) is types.MemberDescriptorType):
+            instance_result = _check_instance(obj, attr)
+    else:
+        klass = obj
+
+    klass_result = _check_class(klass, attr)
+
+    if instance_result is not _sentinel and klass_result is not _sentinel:
+        if _check_class(type(klass_result), "__get__") is not _sentinel and (
+            _check_class(type(klass_result), "__set__") is not _sentinel
+            or _check_class(type(klass_result), "__delete__") is not _sentinel
+        ):
+            return klass_result
+
+    if instance_result is not _sentinel:
+        return instance_result
+    if klass_result is not _sentinel:
+        return klass_result
+
+    if obj is klass:
+        # for types we check the metaclass too
+        for entry in getattr(type(klass), '__mro__', ()):
+            if (
+                _shadowed_dict(type(entry)) is _sentinel
+                and attr in entry.__dict__
+            ):
+                return entry.__dict__[attr]
     if default is not _sentinel:
         return default
     raise AttributeError(attr)
