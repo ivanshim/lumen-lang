@@ -2418,7 +2418,12 @@ impl<'a> Engine<'a> {
         if args.len() == 3 {
             args[0] = Value::text(&self.type_title(&args[0])?);
             let original = args[2].clone();
-            if let Some(worth) = Self::worth_of(&original) { args[2] = worth.contents(); }
+            if let Some(worth) = Self::worth_of(&original) {
+                let ordered = matches!(&original, Value::Object(object) if self.lang.class_special.get(15).is_some_and(|word| self.class_value(&object.class_now(), word).is_some()));
+                args[2] = if ordered && matches!(worth.contents(), Value::Map(_)) {
+                    self.call_held(Value::Native(Builtin::Dict, Rc::from("dict")), vec![original.clone()])?.contents()
+                } else { worth.contents() };
+            }
             else if let Value::Object(object) = &original {
                 if object.class_now().name == "frozendict" {
                     if let Some((_, rows)) = object.fields.borrow().iter().find(|(key, _)| key == "_rows") { args[2] = rows.contents(); }

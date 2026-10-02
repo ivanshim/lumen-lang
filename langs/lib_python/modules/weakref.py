@@ -76,7 +76,7 @@ class ProxyType:
     """A stand-in that behaves like its object while the object lives."""
 
     def __init__(self, ob, callback=None):
-        self._proxied = ref(ob, callback)
+        object.__setattr__(self, "_proxied", ref(ob, callback))
 
     def _object(self):
         ob = self._proxied()
@@ -87,6 +87,12 @@ class ProxyType:
     @property
     def __class__(self):
         return type(self._object())
+
+    def __setattr__(self, name, value):
+        setattr(self._object(), name, value)
+
+    def __delattr__(self, name):
+        delattr(self._object(), name)
 
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):

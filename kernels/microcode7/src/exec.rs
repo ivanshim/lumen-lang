@@ -5774,9 +5774,10 @@ impl<'a> Machine<'a> {
                 let old_bases = Value::tuple(old.to_vec());
                 let mut bases = Vec::new();
                 let mut changed = false;
+                let base_hooks = self.table.strings("ext.stmt.class.bases.resolve").to_vec();
                 for entry in old {
-                    let hook = if self.has_class_order() && !matches!(entry, Value::Blueprint(_) | Value::Intrinsic(..) | Value::OctetKind { .. }) {
-                        match self.read_class_member(entry.clone(), "__mro_entries__", false) {
+                    let hook = if base_hooks.len() == 2 && self.has_class_order() && !matches!(entry, Value::Blueprint(_) | Value::Intrinsic(..) | Value::OctetKind { .. }) {
+                        match self.read_class_member(entry.clone(), &base_hooks[0], false) {
                             Ok(method) => Some(method),
                             Err(escape) if self.missing_member_escape(&escape) => None,
                             Err(escape) => return Err(escape),
@@ -5845,7 +5846,7 @@ impl<'a> Machine<'a> {
                 let constants = named(&plan.constant_names);
                 if self.has_class_order() {
                     let mut entries=shared;
-                    if changed { entries.push((String::from("__orig_bases__"), old_bases)); }
+                    if changed { entries.push((base_hooks[1].to_owned(), old_bases)); }
                     entries.extend(plan.methods.iter().map(|(key,p)|(key.clone(),Value::Routine(p.clone()))));
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
@@ -9151,7 +9152,7 @@ impl<'a> Machine<'a> {
 
     /// Apply a value the program could apply, in the outermost scope,
     /// handing on whatever it raises as the program would see it.
-    fn apply_held(&mut self, target: Value, arguments: Vec<Value>) -> Res {
+    pub(super) fn apply_held(&mut self, target: Value, arguments: Vec<Value>) -> Res {
         let call = Form::Apply(Callee::Code(Box::new(Form::Const(target))), arguments.into_iter().map(Form::Const).collect());
         let scope = self.outermost.clone();
         self.value_of(&call, &scope)

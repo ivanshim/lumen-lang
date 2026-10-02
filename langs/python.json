@@ -166,6 +166,7 @@
     "' and '",
     "'"
   ],
+  "ext.stmt.class.bases.resolve": ["__mro_entries__", "__orig_bases__"],
   "ext.stmt.class.annotations": [
     "__annotations__"
   ],

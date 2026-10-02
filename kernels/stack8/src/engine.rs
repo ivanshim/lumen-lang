@@ -9590,9 +9590,10 @@ impl<'a> Engine<'a> {
                 let original_bases = Value::tuple(inputs[..original_count].to_vec());
                 let mut resolved = Vec::new();
                 let mut replaced_bases = false;
+                let base_words = self.lang.class_base_words.clone();
                 for candidate in inputs.drain(..original_count) {
-                    if self.fuller_classes() && !matches!(candidate, Value::Class(_) | Value::Native(..) | Value::ByteKind(..)) {
-                        match self.class_get(candidate.clone(), "__mro_entries__", false) {
+                    if base_words.len() == 2 && self.fuller_classes() && !matches!(candidate, Value::Class(_) | Value::Native(..) | Value::ByteKind(..)) {
+                        match self.class_get(candidate.clone(), &base_words[0], false) {
                             Ok(hook) => {
                                 let answer = self.call_held(hook, vec![original_bases.clone()])?;
                                 let Value::Tuple(entries) = answer.contents() else { return Err("TypeError: __mro_entries__ must return a tuple".into()); };
@@ -9653,7 +9654,7 @@ impl<'a> Engine<'a> {
                 };
                 if self.fuller_classes() {
                     let mut members=take(&plan.shared_names);
-                    if replaced_bases { members.push(("__orig_bases__".to_string(), original_bases)); }
+                    if replaced_bases { members.push((base_words[1].clone(), original_bases)); }
                     members.extend(plan.methods.iter().map(|(n,p)|(n.clone(),Value::Routine(p.clone()))));
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
@@ -13819,7 +13820,7 @@ impl<'a> Engine<'a> {
     /// Call a value the program could call, with these arguments, and
     /// answer what it left. What the call raises, other than plain
     /// words, is kept aside and raised once the builtin has given way.
-    fn call_held(&mut self, callee: Value, args: Vec<Value>) -> Res<Value> {
+    pub(super) fn call_held(&mut self, callee: Value, args: Vec<Value>) -> Res<Value> {
         let floor = self.data.len();
         let count = args.len() + 1;
         self.data.extend(args);
@@ -16568,7 +16569,10 @@ impl<'a> Engine<'a> {
             // (anything else); a third stream told to follow the
             // second is kept as its own pipe, and the library that
             // asked reads the two together afterwards.
-            Builtin::Posix => crate::posix::operate(args)?,
+            Builtin::Posix => {
+                if self.lang.posix_words.is_empty() { return Err(self.special_fault()); }
+                crate::posix::operate(args)?
+            },
             Builtin::Subprocess => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
                 let step = as_index(&args[0])?;

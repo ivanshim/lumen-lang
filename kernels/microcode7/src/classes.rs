@@ -2556,7 +2556,17 @@ impl<'a> Machine<'a> {
         let mut values: Vec<Value> = values.iter().map(Value::settled).collect();
         if values.len() == 3 {
             values[0] = Value::text(&self.checked_type_name(&values[0])?);
-            if let Some(native) = Self::underlying(&values[2]) { values[2] = native.settled(); }
+            if let Some(native) = Self::underlying(&values[2]) {
+                let custom_iteration = match &values[2] {
+                    Value::Thing(object) => self.table.strings("ext.stmt.class.special").get(15)
+                        .and_then(|key| self.inherited_entry(&object.blueprint(), key)).is_some(),
+                    _ => false,
+                };
+                values[2] = match (custom_iteration, native.settled()) {
+                    (true, Value::Dict(_)) => self.apply_held(Value::Intrinsic(Prim::Dictionary, Rc::from("dict")), vec![values[2].clone()])?.settled(),
+                    (_, ordinary) => ordinary,
+                };
+            }
             else {
                 let rows = match &values[2] {
                     Value::Thing(t) if t.blueprint().name == "frozendict" => t.holds.borrow().iter().find(|entry| entry.0 == "_rows").map(|entry| entry.1.settled()),
