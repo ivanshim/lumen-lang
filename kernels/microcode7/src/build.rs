@@ -4335,7 +4335,8 @@ impl<'a> Builder<'a> {
                 let gathered = table.has_any("ext.op.tuple");
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
-            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+            } else if self.look().shape == Shape::Bare
+                && (!table.keywords.contains(&self.look().lexeme) || ["ext.stmt.type_alias", "ext.stmt.match", "ext.stmt.match.case"].iter().any(|label| table.spells(label, &self.look().lexeme)))
                 && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
@@ -4707,7 +4708,7 @@ impl<'a> Builder<'a> {
                     _ if levels.last().copied() == Some(word) => { levels.pop(); }, _ => {}
                 }
             }
-            if spreading {
+            if spreading || table.has_any("ext.stmt.class.detail.mro.entries") {
                 let arguments = self.args("syntax.call.close", "syntax.call.separator")?;
                 let kept = self.gensym("header_arguments");
                 setup.push(Form::Write(kept.clone(), Box::new(prim_call(Prim::MakeTuple, arguments))));
@@ -8755,7 +8756,9 @@ impl<'a> Builder<'a> {
                 let extra = self.args("syntax.call.close", "syntax.call.separator")?;
                 let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
-                match (extra.is_empty(), base, self.receiver.clone(), sign) {
+                if !extra.is_empty() && table.has_any("ext.stmt.class.detail.mro.entries") {
+                    invoke(constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into())), extra)
+                } else { match (extra.is_empty(), base, self.receiver.clone(), sign) {
                     (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
                         let private = self.parts().completed_class.ident.to_string();
                         let args = vec![self.read(&private), self.read(&receiver)];
@@ -8774,7 +8777,7 @@ impl<'a> Builder<'a> {
                         } else { self.class_not_ready() }
                     }
                     _ => self.class_not_ready(),
-                }
+                } }
             }
             Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
                 && t.lexeme == "__classdict__" && table.has_any("ext.stmt.class.detail.kind") => {

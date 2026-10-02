@@ -4770,6 +4770,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
+| `ext.builtin.storage.get` | - | - | `__storage_get` | - | - | - | - | - | - | - |
+| `ext.builtin.storage.set` | - | - | `__storage_set` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
@@ -5202,13 +5204,17 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.main` | - | - | `__main__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.method.fixed` | - | - | `AttributeError: attribute '` `' of '` `' objects is not writable` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.module` | - | - | `__module__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.module.path` | - | - | `__path__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.module.spec` | - | - | `__spec__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro` | - | - | `__mro__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro.amiss` | - | - | `TypeError: cannot create a consistent method resolution order` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.mro.entries` | - | - | `__mro_entries__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.original.bases` | - | - | `__orig_bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.prepare` | - | - | `__prepare__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.doc` | - | - | `doc` | - | - | - | - | - | - | - |
@@ -5587,3 +5593,13 @@ stop_exception class or tuple of classes for callable iterators.
 
 `ext.builtin.iter.stop_exception` names the corresponding keyword accepted by Python callable iterators.
 `ext.stmt.class.detail.code.fields` names code metadata members (name, qualified name, positional-only and keyword-only counts, local count, names, constants, flags, filename, first line) and the lazy function annotation member. Code values use the same wrapper as traceback frame code.
+
+`ext.stmt.class.detail.mro.entries` names the non-type base substitution hook; `ext.stmt.class.detail.original.bases` names the retained original base tuple. Module-load helpers accept a false second argument to query source availability without importing and a true second argument to return its source path.
+
+The class-seal helper also seals completed instance storage against all subsequent attribute writes, including direct object writes. Template-prefix labels construct the native template storage adapter; the public templatelib executes pinned source.
+
+`ext.builtin.storage.get` and `ext.builtin.storage.set` expose internal field access for native adapters, bypassing Python slots and descriptors. Writes honor sealed storage; zero-prefixed storage in sealed objects remains inaccessible to ordinary attribute reads.
+
+`ext.stmt.class.detail.module.path` names the search-path attribute of imported source packages, initialized to the directory containing their initializer.
+
+`ext.stmt.class.detail.module.spec` names the import specification slot of native source namespaces. It starts empty; the Python import machinery installs the specification when it creates a module through a finder. Source discovery accepts packages and searches a child within its parent package path.

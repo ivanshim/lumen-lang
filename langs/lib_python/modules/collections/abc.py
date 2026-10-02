@@ -468,6 +468,8 @@ class MutableSet(Set):
 
 
 class Mapping(Collection):
+    from types import GenericAlias
+    __class_getitem__ = classmethod(GenericAlias)
     @abstractmethod
     def __getitem__(self, key):
         raise KeyError(key)

@@ -5602,7 +5602,8 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(&self.look().lexeme) || Lang::spells(&lang.type_alias_words, &self.look().lexeme)
+            || Lang::spells(&lang.match_words, &self.look().lexeme) || Lang::spells(&lang.match_cases, &self.look().lexeme))
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
             // A keyword before the mark (`try:`) heads a statement
             // and is no member being annotated.
@@ -5870,7 +5871,7 @@ impl<'a> Compiler<'a> {
                     ")" | "]" | "}" => depth = depth.saturating_sub(1), _ => {}
                 }
             }
-            if expanded {
+            if expanded || lang.class_details.contains_key("mro.entries") {
                 let pair = lang.calling.clone().expect("class call marks");
                 let count = self.arguments(&pair)?;
                 self.act(Action::MakeTuple, count);
@@ -9119,6 +9120,11 @@ impl<'a> Compiler<'a> {
                 }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
+                if extra > 0 && lang.class_details.contains_key("mro.entries") {
+                    self.constant(PARENT_CALLABLE.with(Clone::clone));
+                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), extra + 1);
+                    return self.indexing(from);
+                }
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));

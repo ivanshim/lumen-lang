@@ -150,6 +150,26 @@ impl<'a> Machine<'a> {
         } {
             return if given.is_empty(){Ok(singleton)}else{Err(format!("TypeError: {shown} takes no arguments").into())};
         }
+        if word=="module" {
+            let (values, keywords)=self.open_arguments(given)?;
+            if values.len()>2{return Err(String::from("TypeError: invalid module arguments").into());}
+            let mut name=values.first().cloned();
+            let mut doc=values.get(1).cloned().unwrap_or(Value::Nil);
+            for (key,value) in keywords {
+                if key=="name" && name.is_none(){name=Some(value);}
+                else if key=="doc" && values.len()<2{doc=value;}
+                else{return Err(String::from("TypeError: invalid module arguments").into());}
+            }
+            match name {
+                Some(name @ Value::Text(_))=>{
+                    self.made+=1;
+                    let entries=vec![(String::from("__name__"),name),(String::from("__doc__"),doc),
+                        (String::from("__loader__"),Value::Nil),(String::from("__spec__"),Value::Nil),(String::from("__package__"),Value::Nil)];
+                    return Ok(Value::Thing(Rc::new(Thing{reclassified:RefCell::new(None),of:class,holds:RefCell::new(entries),turn:self.made})));
+                }
+                _=>return Err(String::from("TypeError: module name must be str").into()),
+            }
+        }
         // A routine framed by hand from a code value and a dictionary
         // of names: the reference's own way of making a function, which
         // keeps the dictionary it was handed and the builtins in force
@@ -189,18 +209,38 @@ impl<'a> Machine<'a> {
                 if self.table.spells("ext.stmt.class.metaclass", &key) { factory = Some(item); }
                 else { extra.push((key, item)); }
             }
+            let mut resolved = Vec::new();
+            let source = Value::tuple(positional.clone());
+            let key = self.detail("mro.entries").to_owned();
+            let mut substituted = false;
+            for item in positional {
+                if !key.is_empty() && matches!(item.settled(), Value::Thing(_)) {
+                    let member = self.read_class_member(item, &key, false)?;
+                    let result = self.apply_class_member(member, vec![source.clone()])?;
+                    match result.settled() {
+                        Value::Tuple(sequence) => resolved.extend(sequence.iter().cloned()),
+                        _ => return Err("TypeError: __mro_entries__ must return a tuple".to_string().into()),
+                    }
+                    substituted = true;
+                } else { resolved.push(item); }
+            }
+            if substituted { entries.push((self.detail("original.bases").to_string(), source)); }
             match factory {
                 Some(callable) if !matches!(callable, Value::Intrinsic(Prim::SortOf, _)) => {
                     let pairs = entries.iter().filter_map(|(key, item)| {
                         (!matches!(item, Value::Unset)).then(|| (Value::text(key), item.clone()))
                     }).collect::<Vec<_>>();
                     let mapping = Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(pairs.into())))), true);
-                    let mut supplied = vec![Value::text(&title), Value::tuple(positional), mapping];
+                    let mut supplied = vec![Value::text(&title), Value::tuple(resolved), mapping];
                     for (key, item) in extra { supplied.push(Value::Couple(Rc::new((Value::text(&key), item)))); }
                     return self.apply_class_member(callable, supplied);
                 }
                 _ => {
-                    parents = positional.iter().map(|item| self.parent_from_type(item)).collect::<Result<_, _>>()?;
+                    parents.clear();
+                    for base in resolved {
+                        if self.table.has_any("ext.stmt.class.detail.mro.entries") && matches!(base.settled(), Value::Nil) { return Err(String::from("TypeError: NoneType takes no arguments").into()); }
+                        parents.push(self.parent_from_type(&base)?);
+                    }
                     for (key, item) in extra { entries.push((format!("\0handed:{key}"), item)); }
                 }
             }
@@ -618,7 +658,12 @@ impl<'a> Machine<'a> {
                         self.apply_class_member(kept[0].clone(), values)
                     }
                     72 => Ok(Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())))), true)),
-                    36=>{let named=kept[0].bare();self.root_answers(&named,values)}
+                    36=>{
+                        if kept.get(1).is_some_and(|owner|owner.bare()!=self.detail("root")) {
+                            if let Some(native)=values.first().and_then(Self::underlying){values[0]=native.settled();}
+                        }
+                        let named=kept[0].bare();self.root_answers(&named,values)
+                    }
                     // The maker of a native kind: the blueprint to make a
                     // thing of, then what the kind's primitive takes.
                     14 if !values.is_empty()=>{
@@ -1210,9 +1255,14 @@ impl<'a> Machine<'a> {
     /// names among the root's members, or, read off a thing, one of the
     /// hooks for making, constructing, reading, writing, removing and
     /// formatting, left loose to be bound to it.
-    fn from_the_root(&self,key:&str,of_a_thing:bool)->Option<Value> {
+    fn from_the_root(&self,key:&str,of_a_thing:bool,class:&Blueprint)->Option<Value> {
         if key.is_empty(){return None;}
-        if self.table.strings("ext.stmt.class.detail.root.members").iter().any(|word|word==key) {return Some(Self::wrap(36,vec![Value::text(key)]));}
+        if self.table.strings("ext.stmt.class.detail.root.members").iter().any(|word|word==key) {
+            let owner = Self::native_beneath(class).unwrap_or_else(|| self.detail("root").to_owned());
+            let cache_key = format!("{owner} member {key}");
+            let mut cache = self.loose_members.borrow_mut();
+            return Some(cache.entry(cache_key).or_insert_with(|| Self::wrap(36,vec![Value::text(key),Value::text(&owner)])).clone());
+        }
         if !of_a_thing{return None;}
         let tag=if key==self.detail("allocate"){1}
             else if self.table.single("ext.stmt.class.constructor")==Some(key)||key==self.detail("subclass"){2}
@@ -1434,6 +1484,11 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if key.as_bytes().first()==Some(&0) {
+            if let Value::Thing(instance)=&value {
+                if instance.holds.borrow().iter().any(|entry|entry.0=="\0immutable"){return Err(self.absent_attribute(&value,key));}
+            }
+        }
         if let Value::Wrapped(9, binding) = &value {
             if let [Value::Blueprint(defining), instance] = binding.as_slice() {
                 let actual = match instance { Value::Thing(t) => t.blueprint().clone(), Value::Blueprint(b) => b.clone(), _ => return Err(self.class_unready()) };
@@ -1442,6 +1497,10 @@ impl<'a> Machine<'a> {
                     if passed {
                         if let Some(entry) = Self::own_entry(base, key) {
                             return self.member_binding(entry, Some(instance.clone()), actual.clone());
+                        }
+                        if base.name == self.detail("root") {
+                            let callable = self.read_class_member(Value::Blueprint(base.clone()), key, true)?;
+                            return Ok(Self::wrap(3, vec![callable, instance.clone()]));
                         }
                         // A member a native forebear carries without
                         // keeping an entry of its own, `__hash__` or
@@ -1679,7 +1738,7 @@ impl<'a> Machine<'a> {
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};
                 if tag!=255{return Ok(Self::wrap(tag,Vec::new()));}
             }
-            if let Some(root)=self.from_the_root(key,false){return Ok(root);}
+            if let Some(root)=self.from_the_root(key,false,b){return Ok(root);}
         }else if let Value::Thing(t)=&value {
             if !direct {if let Some(reader)=self.inherited_entry(&t.blueprint(),self.detail("get")){return self.apply_class_member(reader,vec![value.clone(),Value::text(key)]);}}
             if key==self.detail("kind"){return Ok(Value::Blueprint(t.blueprint().clone()));}
@@ -1724,7 +1783,7 @@ impl<'a> Machine<'a> {
                 if let Some(member) = self.attribute(text, key) { return Ok(member); }
             }
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
-            if let Some(root)=self.from_the_root(key,true) {
+            if let Some(root)=self.from_the_root(key,true,&t.blueprint()) {
                 if !native.as_ref().map_or(false,|under|Self::kind_method_named(self.table,key).is_some()||self.attribute(&under.settled(),key).is_some()) {
                     // The maker takes a class and stays loose; the hook
                     // for a class stood on hears from the class; the
@@ -1948,7 +2007,7 @@ impl<'a> Machine<'a> {
         has_slot || b.parents.iter().any(|parent| self.admits_weak(parent))
     }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
-        let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
+        let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).map_or(true, |word| word=="module");};
         let slots=declared.settled();
         let matching=|x:&Value|matches!(x,Value::Text(s) if s.as_ref()==key||s.as_ref()==self.detail("namespace"));
         if match &slots{Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching),v=>matching(v)}{return true;}
@@ -1960,6 +2019,11 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        if let Value::Thing(instance) = &subject {
+            if instance.holds.borrow().iter().any(|entry| entry.0 == "\0immutable") {
+                return Err(format!("AttributeError: '{}' object is immutable", subject.kind_word()).into());
+            }
+        }
         if let Value::Generator(g) = &subject {
             if self.table.single("ext.stmt.yield.running") == Some(key) {
                 let words = self.table.strings("ext.stmt.class.detail.method.fixed");
@@ -2252,6 +2316,7 @@ impl<'a> Machine<'a> {
         Err(self.absent_attribute(&subject,key))
     }
     fn parent_from_type(&mut self, parent: &Value) -> Res<Rc<Blueprint>> {
+        if self.spells_property_kind(parent) { return Ok(self.property_blueprint()); }
         let settled = parent.settled();
         if let Value::Blueprint(class) = settled {
             if Self::sealed(&class) { return Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()); }
@@ -2263,6 +2328,7 @@ impl<'a> Machine<'a> {
         }
         if let Value::Intrinsic(operation, word) = settled {
             if operation == Prim::SortOf { return Ok(self.builder_blueprint()); }
+            if operation == Prim::Truthful { return Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into()); }
             if operation != Prim::Truthful && self.table.spells("ext.stmt.class.builtin", &word) { return Ok(self.native_kind(&word)); }
         }
         Err("TypeError: bases must be types".to_owned().into())

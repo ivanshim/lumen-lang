@@ -1042,6 +1042,8 @@
     "' has no attribute '",
     "'"
   ],
+  "ext.builtin.storage.get": ["__storage_get"],
+  "ext.builtin.storage.set": ["__storage_set"],
   "ext.builtin.member.get": [
     "getattr"
   ],
@@ -2668,6 +2670,10 @@
   "ext.stmt.class.detail.module": [
     "__module__"
   ],
+  "ext.stmt.class.detail.module.spec": ["__spec__"],
+  "ext.stmt.class.detail.module.path": ["__path__"],
+  "ext.stmt.class.detail.mro.entries": ["__mro_entries__"],
+  "ext.stmt.class.detail.original.bases": ["__orig_bases__"],
   "ext.stmt.class.detail.mro": [
     "__mro__"
   ],

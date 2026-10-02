@@ -136,14 +136,9 @@ class method:
 MethodType = method
 
 
-# A place to hang names on, which is all a module is from here.
-class ModuleType:
-    def __init__(self, name, doc=None):
-        self.__name__ = name
-        self.__doc__ = doc
-
-    def __repr__(self):
-        return "<module '" + str(getattr(self, '__name__', '?')) + "'>"
+# Modules use the native namespace kind.
+import sys
+ModuleType = type(sys)
 
 
 # A reading of a mapping that cannot be written through.
@@ -240,6 +235,9 @@ def _kind_name(kind):
 
 # A kind named with the kinds it was given, as list[int] is.
 class GenericAlias:
+    def __mro_entries__(self, bases):
+        return (self.__origin__,)
+
     def __init__(self, origin, args):
         self.__origin__ = origin
         if isinstance(args, tuple):

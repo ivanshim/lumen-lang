@@ -1,85 +1,36 @@
-# Template and interpolation values for Python's template string syntax.
-class Interpolation:
-    def __init__(self, value, expression, conversion=None, format_spec=''):
-        if not isinstance(expression, str) or not isinstance(format_spec, str):
-            raise TypeError('expression and format_spec must be strings')
-        if conversion not in (None, 'a', 'r', 's'):
-            raise ValueError('conversion must be None, a, r, or s')
-        self._value = value
-        self._expression = expression
-        self._conversion = conversion
-        self._format_spec = format_spec
+# Source: CPython 3b564385e4c9, Lib/string/templatelib.py
+# License: PSF License Agreement (see LICENSE).
 
-    @property
-    def value(self):
-        return self._value
+"""Support for template string literals (t-strings)."""
 
-    @property
-    def expression(self):
-        return self._expression
+t = t"{0}"
+Template = type(t)
+Interpolation = type(t.interpolations[0])
+del t
 
-    @property
-    def conversion(self):
-        return self._conversion
-
-    @property
-    def format_spec(self):
-        return self._format_spec
-
-    def __repr__(self):
-        return 'Interpolation(' + repr(self.value) + ', ' + repr(self.expression) + ', ' + repr(self.conversion) + ', ' + repr(self.format_spec) + ')'
-
-
-class Template:
-    def __init__(self, *args):
-        strings = ['']
-        interpolations = []
-        for arg in args:
-            if isinstance(arg, str):
-                strings[-1] += arg
-            elif isinstance(arg, Interpolation):
-                interpolations.append(arg)
-                strings.append('')
-            else:
-                raise TypeError('Template arguments must be strings or interpolations')
-        self._strings = tuple(strings)
-        self._interpolations = tuple(interpolations)
-
-    @property
-    def strings(self):
-        return self._strings
-
-    @property
-    def interpolations(self):
-        return self._interpolations
-
-    @property
-    def values(self):
-        return tuple(item.value for item in self.interpolations)
-
-    def __iter__(self):
-        for index, string in enumerate(self.strings):
-            if string:
-                yield string
-            if index < len(self.interpolations):
-                yield self.interpolations[index]
-
-    def __add__(self, other):
-        if not isinstance(other, Template):
-            return NotImplemented
-        return Template(*list(self), *list(other))
-
-    def __repr__(self):
-        return 'Template(strings=' + repr(self.strings) + ', interpolations=' + repr(self.interpolations) + ')'
-
-
-def convert(value, conversion):
-    if conversion == 'a':
-        return ascii(value)
-    if conversion == 'r':
-        return repr(value)
-    if conversion == 's':
-        return str(value)
+def convert(obj, /, conversion):
+    """Convert *obj* using formatted string literal semantics."""
     if conversion is None:
-        return value
-    raise ValueError('invalid conversion')
+        return obj
+    if conversion == 'r':
+        return repr(obj)
+    if conversion == 's':
+        return str(obj)
+    if conversion == 'a':
+        return ascii(obj)
+    raise ValueError(f'invalid conversion specifier: {conversion}')
+
+def _template_unpickle(*args):
+    import itertools
+
+    if len(args) != 2:
+        raise ValueError('Template expects tuple of length 2 to unpickle')
+
+    strings, interpolations = args
+    parts = []
+    for string, interpolation in itertools.zip_longest(strings, interpolations):
+        if string is not None:
+            parts.append(string)
+        if interpolation is not None:
+            parts.append(interpolation)
+    return Template(*parts)

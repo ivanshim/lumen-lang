@@ -370,3 +370,13 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+# The executable carries a source-backed native finder.
+from _imp import _NativeFinder
+meta_path = [_NativeFinder]
+builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')
+
+# No audit hooks are installed by this interpreter.
+def audit(event, *args):
+    if not isinstance(event, str):
+        raise TypeError('audit() argument 1 must be str')

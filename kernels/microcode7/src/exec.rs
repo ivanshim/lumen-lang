@@ -8862,7 +8862,7 @@ impl<'a> Machine<'a> {
         if handed > ordinary.len() && gather.is_none() {
             return Err(self.overfull_complaint(program, manners, &fitted, handed).into());
         }
-        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())); }
+        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())).keep(true); }
         // Every unfilled place is told at once: first those taken in
         // order, and the ones taken by name only when none of those is.
         let unfilled = |wanted: &dyn Fn(char) -> bool| -> Vec<String> {
@@ -13711,7 +13711,8 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                let mut values: Vec<Value> = match &v[0] {
+                let input = self.underlying_unless(&v[0], &[11, 15]).unwrap_or_else(|| v[0].clone()).settled();
+                let mut values: Vec<Value> = match &input {
                     Value::Generator(state) => {
                         let mut yielded = Vec::new();
                         loop {
@@ -14026,13 +14027,19 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::TemplateField | Prim::TemplateParts => {
-                let module = self.load_namespace("string.templatelib")?;
+                let module = self.load_namespace("_template_core")?;
                 let key = if op == Prim::TemplateField { "Interpolation" } else { "Template" };
-                let constructor = self.namespace_item(&module, "string.templatelib", key)?;
+                let constructor = self.namespace_item(&module, "_template_core", key)?;
                 let Value::Blueprint(kind) = constructor else { return Err("invalid template constructor".to_owned()); };
                 self.make_instance(kind, v.to_vec()).map_err(|fault| self.suspension_fault(fault))?
             }
-            Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
+            Prim::LoadModule => {
+                match (v.len(), v.get(1)) {
+                    (2, Some(Value::Flag(false))) => Value::Flag(self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
+                    (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
+                    _ => { n(1)?; self.load_namespace(&v[0].bare())? }
+                }
+            }
             Prim::MakeHeir => {
                 n(3)?;
                 let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
@@ -14123,6 +14130,10 @@ impl<'a> Machine<'a> {
             Prim::ClassSeal => {
                 n(1)?;
                 match v[0].settled() {
+                    Value::Thing(instance) => {
+                        instance.holds.borrow_mut().push(("\0immutable".to_owned(), Value::Flag(true)));
+                        Value::Nil
+                    }
                     Value::Blueprint(class) => {
                         class.sealed.set(true);
                         Value::Nil
@@ -14155,6 +14166,12 @@ impl<'a> Machine<'a> {
             }
             Prim::WriteMember => {
                 n(3)?;
+                let sealed = match &v[0] {
+                    Value::Thing(instance) => instance.holds.borrow().iter().any(|entry| entry.0 == "\0immutable"),
+                    Value::Blueprint(kind) => kind.sealed.get(),
+                    _ => false,
+                };
+                if sealed { return Err(String::from("AttributeError: sealed storage is immutable")); }
                 let key = v[1].bare();
                 let places = match &v[0] {
                     Value::Thing(object) => &object.holds,
@@ -18629,6 +18646,15 @@ impl Machine<'_> {
                 members.push((word.to_string(), own_file.as_deref().map_or(Value::Nil, Value::text)));
             }
         }
+        if let Some(spelling) = self.table.single("ext.stmt.class.detail.module.spec") {
+            if members.iter().all(|entry| entry.0 != spelling) { members.push((spelling.to_owned(), Value::Nil)); }
+        }
+        if let (Some(word), Some(file)) = (self.table.single("ext.stmt.class.detail.module.path"), own_file.as_deref()) {
+            if file.ends_with("/__init__.py") {
+                let folder = file.rsplit_once('/').map_or("", |pair| pair.0);
+                members.push((word.to_owned(), Value::Vector(crate::tuples::Sequence::plain(vec![Value::text(folder)])).keep(true)));
+            }
+        }
         let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), sealed: Cell::new(false),
@@ -18667,34 +18693,33 @@ impl Machine<'_> {
         Ok(value)
     }
 
-    /// A module written into a directory `sys.path` names, found there
-    /// ahead of the library. Only a plain, undotted name is looked for
-    /// this way, since a directory a program builds for itself holds no
-    /// packages of its own; the file's place is made absolute before it
-    /// comes back, since a name on `sys.path` may be relative to a
-    /// working directory `__file__` must not depend on later changing.
+    /// Find either a source module or a source package. Top-level names
+    /// use sys.path; a dotted name uses the path carried by its parent.
+    /// The selected file is made absolute before the caller keeps it.
     fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
-        if path.contains('.') { return None; }
-        let Value::Thing(sys) = self.imported.get("sys")? else { return None };
-        let held = sys.holds.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
-        let mut value = held;
-        while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
-            value = cell.borrow().clone();
-        }
-        let Value::Vector(items) = value else { return None };
-        for item in items.iter() {
-            let Value::Text(dir) = item else { continue };
-            if dir.is_empty() { continue; }
-            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
-            if let Ok(text) = std::fs::read_to_string(&file) {
-                return Some((made_absolute(&file), text));
+        let split = path.rsplit_once('.');
+        let module_name = split.map_or("sys", |pair| pair.0);
+        let basename = split.map_or(path, |pair| pair.1);
+        let attribute = if split.is_some() { self.detail("module.path") } else { "path" };
+        let Value::Thing(module) = self.imported.get(module_name)? else { return None };
+        let places = module.holds.borrow().iter().find(|entry| entry.0 == attribute)?.1.settled();
+        let row = match places { Value::Vector(parts) | Value::Tuple(parts) => parts, _ => return None };
+        for place in row.iter() {
+            if let Value::Text(place) = place {
+                let prefix = if place.is_empty() { "." } else { place.as_ref() };
+                let stem = std::path::Path::new(prefix).join(basename);
+                let module_file = stem.with_extension("py");
+                let package_file = stem.join("__init__.py");
+                for file in [module_file, package_file] {
+                    if let Ok(body) = std::fs::read_to_string(&file) {
+                        return Some((made_absolute(&file.to_string_lossy()), body));
+                    }
+                }
             }
         }
         None
     }
 
-    /// An explicit directory from the host replaces the build-time location.
-    /// Both ordinary modules and package initializers still need a real file.
     fn library_module_file(&self, path: &str) -> Option<String> {
         let directory = self.library_directory.as_deref().unwrap_or_else(|| {
             std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules"))
@@ -18710,6 +18735,10 @@ impl Machine<'_> {
     }
 
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
+        if path.as_bytes().first() == Some(&b'.') {
+            let full_name = self.relative_namespace(path)?;
+            return self.namespace_item(value, &full_name, wanted);
+        }
         if let Value::Thing(space) = value {
             for (name, cell) in space.holds.borrow().iter() {
                 if name != wanted { continue; }
@@ -20278,6 +20307,9 @@ impl Machine<'_> {
             // for a member only when one is wanted.
             Value::Cursor(_) => Ok(Self::cursor_value(IteratorKind::Handed(source.clone()))),
             Value::Thing(_) => {
+                if let Some(native) = self.underlying_unless(source, &[15, 11]) {
+                    return self.iterated_value(&native.settled());
+                }
                 if let Some(handed) = self.ask_special(source, 15, &[])? {
                     // What a thing hands over is a walk or it is
                     // nothing: one that cannot be asked for a next

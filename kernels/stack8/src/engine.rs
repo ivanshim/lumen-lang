@@ -8368,6 +8368,7 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?).contents();
+                let source = self.worth_free_of(&source, &[15, 11]).unwrap_or(source).contents();
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
@@ -9896,8 +9897,8 @@ impl<'a> Engine<'a> {
                 if matches!(op, Action::Interpolation) {
                     arguments.swap(1, 3);
                 }
-                let namespace = self.import_module("string.templatelib")?;
-                let Value::Class(class) = self.import_member(&namespace, "string.templatelib", constructor)? else { return Err("invalid template constructor".into()); };
+                let namespace = self.import_module("_template_core")?;
+                let Value::Class(class) = self.import_member(&namespace, "_template_core", constructor)? else { return Err("invalid template constructor".into()); };
                 self.class_make(class, arguments)?
             }
             Action::Builtin(builtin, name) => {
@@ -15461,6 +15462,11 @@ impl<'a> Engine<'a> {
             // What the run has bound under a name, by name: the
             // classes, and the routines.
             Builtin::ModuleLoad => {
+                if args.len() == 2 {
+                    let path = args[0].display(&sp);
+                    if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
+                    if matches!(args[1], Value::Flag(true)) { return Ok(self.sys_path_source(&path).map(|(file, _)| file).or_else(|| self.library_module_file(&path)).map_or(Value::Null, |file| Value::text(&file))); }
+                }
                 arity(1)?;
                 match self.import_module(&args[0].display(&sp)) {
                     Ok(module) => module,
@@ -15553,7 +15559,11 @@ impl<'a> Engine<'a> {
             // reach it, and every later look at the class answers from it.
             Builtin::ClassSeal => {
                 arity(1)?;
-                let Value::Class(c) = args[0].contents() else { return Err("TypeError: a class is required".into()) };
+                if let Value::Object(object) = args[0].contents() {
+                    object.fields.borrow_mut().push(("\0immutable".to_string(), Value::Flag(true)));
+                    return Ok(Value::Null);
+                }
+                let Value::Class(c) = args[0].contents() else { return Err("TypeError: a class or instance is required".into()) };
                 c.sealed.set(true);
                 Value::Null
             }
@@ -15580,6 +15590,10 @@ impl<'a> Engine<'a> {
             }
             Builtin::MemberSet => {
                 arity(3)?;
+                if matches!(&args[0], Value::Object(object) if object.fields.borrow().iter().any(|(key, _)| key == "\0immutable"))
+                    || matches!(&args[0], Value::Class(class) if class.sealed.get()) {
+                    return Err("AttributeError: sealed storage is immutable".into());
+                }
                 let name = args[1].display(&sp);
                 let value = args[2].clone();
                 let fields = match &args[0] { Value::Object(o) => &o.fields, Value::Class(c) => &c.shared, _ => return Err(self.lang.module_helper_amiss.clone()) };
@@ -18737,6 +18751,17 @@ impl Engine<'_> {
                 fields.push((word.clone(), own_file.as_deref().map_or(Value::Null, Value::text)));
             }
         }
+        let spec_word = self.class_word("module.spec");
+        if !spec_word.is_empty() && !fields.iter().any(|(word, _)| word == spec_word) {
+            fields.push((spec_word.to_string(), Value::Null));
+        }
+        if let Some(file) = own_file.as_deref().filter(|file| file.ends_with("/__init__.py")) {
+            let path_word = self.class_word("module.path");
+            if !path_word.is_empty() {
+                let directory = std::path::Path::new(file).parent().map_or("", |part| part.to_str().unwrap_or(""));
+                fields.push((path_word.to_string(), Value::array(vec![Value::text(directory)]).held(true)));
+            }
+        }
         self.made += 1;
         let object = Rc::new(Instance {replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) }),
@@ -18765,35 +18790,30 @@ impl Engine<'_> {
         Ok(module)
     }
 
-    /// A module written into a directory `sys.path` names, found there
-    /// ahead of the library. Only a plain, undotted name is looked for
-    /// this way, since a directory a program builds for itself holds no
-    /// packages of its own; the file and what it holds come back
-    /// together, the file's place made absolute first, since a name on
-    /// `sys.path` may be relative to a working directory `__file__`
-    /// must not depend on later changing.
+    /// Source beneath a search-path directory, with a child looked for
+    /// along its parent's package path. A plain file is tried before a
+    /// package initializer; the resulting filename is kept absolute.
     fn sys_path_source(&self, path: &str) -> Option<(String, String)> {
-        if path.contains('.') { return None; }
-        let Value::Object(sys) = self.modules.get("sys")? else { return None };
-        let held = sys.fields.borrow().iter().find(|(word, _)| word == "path").map(|(_, v)| v.clone())?;
-        let mut value = held;
-        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value {
-            value = cell.borrow().clone();
-        }
-        let Value::Array(items) = value else { return None };
-        for item in items.iter() {
-            let Value::Text(dir) = item else { continue };
-            if dir.is_empty() { continue; }
-            let file = format!("{}/{path}.py", dir.trim_end_matches('/'));
-            if let Ok(source) = std::fs::read_to_string(&file) {
-                return Some((made_absolute(&file), source));
+        let (owner, member, word) = match path.rsplit_once('.') {
+            Some((parent, leaf)) => (parent, leaf, self.class_word("module.path")),
+            None => ("sys", path, "path"),
+        };
+        let Value::Object(namespace) = self.modules.get(owner)? else { return None };
+        let held = namespace.fields.borrow().iter().find(|(key, _)| key == word).map(|(_, value)| value.clone())?;
+        let items = match held.contents() { Value::Array(row) | Value::Tuple(row) => row, _ => return None };
+        for entry in items.iter() {
+            let Value::Text(directory) = entry else { continue };
+            let directory = if directory.is_empty() { "." } else { directory.as_ref() };
+            for tail in [format!("{member}.py"), format!("{member}/__init__.py")] {
+                let candidate = format!("{}/{tail}", directory.trim_end_matches('/'));
+                if let Ok(source) = std::fs::read_to_string(&candidate) {
+                    return Some((made_absolute(&candidate), source));
+                }
             }
         }
         None
     }
 
-    /// Locate embedded source on disk, using the host's override when given.
-    /// Without one, keep looking in the checkout that built this kernel.
     fn library_module_file(&self, path: &str) -> Option<String> {
         const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
         let root = self.library_root.as_deref().unwrap_or(ROOT);
@@ -18806,6 +18826,10 @@ impl Engine<'_> {
     }
 
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
+        if path.starts_with('.') {
+            let resolved = self.relative_module_path(path)?;
+            return self.import_member(module, &resolved, name);
+        }
         if let Value::Object(object) = module {
             if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
                 let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
