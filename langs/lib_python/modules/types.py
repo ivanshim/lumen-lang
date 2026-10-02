@@ -3,6 +3,7 @@
 #
 # Some callable and frame constructors below remain placeholders. Code
 # and generator kinds are obtained from values made by the runtime.
+import sys
 
 NoneType = type(None)
 
@@ -146,11 +147,20 @@ class method:
 MethodType = method
 
 
-# A place to hang names on, which is all a module is from here.
-class ModuleType:
+# A place to hang names on, which is all a module is from here. The
+# metaclass answers instance questions by the run's own module kind,
+# so that isinstance(module, ModuleType) holds as it does in the
+# reference.
+class _ModuleKind(type):
+    def __instancecheck__(cls, instance):
+        return type(instance) is type(sys)
+
+
+class ModuleType(metaclass=_ModuleKind):
     def __init__(self, name, doc=None):
         self.__name__ = name
-        self.__doc__ = doc
+        if doc is not None:
+            self.__doc__ = doc
 
     def __repr__(self):
         return "<module '" + str(getattr(self, '__name__', '?')) + "'>"

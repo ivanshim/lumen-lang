@@ -36,3 +36,27 @@ def import_fresh_module(name, fresh=(), blocked=(), deprecated=False, usefrozen=
                 del sys.modules[key]
             if saved[key] is not missing:
                 sys.modules[key] = saved[key]
+
+# The lazy-import check runs a fresh interpreter with a blocking list and
+# looks at what it imported; the test that calls this is marked for the
+# reference implementation, so it does not run here, but the name the
+# suite imports must exist.
+def ensure_lazy_imports(imported_module, modules_to_block):
+    import textwrap
+    modules_to_block = frozenset(modules_to_block)
+    script = textwrap.dedent(
+        f"""
+        import sys
+        modules_to_block = {modules_to_block}
+        if unexpected := modules_to_block & sys.modules.keys():
+            startup = ", ".join(unexpected)
+            raise AssertionError(f'unexpectedly imported at startup: {{startup}}')
+
+        import {imported_module}
+        if unexpected := modules_to_block & sys.modules.keys():
+            after = ", ".join(unexpected)
+            raise AssertionError(f'unexpectedly imported after importing {imported_module}: {{after}}')
+        """
+    )
+    from .script_helper import assert_python_ok
+    assert_python_ok("-S", "-c", script)

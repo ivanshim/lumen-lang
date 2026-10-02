@@ -257,6 +257,10 @@ def exc_info():
 # Where nothing was named -- a reference kernel reads no such label --
 # the empty string stands, and a test that needs its own program skips.
 executable = globals().get('__runner__', '')
+# Stub: the layout gettext joins directory names from. The library
+# travels inside the run rather than under an install prefix, so the
+# directory that holds the modules stands in for the install root.
+prefix = base_prefix = exec_prefix = base_exec_prefix = __file__.rsplit('/', 1)[0]
 
 float_repr_style = 'short'
 byteorder = 'little'

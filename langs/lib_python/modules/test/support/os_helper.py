@@ -12,6 +12,10 @@ def rmtree(path):
     except FileNotFoundError:
         pass
 
+def create_empty_file(filename):
+    """Create an empty file. If the file already exists, truncate it."""
+    __file_write(filename, '')
+
 @contextmanager
 def temp_dir(path=None, quiet=False):
     """Return a context manager that creates a temporary directory.
