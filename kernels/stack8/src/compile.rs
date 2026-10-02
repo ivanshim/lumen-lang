@@ -3315,32 +3315,13 @@ impl<'a> Compiler<'a> {
         let mut module = String::new();
         if from {
             let mut relative = false;
-            let mut last_dot: Option<Token> = None;
             while self.on_any(&lang.pipe_words) || self.on_any(&lang.slice_ellipsis) {
                 relative = true;
-                last_dot = Some(self.take());
-                module.push_str(&last_dot.as_ref().unwrap().lexeme);
-            }
-            // A relative import written `from . lazy import` -- the lazy
-            // word after the dots, set off by a space or a line break --
-            // is the older order of a lazy import; the reference warns of
-            // it and reads the same import without the word.
-            if !lang.syntax_members.is_empty() && !self.in_lazy_from && relative && self.look().lexeme == "lazy"
-                && self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.import_words, &self.look_ahead(1).lexeme)
-                && last_dot.as_ref().map_or(false, |dot| {
-                    let flush = dot.column + dot.lexeme.chars().count();
-                    self.look().row != dot.row || self.look().column != flush
-                }) {
-                let at = self.look().clone();
-                let warning = (format!("did you mean 'lazy from {module} import'?"), at.row, at.column);
-                if !self.registry.warnings.contains(&warning) { self.registry.warnings.push(warning); }
-                self.take();
+                let dot = self.take();
+                module.push_str(&dot.lexeme);
             }
             if !relative || !self.on_keyword(&lang.import_words) {
                 module.push_str(&self.import_name(true)?);
-            }
-            if !lang.syntax_members.is_empty() && self.look().lexeme == "lazy" {
-                return Err("SyntaxError: use 'lazy from ... ' instead of 'from ... lazy import'".into());
             }
             if !self.on_keyword(&lang.import_words) {
                 return Err(format!("Expected '{}' after the module name, got '{}'", lang.import_words.first().map_or("", String::as_str), self.look().lexeme));
