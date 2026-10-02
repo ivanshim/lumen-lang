@@ -843,3 +843,44 @@ def captured_output(stream_name):
         yield getattr(sys, stream_name)
     finally:
         setattr(sys, stream_name, orig_stdout)
+
+
+def no_rerun(reason):
+    """Skip rerunning for a particular test.
+
+    WARNING: Use this decorator with care; skipping rerunning makes it
+    impossible to find reference leaks. Provide a clear reason for skipping the
+    test using the 'reason' parameter.
+    """
+    import functools
+    def deco(func):
+        assert not isinstance(func, type), func
+        _has_run = False
+        @functools.wraps(func)
+        def wrapper(self):
+            nonlocal _has_run
+            if _has_run:
+                self.skipTest(reason)
+            func(self)
+            _has_run = True
+        return wrapper
+    return deco
+
+
+
+def check_disallow_instantiation(testcase, tp, *args, **kwds):
+    """
+    Check that given type cannot be instantiated using *args and **kwds.
+
+    See bpo-43916: Add Py_TPFLAGS_DISALLOW_INSTANTIATION type flag.
+    """
+    import re
+    mod = tp.__module__
+    name = tp.__name__
+    if mod != 'builtins':
+        qualname = f"{mod}.{name}"
+    else:
+        qualname = f"{name}"
+    msg = f"cannot create '{re.escape(qualname)}' instances"
+    testcase.assertRaisesRegex(TypeError, msg, tp, *args, **kwds)
+    testcase.assertRaisesRegex(TypeError, msg, tp.__new__, tp, *args, **kwds)
