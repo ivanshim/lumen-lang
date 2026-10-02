@@ -408,21 +408,33 @@ class deque:
             return True
         if len(_deque_field(self, '_data')) != len(_deque_field(other, '_data')):
             return False
-        return all(a is b or a == b for a, b in zip(iter(self), iter(other)))
+        from operator import eq
+        return deque._compare(self, other, eq)
 
     @_deque_protocol('__ne__', 1)
     def __ne__(self, other):
-        equal = deque.__eq__(self, other)
-        return equal if equal is NotImplemented else not equal
+        if not isinstance(other, deque):
+            return NotImplemented
+        if self is other:
+            return False
+        if len(_deque_field(self, '_data')) != len(_deque_field(other, '_data')):
+            return True
+        from operator import ne
+        return deque._compare(self, other, ne)
 
     def _compare(self, other, operation):
         if not isinstance(other, deque):
             return NotImplemented
-        for a, b in zip(iter(self), iter(other)):
+        left, right = iter(self), iter(other)
+        exhausted = object()
+        while True:
+            a = next(left, exhausted)
+            b = next(right, exhausted)
+            if a is exhausted or b is exhausted:
+                return operation(a is not exhausted, b is not exhausted)
             if a is b or a == b:
                 continue
-            return operation(a, b)
-        return operation(len(_deque_field(self, '_data')), len(_deque_field(other, '_data')))
+            return bool(operation(a, b))
 
     @_deque_protocol('__lt__', 1)
     def __lt__(self, other):
@@ -476,11 +488,21 @@ class deque:
             deque.clear(self)
             return self
         size = len(_deque_field(self, '_data'))
+        if size == 1:
+            limit = _deque_field(self, '_maxlen')
+            if limit is not None:
+                times = min(times, limit)
+            _deque_store(self, '_state', _deque_field(self, '_state') + 1)
+            data = _deque_field(self, '_data')
+            item = data[0]
+            for _ in range(times - 1):
+                data.append(item)
+            return self
         if size > _sys.maxsize // times:
             raise MemoryError
         old = _deque_field(self, '_data')[:]
         if _deque_field(self, '_maxlen') is not None:
-            times = min(times, (_deque_field(self, '_maxlen') + size - 1) // size + 1)
+            times = min(times, (_deque_field(self, '_maxlen') + size - 1) // size)
         for _ in range(times - 1):
             deque.extend(self, old)
         return self
@@ -496,7 +518,30 @@ class deque:
     @_deque_method('__reduce__', 0, 0)
     def __reduce__(self):
         args = () if _deque_field(self, '_maxlen') is None else ((), _deque_field(self, '_maxlen'))
-        state = getattr(self, '__dict__', None)
+        for cls in type(self).__mro__:
+            if cls is object:
+                break
+            if '__getstate__' in cls.__dict__:
+                return (type(self), args, self.__getstate__(), iter(self))
+        state = __reduce_native__(self, True) or None
+        slots = {}
+        for cls in type(self).__mro__:
+            if cls is deque or cls is object:
+                continue
+            names = cls.__dict__.get('__slots__', ())
+            if isinstance(names, str):
+                names = (names,)
+            for name in names:
+                if name in ('__dict__', '__weakref__'):
+                    continue
+                if name.startswith('__') and not name.endswith('__'):
+                    name = '_' + cls.__name__.lstrip('_') + name
+                try:
+                    slots[name] = getattr(self, name)
+                except AttributeError:
+                    pass
+        if slots:
+            state = (state, slots)
         return (type(self), args, state, iter(self))
 
     def __class_getitem__(cls, item):
@@ -549,7 +594,9 @@ class _tuplegetter:
             return self
         if not isinstance(instance, tuple):
             raise TypeError("descriptor for index '%s' for tuple subclasses doesn't apply to a '%s' object" % (self._index, type(instance).__name__))
-        return instance[self._index]
+        if self._index < 0:
+            raise IndexError('tuple index out of range')
+        return tuple.__getitem__(instance, self._index)
 
     def __set__(self, instance, value):
         raise AttributeError('readonly attribute')
