@@ -38,6 +38,12 @@ impl<'a> Machine<'a> {
         }
         self.ancestor.as_ref().unwrap().clone()
     }
+    fn exposed_parent(&self, parent: &Rc<Blueprint>) -> Value {
+        match Self::native_word(parent).and_then(|word| self.kind_by_word(&word)) {
+            Some(kind) => kind,
+            None => Value::Blueprint(parent.clone()),
+        }
+    }
     /// The blueprint standing for a native kind, made once for each word
     /// asked for. A thing of a blueprint beneath it keeps a worth of that
     /// kind among what it holds, under a name no program can write.
@@ -1824,11 +1830,11 @@ impl<'a> Machine<'a> {
             }
             if key == self.detail("base") && !key.is_empty() {
                 let chosen = b.parents.iter().find(|parent| Self::native_beneath(parent).is_some()).or_else(|| b.parents.first());
-                return Ok(chosen.map(|parent| Value::Blueprint(parent.clone())).unwrap_or(Value::Nil));
+                return Ok(chosen.map(|parent| self.exposed_parent(parent)).unwrap_or(Value::Nil));
             }
-            if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|Value::Blueprint(p.clone())).collect()));}
+            if key==self.detail("bases"){return Ok(Value::tuple(b.parents.iter().map(|p|self.exposed_parent(p)).collect()));}
             if key==self.detail("mro")||key==self.detail("order"){
-                let mut all=Vec::new();all.push(value.clone());all.extend(b.ancestry.iter().map(|p|Value::Blueprint(p.clone())));
+                let mut all=Vec::new();all.push(value.clone());all.extend(b.ancestry.iter().map(|p|self.exposed_parent(p)));
                 let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if self.table.single("ext.stmt.class.annotations")==Some(key){return self.blueprint_annotations(b);}

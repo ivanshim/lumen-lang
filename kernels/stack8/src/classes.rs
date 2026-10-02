@@ -21,6 +21,12 @@ impl<'a> Engine<'a> {
         self.class_root = Some(c.clone());
         c
     }
+    fn public_base(&self, class: &Rc<Class>) -> Value {
+        if let Some(word) = Self::own_kind(class) {
+            if let Some(op) = self.lang.builtins.get(&word).copied().filter(Self::kind_builtin) { return Value::Native(op, Rc::from(word)); }
+        }
+        Value::Class(class.clone())
+    }
     /// The class standing for a builtin kind, made once for each word
     /// the definition names: a thing of a class beneath it keeps a worth
     /// of that kind among its members, under a name no program can spell.
@@ -1386,9 +1392,9 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("qualified") { return Ok(c.python_names.borrow().as_ref().map(|names| names.1.clone()).unwrap_or_else(|| self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name)))); }
                 if name == self.class_word("base") && !name.is_empty() {
                     let primary = c.direct.iter().find(|parent| Self::kind_beneath(parent).is_some()).or_else(|| c.direct.first());
-                    return Ok(primary.cloned().map_or(Value::Null, Value::Class));
+                    return Ok(primary.map_or(Value::Null, |parent| self.public_base(parent)));
                 }
-                if name==self.class_word("bases") { return Ok(Value::tuple(c.direct.iter().cloned().map(Value::Class).collect())); }
+                if name==self.class_word("bases") { return Ok(Value::tuple(c.direct.iter().map(|parent| self.public_base(parent)).collect())); }
                 if name==self.class_word("namespace") {
                     if let Some(maker)=Self::maker_beneath(c) {
                         if let Some(descriptor)=self.class_value(&maker,name).filter(|entry| self.takes_writes(entry)) {
@@ -1405,7 +1411,7 @@ impl<'a> Engine<'a> {
                     return Ok(Self::namespace(&c.shared.borrow()));
                 }
                 if name==self.class_word("mro") || name==self.class_word("order") {
-                    let mut order=vec![subject.clone()]; order.extend(c.lineage.iter().cloned().map(Value::Class));
+                    let mut order=vec![subject.clone()]; order.extend(c.lineage.iter().map(|parent| self.public_base(parent)));
                     let tuple=Value::tuple(order);
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
