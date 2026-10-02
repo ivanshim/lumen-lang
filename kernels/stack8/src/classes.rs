@@ -162,6 +162,11 @@ impl<'a> Engine<'a> {
             self.made += 1;
             return Ok(Value::Routine(Rc::new(made)));
         }
+        if word == "method" {
+            if args.len() != 2 { return Err("TypeError: method expected 2 arguments".into()); }
+            if matches!(args[1].contents(), Value::Null) { return Err("TypeError: instance must not be None".into()); }
+            return Ok(Self::adapter(3, args));
+        }
         let Some(op) = self.lang.builtins.get(word).copied() else { return Err(self.class_refusal()); };
         let items = self.call_items(args)?;
         let made = self.builtin_call(op, word, items)?;
@@ -634,6 +639,17 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
+                129 => {
+                    let Value::Adapter(descriptor) = &w.1[0] else { return Err(self.class_refusal()); };
+                    let key = descriptor.1[0].plain();
+                    if w.1[1].plain() != self.class_word("descriptor.get") { return Err(format!("AttributeError: attribute '{key}' of 'type' objects is not writable").into()); }
+                    if args.is_empty() || args.len() > 2 { return Err("TypeError: __get__ expected 1 or 2 arguments".into()); }
+                    if matches!(args[0].contents(), Value::Null) { return Ok(w.1[0].clone()); }
+                    let instance = args[0].contents();
+                    let kind = matches!(&instance, Value::Class(_)) || matches!(&instance, Value::Native(operation, _) if operation.names_kind());
+                    if !kind { return Err(format!("TypeError: descriptor '{key}' for 'type' objects doesn't apply to a '{}' object", instance.core_kind()).into()); }
+                    self.class_get(instance, &key, true)
+                }
                 9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
                 0 => Ok(w.1[0].clone()),
                 1 => {
@@ -863,7 +879,7 @@ impl<'a> Engine<'a> {
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
         }
-        if c.name == "FunctionType" && self.lang.trace_fields.len() > 18 && matches!(args.first().map(Value::contents), Some(Value::Adapter(code)) if code.0 == 7) {
+        if (c.name == "FunctionType" || Self::own_kind(&c).as_deref() == Some("function")) && self.lang.trace_fields.len() > 18 && matches!(args.first().map(Value::contents), Some(Value::Adapter(code)) if code.0 == 7) {
             let mut parts = vec![None; 5];
             let mut next = 0;
             for (named, value) in self.call_items(args)? {
@@ -1298,6 +1314,14 @@ impl<'a> Engine<'a> {
                 _ => Err(self.missing_member(&subject, name)),
             };
         }
+        if let Value::Adapter(entry) = &subject {
+            if entry.0 == 128 {
+                if ["descriptor.get", "descriptor.set", "descriptor.delete"].iter().any(|part| name == self.class_word(part)) {
+                    return Ok(Self::adapter(129, vec![subject.clone(), Value::text(name)]));
+                }
+                if name == self.class_word("name") { return Ok(entry.1[0].clone()); }
+            }
+        }
         if let Value::Adapter(property) = &subject {
             if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
         }
@@ -1454,6 +1478,12 @@ impl<'a> Engine<'a> {
                             let descriptor = self.class_get(subject.clone(), &key, true)?;
                             entries.push((Value::text(&key), descriptor));
                         }
+                        if word == "type" {
+                            for part in ["mro", "namespace"] {
+                                let key = self.class_word(part);
+                                entries.push((Value::text(key), Self::adapter(128, vec![Value::text(key)])));
+                            }
+                        }
                         return Ok(Value::Map(Rc::new(entries.into())));
                     }
                     return Ok(Self::namespace(&c.shared.borrow()));
@@ -1539,7 +1569,7 @@ impl<'a> Engine<'a> {
                         _ => {}
                     }
                 }
-                if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
+                if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name).filter(|(_, v)| !matches!(v.contents(), Value::Blank)) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class_now().clone());}
                 if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
                     let root = Self::adapter(30, vec![Value::text(name)]);
@@ -2471,6 +2501,7 @@ impl<'a> Engine<'a> {
             else { plain.push(value.contents()); }
         }
         let mut args = plain;
+        if args.len() != 1 && args.len() != 3 { return Err("TypeError: type() takes 1 or 3 arguments".into()); }
         if args.len() != 3 && !named.is_empty() { return Err("TypeError: type() takes no keyword arguments".into()); }
         let original_title = args.first().map(Value::contents);
         if args.len() == 3 {
@@ -2630,6 +2661,12 @@ impl<'a> Engine<'a> {
         let told=self.core_fault(label,"");
         if told.is_empty(){self.class_refusal()}else{told.into()}
     }
+    pub(super) fn module_of_kind(&self, value: &Value, expected: &Rc<Class>) -> bool {
+        if self.module_holding(value).is_none() { return false; }
+        let [path, member] = self.lang.module_kind.as_slice() else { return false };
+        let Some(Value::Object(space)) = self.modules.get(path) else { return false };
+        space.fields.borrow().iter().any(|(key, held)| key == member && matches!(held.contents(), Value::Class(kind) if Rc::ptr_eq(&kind, expected)))
+    }
     fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
         if matches!(wanted, Value::Object(o) if o.class_now().name == "GenericAlias") {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());
@@ -2653,6 +2690,7 @@ impl<'a> Engine<'a> {
         // asked: each has its own words, as the reference has.
         let amiss=if subclass{"core.issubclass.amiss"}else{"core.isinstance.amiss"};
         if let Value::Class(c)=wanted {
+            if !subclass && self.module_of_kind(value, c) { return Ok(true); }
             if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
             // Everything stands beneath the class every other one does.
             if c.name==self.class_word("root"){return Ok(true);}
@@ -2705,7 +2743,7 @@ impl<'a> Engine<'a> {
         if (3..=6).contains(&which) && args.len() >= 2 {
             if let Some(Value::Text(word)) = Self::worth_of(&args[1]) { args[1] = Value::Text(word); }
         }
-        if which == 13 {
+        if which == 13 && self.lang.class_builder.is_empty() {
             if let Value::Tuple(header) = args[4].contents() {
                 let opened = self.call_items(header.to_vec())?;
                 let mut bases = Vec::new(); let mut keywords = Vec::new();

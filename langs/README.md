@@ -4569,6 +4569,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
+| `ext.builtin.file.stat` | - | - | `__file_stat` | - | - | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
@@ -5666,7 +5667,7 @@ with checked integer accumulation, three-part compensated binary products,
 and ordinary multiplication/addition for other numeric types.
 
 The embedded `test/test_iter.py` is byte-for-byte CPython `Lib/test/test_iter.py`
-from commit `3b564385e4c9` (the suite source recorded in `tests/README.md`),
+from tag `v3.14.8` (the suite source recorded in `tests/README.md`),
 under the PSF license in `tests/python/LICENSE`. It supplies the original
 module for imports by the unchanged math tests.
 
@@ -5706,3 +5707,7 @@ user comparisons; the four reference kernels ignore this label.
 `ext.builtin.build_class` names the class body builder; `ext.stmt.class.builder` supplies its lookup name and missing-builtin error for class statements.
 
 `ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.
+
+`ext.builtin.file.stat` supplies Python filesystem metadata from the platform,
+including nanosecond times and symbolic-link selection. The os adapter exposes
+these fields to unchanged source modules such as linecache.

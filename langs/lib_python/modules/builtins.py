@@ -437,10 +437,10 @@ class _HostFile:
             if _host_file_exists(name):
                 if _host_file_kind(name) == 2:
                     raise IsADirectoryError(21, 'Is a directory', name)
-                brought = _host_file_read(name)
-                self._buffer = brought if brought is not False else ''
+                brought = _host_file_read(name, self._binary)
+                self._buffer = brought if brought is not False else (b'' if self._binary else '')
             else:
-                self._buffer = ''
+                self._buffer = b'' if self._binary else ''
             self._pos = len(self._buffer)
         else:
             kind = _host_file_kind(name)
@@ -448,7 +448,7 @@ class _HostFile:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = _host_file_read(name)
+            brought = _host_file_read(name, self._binary)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
@@ -464,7 +464,7 @@ class _HostFile:
         return 'w' in self.mode or 'a' in self.mode or '+' in self.mode
 
     def _carried(self, text):
-        return text.encode('utf-8') if self._binary else text
+        return text.encode('utf-8') if self._binary and isinstance(text, str) else text
 
     def read(self, size=-1):
         self._open()

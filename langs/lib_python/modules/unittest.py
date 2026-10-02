@@ -810,22 +810,7 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     suite = loader.loadTestsFromModule(module)
     only = _only_classes()
     if only is not None:
-        # Keep the loader's class and method order when running a long file
-        # in parts. A plain class name selects every method in that class.
-        selected = []
-        for tests in suite.tests:
-            if tests.class_ is None:
-                continue
-            name = tests.class_.__name__
-            if name in only:
-                selected.append(tests)
-            else:
-                methods = [test for test in tests.tests if name + '.' + test._method in only]
-                if len(methods) > 0:
-                    part = TestSuite(methods)
-                    part.class_ = tests.class_
-                    selected.append(part)
-        suite = TestSuite(selected)
+        suite = _select_tests(suite, only)
     if testRunner is None:
         testRunner = TextTestRunner(verbosity=verbosity)
     result = testRunner.run(suite)
@@ -858,3 +843,21 @@ def _word_before(left, right):
 class _TestProgram:
     def __init__(self, result):
         self.result = result
+
+
+def _select_tests(suite, names):
+    selected = TestSuite()
+    selected.class_ = getattr(suite, 'class_', None)
+    if selected.class_ is not None and selected.class_.__name__ in names:
+        return suite
+    for test in suite.tests:
+        if isinstance(test, TestSuite):
+            part = _select_tests(test, names)
+            if len(part.tests) > 0:
+                selected.addTest(part)
+        else:
+            cls = selected.class_ or type(test)
+            label = getattr(test, '_method', 'runTest')
+            if cls.__name__ in names or cls.__name__ + '.' + label in names or label in names:
+                selected.addTest(test)
+    return selected

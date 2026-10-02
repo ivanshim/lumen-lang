@@ -106,3 +106,54 @@ class StringIO:
     def _check(self):
         if self.closed:
             raise ValueError('I/O operation on closed file')
+
+
+# Text streams model the native io.TextIOWrapper interface.
+class TextIOWrapper(StringIO):
+    def __init__(self, buffer, encoding=None, errors=None, newline=None,
+                 line_buffering=False, write_through=False):
+        self.buffer = buffer
+        self.encoding = encoding or 'utf-8'
+        self.errors = errors or 'strict'
+        self.line_buffering = bool(line_buffering)
+        self.write_through = bool(write_through)
+        self.name = getattr(buffer, 'name', None)
+        self.mode = getattr(buffer, 'mode', 'r')
+        self._newline = newline
+        data = buffer.read()
+        text = data.decode(self.encoding, self.errors)
+        if newline is None:
+            text = text.replace('\r\n', '\n').replace('\r', '\n')
+        StringIO.__init__(self, text)
+
+    def write(self, text):
+        self._check()
+        if not isinstance(text, str):
+            raise TypeError('write() argument must be str')
+        if self._newline is not None:
+            text = text.replace('\n', self._newline)
+        written = self.buffer.write(text.encode(self.encoding, self.errors))
+        if self.line_buffering and ('\n' in text or '\r' in text):
+            self.flush()
+        return len(text)
+
+    def flush(self):
+        self._check()
+        self.buffer.flush()
+
+    def close(self):
+        if not self.closed:
+            self.buffer.close()
+            self.closed = True
+
+    def readable(self):
+        self._check()
+        return 'r' in self.mode or '+' in self.mode
+
+    def writable(self):
+        self._check()
+        return 'w' in self.mode or 'a' in self.mode or '+' in self.mode
+
+    def seekable(self):
+        self._check()
+        return True

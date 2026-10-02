@@ -94,6 +94,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
     let lost: HashSet<_> = knots.iter().filter_map(Knot::place).collect();
     let in_group = |ghost: &Ghost| -> bool {
         match ghost {
+            Ghost::StaticKind(_) => false,
             Ghost::Thing(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Blueprint(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Walk(target) => lost.contains(&(target.as_ptr() as usize)),
@@ -327,7 +328,7 @@ pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
             case_holds(test, out);
             for kind in kinds { form_holds(kind, out); }
         }
-        Form::Write(_, body) | Form::OnLine(_, body) | Form::Located(_, body)
+        Form::Write(_, body) | Form::OnLine(_, _, body) | Form::Located(_, _, body)
         | Form::Tie(_, body) | Form::ShareItem(_, body) | Form::ShareField(body, _)
         | Form::ShareOwn(body, _) | Form::ShareCalled(body) | Form::ForgetCalled(body)
         | Form::ReadyCalled(body) | Form::Muted(body) | Form::Silenced(body)

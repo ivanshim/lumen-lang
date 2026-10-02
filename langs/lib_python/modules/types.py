@@ -7,13 +7,7 @@
 NoneType = type(None)
 
 
-class FunctionType:
-    def __init__(self, code, globals):
-        self.__code__ = code
-        self.__globals__ = globals
-
-    def __call__(self):
-        return eval(self.__code__, self.__globals__)
+FunctionType = type(lambda: None)
 
 
 LambdaType = FunctionType
@@ -22,8 +16,7 @@ LambdaType = FunctionType
 CodeType = type((lambda: None).__code__)
 
 
-class BuiltinFunctionType:
-    pass
+BuiltinFunctionType = type(len)
 
 
 BuiltinMethodType = BuiltinFunctionType
@@ -143,7 +136,12 @@ class method:
         return '<bound method of ' + repr(self.__self__) + '>'
 
 
-MethodType = method
+class _MethodSample:
+    def method(self):
+        pass
+
+
+MethodType = type(_MethodSample().method)
 
 
 # Python-created modules keep one live namespace for attributes and execution.

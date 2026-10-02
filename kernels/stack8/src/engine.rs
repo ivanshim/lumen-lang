@@ -2630,6 +2630,16 @@ impl<'a> Engine<'a> {
     /// loaded the first time a name is missed and read from after that,
     /// and a name it does not hold is missing as it was.
     fn kept_by_module(&mut self, name: &str) -> Option<Value> {
+        if self.reading_in.is_none() {
+            if let Some((_, path)) = self.module_slots.get(&self.source) {
+                if let Some(Value::Object(module)) = self.modules.get(path) {
+                    if let Some((_, held)) = module.fields.borrow().iter().find(|(word, _)| word == name) {
+                        let value = held.contents();
+                        if !matches!(value, Value::Blank) { return Some(value); }
+                    }
+                }
+            }
+        }
         if self.fetching_names { return None; }
         // The name of the builtins dictionary itself is read as the
         // module-shaped stand-in the reference keeps it as, so that a
@@ -3269,7 +3279,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(peers) = &state.1[3] else { return Err("TypeError: invalid tee peers".into()); };
                 let Value::Array(old) = peers.borrow().contents() else { return Err("TypeError: invalid tee peers".into()); };
                 let mut live = old.to_vec();
-                live.push(Value::Faint(Rc::new(crate::faint::Faint { hold: crate::faint::Hold::Object(Rc::downgrade(object)), bearer: std::rc::Weak::new(), told: None })));
+                live.push(crate::faint::make(crate::faint::Hold::Object(Rc::downgrade(object)), std::rc::Weak::new(), None));
                 *peers.borrow_mut() = Value::array(live);
                 return Ok(Value::Null);
             }
@@ -8651,12 +8661,32 @@ impl<'a> Engine<'a> {
     /// are kept beside them under `\0keys`.
     fn fields_restore(o: &crate::value::Instance, entries: Vec<(Value, Value)>) {
         let mut fields = o.fields.borrow_mut();
-        fields.retain(|(key, _)| key.starts_with('\0') && key != "\0keys");
-        let mut extra: Vec<(Value, Value)> = Vec::new();
+        let previous = std::mem::take(&mut *fields);
+        let order = previous.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
+        let mut old = previous.into_iter().collect::<HashMap<_, _>>();
+        let mut extra = Vec::new();
         for (key, held) in entries {
-            match key {
-                Value::Text(text) => fields.push((text.to_string(), held)),
-                other => extra.push((other, held)),
+            if let Value::Text(text) = key {
+                let name = text.to_string();
+                let value = match old.remove(&name) {
+                    Some(Value::Bond(cell)) => {
+                        if !matches!(&held, Value::Bond(other) if Rc::ptr_eq(&cell, other)) {
+                            let raw = match held { Value::Bond(other) => other.borrow().clone(), other => other };
+                            *cell.borrow_mut() = raw;
+                        }
+                        Value::Bond(cell)
+                    }
+                    _ => held,
+                };
+                fields.push((name, value));
+            } else { extra.push((key, held)); }
+        }
+        for name in order {
+            let Some(value) = old.remove(&name) else { continue };
+            if name.starts_with('\0') && name != "\0keys" { fields.push((name, value)); }
+            else if let Value::Bond(cell) = value {
+                *cell.borrow_mut() = Value::Blank;
+                fields.push((name, Value::Bond(cell)));
             }
         }
         if !extra.is_empty() { fields.push(("\0keys".to_string(), Value::Map(Rc::new(extra.into())))); }
@@ -9408,7 +9438,8 @@ impl<'a> Engine<'a> {
                 Value::array(together)
             }
             Action::Unpack(count, rest) => {
-                let source = collection_contents(&self.drop_top()?).contents();
+                let original = collection_contents(&self.drop_top()?).contents();
+                let source = self.worth_free_of(&original, &[15, 11]).unwrap_or(original);
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
@@ -9888,8 +9919,14 @@ impl<'a> Engine<'a> {
                 // program's own __import__ answered with answers through
                 // the protocol it answers to.
                 let module = self.data.last().cloned().ok_or_else(|| "Stack underflow".to_string())?;
-                if self.is_builtin_module(&module, path) {
-                    self.import_member(&module, path, name)?
+                let resolved = if path.starts_with('.') {
+                    self.modules.iter().find_map(|(key, known)| match (known, &module) {
+                        (Value::Object(left), Value::Object(right)) if Rc::ptr_eq(left, right) => Some(key.clone()),
+                        _ => None,
+                    }).unwrap_or_else(|| path.clone())
+                } else { path.clone() };
+                if self.is_builtin_module(&module, &resolved) {
+                    self.import_member(&module, &resolved, name)?
                 } else {
                     // A member the program's own __import__ answered
                     // without is a missing import, not a missing
@@ -14233,6 +14270,8 @@ impl<'a> Engine<'a> {
                 // be the wide one.
                 if args.len() == 1 { args.push(Value::text(&self.byte_codec_name(Self::CODEC_WIDE))); }
                 2
+            } else if builtin == Builtin::Bytes(28) && key == "keepends" {
+                1
             } else if builtin == Builtin::Bytes(39) && key == "delete" {
                 // bytes.translate(table, /, delete=b'') keeps the dropped
                 // row after the table, read only by name; the receiver
@@ -14313,8 +14352,10 @@ impl<'a> Engine<'a> {
             let entries = Self::fields_entries(&object);
             let map = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);
             let result = self.value_method(&map, operation, args, named);
-            if let Value::Map(entries) = map.contents() {
-                Self::fields_restore(&object, entries.iter().cloned().collect());
+            if ["clear", "pop", "popitem", "setdefault", "update"].contains(&operation) {
+                if let Value::Map(entries) = map.contents() {
+                    Self::fields_restore(&object, entries.iter().cloned().collect());
+                }
             }
             return result;
         }
@@ -16420,9 +16461,11 @@ impl<'a> Engine<'a> {
             // these labels can, and what cannot be done gives false
             // back rather than stopping, as such a language expects.
             Builtin::FileRead => {
-                arity(1)?;
+                let binary = !self.lang.syntax_members.is_empty() && args.len() == 2 && self.truth(&args[1]);
+                if args.len() != 2 || self.lang.syntax_members.is_empty() { arity(1)?; }
                 let sp = self.wording();
                 match std::fs::read(args[0].display(&sp)) {
+                    Ok(bytes) if binary => self.byte_make(bytes, false),
                     Ok(bytes) => {
                         let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
                             .copied().map(char::from).collect::<String>().to_ascii_lowercase();
@@ -16567,6 +16610,23 @@ impl<'a> Engine<'a> {
             }
             // One for a file, two for a directory, nought for neither.
             Builtin::FileKind => {
+                if Lang::spells(&self.lang.file_stat, name) {
+                    arity(2)?;
+                    let path = self.special_text(&args[0], false)?;
+                    if path.contains('\0') { return Err("ValueError: embedded null byte".into()); }
+                    let information = if self.truth(&args[1]) { std::fs::metadata(&path) } else { std::fs::symlink_metadata(&path) }
+                        .map_err(|error| format!("{}: {error}", match error.kind() { std::io::ErrorKind::NotFound => "FileNotFoundError", std::io::ErrorKind::PermissionDenied => "PermissionError", _ => "OSError" }))?;
+                    #[cfg(unix)] {
+                        use std::os::unix::fs::MetadataExt;
+                        let t = |seconds: i64, nanos: i64| crate::value::real_of(seconds as f64 + nanos as f64 / 1e9, arith::DEFAULT_PLACES);
+                        let ns = |seconds: i64, nanos: i64| Value::Small(seconds.saturating_mul(1_000_000_000).saturating_add(nanos));
+                        return Ok(Value::tuple(vec![Value::Small(information.mode() as i64), Value::Small(information.ino() as i64), Value::Small(information.dev() as i64),
+                            Value::Small(information.nlink() as i64), Value::Small(information.uid() as i64), Value::Small(information.gid() as i64), Value::Small(information.size() as i64),
+                            t(information.atime(), information.atime_nsec()), t(information.mtime(), information.mtime_nsec()), t(information.ctime(), information.ctime_nsec()),
+                            ns(information.atime(), information.atime_nsec()), ns(information.mtime(), information.mtime_nsec()), ns(information.ctime(), information.ctime_nsec())]));
+                    }
+                    #[cfg(not(unix))] { let _ = information; return Err("NotImplementedError: platform stat fields are unavailable".into()); }
+                }
                 arity(1)?;
                 let sp = self.wording();
                 let path = std::path::PathBuf::from(args[0].display(&sp));
@@ -19371,6 +19431,7 @@ impl Engine<'_> {
         // reads it back this way rather than needing `type(None)`.
         if matches!(kind, Value::Null) { return Ok(matches!(value, Value::Null)); }
         if let Value::Class(class) = kind {
+            if self.module_of_kind(value, class) { return Ok(true); }
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
             // Every value whatever is of the class every other one is of.
@@ -20896,7 +20957,7 @@ impl Engine<'_> {
         let dictionary = Value::Bond(self.natives_book());
         self.made += 1;
         let object = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
-            fields: RefCell::new(vec![("\0namespace".to_string(), dictionary)]), mark: self.made }));
+            fields: RefCell::new(vec![("\0namespace".to_string(), dictionary.clone()), ("_namespace".to_string(), dictionary)]), mark: self.made }));
         self.builtins_view = Some(object.clone());
         Ok(object)
     }
@@ -21044,6 +21105,11 @@ impl Engine<'_> {
                 _ => book.near.clone(),
             };
         }
+        if let Some((_, path)) = self.module_slots.get(&self.source) {
+            if let Some(Value::Object(module)) = self.modules.get(path) {
+                return Rc::new(RefCell::new(Value::Fields(module.clone())));
+            }
+        }
         self.outer_book_made()
     }
 
@@ -21059,6 +21125,12 @@ impl Engine<'_> {
             match self.what_it_spells(class_book.unwrap()) {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
                 value => Rc::new(RefCell::new(value)),
+            }
+        } else if kind == Builtin::OuterNames && self.reading_in.is_none() {
+            let module = program.written_in.as_ref().and_then(|source| self.module_slots.get(source)).and_then(|(_, path)| self.modules.get(path));
+            match module {
+                Some(Value::Object(space)) => Rc::new(RefCell::new(Value::Fields(space.clone()))),
+                _ => self.outer_book_made(),
             }
         } else if kind == Builtin::OuterNames || program.body_of_all {
             self.book_here(kind == Builtin::OuterNames)

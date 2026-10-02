@@ -5671,6 +5671,11 @@ impl<'a> Builder<'a> {
                     r.pos = after;
                     items.push(write);
                 }
+                if place.is_none() && r.in_class_body() && !item.starts_with('#') && !r.declared_outside_class(&item) {
+                    let slot = r.address_to_write(&item);
+                    r.class_bindings.last_mut().expect("class loop target").1.insert(item.clone(), slot.clone());
+                    if let Some(stored) = r.mirror_member(&item, &slot) { items.push(stored); }
+                }
                 items.push(r.body()?);
                 let pass = sequence(items);
                 if !things {

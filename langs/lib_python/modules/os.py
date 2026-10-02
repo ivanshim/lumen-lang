@@ -186,3 +186,24 @@ def fspath(path):
         raise TypeError("expected {}.__fspath__() to return str or bytes, "
                         "not {}".format(path_type.__name__,
                                         type(path_repr).__name__))
+
+
+# os.stat models the platform C module; copied library sources use this surface.
+class stat_result(tuple):
+    def __new__(cls, values):
+        return tuple.__new__(cls, tuple(values[:7]) + tuple(int(value) for value in values[7:10]))
+
+    def __init__(self, values):
+        self.st_mode, self.st_ino, self.st_dev, self.st_nlink, self.st_uid, self.st_gid, self.st_size, self.st_atime, self.st_mtime, self.st_ctime = values[:10]
+        self.st_atime_ns, self.st_mtime_ns, self.st_ctime_ns = values[10:13]
+
+def stat(path, *, dir_fd=None, follow_symlinks=True):
+    if dir_fd is not None:
+        raise NotImplementedError('stat: dir_fd is not supported')
+    path = fspath(path)
+    if isinstance(path, bytes):
+        path = path.decode('utf-8', 'surrogateescape')
+    return stat_result(__file_stat(path, follow_symlinks))
+
+def lstat(path, *, dir_fd=None):
+    return stat(path, dir_fd=dir_fd, follow_symlinks=False)
