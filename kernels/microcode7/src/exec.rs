@@ -15406,7 +15406,7 @@ impl<'a> Machine<'a> {
                 if working == "fsum_partial" {
                     if !self.rules.binary_arithmetic || self.real_figures() != math::DEFAULT_PLACES { return Ok(Value::Nil); }
                     let first = self.worth_of(&v[1]);
-                    let Value::Vector(parts) = self.worth_of(&v[2]) else { return Ok(Value::Nil) };
+                    let Value::Vector(parts) = v[2].settled() else { return Ok(Value::Nil) };
                     let read = |item: &Value| -> Option<f64> {
                         let Value::Frac(ratio) = item else { return None };
                         if ratio.places != Some(math::DEFAULT_PLACES) { return None; }
