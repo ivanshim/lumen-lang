@@ -1437,7 +1437,7 @@ LARGEST = _LARGEST()
 SMALLEST = _SMALLEST()
 
 @contextlib.contextmanager
-def run_with_locale(catstr, *locales):
+def _run_with_locale(catstr, *locales):
     try:
         import locale
         category = getattr(locale, catstr)
@@ -1466,3 +1466,28 @@ def run_with_locale(catstr, *locales):
     finally:
         if locale and orig_locale:
             locale.setlocale(category, orig_locale)
+
+
+class _LocaleContextDecorator:
+    # The embedded contextlib lacks ContextDecorator's recreation protocol.
+    def __init__(self, catstr, locales):
+        self.catstr = catstr
+        self.locales = locales
+        self.context = _run_with_locale(catstr, *locales)
+
+    def __enter__(self):
+        return self.context.__enter__()
+
+    def __exit__(self, *exc):
+        return self.context.__exit__(*exc)
+
+    def __call__(self, func):
+        @functools.wraps(func)
+        def inner(*args, **kwargs):
+            with _run_with_locale(self.catstr, *self.locales):
+                return func(*args, **kwargs)
+        return inner
+
+
+def run_with_locale(catstr, *locales):
+    return _LocaleContextDecorator(catstr, locales)
