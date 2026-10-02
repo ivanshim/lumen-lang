@@ -755,6 +755,7 @@ impl<'a> Machine<'a> {
                         };
                         let fast=regular.is_some_and(|(positive,zero)|match operation.as_str() {
                             "exp"|"floor"|"fabs"=>true,
+                            "frexp"=>self.table.flag("ext.builtin.math.frexp"),
                             "sqrt"=>positive || zero,
                             "lgamma"|"log"|"log2"=>positive,
                             _=>false,

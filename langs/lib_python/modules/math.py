@@ -924,23 +924,19 @@ def modf(x):
     fraction = x - whole
     return (fraction, __math('fdiv', whole, 1.0))
 
-def frexp(x):
+def frexp(x, /):
+    """Return the mantissa and exponent of x, as pair (m, e)."""
+    if isinstance(x, complex):
+        complex_base = complex.__mro__[0]
+        ancestors = [base for base in type(x).__mro__ if base is not complex_base]
+        if not any('__float__' in base.__dict__ for base in ancestors):
+            if not any('__index__' in base.__dict__ for base in ancestors):
+                raise TypeError('must be real number, not ' + type(x).__name__)
+            from operator import index
+            x = index(x)
     _check_real(x)
-    if _is_integral(x):
-        n = int(x)
-        if n == 0:
-            return (__math('fdiv', 0.0, 1.0), 0)
-        mantissa, exponent = _int_frexp(-n if n < 0 else n)
-        return (-mantissa if n < 0 else mantissa, exponent)
-    x = float(x)
-    if x == 0 or not isfinite(x):
-        return (__math('fdiv', x, 1.0), 0)
-    # A binary float's denominator is a power of two. Its exact ratio
-    # gives the exponent without scaling once per power, which matters
-    # when summation repeatedly decomposes values with large exponents.
-    numerator, denominator = x.as_integer_ratio()
-    exponent = abs(numerator).bit_length() - denominator.bit_length() + 1
-    return (__math('ldexp', x, -exponent), exponent)
+    return __math('frexp', float(x))
+
 
 def ldexp(x, i):
     if type(i) != type(1) and type(i) != type(True):
@@ -1000,3 +996,5 @@ floor = __math('method', 'floor', floor)
 
 log2 = __math('method', 'log2', log2)
 fabs = __math('method', 'fabs', fabs)
+
+frexp = __math('method', 'frexp', frexp)

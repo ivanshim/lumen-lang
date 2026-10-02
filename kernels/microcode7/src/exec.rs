@@ -16618,6 +16618,12 @@ impl<'a> Machine<'a> {
                     return Ok(result);
                 }
                 let one = width(1)?;
+                if working == "frexp" && self.table.flag("ext.builtin.math.frexp") {
+                    let (fraction, shift) = math::decomposed(one);
+                    let mut part = crate::data::worth_of_binary(fraction, self.real_figures());
+                    if let Value::Frac(value) = &mut part { Rc::make_mut(value).float_style = self.rules.floating_math; }
+                    return Ok(Value::tuple(vec![part, Value::Small(shift)]));
+                }
                 match math::worked(&working, one, two) {
                     Some(got) => {
                         // A working handed only reals of the width

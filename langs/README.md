@@ -4636,6 +4636,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.short` | - | - | `ValueError: map() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.math.frexp` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.math.sumprod` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
@@ -5731,3 +5732,5 @@ user comparisons; the four reference kernels ignore this label.
 `ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
 
 `ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.
+
+`ext.builtin.math.frexp` enables Python binary64 mantissa/exponent decomposition through the existing math operation label, including signed zero, subnormal values and non-finite values. Other language tables leave this capability absent.

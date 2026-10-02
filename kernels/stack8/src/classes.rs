@@ -652,6 +652,7 @@ impl<'a> Engine<'a> {
                                 "log" | "lgamma" | "log2" => positive,
                                 "sqrt" => nonnegative,
                                 "exp" | "floor" | "fabs" => true,
+                                "frexp" => self.lang.math_frexp,
                                 _ => false,
                             };
                             if domain {

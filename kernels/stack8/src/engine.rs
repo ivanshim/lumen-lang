@@ -17126,6 +17126,18 @@ impl<'a> Engine<'a> {
                     }
                 };
                 let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
+                if working == "frexp" && self.lang.math_frexp {
+                    let (mantissa, exponent) = if x == 0.0 || !x.is_finite() { (x, 0) } else {
+                        let (scaled, adjustment) = if x.abs() < f64::MIN_POSITIVE { (x * 18014398509481984.0, -54) } else { (x, 0) };
+                        let bits = scaled.to_bits();
+                        let power = ((bits >> 52) & 2047) as i64 - 1022 + adjustment;
+                        let half = f64::from_bits((bits & 0x800f_ffff_ffff_ffff) | (1022u64 << 52));
+                        (half, power)
+                    };
+                    let mut real = crate::value::real_of(mantissa, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(ratio) = &mut real { Rc::make_mut(ratio).floating = self.lang.math_floating; }
+                    return Ok(Value::tuple(vec![real, Value::Small(exponent)]));
+                }
                 // A floor answers with a whole number, not a real: the
                 // whole numbers reach past what any one place of the
                 // width holds, and the one beneath the given real is

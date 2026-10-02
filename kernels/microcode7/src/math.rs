@@ -501,3 +501,16 @@ fn divide_integers(dividend: &BigInt, divisor: &BigInt) -> Result<Value, String>
     if !answer.is_finite() { Err(too_large) }
     else { Ok(crate::data::worth_of_binary(answer, DEFAULT_PLACES)) }
 }
+
+/// Split a binary float into a signed half-to-one fraction and a power of two.
+pub fn decomposed(number: f64) -> (f64, i64) {
+    if number == 0.0 || !number.is_finite() { return (number, 0); }
+    let encoding = number.to_bits();
+    let biased = (encoding >> 52) & 0x7ff;
+    if biased == 0 {
+        let (fraction, shift) = decomposed(number * 2f64.powi(54));
+        return (fraction, shift - 54);
+    }
+    let normalized = encoding ^ ((biased ^ 0x3fe) << 52);
+    (f64::from_bits(normalized), biased as i64 - 0x3fe)
+}
