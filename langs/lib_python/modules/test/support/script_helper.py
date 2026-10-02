@@ -78,6 +78,16 @@ class _PythonRunResult:
     def __repr__(self):
         return '_PythonRunResult(%r, %r, %r)' % (self.rc, self.out, self.err)
 
+    def __eq__(self, other):
+        if isinstance(other, _PythonRunResult):
+            return (self.rc, self.out, self.err) == (other.rc, other.out, other.err)
+        if isinstance(other, tuple):
+            return (self.rc, self.out, self.err) == other
+        return NotImplemented
+
+    def __hash__(self):
+        return hash((self.rc, self.out, self.err))
+
 
 def _assert_python(expected_success, *args, **env_vars):
     file, rest = _to_file_args(args)
