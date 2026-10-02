@@ -4206,6 +4206,17 @@ Those files use the extension labels, so the host gives them only to the
 kernels that read them; the reference kernels get the ported library
 alone.
 
+The Python binary modules follow CPython v3.14.8 (`8e6e75d9102e`).
+`struct.py` is unchanged beneath its source and PSF provenance header.
+Its `_struct` interface uses native format layouts, integer and IEEE float
+conversion, and byte-buffer operations in stack8 and microcode7, following
+[Modules/_struct.c](https://github.com/python/cpython/blob/v3.14.8/Modules/_struct.c).
+The Python `array` interface translates the C-only
+[Modules/arraymodule.c](https://github.com/python/cpython/blob/v3.14.8/Modules/arraymodule.c)
+and stores typed bytes with native buffer export tracking. Its storage and
+byte conversion therefore share the kernels' binary operations rather than
+representing array elements only as Python lists.
+
 ## What a kernel does not implement
 
 A kernel reads past a core label it gives no meaning to, exactly as it
