@@ -15416,6 +15416,23 @@ impl<'a> Machine<'a> {
                     return Ok(result);
                 }
                 let one = width(1)?;
+                if working == "frexp" {
+                    let mut exponent = 0;
+                    let mantissa = match one {
+                        n if n == 0.0 || !n.is_finite() => n,
+                        n => {
+                            let small = n.is_subnormal();
+                            let bits = (if small { n * (2.0f64).powi(54) } else { n }).to_bits();
+                            exponent = ((bits >> 52) & 0x7ff) as i64 - 1022;
+                            if small { exponent -= 54; }
+                            let sign_and_digits = bits & !(0x7ffu64 << 52);
+                            f64::from_bits(sign_and_digits | (1022u64 << 52))
+                        }
+                    };
+                    let mut worth = crate::data::worth_of_binary(mantissa, self.real_figures());
+                    if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = self.rules.floating_math; }
+                    return Ok(Value::tuple(vec![worth, Value::Small(exponent)]));
+                }
                 match math::worked(&working, one, two) {
                     Some(got) => {
                         // A working handed only reals of the width
@@ -16737,6 +16754,14 @@ impl<'a> Machine<'a> {
             let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
                 true => {
                     let carry = |v: &Value| -> Result<Value, String> {
+                        if let Value::Frac(r) = v {
+                            let fits = r.above.bits() < 54 && r.beneath.bits() < 1076
+                                && r.beneath.trailing_zeros().is_some_and(|n| n + 1 == r.beneath.bits());
+                            // A real already at this precision needs no new
+                            // normalized ratio on its way into binary arithmetic.
+                            if fits && r.places == Some(self.real_figures()) && self.rules.binary_arithmetic
+                                && self.rules.lone_system_real_render == Some("shortest") { return Ok(v.clone()); }
+                        }
                         let wide = self.as_wide_real(v);
                         if !self.a_real(v) {
                             if let Value::Frac(e) = &wide {

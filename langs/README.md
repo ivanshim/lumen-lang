@@ -1166,7 +1166,10 @@ only. The extension labels so far, all from PHP:
   the worth no number answers to, and dividing by nought answers with
   what lies past every number. PHP's `sqrt`, `log`, `sin`, `atan2`,
   `hypot`, `fdiv` and the rest of them are written on it, and so are its
-  `NAN` and `INF`.
+  `NAN` and `INF`. The unary `frexp` working returns a tuple of the
+  signed binary mantissa and its integer exponent; zero and non-finite
+  inputs keep their value with exponent zero. It reads the binary fields
+  directly, including subnormals, for Python's float decomposition.
 - `ext.builtin.output.begun`: a builtin answering whether anything has
   gone out of the run yet. What is held back in a piece of output kept
   aside has not gone out. PHP's `headers_sent` and

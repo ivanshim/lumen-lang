@@ -11556,6 +11556,16 @@ impl<'a> Engine<'a> {
             // only happens to overflow the working stays quiet, as it
             // was already at the width before this was asked.
             let widened = |v: &Value| -> Res<Value> {
+                if self.lang.arithmetic_binary && self.lang.shortest_reals {
+                    if let Value::Real(r) = v {
+                        // These finite dyadics already fit the arithmetic width.
+                        // Their precision and point remain the operand's own.
+                        if r.places == places && r.p.bits() <= 53 && (1..=1075).contains(&r.q.bits())
+                            && r.q.trailing_zeros() == Some(r.q.bits() - 1) {
+                            return Ok(v.clone());
+                        }
+                    }
+                }
                 match arith::to_real(v, places) {
                     Some(real) => {
                         if !matches!(v, Value::Real(_)) {
@@ -15955,6 +15965,25 @@ impl<'a> Engine<'a> {
                     }
                 };
                 let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
+                if working == "frexp" {
+                    let (mantissa, exponent) = if x == 0.0 || !x.is_finite() {
+                        (x, 0)
+                    } else {
+                        let mut normalized = x;
+                        let mut adjustment = 0i64;
+                        if x.is_subnormal() {
+                            normalized *= 18014398509481984.0;
+                            adjustment = -54;
+                        }
+                        let bits = normalized.to_bits();
+                        let exponent = ((bits >> 52) & 2047) as i64 - 1022 + adjustment;
+                        let mantissa = f64::from_bits((bits & 0x800fffffffffffff) | 0x3fe0000000000000);
+                        (mantissa, exponent)
+                    };
+                    let mut number = crate::value::real_of(mantissa, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut number { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    return Ok(Value::tuple(vec![number, Value::Small(exponent)]));
+                }
                 if working == "fma" {
                     let z = given(3)?;
                     let got = arith::fused(x, y, z)?;
