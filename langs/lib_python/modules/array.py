@@ -132,7 +132,11 @@ class array:
             start, stop, step = key.indices(len(self))
             code = 'I' if self._typecode in 'uw' else self._typecode
             raw = _native(9, '@' + code, (self._buffer, start, stop, step))
-            return array(self._typecode, raw)
+            result = object.__new__(array)
+            result._typecode = self._typecode
+            result._itemsize = self._itemsize
+            result._buffer = bytearray(raw)
+            return result
         index = operator.index(key)
         if index < 0:
             index += len(self)
