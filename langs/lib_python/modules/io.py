@@ -108,26 +108,39 @@ class StringIO:
             raise ValueError('I/O operation on closed file')
 
 
-# Only an in-memory binary stream is carried here.
+# An in-memory binary stream, faithful to CPython's pure-Python
+# _pyio.BytesIO: the initial value is copied in, the buffer grows with
+# null bytes on a write past its end, a seek may not move before the
+# beginning, and getvalue hands back immutable bytes.
 class BytesIO:
-    def __init__(self, initial_value=b'', newline='\n'):
-        if newline != "\n":
-            raise 'NotImplementedError: alternate newline modes are not supported'
-        self.data = initial_value
+    def __init__(self, initial_bytes=None):
+        self.data = b''
+        if initial_bytes is not None:
+            with memoryview(initial_bytes) as view:
+                self.data = bytes(view)
         self.position = 0
         self.closed = False
 
     def write(self, value):
-        if self.closed:
-            raise ValueError('I/O operation on closed file')
-        while len(self.data) < self.position:
-            self.data += b"\0"
-        self.data = self.data[:self.position] + value + self.data[self.position + len(value):]
-        self.position += len(value)
-        return len(value)
+        if isinstance(value, str):
+            raise TypeError("can't write str to binary stream")
+        with memoryview(value) as view:
+            if self.closed:
+                raise ValueError('write to closed file')
+            size = view.nbytes
+            if size == 0:
+                return 0
+            position = self.position
+            data = self.data
+            if position > len(data):
+                data = data + bytes(position - len(data))
+            self.data = data[:position] + bytes(view) + data[position + size:]
+            self.position = position + size
+        return size
 
     def getvalue(self):
-        self._check()
+        if self.closed:
+            raise ValueError('getvalue on closed file')
         return self.data
 
     def read(self, size=-1):
@@ -139,19 +152,23 @@ class BytesIO:
         return value
 
     def seek(self, offset, whence=0):
-        self._check()
-        if whence not in [0, 1, 2]:
-            raise 'ValueError: invalid whence'
-        if whence != 0 and offset != 0:
-            raise 'OSError: cannot do nonzero cur-relative seeks'
-        if whence == 2:
-            offset += len(self.data)
+        if self.closed:
+            raise ValueError('seek on closed file')
+        try:
+            offset = offset.__index__()
+        except AttributeError:
+            raise TypeError('%r is not an integer' % (offset,))
+        if whence == 0:
+            if offset < 0:
+                raise ValueError('negative seek position %r' % (offset,))
+            self.position = offset
         elif whence == 1:
-            offset += self.position
-        if offset < 0:
-            raise 'ValueError: negative seek position'
-        self.position = offset
-        return offset
+            self.position = max(0, self.position + offset)
+        elif whence == 2:
+            self.position = max(0, len(self.data) + offset)
+        else:
+            raise ValueError('unsupported whence value')
+        return self.position
 
     def tell(self):
         self._check()

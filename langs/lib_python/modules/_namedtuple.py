@@ -9,6 +9,10 @@ class _tuplegetter:
         if instance is None:
             return self
         return instance[self._index]
+    def __set__(self, instance, value):
+        raise AttributeError("can't set attribute")
+    def __delete__(self, instance):
+        raise AttributeError("can't delete attribute")
 def namedtuple(typename, field_names, *, rename=False, defaults=None, module=None):
     """Returns a new subclass of tuple with named fields.
 
