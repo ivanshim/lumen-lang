@@ -785,7 +785,7 @@ pub struct Routine {
     pub annotation_is_text: bool,
     pub annotation_protocol: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
-    pub class_namespace: Option<(String, Option<String>)>,
+    pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
     pub referenced: Vec<String>,

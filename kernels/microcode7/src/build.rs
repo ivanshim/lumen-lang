@@ -40,6 +40,7 @@ struct ClassParts {
     lexical_members: Vec<String>,
     completed_class: Address,
     needs_class_cell: bool,
+    class_cell_protocol: bool,
     methods: Vec<(String, Rc<Routine>)>,
     attributes: Vec<String>,
     held: Vec<Form>,
@@ -4903,8 +4904,8 @@ impl<'a> Builder<'a> {
         let mut namespace = None;
         let mut cannot = false;
         let body = self.routine(&title, Holds::Every, Traps::Yields, Vec::new(), 0, |b| {
-            let (body, book, cell, declined) = b.python_class_body(title.clone(), full_name.clone())?;
-            namespace = Some((book, cell)); cannot = declined; Ok(body)
+            let (body, book, cell, protocol, declined) = b.python_class_body(title.clone(), full_name.clone())?;
+            namespace = Some((book, cell, protocol)); cannot = declined; Ok(body)
         })?;
         let Form::Const(Value::Routine(code)) = body else { unreachable!() };
         let mut code = (*code).clone(); code.class_namespace = namespace; code.flags &= !3;
@@ -4918,7 +4919,7 @@ impl<'a> Builder<'a> {
         Ok((sequence(setup), cannot))
     }
 
-    fn python_class_body(&mut self, class_title: String, full_name: String) -> Res<(Form, String, Option<String>, bool)> {
+    fn python_class_body(&mut self, class_title: String, full_name: String) -> Res<(Form, String, Option<String>, bool, bool)> {
         let table = self.table;
         let parent: Option<Address> = None;
         let cannot = false;
@@ -4940,7 +4941,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // The body uses the metaclass's actual mapping from its first statement.
@@ -4999,7 +5000,7 @@ impl<'a> Builder<'a> {
         }
         if parts.cannot { setup.push(self.class_not_ready()); }
         setup.push(constant(Value::Nil));
-        Ok((sequence(setup), parts.book.expect("class namespace").ident.to_string(), parts.needs_class_cell.then(|| parts.completed_class.ident.to_string()), parts.cannot))
+        Ok((sequence(setup), parts.book.expect("class namespace").ident.to_string(), parts.needs_class_cell.then(|| parts.completed_class.ident.to_string()), parts.class_cell_protocol, parts.cannot))
     }
 
     fn class_with_receiver(&mut self) -> Res<(Form, bool)> {
@@ -5125,7 +5126,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -9318,6 +9319,7 @@ impl<'a> Builder<'a> {
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
                     (true, Some(_), Some(receiver), None) if !self.under_way.is_empty() => {
                         self.parts().needs_class_cell = true;
+                        self.parts().class_cell_protocol = true;
                         let private = self.parts().completed_class.ident.to_string();
                         let args = vec![self.read(&private), self.read(&receiver)];
                         let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
@@ -9349,6 +9351,7 @@ impl<'a> Builder<'a> {
                 && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
                 self.advance();
                 self.parts().needs_class_cell = true;
+                self.parts().class_cell_protocol = true;
                 let hidden = self.parts().completed_class.ident.to_string();
                 self.read(&hidden)
             }

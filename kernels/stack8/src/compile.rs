@@ -141,6 +141,7 @@ struct ClassBody {
     bindings: HashSet<String>,
     class_cell: String,
     needs_class_cell: bool,
+    class_cell_protocol: bool,
     methods: Vec<(String, Rc<Routine>)>,
     shared: Vec<(String, String)>,
     /// The names the body has bound, each where the body first bound
@@ -6173,8 +6174,8 @@ impl<'a> Compiler<'a> {
         let mut namespace = None;
         let mut unready = false;
         let body = self.routine(&original_name, Vec::new(), 0, true, |c| {
-            let (book, cell, declined) = c.python_class_body(original_name.clone(), qualification.clone())?;
-            namespace = Some((book, cell)); unready = declined; Ok(())
+            let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone())?;
+            namespace = Some((book, cell, protocol)); unready = declined; Ok(())
         })?;
         let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !3;
         self.read(&builder); self.constant(Value::Routine(Rc::new(body)));
@@ -6188,7 +6189,7 @@ impl<'a> Compiler<'a> {
         Ok(unready)
     }
 
-    fn python_class_body(&mut self, original_name: String, qualification: String) -> Res<(String, Option<String>, bool)> {
+    fn python_class_body(&mut self, original_name: String, qualification: String) -> Res<(String, Option<String>, bool, bool)> {
         self.piece().python_fallthrough = true;
         let lang = self.lang;
         let base = None;
@@ -6226,7 +6227,7 @@ impl<'a> Compiler<'a> {
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // Prepare the live mapping before ordered metadata stores and body statements.
         let metadata = std::mem::take(&mut self.gathering().shared);
@@ -6268,7 +6269,7 @@ impl<'a> Compiler<'a> {
         self.within = outer; self.class_depth = outer_depth;
         if parts.unready { self.class_cannot_run(); self.discard(); }
         self.constant(Value::Null); self.write(RESULT_CELL);
-        Ok((parts.book.expect("class namespace"), parts.needs_class_cell.then_some(parts.class_cell), parts.unready))
+        Ok((parts.book.expect("class namespace"), parts.needs_class_cell.then_some(parts.class_cell), parts.class_cell_protocol, parts.unready))
     }
 
     fn explicit_class(&mut self) -> Res<bool> {
@@ -6418,7 +6419,7 @@ impl<'a> Compiler<'a> {
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         let class_cell = self.gensym("class_cell");
         self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
+        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
         // given its own namespace before its first statement runs, so
@@ -9714,6 +9715,7 @@ impl<'a> Compiler<'a> {
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
                 if extra == 0 && parent.is_some() && self.method_self.is_some() && member.is_none() && !self.gathered.is_empty() {
                     self.gathering().needs_class_cell = true;
+                    self.gathering().class_cell_protocol = true;
                     let cell = self.gathering().class_cell.clone();
                     self.read(&cell);
                     self.read(&self.method_self.clone().unwrap());
@@ -9749,6 +9751,7 @@ impl<'a> Compiler<'a> {
                 && !self.comprehension_names.iter().any(|(name, _)| name == &tok.lexeme) => {
                 self.take();
                 self.gathering().needs_class_cell = true;
+                self.gathering().class_cell_protocol = true;
                 let cell = self.gathering().class_cell.clone();
                 self.read(&cell);
             }

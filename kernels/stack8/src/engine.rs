@@ -103,7 +103,7 @@ pub struct Engine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
     delegated_tokens: std::collections::HashSet<usize>,
-    frame_codes: HashMap<usize, Value>,
+    frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
     class_maker: Option<Rc<Class>>,
@@ -113,6 +113,7 @@ pub struct Engine<'a> {
     kind_classes: Vec<(String, Rc<Class>)>,
     function_members: Vec<(Value, Rc<Instance>)>,
     constructor_records: HashMap<usize, usize>,
+    collecting_cycles: bool,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
@@ -1229,7 +1230,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), constructor_records: HashMap::new(),
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), constructor_records: HashMap::new(), collecting_cycles: false,
             native_exceptions,
             lang,
             world,
@@ -1626,6 +1627,7 @@ impl<'a> Engine<'a> {
             if !crate::faint::first_words(&thing) { continue; }
             self.speak_ignoring(words, vec![Value::Object(thing)], "deallocator");
         }
+        crate::faint::release_all_anchors();
     }
 
     /// What is still being kept when the run ends is let go, outermost
@@ -1703,18 +1705,37 @@ impl<'a> Engine<'a> {
         loop {
             let (words, walks, gone) = crate::faint::settle();
             if words.is_empty() && walks.is_empty() && gone.is_empty() { return; }
-            for (object, routine) in words {
-                self.speak_ignoring(routine, vec![Value::Object(object)], "deallocator");
-            }
             for (told, bearer) in gone {
                 self.speak_ignoring(told, vec![bearer], "callback");
             }
+            for (object, routine) in words {
+                self.speak_ignoring(routine, vec![Value::Object(object)], "deallocator");
+            }
             for walk in walks {
-                if let Err(fault) = self.close_generator(&walk) {
+                if let Err(fault) = self.close_departed_generator(&walk) {
                     self.ignore_fault(fault, &Value::Generator(walk.clone()), "generator");
                 }
             }
         }
+    }
+
+    /// A discarded Python generator keeps the globals of the function
+    /// that made it while its pending finalizer runs, even when its
+    /// defining exec namespace has otherwise become unreachable.
+    fn close_departed_generator(&mut self, walk: &Rc<RefCell<Generator>>) -> Flow<Value> {
+        let book = if self.lang.trace_fields.is_empty() { None } else {
+            walk.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| {
+                self.constructor_book(body).or_else(|| match body.globe.as_ref() {
+                    Some(Value::Bond(cell) | Value::Binding(cell)) => Some(cell.clone()),
+                    _ => None,
+                })
+            }))
+        };
+        let saved = self.outer_book.clone();
+        if let Some(book) = book { self.outer_book = Some(book); }
+        let outcome = self.close_generator(walk);
+        self.outer_book = saved;
+        outcome
     }
 
     /// A call made on the run's behalf, whose raised value nobody can
@@ -1750,43 +1771,73 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// The program asked for the rounds nothing reaches to be found and
-    /// broken. Their objects say their last words first, and the rounds
-    /// are looked for again afterwards, since last words may keep an
-    /// object alive; then every round still unreached is emptied, the
-    /// counting frees the rest, and the watchers are told.
-    fn collect_cycles(&mut self) -> usize {
-        loop {
-            let mut graph = crate::faint::Graph::from_candidates();
-            let unreached = graph.unreached();
-            let mut spoke = false;
-            for value in &unreached {
-                match value {
-                    Value::Object(o) => {
-                        let Some(words) = crate::faint::last_word_of(&o.class) else { continue };
-                        if crate::faint::first_words(o) {
-                            spoke = true;
-                            self.speak_ignoring(words, vec![Value::Object(o.clone())], "deallocator");
-                        }
-                    }
-                    Value::Generator(g) if crate::faint::asleep(g) => {
-                        spoke = true;
-                        if let Err(fault) = self.close_generator(g) {
-                            self.ignore_fault(fault, value, "generator");
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if spoke { continue; }
-            let count = unreached.len();
-            let grave = crate::faint::Graph::sever(&unreached);
-            drop(unreached);
-            drop(graph);
-            drop(grave);
-            self.settle_departed();
-            return count;
+    /// Build ownership including any nodes retained by this collection.
+    fn cycle_graph(&self, retained: &[Value]) -> crate::faint::Graph {
+        let books = self.text_books.iter().flat_map(|book| {
+            std::iter::once(Value::Bond(book.near.clone()))
+                .chain(book.outer.iter().cloned().map(Value::Bond))
+        });
+        let bookkeeping = self.function_members.iter().flat_map(|(function, holder)| [function.clone(), Value::Object(holder.clone())])
+            .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).collect();
+        let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
+            .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
+            .chain(self.native_exceptions.values()).cloned()
+            .chain(self.outer_book.iter().cloned().map(Value::Bond))
+            .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
+        {
+            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live);
+            for (function, holder) in &self.function_members { graph.link_attributes(function, &Value::Object(holder.clone())); }
+            graph
         }
+    }
+
+    /// Clear a collection group's weakrefs, call its callbacks, then run
+    /// its finalizers. Recheck the same retained group for resurrection
+    /// before severing it; cycles created by those calls belong to a later
+    /// collection. A nested collect never enters these phases again.
+    fn collect_cycles(&mut self) -> usize {
+        if self.collecting_cycles { return 0; }
+        self.collecting_cycles = true;
+        let mut graph = self.cycle_graph(&[]);
+        let group = graph.unreached();
+        for (callback, bearer) in crate::faint::clear_group(&group) {
+            self.speak_ignoring(callback, vec![bearer], "callback");
+        }
+        for value in &group {
+            match value {
+                Value::Object(object) => {
+                    if let Some(words) = crate::faint::last_word_of(&object.class) {
+                        if crate::faint::first_words(object) {
+                            self.speak_ignoring(words, vec![Value::Object(object.clone())], "deallocator");
+                            crate::faint::release_anchor(object);
+                        }
+                    }
+                }
+                Value::Generator(walk) if crate::faint::asleep(walk) => {
+                    if let Err(fault) = self.close_departed_generator(walk) {
+                        self.ignore_fault(fault, value, "generator");
+                    }
+                }
+                _ => {}
+            }
+        }
+        drop(graph);
+        let mut after = self.cycle_graph(&group);
+        let unreached = after.still_unreached(group);
+        let count = unreached.len();
+        self.function_members.retain(|(function, _)| !after.unowned(function));
+        self.constructor_records.clear();
+        for (at, (function, _)) in self.function_members.iter().enumerate() {
+            if let Value::Routine(program) = function { self.constructor_records.entry(Rc::as_ptr(program) as usize).or_insert(at); }
+        }
+
+        let grave = crate::faint::Graph::sever(&unreached);
+        drop(unreached);
+        drop(after);
+        drop(grave);
+        self.settle_departed();
+        self.collecting_cycles = false;
+        count
     }
 
     fn hand_over_complaints(&mut self) -> Flow<()> {
@@ -3233,7 +3284,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(peers) = &state.1[3] else { return Err("TypeError: invalid tee peers".into()); };
                 let Value::Array(old) = peers.borrow().contents() else { return Err("TypeError: invalid tee peers".into()); };
                 let mut live = old.to_vec();
-                live.push(Value::Faint(Rc::new(crate::faint::Faint { hold: crate::faint::Hold::Object(Rc::downgrade(object)), bearer: std::rc::Weak::new(), told: None })));
+                live.push(crate::faint::make(crate::faint::Hold::Object(Rc::downgrade(object)), std::rc::Weak::new(), None));
                 *peers.borrow_mut() = Value::array(live);
                 return Ok(Value::Null);
             }
@@ -3647,19 +3698,19 @@ impl<'a> Engine<'a> {
         self.running_routine = caller_routine;
         let mut body_namespace = None;
         if outcome.is_ok() {
-            if let Some((book_name, cell_name)) = &program.class_namespace {
+            if let Some((book_name, cell_name, protocol)) = &program.class_namespace {
                 let book_at = program.idents.iter().position(|name| name == book_name).expect("class locals slot");
                 let cell_at = cell_name.as_ref().map(|cell_name| program.idents.iter().position(|name| name == cell_name).expect("class cell slot"));
                 let book = match &frame[book_at] { Value::Bond(cell) | Value::Binding(cell) => cell.borrow().clone(), held => held.clone() };
                 let cell = cell_at.map_or(Value::Null, |at| frame[at].clone());
-                if matches!(cell, Value::Bond(_) | Value::Binding(_)) {
+                if *protocol && matches!(cell, Value::Bond(_) | Value::Binding(_)) {
                     let wrapped = Self::adapter(31, vec![cell.clone()]);
                     let word = self.class_word("classcell").to_owned();
                     let written = match &book { Value::Collection(storage, _) | Value::Bond(storage) | Value::Binding(storage) => self.book_put(storage, &word, Some(wrapped.clone())), _ => self.dyn_write(&book, &word, Some(wrapped.clone())) };
                     if let Err(fault) = written { outcome = Err(fault); }
                     else { self.data.truncate(base); self.data.push(wrapped); }
                 }
-                body_namespace = Some(Value::tuple(vec![book, cell]));
+                body_namespace = Some(Value::tuple(vec![book, cell, Value::Flag(*protocol)]));
             }
         }
         if outcome.is_ok() && self.class_body_capture.as_ref().is_some_and(|(body, _)| Rc::ptr_eq(body, program)) {
@@ -4661,12 +4712,15 @@ impl<'a> Engine<'a> {
             return Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]);
         }
         let key = Rc::as_ptr(&program.instrs) as usize;
-        self.frame_codes.entry(key).or_insert_with(|| {
-            let mut body = (**program).clone();
-            body.held.clear();
-            body.enclosed.clear();
-            Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())])
-        }).clone()
+        if let Some(handle) = self.frame_codes.get(&key).and_then(Weak::upgrade) {
+            return Value::Adapter(handle);
+        }
+        let mut body = (**program).clone();
+        body.held.clear();
+        body.enclosed.clear();
+        let handle = Rc::new((7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]));
+        self.frame_codes.insert(key, Rc::downgrade(&handle));
+        Value::Adapter(handle)
     }
 
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
@@ -9799,6 +9853,7 @@ impl<'a> Engine<'a> {
                 let object = Rc::new(Instance {replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
                 if self.lang.finaliser.is_some() && crate::faint::last_word_of(&class).is_some() {
                     crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&object)));
+                    if !self.lang.trace_fields.is_empty() { crate::faint::anchor(&object); }
                 }
                 if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
                     self.things_made.borrow_mut().push(Rc::downgrade(&object));
@@ -16480,7 +16535,7 @@ impl<'a> Engine<'a> {
             Builtin::WeakGet => {
                 arity(1)?;
                 let Value::Faint(faint) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()) };
-                faint.hold.revive().unwrap_or(Value::Null)
+                faint.revive().unwrap_or(Value::Null)
             }
             Builtin::Collect => {
                 arity(0)?;
@@ -20884,7 +20939,7 @@ impl Engine<'_> {
         self.class_body_capture = previous;
         call?;
         let captured = captured.unwrap_or_else(|| Value::Map(Rc::new(Vec::new().into())));
-        let (namespace, class_cell) = match captured { Value::Tuple(values) if values.len() == 2 => (values[0].clone(), Some(values[1].clone())), value => (value, None) };
+        let (namespace, class_cell, protocol) = match captured { Value::Tuple(values) if values.len() == 3 => (values[0].clone(), Some(values[1].clone()), matches!(values[2], Value::Flag(true))), value => (value, None, false) };
         let result = if let Some(factory) = factory {
             let mut given = vec![Value::Text(name.clone()), bases, namespace]; given.extend(keywords); self.call_held(factory, given)?
         } else {
@@ -20894,6 +20949,7 @@ impl Engine<'_> {
             self.form_class(name.to_string(), parents, members)?
         };
         if let Some(Value::Bond(cell) | Value::Binding(cell)) = class_cell {
+            if !protocol { *cell.borrow_mut() = result.clone(); return Ok(result); }
             let held = cell.borrow().contents();
             if matches!(held, Value::Blank) { return Err(format!("RuntimeError: __class__ not set defining '{}'", name).into()); }
             if !matches!((held, result.contents()), (Value::Class(a), Value::Class(b)) if Rc::ptr_eq(&a, &b)) { return Err(format!("TypeError: __class__ set to a different value defining '{}'", name).into()); }
@@ -21115,7 +21171,7 @@ impl Engine<'_> {
         if kind == Builtin::ClassLocalsPlace {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
-        let class_book = program.class_namespace.as_ref().and_then(|(name, _)| program.idents.iter().position(|word| word == name)).map(|at| frame[at].clone());
+        let class_book = program.class_namespace.as_ref().and_then(|(name, _, _)| program.idents.iter().position(|word| word == name)).map(|at| frame[at].clone());
         let book = if kind != Builtin::OuterNames && class_book.is_some() {
             match self.what_it_spells(class_book.unwrap()) {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,

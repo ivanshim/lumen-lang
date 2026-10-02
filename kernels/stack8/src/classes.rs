@@ -1233,6 +1233,7 @@ impl<'a> Engine<'a> {
             // a round holding it may be found when the program asks.
             if self.lang.finaliser.is_some() && crate::faint::last_word_of(&o.class).is_some() {
                 crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(o)));
+                if !self.lang.trace_fields.is_empty() { crate::faint::anchor(o); }
             }
             if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
                 self.things_made.borrow_mut().push(Rc::downgrade(o));
