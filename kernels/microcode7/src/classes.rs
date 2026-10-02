@@ -65,6 +65,16 @@ impl<'a> Machine<'a> {
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared:RefCell::new(protocols),weak_slot:Cell::new(None),sealed:Cell::new(false), type_names: std::cell::RefCell::new(None)});
         self.native_kinds.push((word.to_owned(),kind.clone()));
+        if let Some(representative) = self.kind_stand_in(word) {
+            let owner = Value::Blueprint(kind.clone());
+            let known = self.native_directory(&representative);
+            let descriptors = known.into_iter().filter(|name|
+                !["real", "imag", "numerator", "denominator", "start", "stop", "step", "__dir__", "__reduce_ex__"].contains(&name.as_str())
+                && !(word == "generator" && matches!(name.as_str(), "__reduce__" | "__setstate__"))
+                && !kind.shared.borrow().iter().any(|(key, _)| key == name))
+                .filter_map(|name| self.carried_by_kind(&owner, &name).map(|entry| (name, entry))).collect::<Vec<_>>();
+            kind.shared.borrow_mut().extend(descriptors);
+        }
         kind
     }
     pub(super) fn native_word(b:&Blueprint)->Option<String> {b.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v.bare())}
@@ -891,6 +901,17 @@ impl<'a> Machine<'a> {
                         // the entry as before.
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
                             .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
+                        if of_own_kind && entry == "__reduce__" && word == "enumerate" && values.is_empty() {
+                            if let Value::Thing(instance) = &subject {
+                                let recipe = self.reduce_iterator(&receiver)?;
+                                if let Value::Tuple(parts) = recipe {
+                                    let mut entries = parts.to_vec();
+                                    entries[0] = Value::Blueprint(instance.blueprint());
+                                    return Ok(Value::tuple(entries));
+                                }
+                                return Err(self.class_unready());
+                            }
+                        }
                         let found=if of_own_kind{self.attribute(&receiver,&entry)}else{None};
                         match found {
                             Some(bound)=>self.apply_class_member(bound,values),
@@ -1164,8 +1185,13 @@ impl<'a> Machine<'a> {
         told.into()
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
+        if let Value::Wrapped(60, parts) = &entry {
+            if parts[0].bare() == "dict" && self.table.spells("ext.builtin.method.fromkeys", &parts[1].bare()) {
+                return Ok(Value::Member(Rc::new(Value::Blueprint(owner)), parts[1].bare()));
+            }
+        }
         match &entry {
-            Value::Wrapped(120 | 123 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(60 | 120 | 123 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -1847,6 +1873,9 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_fromhex")));
             }
             if let Some(word)=Self::native_word(b) {
+                if key == self.detail("allocate") && self.table.prims.get(&word).is_some_and(Self::names_a_kind) {
+                    return Ok(Self::wrap(14, vec![Value::text(&word)]));
+                }
                 if key==self.detail("module") { return Ok(Value::text(if matches!(word.as_str(), "SimpleNamespace" | "GenericAlias") { "types" } else if word == "Union" { "typing" } else { self.builtin_module() })); }
                 if key==self.detail("qualified") { return Ok(Value::text(&word)); }
                 if key=="__getformat__" && word=="float" {
@@ -3110,7 +3139,8 @@ impl<'a> Machine<'a> {
                 let mut fields = alias.holds.borrow_mut();
                 if let Some((_, flag)) = fields.iter_mut().find(|(name, _)| name == "__unpacked__") { *flag = Value::Flag(true); }
                 drop(fields);
-                Ok(self.prim(Prim::Iterator, "iter", &[Value::tuple(vec![unpacked])])?)
+                let entries = Rc::new(vec![unpacked]).into();
+                Ok(Self::cursor_value_walked(crate::data::IteratorKind::Stored { entries, next: 0 }, Some(Rc::from("generic_alias_iterator"))))
             }
             2 => self.apply_class_member(parent, rest),
             3 if rest.len() == 1 => Ok(Value::tuple(vec![parent])),

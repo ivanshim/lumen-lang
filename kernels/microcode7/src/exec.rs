@@ -6936,7 +6936,7 @@ impl<'a> Machine<'a> {
     /// for the kind itself wherever the kind is asked what its values
     /// can do. Nothing where the word names no native kind.
     pub(super) fn kind_stand_in(&self, word: &str) -> Option<Value> {
-        let walking = ["generator", "reversed", "filter", "map", "zip", "enumerate", "callable_iterator", "bytearray_iterator", "bytes_iterator", "dict_reverseitemiterator", "dict_reversevalueiterator", "dict_reversekeyiterator", "dict_itemiterator", "dict_valueiterator", "dict_keyiterator", "set_iterator", "longrange_iterator", "range_iterator", "str_iterator", "str_ascii_iterator", "tuple_iterator", "list_reverseiterator", "list_iterator", "iterator"];
+        let walking = ["generic_alias_iterator", "generator", "reversed", "filter", "map", "zip", "enumerate", "callable_iterator", "bytearray_iterator", "bytes_iterator", "dict_reverseitemiterator", "dict_reversevalueiterator", "dict_reversekeyiterator", "dict_itemiterator", "dict_valueiterator", "dict_keyiterator", "set_iterator", "longrange_iterator", "range_iterator", "str_iterator", "str_ascii_iterator", "tuple_iterator", "list_reverseiterator", "list_iterator", "iterator"];
         if walking.contains(&word) {
             let empty = IteratorKind::Stored { entries: Rc::new(Vec::new()).into(), next: 0 };
             return Some(Self::cursor_value_walked(empty, Some(Rc::from(word))));
@@ -6985,6 +6985,12 @@ impl<'a> Machine<'a> {
             bounds.extend(self.table.strings("ext.stmt.class.detail.root.members").get(9).cloned());
             bounds.sort_unstable();
             return bounds;
+        }
+        if matches!(sample, Value::Iterator(_)) {
+            let mut entries = ["__iter__", "__next__", "__reduce__", "__setstate__", "__length_hint__"].into_iter()
+                .filter(|name| self.native_member(sample, name)).map(str::to_owned).collect::<Vec<_>>();
+            entries.sort();
+            return entries;
         }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
         let mut gathered = Vec::new();
@@ -7744,6 +7750,10 @@ impl<'a> Machine<'a> {
                         })),
                         _ => x.clone(),
                     },
+                    (_, Value::Wrapped(60, parts)) if parts[0].bare() == "dict" && self.table.spells("ext.builtin.method.fromkeys", &parts[1].bare()) =>
+                        Value::Member(Rc::new(Value::Blueprint(class.clone())), parts[1].bare()),
+                    (Value::Thing(object), Value::Wrapped(60, _)) =>
+                        Value::Wrapped(3, Rc::new(vec![x.clone(), Value::Thing(object.clone())]).into()),
                     (Value::Thing(object), Value::Routine(_) | Value::Bound(..)) => Value::Adorned(Rc::new(Adornment {
                         manner: 'b', target: x.clone(), extra: Some(Value::Thing(object.clone())),
                     })),
@@ -11927,7 +11937,12 @@ impl<'a> Machine<'a> {
         let mut blueprint = &thing.blueprint();
         loop {
             let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.clone());
-            if own.is_some() { return own; }
+            if let Some(entry) = own {
+                // A builtin slot is dispatched through the underlying native value.
+                // Keeping its descriptor in the type dictionary does not appoint an override.
+                if Self::native_word(blueprint).is_some() && matches!(&entry, Value::Wrapped(60, _)) { return None; }
+                return Some(entry);
+            }
             if let Some((_, body)) = blueprint.methods.iter().find(|(key, _)| key == word) { return Some(Value::Routine(body.clone())); }
             // Equality given, in the methods or the namespace, without a
             // hash: the things cannot be hashed.
@@ -21623,7 +21638,7 @@ impl Machine<'_> {
         }
     }
 
-    fn reduce_iterator(&mut self, subject: &Value) -> Result<Value, String> {
+    pub(super) fn reduce_iterator(&mut self, subject: &Value) -> Result<Value, String> {
         fn tuple(values: Vec<Value>) -> Value { Value::tuple(values) }
         let builtin = |op: Prim| {
             let label = self.table.prims.iter().find(|(_, candidate)| **candidate == op).map(|(name, _)| name.clone()).unwrap_or_default();

@@ -55,6 +55,17 @@ impl<'a> Engine<'a> {
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: RefCell::new(hooks), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None) });
         self.kind_classes.push((word.to_string(), c.clone()));
+        if let Some(sample) = self.kind_sample(word) {
+            let names = self.kind_member_names(&sample);
+            for name in names {
+                if matches!(name.as_str(), "start" | "stop" | "step" | "real" | "imag" | "numerator" | "denominator" | "__reduce_ex__" | "__dir__") { continue; }
+                if word == "generator" && matches!(name.as_str(), "__reduce__" | "__setstate__") { continue; }
+                if c.shared.borrow().iter().any(|(key, _)| key == &name) { continue; }
+                if let Some(descriptor) = self.loose_kind_member(&Value::Class(c.clone()), &name) {
+                    c.shared.borrow_mut().push((name, descriptor));
+                }
+            }
+        }
         c
     }
     /// The class every metaclass stands on: the kind builtin read as a
@@ -788,6 +799,16 @@ impl<'a> Engine<'a> {
                     // still reaches the member as before.
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
                         .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
+                    if of_own_kind && member == "__reduce__" && word == "enumerate" {
+                        if let Value::Object(object) = &subject {
+                            if args.is_empty() {
+                                let Value::Tuple(parts) = self.pickle_reduction(&receiver)? else { return Err(self.class_refusal()); };
+                                let mut reduced = parts.to_vec();
+                                reduced[0] = Value::Class(object.class_now());
+                                return Ok(Value::tuple(reduced));
+                            }
+                        }
+                    }
                     let found = if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
                     match found {
                         Some(bound) => self.class_apply(bound,args),
@@ -1148,8 +1169,11 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
+            if w.0 == 29 && w.1[0].plain() == "dict" && self.lang.value_methods.get(&w.1[1].plain()).map(String::as_str) == Some("fromkeys") {
+                return Ok(Value::ValueMethod(Rc::new((Value::Class(class), w.1[1].plain()))));
+            }
             return match w.0 {
-                122 | 124 | 126 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 122 | 124 | 126 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 4 => Ok(w.1[0].clone()),
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
@@ -1409,6 +1433,9 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if let Some(word) = Self::own_kind(c) {
+                    if name == self.class_word("allocate") && self.lang.builtins.get(&word).is_some_and(Self::kind_builtin) {
+                        return Ok(Self::adapter(14, vec![Value::text(&word)]));
+                    }
                     if name==self.class_word("module") { return Ok(Value::text(match word.as_str() { "SimpleNamespace" | "GenericAlias" => "types", "Union" => "typing", _ => self.home_module_word() })); }
                     if name==self.class_word("qualified") { return Ok(Value::text(&word)); }
                     if name == "__getformat__" && word == "float" {
@@ -3018,7 +3045,7 @@ impl<'a> Engine<'a> {
                 if let Value::Object(object) = &alias {
                     for (key, value) in object.fields.borrow_mut().iter_mut() { if key == "__unpacked__" { *value = Value::Flag(true); } }
                 }
-                Ok(self.builtin(Builtin::Iter, "iter", &mut vec![Value::tuple(vec![alias])])?)
+                Ok(Self::core_cursor_walked(crate::value::CursorSource::Items(Rc::new(vec![alias]).into(), 0), Some(Rc::from("generic_alias_iterator"))))
             }
             2 => self.class_apply(origin, given),
             3 if given.len() == 1 => Ok(Value::tuple(vec![origin])),

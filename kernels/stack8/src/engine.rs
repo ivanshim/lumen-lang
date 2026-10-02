@@ -5674,7 +5674,12 @@ impl<'a> Engine<'a> {
         let named = self.lang.class_special.get(place)?;
         let mut class = Some(&object.class_now());
         while let Some(current) = class {
-            if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) { return Some(value.clone()); }
+            if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) {
+                // Native slots already run on the value kept beneath a subclass.
+                // Their descriptors are for explicit attribute access, not a Python override.
+                if Self::own_kind(current).is_some() && matches!(value, Value::Adapter(slot) if slot.0 == 29) { return None; }
+                return Some(value.clone());
+            }
             if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
             // A class saying how its things are equal, in its methods or
             // its namespace, and nothing of their hash, has unhashable things.
@@ -5702,7 +5707,7 @@ impl<'a> Engine<'a> {
     pub(super) fn kind_sample(&self, word: &str) -> Option<Value> {
         // Retain the concrete kind while using an empty walk to ask
         // which protocol members the native type exposes.
-        if matches!(word, "iterator" | "list_iterator" | "list_reverseiterator" | "tuple_iterator" | "str_ascii_iterator" | "str_iterator" | "range_iterator" | "longrange_iterator" | "set_iterator" | "dict_keyiterator" | "dict_valueiterator" | "dict_itemiterator" | "dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator" | "bytes_iterator" | "bytearray_iterator" | "callable_iterator" | "enumerate" | "zip" | "map" | "filter" | "reversed" | "generator") {
+        if matches!(word, "generic_alias_iterator" | "iterator" | "list_iterator" | "list_reverseiterator" | "tuple_iterator" | "str_ascii_iterator" | "str_iterator" | "range_iterator" | "longrange_iterator" | "set_iterator" | "dict_keyiterator" | "dict_valueiterator" | "dict_itemiterator" | "dict_reversekeyiterator" | "dict_reversevalueiterator" | "dict_reverseitemiterator" | "bytes_iterator" | "bytearray_iterator" | "callable_iterator" | "enumerate" | "zip" | "map" | "filter" | "reversed" | "generator") {
             return Some(Self::core_cursor_walked(CursorSource::Items(Rc::new(Vec::new()).into(), 0), Some(Rc::from(word))));
         }
         if let Some(portion) = match word { "dict_keys" => Some("keys"), "dict_values" => Some("values"), "dict_items" => Some("items"), "mappingproxy" => Some("mapping"), _ => None } {
@@ -18561,7 +18566,7 @@ impl Engine<'_> {
         walk
     }
 
-    fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
+    pub(super) fn pickle_reduction(&mut self, value: &Value) -> Res<Value> {
         let pack = |parts: Vec<Value>| Value::tuple(parts);
         let native = |op: Builtin| {
             let word = self.lang.builtins.iter().find(|(_, candidate)| **candidate == op).map(|(word, _)| word.clone()).unwrap_or_default();
