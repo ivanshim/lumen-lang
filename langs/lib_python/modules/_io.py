@@ -262,6 +262,15 @@ class BytesIO(_BufferedIOBase):
         self._pos = end
         return result
     read1 = read
+    def readinto(self, buffer):
+        with memoryview(buffer) as view:
+            target = view.cast('B')
+            if target.readonly:
+                raise TypeError('readinto() argument must be read-write bytes-like object')
+            data = BytesIO.read(self, target.nbytes)
+            target[:len(data)] = data
+            return len(data)
+    readinto1 = readinto
     def readline(self, size=-1):
         size = _size(size)
         self._checkClosed()
@@ -503,20 +512,46 @@ def _text_option(value, name):
     return value
 
 class TextIOWrapper(_TextIOBase):
-    _CHUNK_SIZE = 2048
+    @property
+    def _CHUNK_SIZE(self):
+        return getattr(self, '_chunk_size', 8192)
+    @_CHUNK_SIZE.setter
+    def _CHUNK_SIZE(self, value):
+        value = _index(value)
+        if value <= 0 or value > sys.maxsize:
+            raise ValueError('a strictly positive integer is required')
+        self._chunk_size = value
+    @_CHUNK_SIZE.deleter
+    def _CHUNK_SIZE(self):
+        raise AttributeError('cannot be deleted')
     def __init__(self, buffer, encoding=None, errors=None, newline=None, line_buffering=False, write_through=False):
         import _pyio
+        self._initialized = False
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
         if (encoding is not None and '\0' in encoding) or (errors is not None and '\0' in errors):
             raise ValueError('embedded null character')
         line_buffering = bool(_whence(line_buffering))
         write_through = bool(_whence(write_through))
-        _pyio.TextIOWrapper.__init__(self, buffer, encoding, errors, newline, line_buffering, write_through)
+        self._initialized = True
+        try:
+            _pyio.TextIOWrapper.__init__(self, buffer, encoding, errors, newline, line_buffering, write_through)
+        except BaseException:
+            self._initialized = False
+            raise
     def __repr__(self):
-        if self._buffer is None:
-            return '<{}.{} encoding={!r}>'.format(type(self).__module__, type(self).__qualname__, self.encoding)
-        return _method(self, 'TextIOWrapper', '__repr__')()
+        if not getattr(self, '_initialized', False):
+            raise ValueError('I/O operation on uninitialized object')
+        title = type(self).__module__ + '.' + type(self).__qualname__
+        if getattr(self, '_repr_running', False):
+            raise RuntimeError('reentrant call inside ' + title + '.__repr__')
+        self._repr_running = True
+        try:
+            if self._buffer is None:
+                return '<{} encoding={!r}>'.format(title, self.encoding)
+            return _method(self, 'TextIOWrapper', '__repr__')()
+        finally:
+            self._repr_running = False
     def reconfigure(self, *, encoding=None, errors=None, newline=Ellipsis, line_buffering=None, write_through=None):
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
@@ -542,9 +577,13 @@ class TextIOWrapper(_TextIOBase):
         self._decoder = decoded
         return decoded
     def __getattr__(self, name):
+        if name in ('_initialized', '_repr_running', '_chunk_size'):
+            raise AttributeError(name)
         return _method(self, 'TextIOWrapper', name)
     @property
     def buffer(self):
+        if not getattr(self, '_initialized', False):
+            raise ValueError('I/O operation on uninitialized object')
         if self._buffer is None:
             raise ValueError('underlying buffer has been detached')
         return self._buffer
@@ -621,14 +660,107 @@ class FileIO(_RawIOBase):
     def __init__(self, file, mode='r', closefd=True, opener=None):
         raise UnsupportedOperation('File descriptors are not implemented')
 
+class _CheckedRaw:
+    # Buffered C streams use raw.readinto(), even when raw also has read().
+    # Keep validation here so all refill paths share the same contract.
+    def __init__(self, raw):
+        self.raw = raw
+        self._owned = True
+    @property
+    def closed(self):
+        return not self._owned or self.raw.closed
+    def close(self):
+        if self._owned:
+            return self.raw.close()
+    def __getattr__(self, name):
+        return getattr(self.raw, name)
+    def readinto(self, buffer):
+        count = self.raw.readinto(memoryview(buffer))
+        if count is None:
+            return None
+        try:
+            count = _index(count)
+            if count > sys.maxsize or count < -sys.maxsize - 1:
+                raise ValueError('cannot fit int into an index-sized integer')
+        except Exception as error:
+            raise OSError('raw readinto() failed') from error
+        if count < 0 or count > len(buffer):
+            raise OSError('raw readinto() returned invalid length %d (should have been between 0 and %d)' % (count, len(buffer)))
+        return count
+    def read(self, size=-1):
+        if size is None or size < 0:
+            chunk = self.raw.read()
+            if chunk is not None and not isinstance(chunk, bytes):
+                raise TypeError('read() should return bytes')
+            return chunk
+        data = bytearray(size)
+        count = self.readinto(data)
+        return None if count is None else bytes(data[:count])
+    def readall(self):
+        method = getattr(self.raw, 'readall', None)
+        if method is not None:
+            result = method()
+            if result is not None and not isinstance(result, bytes):
+                raise TypeError('readall() should return bytes')
+            return result
+        chunks = []
+        while True:
+            chunk = self.read()
+            if not chunk:
+                return b''.join(chunks) if chunks else chunk
+            chunks.append(chunk)
+    def write(self, data):
+        count = self.raw.write(data)
+        if count is None:
+            return None
+        count = _ssize(count)
+        if count < 0 or count > len(data):
+            raise OSError('raw write() returned invalid length %d (should have been between 0 and %d)' % (count, len(data)))
+        return count
+
 class BufferedReader(_BufferedIOBase):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         import _pyio
-        self._impl = _pyio.BufferedReader(raw, buffer_size)
-    def __getattr__(self, name):
-        if name == '_impl':
+        self._initialize(_pyio.BufferedReader, raw, buffer_size)
+    def _initialize(self, factory, raw, size):
+        previous = getattr(self, '_implementation', None)
+        if previous is not None and previous.raw is not None:
+            previous.raw._owned = False
+        self._implementation = None
+        self._detached = False
+        self._raw = raw
+        size = _ssize(size)
+        if size <= 0:
+            raise ValueError('buffer size must be strictly positive')
+        self._implementation = factory(_CheckedRaw(raw), size)
+    @property
+    def _impl(self):
+        if getattr(self, '_detached', False):
+            raise ValueError('raw stream has been detached')
+        result = getattr(self, '_implementation', None)
+        if result is None:
             raise ValueError('I/O operation on uninitialized object')
+        return result
+    @property
+    def raw(self):
+        return getattr(self, '_raw', None)
+    def __getattr__(self, name):
+        if name in ('_implementation', '_raw', '_repr_running', '_detached'):
+            raise AttributeError(name)
         return getattr(self._impl, name)
+    def __repr__(self):
+        title = type(self).__module__ + '.' + type(self).__qualname__
+        if getattr(self, '_repr_running', False):
+            raise RuntimeError('reentrant call inside ' + title + '.__repr__')
+        self._repr_running = True
+        try:
+            try:
+                name = self.raw.name
+            except AttributeError:
+                return '<' + title + '>'
+            return '<%s name=%r>' % (title, name)
+        finally:
+            self._repr_running = False
     def readinto(self, buffer):
         return self._impl.readinto(buffer)
     def readinto1(self, buffer):
@@ -647,7 +779,12 @@ class BufferedReader(_BufferedIOBase):
     def closed(self):
         return self._impl.closed
     def close(self):
-        return self._impl.close()
+        if self.closed:
+            return None
+        try:
+            self.flush()
+        finally:
+            self._impl.raw.close()
     def flush(self):
         return self._impl.flush()
     def readable(self):
@@ -661,24 +798,30 @@ class BufferedReader(_BufferedIOBase):
     def tell(self):
         return self._impl.tell()
     def detach(self):
-        return self._impl.detach()
+        self.flush()
+        checked = self._impl.detach()
+        self._detached = True
+        self._raw = None
+        return checked.raw
     def write(self, b):
         return self._impl.write(b)
 
 class BufferedWriter(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         import _pyio
-        self._impl = _pyio.BufferedWriter(raw, buffer_size)
+        self._initialize(_pyio.BufferedWriter, raw, buffer_size)
 
 class BufferedRandom(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         import _pyio
-        self._impl = _pyio.BufferedRandom(raw, buffer_size)
+        self._initialize(_pyio.BufferedRandom, raw, buffer_size)
 
 class BufferedRWPair(BufferedReader):
     def __init__(self, reader, writer, buffer_size=DEFAULT_BUFFER_SIZE):
         import _pyio
-        self._impl = _pyio.BufferedRWPair(reader, writer, buffer_size)
+        self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
+    def close(self):
+        return self._impl.close()
 
 class _Open:
     __name__ = 'open'
@@ -693,3 +836,6 @@ def open_code(path):
 
 import builtins as _builtins
 _builtins.open = open
+
+for _type in (BytesIO, StringIO, TextIOWrapper, IncrementalNewlineDecoder, BufferedReader, BufferedWriter, BufferedRandom, BufferedRWPair, FileIO):
+    _type.__module__ = '_io'

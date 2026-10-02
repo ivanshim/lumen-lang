@@ -8,7 +8,9 @@ class array:
         self.typecode = typecode
         self.itemsize = 1 if typecode in ('b', 'B') else 4
         self.data = []
-        if initializer is not None:
+        if isinstance(initializer, (bytes, bytearray)):
+            self.frombytes(initializer)
+        elif initializer is not None:
             self.extend(initializer)
 
     def append(self, value):
@@ -34,12 +36,23 @@ class array:
     def __getitem__(self, index):
         return self.data[index]
 
+    def frombytes(self, data):
+        with memoryview(data) as view:
+            if not view.c_contiguous:
+                raise BufferError('memoryview: underlying buffer is not C-contiguous')
+            raw = view.tobytes()
+        if len(raw) % self.itemsize:
+            raise ValueError('bytes length not a multiple of item size')
+        import sys
+        for at in range(0, len(raw), self.itemsize):
+            self.append(int.from_bytes(raw[at:at + self.itemsize], sys.byteorder, signed=self.typecode != 'B'))
+
     def tobytes(self):
         if self.typecode in ('B', 'b'):
-            return bytes([n % 256 for n in self.data])
+            return bytes([n & 255 for n in self.data])
         result = b''
         for value in self.data:
-            result += value.to_bytes(4, 'little', signed=True)
+            result += value.to_bytes(4, __import__('sys').byteorder, signed=True)
         return result
 
     def __int__(self):

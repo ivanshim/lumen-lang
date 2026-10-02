@@ -145,7 +145,7 @@ vars = vars
 # the answer falls back on what the reader would have seeded: there is
 # no switch in this runtime that turns the checks off, so it is always
 # true.
-setattr(__load_module('builtins'), '__debug__', globals().get('__debug__', True))
+setattr(__load_module('builtins'), '__debug__', __program_namespace().get('__debug__', True))
 
 # True, False, None, Ellipsis, bytes and bytearray are words the reader
 # knows rather than names it can be asked for, so none of them can stand
@@ -448,7 +448,7 @@ class memoryview:
         from array import array
         if isinstance(self._source, array):
             if self._source.typecode in ('B', 'b'):
-                return self._source.data[offset] % 256
+                return self._source.data[offset] & 255
             word = self._source.data[offset // 4]
             return word.to_bytes(4, 'little', signed=True)[offset % 4]
         if isinstance(self._source, bytes):
