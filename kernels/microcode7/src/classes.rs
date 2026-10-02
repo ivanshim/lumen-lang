@@ -2042,6 +2042,15 @@ impl<'a> Machine<'a> {
             }
             // The worth a thing keeps answers for the methods of its kind.
             let native=Self::underlying(&value);
+            if native.as_ref().is_some_and(|held| matches!(held.settled(), Value::Set(_))) {
+                for (which, position) in [(79, 11), (81, 12)] {
+                    if self.rules.specials.get(which).is_some_and(|word| word == key) && self.appointment(&value, which).is_none() {
+                        let method = self.table.strings("ext.stmt.class.detail.root.members")[position].clone();
+                        let operation = Self::wrap(36, vec![Value::text(&method)]);
+                        return Ok(Self::wrap(3, vec![operation, value.clone()]));
+                    }
+                }
+            }
             if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
                 if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
             }

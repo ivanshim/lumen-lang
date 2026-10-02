@@ -3088,7 +3088,7 @@
     "SyntaxError: invalid parameter list"
   ],
   "ext.stmt.function.parameters.duplicate": [
-    "SyntaxError: duplicate parameter '",
+    "SyntaxError: duplicate argument '",
     "' in function definition"
   ],
   "ext.stmt.function.positional_only": [

@@ -917,6 +917,7 @@ impl<'a> Engine<'a> {
 
     /// Whether a name is one of the methods an exception answers itself.
     fn exception_method_named(&self, name: &str) -> bool {
+        self.lang.class_special.get(81).is_some_and(|word| word == name) ||
         [&self.lang.note_method, &self.lang.setstate_method, &self.lang.reduce_method, &self.lang.traceback_setter, &self.lang.group_split, &self.lang.group_subgroup, &self.lang.group_derive]
             .into_iter().flatten().any(|word| word == name)
     }
@@ -924,6 +925,13 @@ impl<'a> Engine<'a> {
     /// The methods an exception answers itself: adding a note, setting
     /// a traceback, and parting a group three ways.
     fn exception_method(&mut self, object: Rc<Instance>, name: &str, args: &[Value]) -> Flow<Value> {
+        if self.lang.class_special.get(81).is_some_and(|word| word == name) {
+            let [protocol] = args else { return Err(self.lang.method_errors["arguments"].clone().into()) };
+            self.reduction_protocol(protocol)?;
+            let reduce = self.lang.reduce_method.clone().unwrap_or_default();
+            return self.exception_method(object, &reduce, &[]);
+        }
+
         if self.stands_on(&object.class_now(), 19) && self.lang.constructor.as_deref() == Some(name) {
             let Value::Object(fresh) = self.exception_instance(object.class_now().clone(), args.to_vec(), Value::Null) else { unreachable!() };
             let mut fields = object.fields.borrow_mut();
@@ -5613,7 +5621,11 @@ impl<'a> Engine<'a> {
         let mut pairs = store.to_vec();
         let mut amiss = None;
         if let Some(v) = args.first() {
-            match v.contents() {
+            let source = match v {
+                Value::View(view) if view.1 == "mapping" => view.0.contents(),
+                _ => v.contents(),
+            };
+            match source {
                 Value::Map(p) => {
                     let watch = Self::map_cell(v).map(|cell| { let start = Self::map_size(&cell); (cell, start) });
                     for (k, v) in p.iter() {
@@ -6331,7 +6343,7 @@ impl<'a> Engine<'a> {
             // A walk answers a guess at how many members it has left,
             // where the reference keeps one for a walk of its kind.
             78 | 80 => matches!(family, Kindred::Walk),
-            79 | 81 => matches!(family, Kindred::Walk | Kindred::Counted),
+            79 | 81 => matches!(family, Kindred::Walk | Kindred::Counted | Kindred::Set(_)),
             _ => false,
         }
     }
@@ -6368,6 +6380,9 @@ impl<'a> Engine<'a> {
     /// Where among the language's special names this one stands, when a
     /// value of a builtin kind answers to it as a member of its own.
     pub(super) fn native_place(&self, subject: &Value, name: &str) -> Option<usize> {
+        if matches!(subject.contents(), Value::Slice(_)) && (self.lang.class_special.get(79).is_some_and(|word| word == name) || self.lang.class_details.get("root.members").and_then(|row| row.get(12)).is_some_and(|word| word == name)) {
+            return Some(usize::MAX - 2);
+        }
         let family = Self::native_family(subject)?;
         if self.lang.constructor.as_deref() == Some(name) {
             if matches!(family, Kindred::Set(_) | Kindred::Map) { return Some(usize::MAX); }
@@ -6404,7 +6419,29 @@ impl<'a> Engine<'a> {
     /// comparing, the signs, the length, the walk, the place written
     /// into and the place taken out are the ones the plain forms run,
     /// so the answers and the refusals are the plain forms' too.
+    fn reduction_protocol(&mut self, value: &Value) -> Res<()> {
+        let protocol = match value.contents() {
+            integer @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => integer,
+            _ => self.special_index(value)?.ok_or_else(|| self.core_fault("core.integer", &value.core_kind()))?,
+        };
+        if matches!(protocol.contents(), Value::Small(n) if (i32::MIN as i64..=i32::MAX as i64).contains(&n)) || matches!(protocol, Value::Flag(_)) { return Ok(()); }
+        Err("OverflowError: Python int too large to convert to C int".into())
+    }
+
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if matches!(place, 79 | 81) && matches!(receiver.contents(), Value::Set(_)) {
+            if !named.is_empty() || args.len() != usize::from(place == 81) { return Err(self.lang.method_errors["arguments"].clone()); }
+            if place == 81 { self.reduction_protocol(&args[0])?; }
+            let contents = self.core_members(receiver)?;
+            return Ok(Value::tuple(vec![self.named_kind(receiver), Value::tuple(vec![Value::array(contents)]), Value::Null]));
+        }
+        if place == usize::MAX - 2 {
+            let wants_protocol = self.lang.class_details.get("root.members").and_then(|row| row.get(12)).is_some_and(|word| word == operation);
+            if !named.is_empty() || args.len() != usize::from(wants_protocol) { return Err(self.lang.method_errors["arguments"].clone()); }
+            if wants_protocol { self.reduction_protocol(&args[0])?; }
+            let Value::Slice(bounds) = receiver.contents() else { return Err(self.special_fault()) };
+            return Ok(Value::tuple(vec![Value::Native(Builtin::MakeSlice, Rc::from("slice")), Value::tuple(bounds.to_vec())]));
+        }
         if self.is_async_generator(receiver) && matches!(place, 83 | 84) {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             return Ok(if place == 83 { receiver.clone() }
@@ -19616,7 +19653,7 @@ impl Engine<'_> {
             if matches!(b, Builtin::SetAttr | Builtin::DelAttr) && matches!(args.first(), Some(Value::Generator(_))) {
                 return self.class_work(if b == Builtin::SetAttr { 4 } else { 5 }, args).map_err(|fault| fault.told(&self.wording()));
             }
-            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || (matches!(b, Builtin::SetAttr | Builtin::DelAttr) && self.stands_for_kind(v))) {
+            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || (matches!(b, Builtin::GetAttr | Builtin::HasAttr | Builtin::Vars | Builtin::SetAttr | Builtin::DelAttr) && self.stands_for_kind(v))) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
                 if let Some(work) = work {
                     return match self.class_work(work, args) {
@@ -19844,6 +19881,10 @@ impl Engine<'_> {
                 arity(0, 1)?;
                 let mut pairs = match args.first() {
                     Some(Value::Map(p)) => p.to_vec(),
+                    Some(Value::View(view)) if view.1 == "mapping" => match view.0.contents() {
+                        Value::Map(entries) => entries.to_vec(),
+                        _ => return Err(self.lang.method_errors["unready"].clone()),
+                    },
                     Some(value) if !self.lang.class_builder.is_empty() && self.special_value(value, 15).is_none()
                         && matches!(Self::worth_of(value).map(|worth| worth.contents()), Some(Value::Map(_))) => {
                         let Some(Value::Map(entries)) = Self::worth_of(value).map(|worth| worth.contents()) else { unreachable!() };
@@ -21411,7 +21452,7 @@ impl Engine<'_> {
             if message.starts_with("unterminated ") || (unclosed && source.lines().count() > row) { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if message == "cannot assign to function call" && source.lines().count() > row { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if mode != 0 && message == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { col = 0; finish = 0; }
-            let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("annotated name ") || message.starts_with("duplicate parameter ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
+            let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("annotated name ") || message.starts_with("duplicate argument ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
             // Symbol-table diagnostics retain UTF-8 spans; tokenizer
             // diagnostics count characters in the original source.
             if compiler_only {
@@ -21617,7 +21658,7 @@ impl Engine<'_> {
                     let why = if error.error_len().is_none() { "unexpected end of data" } else if bytes[error.valid_up_to()] >= 194 { "invalid continuation byte" } else { "invalid start byte" };
                     let position = prefix.rsplit(['\n', '\'', '"']).next().unwrap_or("").len();
                     let message = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{:02x} in position {position}: {why}", bytes[error.valid_up_to()]);
-                    return Err(self.text_syntax(0, message, filename, row, col, Some((row, col + 1)), &source));
+                    return Err(self.text_syntax(0, message, filename, row, col, Some((row, col)), &source));
                 }
             },
             "latin1" | "latin" | "iso88591" => bytes.iter().copied().map(char::from).collect(),

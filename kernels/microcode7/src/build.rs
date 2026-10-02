@@ -2986,7 +2986,7 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.throw") {
                 self.advance();
                 if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.throw.from") {
-                    return Err("SyntaxError: did you forget an expression between 'raise' and 'from'?".to_owned());
+                    return Err("SyntaxError: invalid syntax".to_owned());
                 }
                 if self.table.single("ext.stmt.throw.from").is_some()
                     && (matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.on_any("stmt.terminator"))
@@ -6003,10 +6003,8 @@ impl<'a> Builder<'a> {
             let mut pairs = Vec::new();
             let mut rest: Option<(usize, String)> = None;
             while !self.on_any("syntax.map.close") {
-                if let Some((start, _)) = &rest {
-                    self.pos = *start;
-                    let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: double star pattern must be the last (right-most) subpattern in the mapping pattern".to_owned() } else { self.bad_case() };
-                    return Err(words);
+                if rest.is_some() {
+                    return Err(if table.has_any("ext.builtin.exceptions.syntax") { String::from("SyntaxError: invalid syntax") } else { self.bad_case() });
                 }
                 if self.on_any("op.pow") {
                     self.advance();
@@ -6491,11 +6489,11 @@ impl<'a> Builder<'a> {
         while !self.sign(&close) && !self.exhausted() {
             let mut manner = if beyond { 'n' } else { 'b' };
             if bind {
-                if closed { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: parameters cannot follow var-keyword parameter".to_owned() } else { wrong() }); }
+                if closed { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { wrong() }); }
                 let word = self.look().lexeme.clone();
                 if table.spells("ext.stmt.function.positional_only", &word) {
                     if slash || beyond || params.is_empty() {
-                        let complaint = if slash { "/ may appear only once" } else if beyond { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        let complaint = if slash { "/ may appear only once" } else if beyond { "/ must be ahead of *" } else { "at least one argument must precede /" };
                         return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {complaint}") } else { wrong() });
                     }
                     for before in &mut manners { *before = 'p'; }
@@ -6514,7 +6512,7 @@ impl<'a> Builder<'a> {
                     manner = 'k';
                     self.advance();
                 } else if table.spells("ext.stmt.function.carries", &word) || table.spells("ext.stmt.function.keyword_only", &word) {
-                    if beyond { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * may appear only once".to_owned() } else { wrong() }); }
+                    if beyond { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { wrong() }); }
                     if self.table.has_any("ext.builtin.exceptions.syntax") && (self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == close) {
                         return Err("SyntaxError: named arguments must follow bare *".to_string());
                     }
@@ -6595,7 +6593,7 @@ impl<'a> Builder<'a> {
                 match (self.on_assign(), manner) {
                     (true, 'v' | 'k') => {
                         let kind = if manner == 'v' { "var-positional" } else { "var-keyword" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} parameter cannot have default value") } else { wrong() });
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { wrong() });
                     }
                     (true, 'b') => optional = true,
                     (false, 'b') if optional => {
@@ -6936,12 +6934,12 @@ impl<'a> Builder<'a> {
         let bad = || table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().to_string();
         loop {
             if self.sign(colon) { self.advance(); break; }
-            if pairs { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: parameters cannot follow var-keyword parameter".to_owned() } else { bad() }); }
+            if pairs { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { bad() }); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if table.spells("op.div", &self.look().lexeme) {
                 if table.flag("ext.stmt.function.closes_over") {
                     if positional_mark || named_only || names.is_empty() {
-                        let reason = if positional_mark { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one parameter must precede /" };
+                        let reason = if positional_mark { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one argument must precede /" };
                         return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {reason}") } else { bad() });
                     }
                     positional_mark = true;
@@ -6956,18 +6954,18 @@ impl<'a> Builder<'a> {
                 let mapping = table.spells("op.pow", &self.look().lexeme);
                 let mut way = if named_only { 'n' } else { 'b' };
                 if many || mapping {
-                    if many && named_only { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * may appear only once".to_owned() } else { bad() }); }
+                    if many && named_only { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { bad() }); }
                     self.advance();
                     named_only = true;
                     pairs = mapping;
                     way = if mapping { 'k' } else { 'v' };
                     if many && self.sign(comma) {
                         self.advance();
-                        if self.sign(colon) { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: named parameters must follow bare *".to_owned() } else { bad() }); }
+                        if self.sign(colon) { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: named arguments must follow bare *".to_owned() } else { bad() }); }
                         continue;
                     }
                     if many && table.has_any("ext.builtin.exceptions.syntax") && self.sign(colon) {
-                        return Err("SyntaxError: named parameters must follow bare *".to_owned());
+                        return Err("SyntaxError: named arguments must follow bare *".to_owned());
                     }
                     gather = Some(names.len());
                 }
@@ -6990,7 +6988,7 @@ impl<'a> Builder<'a> {
                 if self.on_assign() {
                     if many || mapping {
                         let kind = if many { "var-positional" } else { "var-keyword" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} parameter cannot have default value") } else { bad() });
+                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { bad() });
                     }
                     if way == 'b' { default_seen = true; }
                     self.advance();
@@ -10410,6 +10408,13 @@ impl<'a> Builder<'a> {
             self.reading_yield |= answer.is_empty();
             let mut term = self.expr(0)?;
             self.reading_yield = previous;
+            if spread && self.table.has_any("ext.builtin.exceptions.syntax") {
+                let endpoint = &self.tokens[if dictionary { expression_at } else { self.pos - 1 }];
+                self.range_end = Some((endpoint.column + endpoint.lexeme.chars().count(), endpoint.row));
+                self.pos = expression_at;
+                let complaint = match dictionary { true => "dict unpacking cannot be used in dict comprehension", false => "iterable unpacking cannot be used in comprehension" };
+                return Err(format!("SyntaxError: {complaint}"));
+            }
             if dictionary && !spread {
                 self.need_sign(self.table.single("syntax.map.pair").unwrap(), "in a map comprehension")?;
                 let worth = self.expr(0)?;

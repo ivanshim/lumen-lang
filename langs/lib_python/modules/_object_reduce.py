@@ -29,6 +29,10 @@ def reduce(value, protocol=0):
     protocol = index(protocol)
     if not -2147483648 <= protocol <= 2147483647:
         raise OverflowError('Python int too large to convert to C int')
+    if isinstance(value, BaseException):
+        return value.__reduce__()
+    if isinstance(value, (set, frozenset)):
+        return type(value), (list(value),), state(value)
     if protocol < 2:
         return copyreg._reduce_ex(value, protocol)
     cls = type(value)

@@ -1608,6 +1608,14 @@ impl<'a> Engine<'a> {
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {
                     if !matches!(v.contents(), Value::Blank) { return Ok(v.clone()); }
                 }
+                if Self::worth_of(&subject).is_some_and(|held| matches!(held.contents(), Value::Set(_))) {
+                    if let Some(protocol) = [79usize, 81].into_iter().find(|at| self.lang.class_special.get(*at).is_some_and(|word| word == name)) {
+                        if self.special_value(&subject, protocol).is_none() {
+                            let root = self.lang.class_details["root.members"][if protocol == 79 { 11 } else { 12 }].clone();
+                            return Ok(Self::adapter(3, vec![Self::adapter(30, vec![Value::text(&root)]), subject.clone()]));
+                        }
+                    }
+                }
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class_now().clone());}
                 if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
                     let root = Self::adapter(30, vec![Value::text(name)]);
@@ -1817,7 +1825,7 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) if w.0==3 => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
-                if matches!(w.1.get(2),Some(Value::Flag(true))) && name!=self.class_word("kind") { return self.class_get(w.1[0].clone(),name,true); }
+                if (matches!(w.1.first(), Some(Value::Routine(_))) || matches!(w.1.get(2),Some(Value::Flag(true)))) && name!=self.class_word("kind") { return self.class_get(w.1[0].clone(),name,true); }
             }
             _ => {}
         }

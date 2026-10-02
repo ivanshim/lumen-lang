@@ -5347,7 +5347,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.outermost` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.own_names` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
-| `ext.stmt.function.parameters.duplicate` | - | - | `SyntaxError: duplicate parameter '` `' in function definition` | - | - | - | - | - | - | - |
+| `ext.stmt.function.parameters.duplicate` | - | - | `SyntaxError: duplicate argument '` `' in function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
 | `ext.stmt.function.short` | - | - | `lambda` `:` | - | `fn` `=>` | - | - | - | - | - |

@@ -1224,6 +1224,7 @@ impl<'a> Machine<'a> {
 
     /// Whether a word names one of the few methods a fault answers itself.
     fn fault_method_word(&self, word: &str) -> bool {
+        self.rules.specials.get(81).is_some_and(|name| name == word) ||
         ["ext.builtin.exceptions.note", "ext.builtin.exceptions.setstate", "ext.builtin.exceptions.reduce", "ext.builtin.exceptions.traceback.with", "ext.builtin.exceptions.group.split", "ext.builtin.exceptions.group.subgroup", "ext.builtin.exceptions.group.derive"]
             .iter().any(|label| self.table.single(label) == Some(word))
     }
@@ -1231,6 +1232,13 @@ impl<'a> Machine<'a> {
     /// The methods a fault answers itself: a note added, a traceback
     /// set, and a gatherer divided three ways.
     fn fault_method(&mut self, thing: Rc<Thing>, word: &str, given: &[Value]) -> Res<Value> {
+        if self.rules.specials.get(81).is_some_and(|name| name == word) {
+            if given.len() != 1 { return Err(self.method_fault("arguments").into()); }
+            self.check_reduction_protocol(&given[0])?;
+            let word = self.table.single("ext.builtin.exceptions.reduce").unwrap_or_default().to_owned();
+            return self.fault_method(thing, &word, &[]);
+        }
+
         if self.stands_under(&thing.blueprint(), 19) && self.table.single("ext.stmt.class.constructor") == Some(word) {
             let fresh = self.make_fault(thing.blueprint().clone(), given.to_vec(), Value::Nil);
             if let Value::Thing(source) = fresh {
@@ -7401,7 +7409,7 @@ impl<'a> Machine<'a> {
             // A walk answers a guess at how many members it has left,
             // where the table keeps one for a walk of its own kind.
             78 | 80 => mark == 'w',
-            79 | 81 => matches!(mark, 'w' | 'p'),
+            79 | 81 => matches!(mark, 'w' | 'p' | 'e' | 'E'),
             _ => false,
         }
     }
@@ -7445,6 +7453,11 @@ impl<'a> Machine<'a> {
     /// Where among the table's special names this one stands, when a
     /// value of a native kind answers to it as a member of its own.
     pub(super) fn native_place(&self, value: &Value, name: &str) -> Option<usize> {
+        if let Value::Span(_) = value.settled() {
+            let ordinary = self.rules.specials.get(79).is_some_and(|key| key == name);
+            let extended = self.table.strings("ext.stmt.class.detail.root.members").get(12).is_some_and(|key| key == name);
+            if ordinary || extended { return Some(usize::MAX - 2); }
+        }
         let mark = Self::native_mark(value)?;
         if self.table.single("ext.stmt.class.constructor") == Some(name) {
             if matches!(mark, 'e' | 'E' | 'd') { return Some(usize::MAX); }
@@ -7531,6 +7544,14 @@ impl<'a> Machine<'a> {
             _ => 0,
         };
         if !keywords.is_empty() || arguments.len() != wanted { return Err(self.method_fault("arguments").into()); }
+        if matches!(at, 79 | 81) {
+            if let Value::Set(_) = receiver.settled() {
+                if at == 81 { self.check_reduction_protocol(&arguments[0])?; }
+                let rows = self.gathered_members(receiver)?;
+                let arguments = Value::tuple(vec![Value::Vector(crate::tuples::Sequence::plain(rows))]);
+                return Ok(Value::tuple(vec![self.kind_named_after(receiver), arguments, Value::Nil]));
+            }
+        }
         match at {
             79 | 81 => return self.reduce_iterator(&receiver.settled()).map_err(Escape::from),
             80 => return self.restore_iterator(&receiver.settled(), &arguments[0]).map_err(Escape::from),
@@ -7865,7 +7886,10 @@ impl<'a> Machine<'a> {
             return Some(self.kind_named_after(&value.settled()));
         }
         if let Value::Span(bounds) = value {
-            return self.span_bound_named(name).map(|i| bounds[i].clone());
+            if let Some(bound) = self.span_bound_named(name) { return Some(bounds[bound].clone()); }
+            if self.native_place(value, name) == Some(usize::MAX - 2) {
+                return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
+            }
         }
         // A stepped walk holds three numbers and no places; each of the
         // three answers to its own word.
@@ -8352,7 +8376,31 @@ impl<'a> Machine<'a> {
         Err(Escape::Thrown(gathered))
     }
 
+    fn check_reduction_protocol(&mut self, input: &Value) -> Result<(), String> {
+        let whole = match input.settled() {
+            Value::Small(n) => BigInt::from(n),
+            Value::Flag(flag) => BigInt::from(u8::from(flag)),
+            Value::Huge(n) => (*n).clone(),
+            _ => match self.stood_for_whole(input)? {
+                Some(index) => index.as_big()?,
+                None => return Err(self.core_complaint("core.integer", &input.kind_word())),
+            },
+        };
+        match whole.to_i32() {
+            Some(_) => Ok(()),
+            None => Err(String::from("OverflowError: Python int too large to convert to C int")),
+        }
+    }
+
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if self.native_place(receiver, name) == Some(usize::MAX - 2) {
+            let extended = self.table.strings("ext.stmt.class.detail.root.members").get(12).is_some_and(|word| word == name);
+            if arguments.len() != if extended { 1 } else { 0 } || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            if extended { self.check_reduction_protocol(&arguments[0])?; }
+            if let Value::Span(bounds) = receiver.settled() {
+                return Ok(Value::Tuple(crate::tuples::Sequence::plain(vec![Value::Intrinsic(Prim::SliceBounds, Rc::from("slice")), Value::Tuple(bounds)])));
+            }
+        }
         if self.directory_attribute(receiver, name).is_some() {
             if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
             return Ok(self.ordinary_directory(receiver));
@@ -20478,6 +20526,12 @@ impl Machine<'_> {
         if let Some(attribute) = self.table.single("ext.system.module.path").map(str::to_owned) {
             if let Some((parent_name, _)) = split {
                 let parent_value = self.load_namespace(parent_name)?;
+                if let Some(alias) = self.cached_import(path) {
+                    return match alias {
+                        Value::Nil => Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules")),
+                        module => Ok(module),
+                    };
+                }
                 let has_directories = if let Value::Thing(parent) = &parent_value {
                     parent.holds.borrow().iter().any(|entry| entry.0 == attribute)
                 } else { false };
@@ -21532,7 +21586,7 @@ impl<'a> Machine<'a> {
                 if words.starts_with("unterminated ") || (needs_closer && source.lines().count() > line as usize) { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if words == "cannot assign to function call" && source.lines().count() > line as usize { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if mode > 0 && words == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { offset = 0; end_offset = 0; }
-                let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("annotated name ") || words.starts_with("duplicate parameter ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
+                let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("annotated name ") || words.starts_with("duplicate argument ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
                 if omit {
                     let first: String = text.chars().take(offset.saturating_sub(1) as usize).collect();
                     offset = first.len() as i64 + 1;
@@ -21728,7 +21782,7 @@ impl<'a> Machine<'a> {
                 let byte = raw[bad.valid_up_to()];
                 let reason = match bad.error_len() { None => "unexpected end of data", Some(_) if byte >= 194 => "invalid continuation byte", _ => "invalid start byte" };
                 let words = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{byte:02x} in position {position}: {reason}");
-                Err(self.text_unreadable_at(0, words, file, line, offset, Some((line, offset + 1)), &String::from_utf8_lossy(raw)))
+                Err(self.text_unreadable_at(0, words, file, line, offset, Some((line, offset)), &String::from_utf8_lossy(raw)))
             }
         }
     }
