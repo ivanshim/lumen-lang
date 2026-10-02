@@ -13232,8 +13232,8 @@ impl<'a> Machine<'a> {
         // beneath it is let to stand in its place: the worth would be
         // asked for an address of its own kind and have none.
         if let (Prim::Contains | Prim::Absent, [needle @ (Value::Thing(_) | Value::Tuple(_) | Value::Keyed(..)), haystack]) = (operation, operands) {
-            if !Self::needs_set_methods(needle) { return Ok(None); }
             if let Value::Set(store) = haystack.settled() {
+                if !Self::needs_set_methods(needle) { return Ok(None); }
                 if let Value::Set(candidate) = self.set_search_item(needle) {
                     let present = store.borrow().keys.contains(&candidate.borrow().whole_address());
                     return Ok(Some(Value::Flag(if operation == Prim::Absent { !present } else { present })));
