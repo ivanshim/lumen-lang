@@ -252,7 +252,13 @@ class _HostFile:
 
     def _ensure_lines(self):
         if self._lines is None or self._lines_pos != self._pos:
-            self._lines = self._buffer[self._pos:].splitlines(True)
+            if self._binary:
+                parts = self._buffer[self._pos:].split(b'\n')
+                self._lines = [part + b'\n' for part in parts[:-1]]
+                if parts[-1]:
+                    self._lines.append(parts[-1])
+            else:
+                self._lines = self._buffer[self._pos:].splitlines(True)
             self._lines_at = 0
             self._lines_pos = self._pos
 
