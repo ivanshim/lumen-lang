@@ -17008,6 +17008,7 @@ impl<'a> Engine<'a> {
                     return self.product_sum(&args[1], &args[2]);
                 }
                 let wants = match working.as_str() {
+                    "vector_norm" if self.lang.math_floating => args.len() - 1,
                     "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
                     "fma" => 3,
                     _ => 1,
@@ -17041,6 +17042,13 @@ impl<'a> Engine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
+                if working == "vector_norm" && self.lang.math_floating {
+                    let points = (1..args.len()).map(given).collect::<Result<Vec<_>, _>>()?;
+                    let got = arith::vector_norm(&points);
+                    let mut answer = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut answer { Rc::make_mut(real).floating = true; }
+                    return Ok(answer);
+                }
                 let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
                 if working == "fma" {
                     let z = given(3)?;

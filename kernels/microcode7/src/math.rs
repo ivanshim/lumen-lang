@@ -445,3 +445,43 @@ fn divide_integers(dividend: &BigInt, divisor: &BigInt) -> Result<Value, String>
     if !answer.is_finite() { Err(too_large) }
     else { Ok(crate::data::worth_of_binary(answer, DEFAULT_PLACES)) }
 }
+
+// Release 3.14.8 vector_norm from Modules/mathmodule.c, using the
+// error-free sum and product transformations before correcting sqrt.
+pub fn euclidean_length(numbers: &[f64]) -> f64 {
+    let maximum = numbers.iter().fold(0.0_f64, |m, n| m.max(n.abs()));
+    if maximum == f64::INFINITY { return maximum; }
+    if numbers.iter().any(|n| n.is_nan()) { return f64::NAN; }
+    if numbers.len() < 2 || maximum == 0.0 { return maximum; }
+    let encoding = maximum.to_bits();
+    let field = (encoding >> 52) as i32;
+    let frexp_power = match field {
+        0 => -1010 - encoding.leading_zeros() as i32,
+        _ => field - 1022,
+    };
+    if frexp_power <= -1024 {
+        let lifted = numbers.iter().map(|n| n / f64::MIN_POSITIVE).collect::<Vec<_>>();
+        return euclidean_length(&lifted) * f64::MIN_POSITIVE;
+    }
+    let shift = -frexp_power;
+    let factor_bits = match shift {
+        -1024 | -1023 => 1_u64 << (shift + 1074),
+        _ => ((shift + 1023) as u64) << 52,
+    };
+    let factor = f64::from_bits(factor_bits);
+    let (mut total, mut round_product, mut round_sum) = (1.0_f64, 0.0_f64, 0.0_f64);
+    let product = |a: f64, b: f64| { let hi = a * b; (hi, a.mul_add(b, -hi)) };
+    let sum = |a: f64, b: f64| { let hi = a + b; (hi, (a - hi) + b) };
+    for term in numbers.iter().map(|v| v * factor) {
+        let (square, error) = product(term, term);
+        let (joined, remainder) = sum(total, square);
+        total = joined;
+        round_product += error;
+        round_sum += remainder;
+    }
+    let estimate = (total - 1.0 + (round_product + round_sum)).sqrt();
+    let (negative, error) = product(-estimate, estimate);
+    let (joined, remainder) = sum(total, negative);
+    let correction = joined - 1.0 + ((round_product + error) + (round_sum + remainder));
+    (estimate + correction / (estimate + estimate)) / factor
+}

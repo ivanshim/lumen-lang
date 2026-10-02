@@ -390,3 +390,42 @@ fn integer_quotient(a: &BigInt, b: &BigInt) -> Result<Value, String> {
     if result.is_infinite() { return Err(overflow()); }
     Ok(crate::value::real_of(signed(result), DEFAULT_PLACES))
 }
+
+// CPython v3.14.8 mathmodule.c vector_norm: scaled double-length squares
+// and a differential correction to the square root.
+pub fn vector_norm(input: &[f64]) -> f64 {
+    let mut largest = 0.0_f64;
+    let mut nan = false;
+    for &v in input { largest = largest.max(v.abs()); nan |= v.is_nan(); }
+    if largest.is_infinite() { return largest; }
+    if nan { return f64::NAN; }
+    if largest == 0.0 || input.len() <= 1 { return largest; }
+    let bits = largest.to_bits();
+    let biased = (bits >> 52) as i32;
+    let exponent = if biased == 0 { 63 - bits.leading_zeros() as i32 - 1073 } else { biased - 1022 };
+    if exponent < -1023 {
+        let normal: Vec<f64> = input.iter().map(|x| x / f64::MIN_POSITIVE).collect();
+        return f64::MIN_POSITIVE * vector_norm(&normal);
+    }
+    let power = -exponent;
+    let scale = if power >= -1022 { f64::from_bits(((power + 1023) as u64) << 52) }
+                else { f64::from_bits(1_u64 << (power + 1074)) };
+    let (mut high, mut products, mut additions) = (1.0, 0.0, 0.0);
+    for &v in input {
+        let x = v * scale;
+        let square = x * x;
+        let tail = x.mul_add(x, -square);
+        let next = high + square;
+        additions += (high - next) + square;
+        products += tail;
+        high = next;
+    }
+    let mut root = (high - 1.0 + (products + additions)).sqrt();
+    let negative_square = -root * root;
+    let residue = (-root).mul_add(root, -negative_square);
+    let next = high + negative_square;
+    additions += (high - next) + negative_square;
+    products += residue;
+    root += (next - 1.0 + (products + additions)) / (2.0 * root);
+    root / scale
+}

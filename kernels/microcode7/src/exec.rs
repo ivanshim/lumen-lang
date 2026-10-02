@@ -16561,7 +16561,7 @@ impl<'a> Machine<'a> {
                     if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
                     return self.dot_product(&v[1], &v[2]);
                 }
-                let takes = math::worked_takes(&working);
+                let takes = if working == "vector_norm" && self.rules.floating_math { v.len() - 1 } else { math::worked_takes(&working) };
                 if v.len() != takes + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
                 }
@@ -16592,6 +16592,14 @@ impl<'a> Machine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
+                if self.rules.floating_math && working == "vector_norm" {
+                    let mut coordinates = Vec::with_capacity(takes);
+                    for at in 1..v.len() { coordinates.push(width(at)?); }
+                    let norm = math::euclidean_length(&coordinates);
+                    let mut answer = crate::data::worth_of_binary(norm, self.real_figures());
+                    if let Value::Frac(number) = &mut answer { Rc::make_mut(number).float_style = true; }
+                    return Ok(answer);
+                }
                 let two = match takes {
                     2 | 3 => width(2)?,
                     _ => 0.0,

@@ -387,34 +387,7 @@ def hypot(*coordinates):
 
 
 def _hypot_values(values):
-    # Both callers have already converted every coordinate. Keep that
-    # ordering even when an early coordinate is infinite or NaN: a later
-    # conversion can still raise. Inspecting these base floats directly
-    # avoids repeating the public conversion protocol for each distance.
-    saw_inf = False
-    saw_nan = False
-    for value in values:
-        saw_inf = saw_inf or value == inf or value == -inf
-        saw_nan = saw_nan or value != value
-    if saw_inf:
-        return inf
-    if saw_nan:
-        return nan
-    if len(values) == 0:
-        return 0.0
-    if len(values) == 1:
-        return fabs(values[0])
-    import decimal
-    squares = decimal.Decimal(0)
-    for value in values:
-        exact = decimal.Decimal(value)
-        squares += exact * exact
-    if squares == 0:
-        return 0.0
-    try:
-        return float(squares.sqrt())
-    except OverflowError:
-        return inf
+    return __math('vector_norm', *values)
 
 
 def _point_items(point):
