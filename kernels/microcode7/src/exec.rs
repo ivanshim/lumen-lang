@@ -7776,6 +7776,7 @@ impl<'a> Machine<'a> {
         }
         if let Value::Intrinsic(op, word) = value {
             if !Self::names_a_kind(op) {
+                if name == self.rules.detail_name { return Some(Value::text(word.rsplit('.').next().unwrap_or(word))); }
                 if name == self.rules.detail_qualified { return Some(Value::text(word)); }
                 if name == self.rules.detail_module { return Some(self.intrinsic_home(op, word)); }
                 if name == self.rules.detail_receiver {
@@ -17553,6 +17554,7 @@ impl<'a> Machine<'a> {
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
+                    _ if self.table.has_any("ext.builtin.exceptions.traceback") => false,
                     _ if !v[0].selfsame(&v[1]) => false,
                     _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
                 };

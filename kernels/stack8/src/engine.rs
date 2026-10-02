@@ -6087,6 +6087,7 @@ impl<'a> Engine<'a> {
         }
         if let Value::Native(op, word) = &held {
             if !Self::kind_builtin(op) {
+                if name == self.class_word("name") { return Ok(Some(Value::text(word.rsplit('.').next().unwrap_or(word)))); }
                 if name == self.class_word("qualified") { return Ok(Some(Value::text(word))); }
                 if name == self.class_word("module") { return Ok(Some(self.callable_home(op, word))); }
                 if name == self.class_word("receiver") {
@@ -12134,6 +12135,7 @@ impl<'a> Engine<'a> {
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
                     (Value::Object(_), Value::Text(_)) | (Value::Text(_), Value::Object(_)) => false,
                     (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
+                    _ if !self.lang.trace_fields.is_empty() => false,
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
                 };
