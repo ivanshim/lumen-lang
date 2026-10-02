@@ -4388,7 +4388,7 @@ impl<'a> Builder<'a> {
                 let gathered = table.has_any("ext.op.tuple");
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
-            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+            } else if self.look().shape == Shape::Bare && !(table.keywords.contains(&self.look().lexeme) && !table.spells("ext.stmt.type_alias", &self.look().lexeme))
                 && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.

@@ -44,6 +44,7 @@
   "ext.builtin.complex.zero": [
     "ZeroDivisionError: division by zero"
   ],
+  "ext.builtin.posix": ["__posix"],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -879,7 +880,10 @@
     "MemoryError",
     "BufferError",
     "StopAsyncIteration",
-    "SystemError"
+    "SystemError",
+    "PermissionError",
+    "FileExistsError",
+    "NotADirectoryError"
   ],
   "ext.builtin.exceptions.args": [
     "args"

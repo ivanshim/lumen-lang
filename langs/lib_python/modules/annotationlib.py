@@ -1,8 +1,8 @@
 # The formats an __annotate__ function is asked for, and the one reader of
 # annotations that works without one. This runtime records the names a class
 # or module annotates but does not evaluate the annotations themselves, so
-# only VALUE can be served; the formats that need the annotation expression
-# back are refused rather than answered with a guess.
+# VALUE and resolved FORWARDREF annotations can be served; formats requiring
+# the original annotation expression are refused.
 
 class Format:
     VALUE = 1
@@ -15,8 +15,8 @@ _FORMAT_NAMES = {1: 'VALUE', 2: 'VALUE_WITH_FAKE_GLOBALS', 3: 'FORWARDREF', 4: '
 def _check_format(format):
     if format not in _FORMAT_NAMES:
         raise 'ValueError: ' + str(format) + ' is not a valid Format'
-    if format != Format.VALUE:
-        raise 'NotImplementedError: annotationlib can only serve Format.VALUE here'
+    if format not in (Format.VALUE, Format.FORWARDREF):
+        raise NotImplementedError("annotationlib cannot produce unevaluated annotation strings here")
 
 def get_annotate_from_class_namespace(obj):
     # A class body here never leaves an __annotate__ behind.

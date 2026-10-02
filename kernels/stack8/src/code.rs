@@ -636,6 +636,7 @@ pub enum Builtin {
     /// this may run a second interpreter beside itself and read its
     /// writing back.
     Subprocess,
+    Posix,
     /// The host's own signals, one word told which step it is on
     /// (ext.builtin.signal): give a number the handler it answers with,
     /// ask which handler a number was given, or leave a number pending

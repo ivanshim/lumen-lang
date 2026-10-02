@@ -376,3 +376,19 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+# Python audit hooks receive explicit runtime audit events in registration order.
+_audit_hooks = []
+
+def audit(event, *args):
+    if not isinstance(event, str):
+        raise TypeError('audit() argument 1 must be str')
+    for hook in tuple(_audit_hooks):
+        hook(event, args)
+
+def addaudithook(hook):
+    try:
+        audit('sys.addaudithook')
+    except RuntimeError:
+        return
+    _audit_hooks.append(hook)

@@ -4561,7 +4561,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `PermissionError` `FileExistsError` `NotADirectoryError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4747,6 +4747,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.posix` | - | - | `__posix` | - | - | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.exp` | - | - | `exp` | - | - | - | - | - | - | - |
@@ -5725,3 +5726,5 @@ protocols.
 `ext.builtin.heap_native` exposes the Python-only heap accelerator. It operates
 on list storage directly, retaining aliases and catching size changes across
 user comparisons; the four reference kernels ignore this label.
+
+`ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access and file descriptors for the Python POSIX adapter. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.

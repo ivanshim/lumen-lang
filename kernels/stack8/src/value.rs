@@ -1031,6 +1031,7 @@ impl Value {
             Value::Bytes(bytes, false, _) => Ok(format!("bytes:{:?}", bytes.borrow())),
             Value::Bytes(_, true, _) => Err("bytearray"),
             Value::Native(_, word) => Ok(format!("builtin:{word}")),
+            Value::ByteKind(mutable, _) => Ok(format!("bytekind:{mutable}")),
             Value::Class(kind) => Ok(format!("class:{:p}", Rc::as_ptr(kind))),
             Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
             Value::Method(owner, code) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),

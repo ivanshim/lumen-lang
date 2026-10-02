@@ -786,7 +786,7 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 => Some(20), 42 => Some(19),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=55 => Some(20), 42 => Some(19),
                 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
             };
             let mut seed = Vec::new();
@@ -5337,7 +5337,9 @@ impl<'a> Machine<'a> {
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
-                    Value::Shared(cell) if self.rules.closes_over && (!self.names_in_calls || Rc::ptr_eq(f, &self.outermost) && self.loaded_spaces.contains_key(&self.written_in)) => *cell.borrow_mut() = Value::Unset,
+                    // Dropping a compiler temporary releases its reference; deleting
+                    // a source binding empties the shared cell it names.
+                    Value::Shared(cell) if !slot.ident.starts_with('#') && self.rules.closes_over && (!self.names_in_calls || Rc::ptr_eq(f, &self.outermost) && self.loaded_spaces.contains_key(&self.written_in)) => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }
                 Ok(Value::Nil)
@@ -5766,8 +5768,32 @@ impl<'a> Machine<'a> {
                 // What was written: the class it is built on, then a value
                 // for every property, kept value and constant, in the
                 // order the plan names them.
-                let mut given = self.value_list(values, frame)?.into_iter();
-                let under = match plan.extends {
+                let evaluated = self.value_list(values, frame)?;
+                let count = plan.answers + if plan.extends { 1 } else { 0 };
+                let (old, rest) = evaluated.split_at(count);
+                let old_bases = Value::tuple(old.to_vec());
+                let mut bases = Vec::new();
+                let mut changed = false;
+                for entry in old {
+                    let hook = if self.has_class_order() && !matches!(entry, Value::Blueprint(_) | Value::Intrinsic(..) | Value::OctetKind { .. }) {
+                        match self.read_class_member(entry.clone(), "__mro_entries__", false) {
+                            Ok(method) => Some(method),
+                            Err(escape) if self.missing_member_escape(&escape) => None,
+                            Err(escape) => return Err(escape),
+                        }
+                    } else { None };
+                    if let Some(method) = hook {
+                        match self.apply_held(method, vec![old_bases.clone()])?.settled() {
+                            Value::Tuple(row) => bases.extend(row.iter().cloned()),
+                            _ => return Err(String::from("TypeError: __mro_entries__ must return a tuple").into()),
+                        }
+                        changed = true;
+                    } else { bases.push(entry.clone()); }
+                }
+                let n_bases = bases.len();
+                bases.extend_from_slice(rest);
+                let mut given = bases.into_iter();
+                let under = match n_bases != 0 {
                     false => None,
                     true => match given.next() {
                         // A class the seal marked unchangeable stands
@@ -5795,7 +5821,7 @@ impl<'a> Machine<'a> {
                     },
                 };
                 let mut answers = Vec::with_capacity(plan.answers);
-                for _ in 0..plan.answers {
+                for _ in 1..n_bases {
                     match given.next() {
                         Some(Value::Blueprint(b)) if Self::sealed(&b) => return Err(format!("TypeError: type '{}' is not an acceptable base type", b.name).into()),
                         Some(Value::Blueprint(b)) => answers.push(b),
@@ -5819,6 +5845,7 @@ impl<'a> Machine<'a> {
                 let constants = named(&plan.constant_names);
                 if self.has_class_order() {
                     let mut entries=shared;
+                    if changed { entries.push((String::from("__orig_bases__"), old_bases)); }
                     entries.extend(plan.methods.iter().map(|(key,p)|(key.clone(),Value::Routine(p.clone()))));
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
@@ -15283,8 +15310,9 @@ impl<'a> Machine<'a> {
                 // reference's __import__ reads it in, and a value the
                 // program's own __import__ answered with answers through
                 // the protocol it answers to.
-                if self.is_our_namespace(&v[0], &v[1].bare()) {
-                    self.namespace_item(&v[0], &v[1].bare(), &v[2].bare())?
+                let origin = self.package_import_name(&v[1].bare())?;
+                if self.is_our_namespace(&v[0], &origin) {
+                    self.namespace_item(&v[0], &origin, &v[2].bare())?
                 } else {
                     // A member the program's own __import__ answered
                     // without is a missing import, not a missing
@@ -16161,6 +16189,7 @@ impl<'a> Machine<'a> {
             // a pipe (1), or inherited (anything else); a third stream
             // told to follow the second is kept a pipe of its own, and
             // the library that asked joins the two later.
+            Prim::Posix => crate::posix::perform(v)?,
             Prim::Subprocess => {
                 if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
                 let step = as_index(&v[0])?;
@@ -20181,6 +20210,20 @@ impl Machine<'_> {
 
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
+    fn package_import_name(&self, spelling: &str) -> Result<String, String> {
+        let level = spelling.bytes().take_while(|byte| *byte == b'.').count();
+        if level == 0 { return Ok(spelling.to_owned()); }
+        let namespace = self.loaded_spaces.get(&self.written_in).ok_or("ImportError: attempted relative import with no known parent package")?;
+        let is_package = self.library_module_file(namespace).is_some_and(|file| std::path::Path::new(&file).file_name().is_some_and(|name| name == "__init__.py"));
+        let base = if is_package { namespace.as_str() } else { namespace.rsplit_once('.').map(|pair| pair.0).unwrap_or("") };
+        if base.is_empty() { return Err(String::from("ImportError: attempted relative import with no known parent package")); }
+        let available = base.split('.').count();
+        if level > available { return Err(String::from("ImportError: attempted relative import beyond top-level package")); }
+        let prefix = base.split('.').take(available + 1 - level).collect::<Vec<_>>().join(".");
+        let tail = &spelling[level..];
+        Ok(if tail.is_empty() { prefix } else { format!("{prefix}.{tail}") })
+    }
+
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is
@@ -20198,7 +20241,8 @@ impl Machine<'_> {
             if self.import_cache_names(path) { return Ok(value.clone()); }
         }
         if path.starts_with('.') {
-            return Err(self.table.single("ext.stmt.import.relative.unready").unwrap_or_default().to_string());
+            let absolute = self.package_import_name(path)?;
+            return self.load_namespace(&absolute);
         }
         // A directory the program itself put on `sys.path` is looked in,
         // in the order it stands there, ahead of the library.
@@ -20207,6 +20251,11 @@ impl Machine<'_> {
         if let Some(attribute) = self.table.single("ext.system.module.path").map(str::to_owned) {
             if let Some((parent_name, _)) = split {
                 let parent_value = self.load_namespace(parent_name)?;
+                match self.cached_import(path) {
+                    Some(Value::Nil) => return Err(format!("ModuleNotFoundError: import of {} halted; None in sys.modules", path)),
+                    Some(namespace) => return Ok(namespace),
+                    None => {}
+                }
                 let has_directories = if let Value::Thing(parent) = &parent_value {
                     parent.holds.borrow().iter().any(|entry| entry.0 == attribute)
                 } else { false };
@@ -23371,9 +23420,9 @@ impl Machine<'_> {
                         if nested {
                             let inner = cell.borrow().clone();
                             if let Value::Shared(inner) | Value::Mutable(inner, _) = inner { *inner.borrow_mut() = dictionary; }
-                        } else { *cell.borrow_mut() = dictionary; }
+                        } else { *cell.borrow_mut() = dictionary.keep(true); }
                     }
-                    _ => { *slot = dictionary; }
+                    _ => { *slot = dictionary.keep(true); }
                 }
             }
             break;

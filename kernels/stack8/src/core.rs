@@ -168,6 +168,7 @@ impl Value {
                 Value::text(&text).core_hash()
             }
             Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
+            Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),

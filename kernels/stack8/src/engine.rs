@@ -520,7 +520,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -9585,8 +9585,31 @@ impl<'a> Engine<'a> {
                 // What was pushed: the class to stand on, then a value for
                 // every property, every value of the class's own, and
                 // every constant, in the order the plan names them.
-                let mut given = self.drop_many(argc)?.into_iter();
-                let base = match plan.extends {
+                let mut inputs = self.drop_many(argc)?;
+                let original_count = usize::from(plan.extends) + plan.answers;
+                let original_bases = Value::tuple(inputs[..original_count].to_vec());
+                let mut resolved = Vec::new();
+                let mut replaced_bases = false;
+                for candidate in inputs.drain(..original_count) {
+                    if self.fuller_classes() && !matches!(candidate, Value::Class(_) | Value::Native(..) | Value::ByteKind(..)) {
+                        match self.class_get(candidate.clone(), "__mro_entries__", false) {
+                            Ok(hook) => {
+                                let answer = self.call_held(hook, vec![original_bases.clone()])?;
+                                let Value::Tuple(entries) = answer.contents() else { return Err("TypeError: __mro_entries__ must return a tuple".into()); };
+                                resolved.extend(entries.iter().cloned());
+                                replaced_bases = true;
+                                continue;
+                            }
+                            Err(fault) if self.attribute_fault(&fault) => {}
+                            Err(fault) => return Err(fault),
+                        }
+                    }
+                    resolved.push(candidate);
+                }
+                let base_count = resolved.len();
+                resolved.extend(inputs);
+                let mut given = resolved.into_iter();
+                let base = match base_count > 0 {
                     false => None,
                     true => match given.next() {
                         Some(Value::Class(c)) if Self::class_sealed(&c) => return Err(format!("TypeError: type '{}' is not an acceptable base type", c.name).into()),
@@ -9611,7 +9634,7 @@ impl<'a> Engine<'a> {
                     },
                 };
                 let mut answers = Vec::with_capacity(plan.answers);
-                for _ in 0..plan.answers {
+                for _ in 1..base_count {
                     match given.next() {
                         Some(Value::Class(c)) => answers.push(c),
                         Some(Value::Native(Builtin::SortOf, _)) if self.fuller_classes() => { let maker = self.metaclass_root(); answers.push(maker); }
@@ -9630,6 +9653,7 @@ impl<'a> Engine<'a> {
                 };
                 if self.fuller_classes() {
                     let mut members=take(&plan.shared_names);
+                    if replaced_bases { members.push(("__orig_bases__".to_string(), original_bases)); }
                     members.extend(plan.methods.iter().map(|(n,p)|(n.clone(),Value::Routine(p.clone()))));
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
@@ -9740,7 +9764,9 @@ impl<'a> Engine<'a> {
                     self.call_held(importer, vec![Value::text(path), globals, locals, fromlist, Value::Small(0)])?
                 }
             }
-            Action::ImportFrom(path, name) => {
+            Action::ImportFrom(written, name) => {
+                let resolved = self.relative_module_name(written)?;
+                let path = resolved.as_str();
                 // The member a from-import (or a dotted aliased import)
                 // names is read off the module the import itself left on
                 // the stack: a package's own submodule is read in as the
@@ -16542,6 +16568,7 @@ impl<'a> Engine<'a> {
             // (anything else); a third stream told to follow the
             // second is kept as its own pipe, and the library that
             // asked reads the two together afterwards.
+            Builtin::Posix => crate::posix::operate(args)?,
             Builtin::Subprocess => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
                 let step = as_index(&args[0])?;
@@ -20280,10 +20307,26 @@ impl Engine<'_> {
         Some(held)
     }
 
+    fn relative_module_name(&self, written: &str) -> Result<String, String> {
+        let dots = written.chars().take_while(|ch| *ch == '.').count();
+        if dots == 0 { return Ok(written.to_string()); }
+        let (_, owner) = self.module_slots.get(&self.source)
+            .ok_or_else(|| "ImportError: attempted relative import with no known parent package".to_string())?;
+        let package = if self.library_module_file(owner).is_some_and(|file| file.ends_with("/__init__.py")) { owner.as_str() }
+            else { owner.rsplit_once('.').map_or("", |(head, _)| head) };
+        if package.is_empty() { return Err("ImportError: attempted relative import with no known parent package".into()); }
+        let mut parts: Vec<&str> = package.split('.').collect();
+        if dots > parts.len() { return Err("ImportError: attempted relative import beyond top-level package".into()); }
+        parts.truncate(parts.len() - dots + 1);
+        let mut result = parts.join(".");
+        if written.len() > dots { result.push('.'); result.push_str(&written[dots..]); }
+        Ok(result)
+    }
+
     /// A module owns cells in the same world, under names no source can
     /// spell. Its routines keep those addresses after the reader returns.
     fn import_module(&mut self, path: &str) -> Flow<Value> {
-        if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
+        if path.starts_with('.') { let resolved = self.relative_module_name(path)?; return self.import_module(&resolved); }
         if let Some(cached) = self.module_cache_value(path) {
             if matches!(cached, Value::Null) {
                 return Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules").into());
@@ -20307,6 +20350,10 @@ impl Engine<'_> {
         if let Some(word) = self.lang.module_path.clone() {
             if let Some((above, _)) = parent {
                 let owner = self.import_module(above)?;
+                if let Some(cached) = self.module_cache_value(path) {
+                    if matches!(cached, Value::Null) { return Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules").into()); }
+                    return Ok(cached);
+                }
                 let package = matches!(owner, Value::Object(ref module) if module.fields.borrow().iter().any(|(name, _)| name == &word));
                 if let Some(held) = self.modules.get(path) {
                     if self.module_cache_names(path) { return Ok(held.clone()); }

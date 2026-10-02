@@ -185,6 +185,7 @@ impl Value {
                 return Self::text(&letters).hash_number();
             }
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
+            Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,
