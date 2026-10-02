@@ -44,3 +44,33 @@ the interpreter. Use separate raw directories for each full release;
 `python_version_probe.py` probes identity, selection and precedence on both
 full kernels. `reference_tests.py` runs all registered suites by default,
 or one with `--python`; CI runs all registered suites explicitly.
+
+Saved results have an immutable full-release binding in `suite.json`. Both run
+commands validate it before writing results, and refuse a different release.
+A nonempty directory without metadata cannot be reused or reported. `count.py`
+reads both bindings before comparison and refuses cross-release comparisons;
+it never infers a release from the current table or environment. Existing
+bindings remain valid for reporting after a pin refresh, even if that release
+is no longer registered for execution.
+
+To migrate legacy results, recover the exact full release from the original
+run's provenance (not the current table), and prepare an inventory outside the
+results directory:
+
+```json
+{"release":"3.14.8","sha256":{"test_contains.stack8.txt":"<original result SHA-256>","test_contains.microcode7.txt":"<original result SHA-256>"}}
+```
+
+Include every saved `.txt` result. Verify this inventory against the original
+measurement records, then run:
+
+```sh
+python3 scripts/suite/migrate_results.py old-raw --release 3.14.8 --provenance original-inventory.json
+```
+
+Migration requires an exact full release matching the provenance and verifies
+all result bytes against its hashes before creating `suite.json` exclusively.
+It records the provenance path and digest, and refuses to replace an existing
+binding. The inventory is an explicit assertion from the original run's owner;
+its hashes verify the files, not which interpreter produced them. If the
+original release cannot be established, rerun into a new directory instead.

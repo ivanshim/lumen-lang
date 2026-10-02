@@ -2,16 +2,17 @@ import os, sys, shutil, subprocess, pathlib, tempfile, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from python_versions import select, option
+from results_metadata import bind_for_run
 REQUESTED = option(sys.argv)
 # usage: count_run.py <rawdir> [cap] [binary]   one process per core (SUITE_JOBS to change), each
 # file in its own working directory so two tests' @test files cannot meet; largest files first.
 ROOT = pathlib.Path(os.environ.get("LUMEN_ROOT", ".")).resolve(); BIN = pathlib.Path(sys.argv[3]).resolve() if len(sys.argv) > 3 else ROOT/"target"/"debug"/"lumen-lang"
-RAW = pathlib.Path(sys.argv[1]); RAW.mkdir(parents=True, exist_ok=True)
+RAW = pathlib.Path(sys.argv[1])
 VERSION = select(REQUESTED, ROOT)
-metadata = RAW / 'suite.json'
-if metadata.exists() and __import__('json').loads(metadata.read_text())['release'] != VERSION['release']:
-    raise ValueError('Use a separate raw directory for each full Python release')
-(RAW / 'suite.json').write_text(__import__('json').dumps(VERSION) + '\n')
+try:
+    bind_for_run(RAW, VERSION)
+except (ValueError, KeyError, OSError) as error:
+    sys.exit(f"Error: {error}")
 CAP = int(sys.argv[2]) if len(sys.argv) > 2 else 900
 JOBS = int(os.environ.get("SUITE_JOBS", os.cpu_count()))
 

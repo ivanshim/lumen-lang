@@ -1,4 +1,5 @@
 import sys, re, pathlib
+from results_metadata import compare_bindings
 def read(d):
     out = {}
     for f in sorted(pathlib.Path(d).glob("*.txt")):
@@ -10,14 +11,11 @@ def read(d):
         if ran and len(line) != int(ran.group(1)): line = "?" + line
         out[(stem, k)] = (line, int(ran.group(1)) if ran else 0, "TIMEOUT" in t)
     return out
+try:
+    release = compare_bindings(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
+except (ValueError, KeyError, OSError) as error:
+    sys.exit(f"Error: {error}")
 new, old = read(sys.argv[1]), read(sys.argv[2]) if len(sys.argv) > 2 else {}
-metadata = pathlib.Path(sys.argv[1]) / 'suite.json'
-if metadata.exists():
-    release = __import__('json').loads(metadata.read_text())['release']
-else:
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-    from python_versions import select
-    release = select()['release']
 def report(*items):
     print(*items, f"· CPython {release} suite")
 for k in ("stack8", "microcode7"):
