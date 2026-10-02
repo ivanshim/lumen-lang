@@ -364,7 +364,7 @@ class _Skip:
         raise SkipTest(self.reason)
 
     def decorate(self, function):
-        if getattr(function, '_test_case', False):
+        if isinstance(function, type) or getattr(function, '_test_case', False):
             setattr(function, '__unittest_skip__', True)
             setattr(function, '__unittest_skip_why__', self.reason)
             return function

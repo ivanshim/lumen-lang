@@ -257,6 +257,11 @@ def exc_info():
 # Where nothing was named -- a reference kernel reads no such label --
 # the empty string stands, and a test that needs its own program skips.
 executable = globals().get('__runner__', '')
+# The installation prefix encloses the executable's directory.
+prefix = executable.rsplit('/', 2)[0] if executable else path[0].rsplit('/', 1)[0]
+base_prefix = prefix
+exec_prefix = prefix
+base_exec_prefix = prefix
 
 float_repr_style = 'short'
 byteorder = 'little'
