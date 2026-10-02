@@ -16,8 +16,11 @@ lexer: interpolation with the enclosing quote reused inside a replacement
 expression and some malformed-input diagnostic positions remain unsupported.
 The existing io adapter supplies text streams, and the os adapter obtains
 real stat fields through a Python-only runtime label. The text-stream adapter
-currently buffers input eagerly; full incremental decoding and opaque seek
-cookies remain outside its supported surface. Native directory-file
+uses the binary buffer as its only contents and cursor; construction does
+not read it. ASCII, UTF-8 and single-byte sized reads use byte-position
+cookies derived from the buffer position and unread input. Writes discard
+read-ahead, matching TextIOWrapper update-stream behavior. Stateful codecs
+and opaque decoder-state cookies remain unsupported. Native directory-file
 stat operations remain unsupported and raise NotImplementedError.
 
 The import execution remains in the kernels. The full CPython bootstrap
