@@ -120,16 +120,20 @@ class TestCase:
         return getattr(self, '_test_module', '__main__') + '.' + _class_name(self) + '.' + self._method
 
     def assertNotEqual(self, a, b, msg=None):
-        self._check(a != b, str(a) + ' == ' + str(b), msg)
+        if not (a != b):
+            self._check(False, str(a) + ' == ' + str(b), msg)
 
     def assertTrue(self, value, msg=None):
-        self._check(not not value, str(value) + ' is not true', msg)
+        if not (not not value):
+            self._check(False, str(value) + ' is not true', msg)
 
     def assertFalse(self, value, msg=None):
-        self._check(not value, str(value) + ' is not false', msg)
+        if not (not value):
+            self._check(False, str(value) + ' is not false', msg)
 
     def assertIs(self, a, b, msg=None):
-        self._check(a is b, str(a) + ' is not ' + str(b), msg)
+        if not (a is b):
+            self._check(False, str(a) + ' is not ' + str(b), msg)
 
     def assertIsNot(self, a, b, msg=None):
         self._check(a is not b, 'unexpected identity', msg)
@@ -141,25 +145,31 @@ class TestCase:
         self.assertIsNot(value, None, msg)
 
     def assertIn(self, member, container, msg=None):
-        self._check(member in container, str(member) + ' not found in ' + str(container), msg)
+        if not (member in container):
+            self._check(False, str(member) + ' not found in ' + str(container), msg)
 
     def assertNotIn(self, member, container, msg=None):
-        self._check(member not in container, str(member) + ' unexpectedly found', msg)
+        if not (member not in container):
+            self._check(False, str(member) + ' unexpectedly found', msg)
 
     def assertIsInstance(self, value, kind, msg=None):
         self._check(isinstance(value, kind), 'value is not an instance of the requested class', msg)
 
     def assertGreater(self, a, b, msg=None):
-        self._check(a > b, str(a) + ' not greater than ' + str(b), msg)
+        if not (a > b):
+            self._check(False, str(a) + ' not greater than ' + str(b), msg)
 
     def assertLess(self, a, b, msg=None):
-        self._check(a < b, str(a) + ' not less than ' + str(b), msg)
+        if not (a < b):
+            self._check(False, str(a) + ' not less than ' + str(b), msg)
 
     def assertGreaterEqual(self, a, b, msg=None):
-        self._check(a >= b, str(a) + ' not greater than or equal to ' + str(b), msg)
+        if not (a >= b):
+            self._check(False, str(a) + ' not greater than or equal to ' + str(b), msg)
 
     def assertLessEqual(self, a, b, msg=None):
-        self._check(a <= b, str(a) + ' not less than or equal to ' + str(b), msg)
+        if not (a <= b):
+            self._check(False, str(a) + ' not less than or equal to ' + str(b), msg)
 
     def assertAlmostEqual(self, a, b, places=None, msg=None, delta=None):
         if delta is not None and places is not None:
@@ -171,7 +181,8 @@ class TestCase:
             close = difference <= delta
         else:
             close = difference < 0.5 * 10 ** (-places)
-        self._check(a == b or close, str(a) + ' != ' + str(b) + ' within tolerance', msg)
+        if not (a == b or close):
+            self._check(False, str(a) + ' != ' + str(b) + ' within tolerance', msg)
 
     def assertCountEqual(self, first, second, msg=None):
         left = list(first)

@@ -108,16 +108,17 @@ def exp(x):
     return __math('exp', x)
 
 def _is_integral(x):
-    return type(x) == type(1) or type(x) == type(True)
+    return isinstance(x, int)
 
 def _index_or_none(x):
     # A whole number itself, or whatever stands in an index's place;
     # anything else answers with nothing rather than a fault, since
     # what comes of it decides on its own what the value must be.
     if _is_integral(x):
-        return int(x)
-    if hasattr(x, '__index__'):
-        return x.__index__()
+        return int.__index__(x)
+    if hasattr(type(x), '__index__'):
+        from operator import index
+        return index(x)
     return None
 
 def _as_index(value):
@@ -237,10 +238,9 @@ def lcm(*integers):
     return result
 
 def factorial(n):
+    n = _as_index(n)
     if n < 0:
         raise 'ValueError: factorial() not defined for negative values'
-    if type(n) != type(1) and type(n) != type(True):
-        raise 'TypeError: factorial needs an integer'
     value = 1
     for i in range(2, n + 1):
         value *= i
@@ -258,8 +258,7 @@ def prod(values, *, start=1):
 tau = 2 * pi
 
 def comb(n, k):
-    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
-        raise 'TypeError: comb needs integers'
+    n, k = _as_index(n), _as_index(k)
     if n < 0 or k < 0:
         raise 'ValueError: comb arguments must be non-negative'
     if k > n:
@@ -273,8 +272,7 @@ def comb(n, k):
 def perm(n, k=None):
     if k is None:
         return factorial(n)
-    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
-        raise 'TypeError: perm needs integers'
+    n, k = _as_index(n), _as_index(k)
     if n < 0 or k < 0:
         raise 'ValueError: perm arguments must be non-negative'
     if k > n:
@@ -285,19 +283,18 @@ def perm(n, k=None):
     return result
 
 def isqrt(n):
-    if type(n) != type(1) and type(n) != type(True):
-        raise 'TypeError: isqrt needs an integer'
+    n = _as_index(n)
     if n < 0:
         raise 'ValueError: isqrt argument must be non-negative'
-    low = 0
-    high = n + 1
-    while high - low > 1:
-        mid = (low + high) // 2
-        if mid * mid <= n:
-            low = mid
-        else:
-            high = mid
-    return low
+    if n < 2:
+        return n
+    # Newton iteration starts above the root and descends to its floor.
+    root = 1 << ((n.bit_length() + 1) // 2)
+    while True:
+        smaller = (root + n // root) // 2
+        if smaller >= root:
+            return root
+        root = smaller
 
 def hypot(*coordinates):
     values = []
@@ -879,3 +876,75 @@ def issubnormal(x):
 
 def sumprod(p, q, /):
     return __math('sumprod', p, q)
+
+# Native module entries remain callable without binding a class instance.
+
+sqrt = staticmethod(sqrt)
+fabs = staticmethod(fabs)
+floor = staticmethod(floor)
+ceil = staticmethod(ceil)
+trunc = staticmethod(trunc)
+pow = staticmethod(pow)
+exp = staticmethod(exp)
+log = staticmethod(log)
+isnan = staticmethod(isnan)
+isinf = staticmethod(isinf)
+isfinite = staticmethod(isfinite)
+isclose = staticmethod(isclose)
+copysign = staticmethod(copysign)
+gcd = staticmethod(gcd)
+lcm = staticmethod(lcm)
+factorial = staticmethod(factorial)
+fsum = staticmethod(fsum)
+prod = staticmethod(prod)
+comb = staticmethod(comb)
+perm = staticmethod(perm)
+isqrt = staticmethod(isqrt)
+hypot = staticmethod(hypot)
+dist = staticmethod(dist)
+log2 = staticmethod(log2)
+log10 = staticmethod(log10)
+log1p = staticmethod(log1p)
+expm1 = staticmethod(expm1)
+degrees = staticmethod(degrees)
+radians = staticmethod(radians)
+sin = staticmethod(sin)
+cos = staticmethod(cos)
+tan = staticmethod(tan)
+asin = staticmethod(asin)
+acos = staticmethod(acos)
+atan = staticmethod(atan)
+atan2 = staticmethod(atan2)
+sinh = staticmethod(sinh)
+cosh = staticmethod(cosh)
+tanh = staticmethod(tanh)
+asinh = staticmethod(asinh)
+acosh = staticmethod(acosh)
+atanh = staticmethod(atanh)
+gamma = staticmethod(gamma)
+lgamma = staticmethod(lgamma)
+erf = staticmethod(erf)
+erfc = staticmethod(erfc)
+sinpi = staticmethod(sinpi)
+cospi = staticmethod(cospi)
+tanpi = staticmethod(tanpi)
+asinpi = staticmethod(asinpi)
+acospi = staticmethod(acospi)
+atanpi = staticmethod(atanpi)
+atan2pi = staticmethod(atan2pi)
+nextafter = staticmethod(nextafter)
+ulp = staticmethod(ulp)
+remainder = staticmethod(remainder)
+fmod = staticmethod(fmod)
+modf = staticmethod(modf)
+frexp = staticmethod(frexp)
+ldexp = staticmethod(ldexp)
+exp2 = staticmethod(exp2)
+fma = staticmethod(fma)
+fmin = staticmethod(fmin)
+fmax = staticmethod(fmax)
+cbrt = staticmethod(cbrt)
+signbit = staticmethod(signbit)
+isnormal = staticmethod(isnormal)
+issubnormal = staticmethod(issubnormal)
+sumprod = staticmethod(sumprod)
