@@ -5865,6 +5865,7 @@ impl<'a> Compiler<'a> {
             let mut expanded = false;
             for token in &self.tokens[self.pos..] {
                 if depth == 0 && token.lexeme == close { break; }
+                if depth == 0 && lang.class_details.contains_key("mro.entries") && Lang::spells(&lang.comprehension_for, &token.lexeme) { return Err("SyntaxError: invalid syntax".into()); }
                 if depth == 0 && (Lang::spells(&lang.call_spread, &token.lexeme) || Lang::spells(&lang.call_spread_pairs, &token.lexeme)) { expanded = true; }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,

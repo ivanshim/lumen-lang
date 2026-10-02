@@ -7425,7 +7425,18 @@ impl<'a> Machine<'a> {
     /// very namespace and nothing else.
     pub(super) fn namespace_holding(&self, value: &Value) -> Option<String> {
         let Value::Thing(thing) = value else { return None };
-        self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing))).map(|(path, _)| path.clone())
+        for (path, held) in &self.imported {
+            if matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing)) { return Some(path.clone()); }
+        }
+        let names = self.table.strings("ext.system.module.name");
+        if names.is_empty() || Self::native_beneath(&thing.blueprint()).as_deref() != Some("module") { return None; }
+        let entries = thing.holds.borrow();
+        for (key, item) in entries.iter() {
+            if names.contains(key) {
+                if let Value::Text(text) = item.settled() { return Some(text.to_string()); }
+            }
+        }
+        None
     }
 
     /// The word a value goes by as a kind: a blueprint its own name, a
@@ -7448,6 +7459,13 @@ impl<'a> Machine<'a> {
         let settled = value.settled();
         if let Some(path) = self.namespace_holding(&settled) {
             return Self::member_worded(self.table.strings("ext.builtin.member.absent.module"), &path, name);
+        }
+        if self.table.has_any("ext.builtin.member.absent.module") {
+            if let Value::Thing(item) = &settled {
+                if Self::native_beneath(&item.blueprint()).as_deref() == Some("module") {
+                    return ["AttributeError: module has no attribute '", name, "'"].concat();
+                }
+            }
         }
         match self.kind_word_of(&settled) {
             Some(word) => Self::member_worded(self.table.strings("ext.builtin.member.absent.class"), &word, name),

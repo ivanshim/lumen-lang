@@ -4702,6 +4702,9 @@ impl<'a> Builder<'a> {
             for token in &self.tokens[self.pos..] {
                 let word = token.lexeme.as_str();
                 if levels.is_empty() && word == end { break; }
+                if levels.is_empty() && table.has_any("ext.stmt.class.detail.mro.entries") && table.spells("ext.op.comprehension.for", word) {
+                    return Err(String::from("SyntaxError: invalid syntax"));
+                }
                 if levels.is_empty() && (table.spells("op.mul", word) || table.spells("op.pow", word)) { spreading = true; }
                 match word {
                     "(" => levels.push(")"), "[" => levels.push("]"), "{" => levels.push("}"),

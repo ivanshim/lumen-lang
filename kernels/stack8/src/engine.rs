@@ -5126,7 +5126,15 @@ impl<'a> Engine<'a> {
     /// module and nothing else.
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
-        self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))).map(|(path, _)| path.clone())
+        if let Some((path, _)) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))) { return Some(path.clone()); }
+        if !self.lang.module_names.is_empty() && Self::kind_beneath(&o.class_now()).as_deref() == Some("module") {
+            let fields = o.fields.borrow();
+            return fields.iter().find_map(|(key, held)| {
+                if !self.lang.module_names.contains(key) { return None; }
+                match held.contents() { Value::Text(word) => Some(word.to_string()), _ => None }
+            });
+        }
+        None
     }
 
     /// The word a value goes by as a kind: a class its own name, a
@@ -5149,6 +5157,9 @@ impl<'a> Engine<'a> {
     pub(super) fn member_named_amiss(&self, value: &Value, name: &str) -> String {
         let held = value.contents();
         if let Some(path) = self.module_holding(&held) { return Self::member_said(&self.lang.member_absent_module, &path, name); }
+        if self.lang.member_absent_module.is_some() && matches!(&held, Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("module")) {
+            return format!("AttributeError: module has no attribute '{name}'");
+        }
         match self.kind_word_of(&held) {
             Some(word) => Self::member_said(&self.lang.member_absent_class, &word, name),
             None => String::new(),
