@@ -5123,20 +5123,20 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.byte` | - | - | `TypeError: format argument` `: %b requires a bytes-like object, or an object that implements __bytes__, not ` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.character` | - | - | `TypeError: format argument` `: %c requires ` `, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.character` | - | - | `TypeError: %c requires ` `, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character.range` | - | - | `OverflowError: format argument` `: %c argument not in range(` `)` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string (got ` `)` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.incomplete` | - | - | `ValueError: stray % at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.integer` | - | - | `TypeError: format argument` `: %` ` requires an integer, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.integer` | - | - | `TypeError: %` ` format: an integer is required, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.key.incomplete` | - | - | `ValueError: stray % or incomplete format key at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.many` | - | - | `TypeError: not all arguments converted during ` ` formatting (required ` `, got ` `)` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.mapping` | - | - | `TypeError: format requires a mapping, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.mapping.key` | - | - | `ValueError: format requires a parenthesised mapping key at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.mapping.star` | - | - | `ValueError: * cannot be used with a parenthesised mapping key at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
-| `ext.op.rem.format.number` | - | - | `TypeError: format argument` `: %` ` requires a real number, not ` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.number` | - | - | `TypeError: %` ` format: a real number is required, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.precision.big` | - | - | `ValueError: precision too big at position ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.real` | - | - | `TypeError: format argument` `: %` ` requires a real number, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.star` | - | - | `TypeError: format argument ` `: * requires int, not ` | - | - | - | - | - | - | - |

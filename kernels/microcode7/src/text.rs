@@ -431,9 +431,25 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 Value::Thing(_) => return Err(g.bad("protocol")),
                 _=>return Err(g.bad("walk")),
             };
-            let mut portions=Vec::new();
-            for item in &row {match item {Value::Text(t)=>portions.push(t.as_ref()),_=>return Err(g.bad("join"))}}
-            Value::text(&portions.join(source))
+            let mut portions=Vec::with_capacity(row.len());
+            for item in row {
+                let chars=match item {
+                    Value::Text(chars)=>chars,
+                    Value::Thing(instance)=>{
+                        let state=instance.holds.borrow();
+                        match state.iter().find(|entry|entry.0=="\0underlying").map(|entry|entry.1.clone()) {
+                            Some(Value::Text(chars))=>chars,
+                            _=>return Err(g.bad("join")),
+                        }
+                    }
+                    _=>return Err(g.bad("join")),
+                };
+                portions.push(chars);
+            }
+            match portions.as_slice() {
+                [only]=>Value::Text(only.clone()),
+                _=>Value::text(&portions.iter().map(|chars|&**chars).collect::<Vec<_>>().join(source)),
+            }
         }
         TRANSLATE=>{
             let lookup=&g.tail[0];

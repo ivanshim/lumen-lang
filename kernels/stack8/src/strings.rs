@@ -482,8 +482,17 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 Value::Object(_) => return Err(fault(lang,"protocol")),
                 _=>return Err(fault(lang,"walk")),
             };
-            let mut out=String::new();for (i,v) in items.iter().enumerate() {if i>0 {out.push_str(s);}let Value::Text(t)=v else {return Err(fault(lang,"join"));};out.push_str(t);}
-            Value::text(&out)
+            let mut pieces = Vec::with_capacity(items.len());
+            for value in items {
+                let value = if let Value::Object(object) = &value {
+                    object.fields.borrow().iter().find(|(key, _)| key == "\0worth")
+                        .map(|(_, held)| held.clone()).unwrap_or(value.clone())
+                } else { value };
+                let Value::Text(text) = value else { return Err(fault(lang, "join")); };
+                pieces.push(text);
+            }
+            if pieces.len() == 1 { Value::Text(pieces.remove(0)) }
+            else { Value::text(&pieces.iter().map(|text| text.as_ref()).collect::<Vec<_>>().join(s)) }
         }
         FormatMap => Value::text(&mapping_format(s,&params[0],lang,words,0)?),
         Maketrans | Repr => unreachable!(),
