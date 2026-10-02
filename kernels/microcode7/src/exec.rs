@@ -21208,8 +21208,8 @@ impl<'a> Machine<'a> {
                 _ => book.near.clone(),
             };
         }
-        if let Some(path) = self.loaded_spaces.get(&self.written_in) {
-            if let Some(Value::Thing(space)) = self.imported.get(path) {
+        if let Some(source) = self.frames_named.last().and_then(|code| code.written_in.as_ref()) {
+            if let Some(Value::Thing(space)) = self.loaded_spaces.get(source).and_then(|path| self.imported.get(path)) {
                 return Rc::new(RefCell::new(Value::Attributes(space.clone())));
             }
         }

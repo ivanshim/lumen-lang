@@ -895,6 +895,8 @@ impl<'a> Engine<'a> {
             let Some(globals) = parts[1].clone() else { return Err("TypeError: function() missing required argument 'globals'".into()); };
             if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
             let mut made = (**origin).clone();
+            made.globe = Some(globals.clone());
+            made.born = Some(self.ambient_builtins());
             if let Some(Value::Text(name)) = parts[2].as_ref().map(Value::contents) { made.ident = name.to_string(); made.qualified = name.to_string(); }
             if let Some(Value::Tuple(defaults)) = parts[3].as_ref().map(Value::contents) {
                 made = Self::with_spare_arguments(&made, Some(defaults.as_ref().clone()), None);
@@ -914,9 +916,6 @@ impl<'a> Engine<'a> {
                 made.enclosed.push((*at, held.clone()));
             }
             let created = Value::Routine(Rc::new(made));
-            let at = self.function_storage(&created);
-            self.routine_namespace_write(at, Some(globals))?;
-            if origin.ident == "<genexpr>" || origin.ident.starts_with("#generator") { return Ok(Self::adapter(43, vec![created])); }
             return Ok(created);
         }
         if let Some(maker) = Self::maker_beneath(&c) {

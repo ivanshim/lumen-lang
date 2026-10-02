@@ -1002,6 +1002,12 @@ impl<'a> Machine<'a> {
             let Some(globals) = options[1].clone() else { return Err(String::from("TypeError: function() missing required argument 'globals'").into()); };
             if !matches!(globals.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
             let mut fresh = (**origin).clone();
+            fresh.globe = Some(globals.clone());
+            fresh.born = Some(self.builtins_here());
+            fresh.framed_in = match globals.settled() {
+                Value::Dict(entries) => entries.iter().find(|(key, _)| key.bare() == "__name__").and_then(|(_, value)| match value.settled() { Value::Text(name) => Some(name), _ => None }),
+                _ => None,
+            };
             if let Some(Value::Text(name)) = options[2].as_ref().map(Value::settled) { fresh.ident = name.to_string(); fresh.qualification = name.to_string(); }
             let closure = match options[4].as_ref().map(Value::settled) {
                 None | Some(Value::Nil) => Vec::new(),
@@ -1045,9 +1051,6 @@ impl<'a> Machine<'a> {
                 (Rc::new(adjusted), kept)
             } else { (source, base) };
             let callable = Value::Bound(source, room);
-            let at = self.routine_storage(&callable);
-            self.routine_members[at].1.holds.borrow_mut().push((Self::HANDED.to_string(), globals));
-            if matches!(origin.ident.as_str(), "<generator>" | "<genexpr>") { return Ok(Value::Wrapped(43, Rc::new(vec![callable]).into())); }
             return Ok(callable);
         }
         if let Some(builder)=Self::builder_over(&class) {
