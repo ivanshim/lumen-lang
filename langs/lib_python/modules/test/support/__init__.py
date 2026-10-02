@@ -843,3 +843,5 @@ def captured_output(stream_name):
         yield getattr(sys, stream_name)
     finally:
         setattr(sys, stream_name, orig_stdout)
+
+is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")

@@ -849,15 +849,19 @@ impl<'a> Machine<'a> {
                 holds.push((key.to_string(), row.first().cloned().unwrap_or(Value::Nil)));
             }
         }
+        let progress_argument = if self.stands_under(&kind, 53) {
+            row.get(2).filter(|v| matches!(v.kind(), Some(Kind::Whole | Kind::Truth))).cloned()
+        } else { None };
+        if let Some(written) = &progress_argument { holds.push((String::from("characters_written"), written.clone())); }
         if self.stands_under(&kind, 20) {
             let numbered = row.len() >= 2;
             for (at, key) in self.table.strings("ext.builtin.exceptions.os").iter().enumerate() {
-                holds.push((key.clone(), if numbered { row.get(at).cloned().unwrap_or(Value::Nil) } else { Value::Nil }));
+                holds.push((key.clone(), if numbered && (at != 2 || progress_argument.is_none()) { row.get(at).cloned().unwrap_or(Value::Nil) } else { Value::Nil }));
             }
             if let ([opening, middle, colon, quote], true) = (self.table.strings("ext.builtin.exceptions.os.message"), numbered) {
                 let mut told = format!("{opening}{}{middle}{}", row[0].render(self.wording()), row[1].render(self.wording()));
                 if let Some(named) = row.get(2) {
-                    if !matches!(named, Value::Nil) { told = format!("{told}{colon}{}{quote}", named.render(self.wording())); }
+                    if progress_argument.is_none() && !matches!(named, Value::Nil) { told = format!("{told}{colon}{}{quote}", named.render(self.wording())); }
                 }
                 holds.push(("\0told-as".to_string(), Value::text(&told)));
             }
@@ -909,7 +913,7 @@ impl<'a> Machine<'a> {
         if self.stands_under(&kind, 20) {
             let second_file = row.get(4).cloned().unwrap_or(Value::Nil);
             holds.push((String::from("filename2"), second_file));
-            if row.len() >= 3 && row.len() <= 5 && !matches!(row[2], Value::Nil) { row.resize(2, Value::Nil); }
+            if progress_argument.is_none() && row.len() >= 3 && row.len() <= 5 && !matches!(row[2], Value::Nil) { row.resize(2, Value::Nil); }
         }
         let values = Value::Arguments(crate::tuples::Sequence::plain(row));
         let seeded = [

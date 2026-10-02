@@ -7566,6 +7566,19 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+        if !self.lang.syntax_members.is_empty() {
+            if let Some(sign) = self.second_assign_ahead().filter(|&at| self.lang.compound.contains_key(&self.tokens[at].lexeme)) {
+                let mut left = self.pos;
+                let mut right = sign;
+                while left + 1 < right && self.tokens[left].lexeme == "(" && self.bracket_close(left, right) == Some(right - 1) {
+                    left += 1;
+                    right -= 1;
+                }
+                if left != self.pos && !self.outer_marks(left, right, &self.lang.tuple_marks).0.is_empty() {
+                    return Err("SyntaxError: 'tuple' is an illegal expression for augmented assignment".into());
+                }
+            }
+        }
         if self.tuple_assignment()? { return Ok(()); }
         if !self.lang.tuple_marks.is_empty() && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty()
             && !self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty()

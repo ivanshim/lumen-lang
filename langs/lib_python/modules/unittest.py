@@ -236,6 +236,9 @@ class TestCase:
     def assertIsSubclass(self, cls, superclass, msg=None):
         self._check(issubclass(cls, superclass), _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
 
+    def assertNotIsSubclass(self, cls, superclass, msg=None):
+        self._check(not issubclass(cls, superclass), _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
+
     def assertNotIsInstance(self, value, kind, msg=None):
         self._check(not isinstance(value, kind), _representation(value) + ' is an instance of the requested class', msg)
 
@@ -463,6 +466,7 @@ class TestSuite:
         return result
 
 class TestLoader:
+    suiteClass = TestSuite
     def getTestCaseNames(self, cls):
         return _ordered([name for name in _host_class_methods(cls) if name[:4] == 'test'])
 
@@ -498,11 +502,16 @@ class TestLoader:
             for test in tests.tests:
                 test._test_module = module_name
             suite.addTest(tests)
+        hook = names.get('load_tests')
+        if hook is not None:
+            return hook(self, suite, pattern)
         return suite
 
     def discover(self, start_dir, pattern='test*.py', top_level_dir=None):
         raise 'NotImplementedError: test discovery needs filesystem access'
 
+
+TestLoader.loadTestsFromModule._honours_load_tests = True
 
 def main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     return _main(module, exit, verbosity, argv, testRunner)

@@ -41,7 +41,11 @@ def _new_builtin(cls, value):
 def _global(module, name):
     if module == '__main__':
         parts = name.split('.')
-        owner = __program_namespace()[parts[0]]
+        import __main__
+        try:
+            owner = getattr(__main__, parts[0])
+        except AttributeError:
+            owner = __program_namespace()[parts[0]]
         for part in parts[1:]:
             owner = getattr(owner, part)
         return owner

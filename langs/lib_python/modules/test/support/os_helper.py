@@ -159,3 +159,12 @@ class EnvironmentVarGuard:
             else:
                 self._environ[key] = value
         return False
+
+
+class FakePath:
+    def __init__(self, path):
+        self.path = path
+    def __fspath__(self):
+        if isinstance(self.path, BaseException):
+            raise self.path
+        return self.path

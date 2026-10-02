@@ -803,15 +803,32 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
 
 
 def DocFileSuite(*paths, **options):
-    """CPython reads the named files from disk; there is no file reading
-    here, so say so rather than pretend the examples passed."""
-    raise NotImplementedError(
-        'doctest.DocFileSuite needs to read ' + ', '.join([str(p) for p in paths]) +
-        ' from disk, which this library cannot do')
+    suite = unittest.TestSuite()
+    for path in paths:
+        suite.addTest(DocFileTest(path, **options))
+    return suite
 
 
 def DocFileTest(path, **options):
-    return DocFileSuite(path, **options)
+    import os
+    package = options.get('package')
+    relative = options.get('module_relative', True)
+    if package is not None and not relative:
+        raise ValueError('Package may only be specified for module-relative paths.')
+    if relative:
+        if path.startswith('/'):
+            raise ValueError('Module-relative files may not have absolute paths')
+        namespace = _namespace_of(package)
+        path = os.path.join(os.path.dirname(namespace.get('__file__', '')), path)
+    with open(path, encoding=options.get('encoding', 'utf-8')) as source:
+        text = source.read()
+    globs = _copy_dict(options.get('globs') or {})
+    globs.update(options.get('extraglobs') or {})
+    globs.setdefault('__name__', '__main__')
+    parser = options.get('parser') or DocTestParser()
+    test = parser.get_doctest(text, globs, os.path.basename(path), path, 0)
+    return DocTestCase(test, options.get('optionflags', 0), options.get('setUp'),
+                       options.get('tearDown'), options.get('checker'))
 
 
 def testfile(filename, module_relative=True, name=None, package=None,

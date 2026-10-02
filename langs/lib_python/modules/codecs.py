@@ -157,6 +157,7 @@ def _normalize(encoding):
     return aliases.get(name, name)
 
 class CodecInfo(tuple):
+    _is_text_encoding = True
     def __new__(cls, encode=None, decode=None, streamreader=None, streamwriter=None, incrementalencoder=None, incrementaldecoder=None, name=None):
         return tuple.__new__(cls, (encode, decode, streamreader, streamwriter))
     def __init__(self, encode=None, decode=None, streamreader=None, streamwriter=None, incrementalencoder=None, incrementaldecoder=None, name=None):
@@ -637,3 +638,138 @@ _charmaps = {
     'mac_roman': '\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\xc4\xc5\xc7\xc9\xd1\xd6\xdc\xe1\xe0\xe2\xe4\xe3\xe5\xe7\xe9\xe8\xea\xeb\xed\xec\xee\xef\xf1\xf3\xf2\xf4\xf6\xf5\xfa\xf9\xfb\xfc\u2020\xb0\xa2\xa3\xa7\u2022\xb6\xdf\xae\xa9\u2122\xb4\xa8\u2260\xc6\xd8\u221e\xb1\u2264\u2265\xa5\xb5\u2202\u2211\u220f\u03c0\u222b\xaa\xba\u03a9\xe6\xf8\xbf\xa1\xac\u221a\u0192\u2248\u2206\xab\xbb\u2026\xa0\xc0\xc3\xd5\u0152\u0153\u2013\u2014\u201c\u201d\u2018\u2019\xf7\u25ca\xff\u0178\u2044\u20ac\u2039\u203a\ufb01\ufb02\u2021\xb7\u201a\u201e\u2030\xc2\xca\xc1\xcb\xc8\xcd\xce\xcf\xcc\xd3\xd4\uf8ff\xd2\xda\xdb\xd9\u0131\u02c6\u02dc\xaf\u02d8\u02d9\u02da\xb8\u02dd\u02db\u02c7',
     'mac_turkish': '\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\xc4\xc5\xc7\xc9\xd1\xd6\xdc\xe1\xe0\xe2\xe4\xe3\xe5\xe7\xe9\xe8\xea\xeb\xed\xec\xee\xef\xf1\xf3\xf2\xf4\xf6\xf5\xfa\xf9\xfb\xfc\u2020\xb0\xa2\xa3\xa7\u2022\xb6\xdf\xae\xa9\u2122\xb4\xa8\u2260\xc6\xd8\u221e\xb1\u2264\u2265\xa5\xb5\u2202\u2211\u220f\u03c0\u222b\xaa\xba\u03a9\xe6\xf8\xbf\xa1\xac\u221a\u0192\u2248\u2206\xab\xbb\u2026\xa0\xc0\xc3\xd5\u0152\u0153\u2013\u2014\u201c\u201d\u2018\u2019\xf7\u25ca\xff\u0178\u011e\u011f\u0130\u0131\u015e\u015f\u2021\xb7\u201a\u201e\u2030\xc2\xca\xc1\xcb\xc8\xcd\xce\xcf\xcc\xd3\xd4\uf8ff\xd2\xda\xdb\xd9\uf8a0\u02c6\u02dc\xaf\u02d8\u02d9\u02da\xb8\u02dd\u02db\u02c7',
 }
+
+
+# Stateful codec interfaces used by the unmodified _pyio algorithms.
+class IncrementalDecoder:
+    def __init__(self, errors='strict'):
+        self.errors = errors
+    def decode(self, input, final=False):
+        raise NotImplementedError
+    def reset(self):
+        pass
+    def getstate(self):
+        return b'', 0
+    def setstate(self, state):
+        pass
+
+class IncrementalEncoder:
+    def __init__(self, errors='strict'):
+        self.errors = errors
+    def encode(self, input, final=False):
+        raise NotImplementedError
+    def reset(self):
+        pass
+    def getstate(self):
+        return 0
+    def setstate(self, state):
+        pass
+
+class _IncrementalDecoder(IncrementalDecoder):
+    def __init__(self, name, errors='strict'):
+        self.errors = errors
+        self.name = name
+        self.reset()
+    def reset(self):
+        self.buffer = b''
+        self.order = 2 if self.name in ('utf_16', 'utf_32') else 1 if self.name == 'utf_8_sig' else 0
+    def getstate(self):
+        return self.buffer, self.order
+    def setstate(self, state):
+        self.buffer, self.order = state
+    def decode(self, input, final=False):
+        data = self.buffer + bytes(input)
+        name = self.name
+        end = len(data)
+        if name == 'utf_8_sig' and self.order == 1:
+            if len(data) < 3 and BOM_UTF8.startswith(data) and not final:
+                self.buffer = data
+                return ''
+            if data.startswith(BOM_UTF8):
+                data = data[3:]
+                end = len(data)
+            self.order = 0
+        if name in ('utf_16', 'utf_32'):
+            width = 2 if name == 'utf_16' else 4
+            if self.order == 2:
+                if len(data) < width and not final:
+                    self.buffer = data
+                    return ''
+                le = BOM_UTF16_LE if width == 2 else BOM_UTF32_LE
+                be = BOM_UTF16_BE if width == 2 else BOM_UTF32_BE
+                if data.startswith(le):
+                    self.order = 0
+                elif data.startswith(be):
+                    self.order = 1
+                elif data:
+                    raise UnicodeError('UTF-16 stream does not start with BOM' if width == 2 else 'UTF-32 stream does not start with BOM')
+                data = data[width:]
+                end = len(data)
+            name += '_be' if self.order == 1 else '_le'
+        if not final:
+            if name in ('utf_8', 'utf_8_sig'):
+                # Retain only a valid, unfinished UTF-8 prefix. Malformed bytes
+                # belong to the current decode and its configured error policy.
+                start = max(0, len(data) - 3)
+                for at in range(start, len(data)):
+                    lead = data[at]
+                    need = 2 if 0xc2 <= lead <= 0xdf else 3 if 0xe0 <= lead <= 0xef else 4 if 0xf0 <= lead <= 0xf4 else 0
+                    tail = data[at + 1:]
+                    if need and len(data) - at < need and all(0x80 <= b <= 0xbf for b in tail):
+                        valid = not tail or not ((lead == 0xe0 and tail[0] < 0xa0) or (lead == 0xed and tail[0] >= 0xa0 and self.errors != 'surrogatepass') or (lead == 0xf0 and tail[0] < 0x90) or (lead == 0xf4 and tail[0] >= 0x90))
+                        if valid:
+                            end = at
+                            break
+            elif name.startswith('utf_16'):
+                end -= end % 2
+                if end >= 2:
+                    last = int.from_bytes(data[end - 2:end], 'big' if name.endswith('_be') else 'little')
+                    if 0xd800 <= last <= 0xdbff:
+                        end -= 2
+            elif name.startswith('utf_32'):
+                end -= end % 4
+        result = _decode(data[:end], 'utf_8' if name == 'utf_8_sig' else name, self.errors)
+        self.buffer = data[end:]
+        return result
+
+class _IncrementalEncoder(IncrementalEncoder):
+    def __init__(self, name, errors='strict'):
+        self.errors = errors
+        self.name = name
+        self.first = True
+    def reset(self):
+        self.first = True
+    def getstate(self):
+        if self.name in ('utf_16', 'utf_32'):
+            return 2 if self.first else 0
+        return int(self.first) if self.name == 'utf_8_sig' else 0
+    def setstate(self, state):
+        self.first = bool(state)
+    def encode(self, input, final=False):
+        name = self.name
+        if not self.first:
+            if name in ('utf_16', 'utf_32'):
+                name += '_le' if sys.byteorder == 'little' else '_be'
+            elif name == 'utf_8_sig':
+                name = 'utf_8'
+        result = _encode(input, name, self.errors)
+        self.first = False
+        return result
+
+def getincrementaldecoder(encoding):
+    codec = lookup(encoding)
+    if codec.incrementaldecoder is not None:
+        return codec.incrementaldecoder
+    name = _normalize(encoding)
+    if name in ('utf_8', 'utf_8_sig', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'ascii', 'latin_1') or name in _charmaps:
+        return lambda errors='strict': _IncrementalDecoder(name, errors)
+    raise LookupError(encoding)
+
+def getincrementalencoder(encoding):
+    codec = lookup(encoding)
+    if codec.incrementalencoder is not None:
+        return codec.incrementalencoder
+    name = _normalize(encoding)
+    if name in ('utf_8', 'utf_8_sig', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'ascii', 'latin_1') or name in _charmaps:
+        return lambda errors='strict': _IncrementalEncoder(name, errors)
+    raise LookupError(encoding)

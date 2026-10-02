@@ -379,7 +379,7 @@ def breakpoint(*args, **kws):
     return hook(*args, **kws)
 
 
-def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
     # A null byte inside the name is refused before the name is looked
     # at any further, the way the reference refuses it, whatever the
     # mode.
@@ -395,11 +395,27 @@ def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None,
     return _HostFile(file, mode, encoding, errors)
 
 
+def open(*args, **kwargs):
+    from io import open as io_open
+    return io_open(*args, **kwargs)
+
+
 # One-dimensional views use byte offsets into the original storage. A slice
 # keeps those offsets, and a cast groups them without copying the storage.
 class memoryview:
     def __init__(self, object):
+        self._init_buffer(object, 284)
+    def _init_buffer(self, object, flags):
         from array import array
+        self._object = object.obj if isinstance(object, memoryview) else object
+        self._owner = None
+        self._owner_view = None
+        if not isinstance(object, (memoryview, bytes, bytearray, array)) and hasattr(type(object), '__buffer__'):
+            self._owner = object
+            object = type(object).__buffer__(object, flags)
+            if not isinstance(object, memoryview):
+                raise TypeError('__buffer__ returned non-memoryview')
+            self._owner_view = object
         if isinstance(object, memoryview):
             object._check()
             self._source = object._source
@@ -409,11 +425,11 @@ class memoryview:
             self._readonly = object._readonly
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
-            self._offsets = list(range(len(object)))
+            self._offsets = list(range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object)))
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
-        elif isinstance(object, array) and object.typecode in ('B', 'i'):
+        elif isinstance(object, array) and object.typecode in ('B', 'b', 'i'):
             self._source = object
             self._offsets = list(range(0, len(object.data) * object.itemsize, object.itemsize))
             self._format = object.typecode
@@ -431,17 +447,19 @@ class memoryview:
     def _byte(self, offset):
         from array import array
         if isinstance(self._source, array):
-            if self._source.typecode == 'B':
-                return self._source.data[offset]
+            if self._source.typecode in ('B', 'b'):
+                return self._source.data[offset] % 256
             word = self._source.data[offset // 4]
             return word.to_bytes(4, 'little', signed=True)[offset % 4]
-        return self._source[offset]
+        if isinstance(self._source, bytes):
+            return bytes.__getitem__(self._source, offset)
+        return bytearray.__getitem__(self._source, offset)
 
     def _put_byte(self, offset, value):
         from array import array
         if isinstance(self._source, array):
-            if self._source.typecode == 'B':
-                self._source.data[offset] = value
+            if self._source.typecode in ('B', 'b'):
+                self._source.data[offset] = value - 256 if self._source.typecode == 'b' and value >= 128 else value
             else:
                 index = offset // 4
                 data = bytearray(self._source.data[index].to_bytes(4, 'little', signed=True))
@@ -449,6 +467,11 @@ class memoryview:
                 self._source.data[index] = int.from_bytes(data, 'little', signed=True)
         else:
             self._source[offset] = value
+
+    @property
+    def obj(self):
+        self._check()
+        return self._object
 
     @property
     def format(self):
@@ -464,6 +487,21 @@ class memoryview:
     def readonly(self):
         self._check()
         return self._readonly
+
+    @property
+    def c_contiguous(self):
+        self._check()
+        if not self._offsets:
+            return True
+        return all(at == self._offsets[0] + i * self._itemsize for i, at in enumerate(self._offsets))
+
+    @property
+    def contiguous(self):
+        return self.c_contiguous
+
+    @property
+    def f_contiguous(self):
+        return self.c_contiguous
 
     @property
     def nbytes(self):
@@ -566,9 +604,22 @@ class memoryview:
         result._offsets = list(range(start, start + self.nbytes, width))
         return result
 
+    def __del__(self):
+        if hasattr(self, '_released'):
+            self.release()
+
     def release(self):
+        if self._released:
+            return
         self._released = True
         self._export = None
+        self._object = None
+        if self._owner is not None:
+            callback = getattr(type(self._owner), '__release_buffer__', None)
+            if callback is not None:
+                callback(self._owner, self._owner_view)
+            self._owner = None
+            self._owner_view = None
 
     def __enter__(self):
         self._check()
@@ -610,3 +661,16 @@ class memoryview:
 # FileExistsError, InterruptedError, NotADirectoryError,
 # PermissionError, ProcessLookupError and TimeoutError -- along with
 # the old spellings EnvironmentError and IOError.
+
+
+def _buffer_bytes(source):
+    with memoryview(source) as view:
+        if not view.c_contiguous:
+            raise BufferError('memoryview: underlying buffer is not C-contiguous')
+        return view.tobytes()
+
+
+def _buffer_view(source, flags):
+    view = object.__new__(memoryview)
+    view._init_buffer(source, flags)
+    return view

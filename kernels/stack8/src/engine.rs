@@ -592,15 +592,17 @@ impl<'a> Engine<'a> {
                 fields.push((name.clone(), args.first().cloned().unwrap_or(Value::Null)));
             }
         }
+        let written_count = self.stands_on(&class, 53) && matches!(args.get(2), Some(Value::Small(_) | Value::Huge(_) | Value::Flag(_)));
+        if written_count { fields.push(("characters_written".into(), args[2].clone())); }
         if self.stands_on(&class, 20) {
             let numbered = args.len() >= 2;
             for (at, name) in self.lang.os_members.iter().enumerate() {
-                fields.push((name.clone(), if numbered { args.get(at).cloned().unwrap_or(Value::Null) } else { Value::Null }));
+                fields.push((name.clone(), if numbered && !(written_count && at == 2) { args.get(at).cloned().unwrap_or(Value::Null) } else { Value::Null }));
             }
             if let ([before, between, colon, quote], true) = (self.lang.os_message.as_slice(), numbered) {
                 let mut shown = format!("{before}{}{between}{}", args[0].display(&sp), args[1].display(&sp));
                 if let Some(named) = args.get(2) {
-                    if !matches!(named, Value::Null) { shown = format!("{shown}{colon}{}{quote}", named.display(&sp)); }
+                    if !written_count && !matches!(named, Value::Null) { shown = format!("{shown}{colon}{}{quote}", named.display(&sp)); }
                 }
                 fields.push(("\0shown".into(), Value::text(&shown)));
             }
@@ -645,7 +647,7 @@ impl<'a> Engine<'a> {
         let mut args = args;
         if self.stands_on(&class, 20) {
             fields.push(("filename2".into(), args.get(4).cloned().unwrap_or(Value::Null)));
-            if (3..=5).contains(&args.len()) && !matches!(args[2], Value::Null) { args.truncate(2); }
+            if !written_count && (3..=5).contains(&args.len()) && !matches!(args[2], Value::Null) { args.truncate(2); }
         }
         let args = Value::tuple(args);
         fields.push(("\0arguments".into(), args.clone()));

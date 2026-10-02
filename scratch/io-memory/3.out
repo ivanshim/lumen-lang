@@ -1,0 +1,9 @@
+bytearray(b'Cb') 0
+bytearray(b'Cb') 0
+bytearray(b'Cb') 0
+None bytearray(b'a\x00\x00\x00')
+TypeError 'str' object cannot be interpreted as an integer
+OverflowError Python int too large to convert to C ssize_t
+ValueError Can only resize to positive sizes, got -1
+TypeError export failed
+TypeError export failed
