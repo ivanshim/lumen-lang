@@ -117,6 +117,12 @@ def linked_to_musl():
     # Stub: no host C library is inspected.
     return None
 
+def requires_docstrings(test):
+    """Decorator for a test function that requires docstrings."""
+    return unittest.skipIf(sys.flags.optimize >= 2,
+                           "Docstrings are omitted with -O2 and above")(test)
+
+
 def gc_collect():
     gc.collect()
     gc.collect()

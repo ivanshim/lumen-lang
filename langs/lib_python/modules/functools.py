@@ -1,9 +1,32 @@
-# Wrapping keeps the function itself; metadata copying is a stub.
-def _identity(function):
-    return function
+# update_wrapper and wraps are CPython's own, from Lib/functools.py at
+# the suite's commit 3b564385e4c9 under the PSF licence; the reference's
+# assigned tuple also names __type_params__, which a function here does
+# not carry, so it is passed over like any other missing attribute.
+WRAPPER_ASSIGNMENTS = ('__module__', '__name__', '__qualname__',
+                       '__annotations__', '__type_params__', '__doc__')
+WRAPPER_UPDATES = ('__dict__',)
 
-def wraps(wrapped, assigned=None, updated=None):
-    return _identity
+def update_wrapper(wrapper,
+                   wrapped,
+                   assigned=WRAPPER_ASSIGNMENTS,
+                   updated=WRAPPER_UPDATES):
+    for attr in assigned:
+        try:
+            value = getattr(wrapped, attr)
+        except AttributeError:
+            pass
+        else:
+            setattr(wrapper, attr, value)
+    for attr in updated:
+        getattr(wrapper, attr).update(getattr(wrapped, attr, {}))
+    wrapper.__wrapped__ = wrapped
+    return wrapper
+
+def wraps(wrapped,
+          assigned=WRAPPER_ASSIGNMENTS,
+          updated=WRAPPER_UPDATES):
+    return partial(update_wrapper, wrapped=wrapped,
+                   assigned=assigned, updated=updated)
 
 def reduce(function, sequence, *initial):
     seen = len(initial) != 0

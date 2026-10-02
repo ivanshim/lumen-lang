@@ -453,8 +453,20 @@ impl<'a> Engine<'a> {
             if at == 43 { fields.push(("\0unicode-encode".into(), Value::Flag(true))); }
             if at == 44 { fields.push(("\0unicode-decode".into(), Value::Flag(true))); }
             if at == 45 { fields.push(("\0unicode-translate".into(), Value::Flag(true))); }
-            classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
-                name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
+            // The line a fault class descends by: its parent, then all
+            // the parent descends from, so issubclass and __mro__ read
+            // the fault hierarchy as they read any other class's.
+            let base = parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned());
+            let (direct, lineage) = match &base {
+                Some(parent) => {
+                    let mut line = vec![parent.clone()];
+                    line.extend(parent.lineage.iter().cloned());
+                    (vec![parent.clone()], line)
+                }
+                None => (Vec::new(), Vec::new()),
+            };
+            classes.push(Rc::new(Class { direct, lineage, outline: None,
+                name: name.clone(), base,
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                 constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false),
             }));
@@ -586,6 +598,10 @@ impl<'a> Engine<'a> {
         let Some(Value::Object(handling)) = self.caught.last().map(Value::contents) else { return };
         if Rc::ptr_eq(&handling, &object) { return; }
         let behind = |link: &Rc<Instance>| link.fields.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.contents());
+        // A value raised already standing behind another keeps the link
+        // it has: the reference chains a value only where it stands
+        // behind nothing.
+        if matches!(behind(&object), Some(Value::Object(_))) { return; }
         let mut link = handling.clone();
         // A chain already standing behind `handling` may loop back on
         // itself without ever passing through the value being raised

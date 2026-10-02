@@ -626,8 +626,20 @@ impl<'a> Machine<'a> {
                 45 => seed.push(("\0unicode-translate".to_string(), Value::Flag(true))),
                 _ => {}
             }
-            let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
-                name: word.clone(), under: parent.and_then(|p| chain.get(p).cloned()),
+            // The line a fault kind descends by: its parent, then all
+            // the parent descends from, so issubclass and __mro__ read
+            // the fault hierarchy as they read any other class's.
+            let under = parent.and_then(|p| chain.get(p).cloned());
+            let (parents, ancestry) = match &under {
+                Some(forebear) => {
+                    let mut line = vec![forebear.clone()];
+                    line.extend(forebear.ancestry.iter().cloned());
+                    (vec![forebear.clone()], line)
+                }
+                None => (Vec::new(), Vec::new()),
+            };
+            let kind = Blueprint { parents, ancestry, presentation: None,
+                name: word.clone(), under,
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
                 shared: RefCell::new(vec![("__module__".to_owned(), Value::text("builtins"))]), constants: vec![], weak_slot: Cell::new(None), sealed: Cell::new(false),
             };
@@ -756,6 +768,10 @@ impl<'a> Machine<'a> {
         let Some(Value::Thing(handled)) = self.holding_fault.last().map(Value::settled) else { return };
         if Rc::ptr_eq(&handled, &thing) { return; }
         let context_of = |of: &Rc<Thing>| of.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.settled());
+        // A value raised already standing behind another keeps the link
+        // it has: the reference chains a value only where it stands
+        // behind nothing.
+        if matches!(context_of(&thing), Some(Value::Thing(_))) { return; }
         let mut step = handled.clone();
         // A chain already standing behind `handled` may loop back on
         // itself without ever passing through the value being raised
@@ -3925,9 +3941,19 @@ impl<'a> Machine<'a> {
                     // owed, innermost first, before the body is over.
                     let mut parts = Vec::new();
                     while let Some(owed) = state.owed.pop() {
-                        if let Owed::Lastly(plan, _, held) = owed {
-                            self.holding_fault.truncate(self.holding_below + held);
-                            if let Some(last) = plan.last.clone() { parts.push(last); }
+                        match owed {
+                            Owed::Lastly(plan, _, held) => {
+                                self.holding_fault.truncate(self.holding_below + held);
+                                if let Some(last) = plan.last.clone() { parts.push(last); }
+                            }
+                            // A manager still open is told the body is
+                            // done with it before the return goes on, as
+                            // a body falling off its end tells it.
+                            Owed::Warding(plan, _, _) if plan.context.is_some() => {
+                                let address = plan.context.as_ref().expect("a manager still open");
+                                self.leaving(&frame, address, None, plan.async_context)?;
+                            }
+                            _ => {}
                         }
                     }
                     if parts.is_empty() { return Ok(Stepped::Over); }

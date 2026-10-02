@@ -206,3 +206,22 @@ class catch_warnings:
         filters = self.filters
         _state.seen = []
         return False
+
+
+_DEPRECATED_MSG = "{name!r} is deprecated and slated for removal in Python {remove}"
+
+
+def _deprecated(name, message=_DEPRECATED_MSG, *, remove, _version=None):
+    # CPython's _py_warnings._deprecated at the suite's commit, under the
+    # PSF licence; the running version comes from sys here.
+    import sys
+    if _version is None:
+        _version = sys.version_info
+    remove_formatted = f"{remove[0]}.{remove[1]}"
+    level = _version[3] if len(_version) > 3 else "final"
+    if (_version[:2] > remove) or (_version[:2] == remove and level != "alpha"):
+        msg = f"{name!r} was slated for removal after Python {remove_formatted} alpha"
+        raise RuntimeError(msg)
+    else:
+        msg = message.format(name=name, remove=remove_formatted)
+        warn(msg, DeprecationWarning, stacklevel=3)

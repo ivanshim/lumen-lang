@@ -46,7 +46,18 @@ def mkstemp(suffix=None, prefix=None, dir=None, text=False):
 
 
 def mktemp(suffix='', prefix=template, dir=None):
-    raise 'NotImplementedError: tempfile.mktemp would name a file this runtime cannot then create'
+    # A name only, never made: the first free one the random sequence
+    # offers, as CPython's own mktemp picks it.
+    if dir is None:
+        dir = gettempdir()
+    import random as _random
+    characters = 'abcdefghijklmnopqrstuvwxyz0123456789_'
+    for _ in range(100):
+        name = ''.join(_random.choice(characters) for _ in range(8))
+        file = os.path.join(dir, prefix + name + suffix)
+        if not os.path.exists(file):
+            return file
+    raise FileExistsError(17, 'File exists')
 
 
 def NamedTemporaryFile(*args, **keywords):
