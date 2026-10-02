@@ -36,6 +36,8 @@ def _call(action, format, values=None):
         raise error(exc.args[0])
 
 def _get(format):
+    if isinstance(format, str) and format in _cache:
+        return _cache[format]
     format = _format(format)
     if format not in _cache:
         if len(_cache) >= 100:
@@ -43,12 +45,20 @@ def _get(format):
         _cache[format] = Struct(format)
     return _cache[format]
 
+def _argument_codes(fields):
+    for code, repeat in fields:
+        if code != 'x':
+            for index in range(1 if code in 'sp' else repeat):
+                yield code
+
 class Struct:
     def __new__(cls, *args, **kwargs):
         self = object.__new__(cls)
         self._format = None
         self._size = -1
         self._fields = ()
+        self._codes = ()
+        self._count = 0
         return self
 
     def _ready(self):
@@ -65,6 +75,8 @@ class Struct:
         self._format = format
         self._size = size
         self._fields = fields
+        self._count = sum(0 if code == 'x' else 1 if code in 'sp' else repeat for code, repeat in fields)
+        self._codes = tuple(_argument_codes(fields)) if self._count <= 256 else None
 
     @property
     def format(self):
@@ -79,47 +91,48 @@ class Struct:
         return 'Struct(' + repr(self.format) + ')'
 
     def _arguments(self, values):
-        expected = sum(0 if c == 'x' else 1 if c in 'sp' else n for c, n in self._fields)
+        expected = self._count
         if len(values) != expected:
             raise error('pack expected ' + str(expected) + ' items for packing (got ' + str(len(values)) + ')')
         normalized = []
-        i = 0
-        for code, count in self._fields:
-            if code == 'x':
-                continue
-            for j in range(1 if code in 'sp' else count):
-                value = values[i]
-                i += 1
-                if code in 'bBhHiIlLqQnNP':
-                    if not isinstance(value, int) and not hasattr(type(value), '__index__'):
-                        raise error('required argument is not an integer')
+        codes = self._codes if self._codes is not None else _argument_codes(self._fields)
+        for code, value in zip(codes, values):
+            if code in 'bBhHiIlLqQnNP':
+                if not isinstance(value, int) and not hasattr(type(value), '__index__'):
+                    raise error('required argument is not an integer')
+                if not isinstance(value, int):
                     value = operator.index(value)
-                elif code in 'efd':
-                    if not isinstance(value, (int, float)) and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
-                        raise error('required argument is not a float')
-                    try:
+            elif code in 'efd':
+                if not isinstance(value, (int, float)) and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
+                    raise error('required argument is not a float')
+                try:
+                    if not isinstance(value, float):
                         value = float(value)
-                    except (TypeError, ValueError):
-                        raise error('required argument is not a float')
-                elif code in 'FD':
-                    if not isinstance(value, (int, float, complex)) and not hasattr(type(value), '__complex__') and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
-                        raise error('required argument is not a complex')
-                    try:
-                        value = complex(value)
-                    except TypeError:
-                        raise error('required argument is not a complex')
-                    value = (value.real, value.imag)
-                elif code == '?':
-                    value = bool(value)
-                normalized.append(value)
+                except (TypeError, ValueError):
+                    raise error('required argument is not a float')
+            elif code in 'FD':
+                if not isinstance(value, (int, float, complex)) and not hasattr(type(value), '__complex__') and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
+                    raise error('required argument is not a complex')
+                try:
+                    value = complex(value)
+                except TypeError:
+                    raise error('required argument is not a complex')
+                value = (value.real, value.imag)
+            elif code == '?':
+                value = bool(value)
+            normalized.append(value)
         return tuple(normalized)
 
     def pack(self, *values):
-        return _call(1, self.format, self._arguments(values))
+        self._ready()
+        return _call(1, self._format, self._arguments(values))
 
     def unpack(self, buffer):
-        result = _call(2, self.format, _read_view(buffer).tobytes())
-        if 'F' not in self.format and 'D' not in self.format:
+        self._ready()
+        format = self._format
+        raw = buffer if isinstance(buffer, (bytes, bytearray)) else _read_view(buffer).tobytes()
+        result = _call(2, format, raw)
+        if 'F' not in format and 'D' not in format:
             return result
         converted = []
         i = 0
