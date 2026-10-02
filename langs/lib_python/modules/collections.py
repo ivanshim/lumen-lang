@@ -336,3 +336,59 @@ class UserDict(MutableMapping):
         for key in iterable:
             made[key] = value
         return made
+
+class ChainMap(MutableMapping):
+    # A chain of mappings searched front to back; writes go to the first.
+    def __init__(self, *maps):
+        self.maps = list(maps) or [{}]
+
+    def __getitem__(self, key):
+        for mapping in self.maps:
+            if key in mapping:
+                return mapping[key]
+        raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        self.maps[0][key] = value
+
+    def __delitem__(self, key):
+        if key in self.maps[0]:
+            del self.maps[0][key]
+        else:
+            raise KeyError('Key not found in the first mapping: ' + repr(key))
+
+    def __iter__(self):
+        keys = []
+        seen = set()
+        for index in range(len(self.maps) - 1, -1, -1):
+            for key in self.maps[index]:
+                if key not in seen:
+                    seen.add(key)
+                    keys.append(key)
+        return iter(keys)
+
+    def __len__(self):
+        seen = set()
+        for mapping in self.maps:
+            for key in mapping:
+                seen.add(key)
+        return len(seen)
+
+    def __contains__(self, key):
+        for mapping in self.maps:
+            if key in mapping:
+                return True
+        return False
+
+    @property
+    def parents(self):
+        return ChainMap(*self.maps[1:])
+
+    def new_child(self, m=None):
+        if m is None:
+            m = {}
+        return ChainMap(m, *self.maps)
+
+    def __repr__(self):
+        parts = [repr(mapping) for mapping in self.maps]
+        return '%s(%s)' % (type(self).__name__, ', '.join(parts))

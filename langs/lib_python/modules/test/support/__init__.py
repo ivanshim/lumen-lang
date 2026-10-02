@@ -776,6 +776,40 @@ def check__all__(test_case, module, name_of_module=None, extra=(),
             expected.add(name)
     test_case.assertCountEqual(module.__all__, expected)
 
+def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
+    single_param = False
+    if isinstance(arg_names, str):
+        arg_names = arg_names.replace(',', ' ').split()
+        if len(arg_names) == 1:
+            single_param = True
+    arg_values = tuple(arg_values)
+    def decorator(func):
+        if isinstance(func, type):
+            raise TypeError('subTests() can only decorate methods, not classes')
+
+        @functools.wraps(func)
+        def wrapper(self, /, *args, **kwargs):
+            for values in arg_values:
+                subtest_kwargs = dict(zip(arg_names, (values,) if single_param else values))
+                with self.subTest(**subtest_kwargs):
+                    func(self, *args, **kwargs, **subtest_kwargs)
+                if _do_cleanups:
+                    self.doCleanups()
+        return wrapper
+    return decorator
+
+def check_disallow_instantiation(testcase, tp, *args, **kwds):
+    import re
+    mod = tp.__module__
+    name = tp.__name__
+    if mod != 'builtins':
+        qualname = mod + '.' + name
+    else:
+        qualname = name
+    msg = "cannot create '" + re.escape(qualname) + "' instances"
+    testcase.assertRaisesRegex(TypeError, msg, tp, *args, **kwds)
+    testcase.assertRaisesRegex(TypeError, msg, tp.__new__, tp, *args, **kwds)
+
 # From CPython Lib/test/support at v3.14.8 / 8e6e75d9102e, PSF License.
 import functools
 PGO = False

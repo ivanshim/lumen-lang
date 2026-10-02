@@ -36,3 +36,18 @@ def import_fresh_module(name, fresh=(), blocked=(), deprecated=False, usefrozen=
                 del sys.modules[key]
             if saved[key] is not missing:
                 sys.modules[key] = saved[key]
+
+def ensure_lazy_imports(imported_module, modules_to_block):
+    import sys
+    from .script_helper import assert_python_ok
+    wanted = set(modules_to_block)
+    lines = [
+        "import sys",
+        "wanted = " + repr(wanted),
+        "if wanted & set(sys.modules):",
+        "    raise AssertionError('unexpectedly imported at startup')",
+        "import " + imported_module,
+        "if wanted & set(sys.modules):",
+        "    raise AssertionError('unexpectedly imported after import')",
+    ]
+    assert_python_ok("-S", "-c", "\n".join(lines))
