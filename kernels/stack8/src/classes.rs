@@ -60,6 +60,7 @@ impl<'a> Engine<'a> {
             for name in names {
                 if matches!(name.as_str(), "start" | "stop" | "step" | "real" | "imag" | "numerator" | "denominator" | "__reduce_ex__" | "__dir__") { continue; }
                 if word == "generator" && name == "__setstate__" { continue; }
+                if self.lang.builtins.get(word) == Some(&Builtin::Frozen) && self.lang.constructor.as_deref() == Some(name.as_str()) { continue; }
                 if c.shared.borrow().iter().any(|(key, _)| key == &name) { continue; }
                 if let Some(descriptor) = self.loose_kind_member(&Value::Class(c.clone()), &name) {
                     c.shared.borrow_mut().push((name, descriptor));
@@ -659,7 +660,16 @@ impl<'a> Engine<'a> {
             Value::Native(operation, name) => { let items = self.call_items(args)?; Ok(self.builtin_call(operation, &name, items)?) }
             // A method bound to a value of a builtin kind, reached as a
             // value in its own right and then called.
-            Value::ValueMethod(bound) => Ok(self.value_method(&bound.0,&bound.1,args,Vec::new())?),
+            Value::ValueMethod(bound) => {
+                let mut positional = Vec::new();
+                let mut named = Vec::new();
+                for (key, value) in self.call_items(args)? {
+                    match key { Some(key) => named.push((key, value)), None => positional.push(value) }
+                }
+                let result = self.value_method(&bound.0, &bound.1, positional, named);
+                if let Some(fault) = self.carried.take() { return Err(fault); }
+                Ok(result?)
+            },
             Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A thing called stands on its own call member, which may be
             // a thing again: each such step is counted with the calls
@@ -872,7 +882,7 @@ impl<'a> Engine<'a> {
                 let Some(op) = self.lang.builtins.get(word.as_ref()).copied() else { return Err(self.class_refusal()); };
                 if let Builtin::ClassTool(i) = op { self.class_work(i,args) }
                 else if op == Builtin::SortOf { self.class_type(args) }
-                else { Ok(self.builtin(op,&word,&mut args)?) }
+                else { self.class_apply(Value::Native(op, word), args) }
             }
             other => Err(self.core_fault("core.uncallable", &other.core_kind()).into()),
         }
@@ -1169,6 +1179,10 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
+            if w.0 == 29 && w.1[0].plain() == "int" {
+                let receiver = subject.clone().unwrap_or_else(|| Value::Class(class.clone()));
+                if let Some(method) = self.integer_member(&receiver, &w.1[1].plain()) { return Ok(method); }
+            }
             if w.0 == 29 && w.1[0].plain() == "dict" && self.lang.value_methods.get(&w.1[1].plain()).map(String::as_str) == Some("fromkeys") {
                 return Ok(Value::ValueMethod(Rc::new((Value::Class(class), w.1[1].plain()))));
             }

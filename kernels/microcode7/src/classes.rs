@@ -71,6 +71,7 @@ impl<'a> Machine<'a> {
             let descriptors = known.into_iter().filter(|name|
                 !["real", "imag", "numerator", "denominator", "start", "stop", "step", "__dir__", "__reduce_ex__"].contains(&name.as_str())
                 && !(word == "generator" && name == "__setstate__")
+                && !(self.table.prims.get(word) == Some(&Prim::Unchanging) && self.table.single("ext.stmt.class.constructor") == Some(name.as_str()))
                 && !kind.shared.borrow().iter().any(|(key, _)| key == name))
                 .filter_map(|name| self.carried_by_kind(&owner, &name).map(|entry| (name, entry))).collect::<Vec<_>>();
             kind.shared.borrow_mut().extend(descriptors);
@@ -752,12 +753,19 @@ impl<'a> Machine<'a> {
             Value::Bound(code,environment)=>self.invoke(code,environment,values),
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),
             Value::Intrinsic(operation, name) => {
-                let (input, keywords) = self.open_arguments(values)?;
-                Ok(self.core_primitive(operation, &name, input, keywords)?)
+                let (mut input, keywords) = self.open_arguments(values)?;
+                if let Some(answer) = self.builtin_names(operation, &name, &mut input, keywords)? { return Ok(answer); }
+                let result = self.prim(operation, &name, &input);
+                if let Some(raised) = self.got_away.take() { return Err(raised); }
+                Ok(result?)
             }
             // A method tied to a value of a native kind, reached as a
             // value of its own and then called.
-            Value::Member(receiver,operation)=>self.value_member(&receiver,&operation,values,Vec::new()),
+            Value::Member(receiver,operation)=>{
+                let (arguments, keywords) = self.open_arguments(values)?;
+                let answer = self.value_member(&receiver, &operation, arguments, keywords);
+                match self.got_away.take() { Some(escape) => Err(escape), None => answer }
+            },
             Value::Method(code,thing)=>{values.insert(0,Value::Thing(thing));self.invoke(code,self.outermost.clone(),values)},
             // A thing called stands on its own call member, which may
             // be a thing again. Reaching through one makes no frame, so
@@ -974,7 +982,7 @@ impl<'a> Machine<'a> {
             }
             Value::Text(word)=>{
                 let Some(op)=self.table.prims.get(word.as_ref()).copied()else{return Err(self.class_unready());};
-                match op {Prim::ClassWork(k)=>self.work_on_class(k,values),Prim::SortOf=>self.class_from_type(values),_=>Ok(self.prim(op,&word,&values)?)}
+                match op {Prim::ClassWork(k)=>self.work_on_class(k,values),Prim::SortOf=>self.class_from_type(values),_=>self.apply_class_member(Value::Intrinsic(op, word), values)}
             }
             other => Err(self.core_complaint("core.uncallable", &other.kind_word()).into()),
         }
@@ -1186,6 +1194,10 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         if let Value::Wrapped(60, parts) = &entry {
+            if parts[0].bare() == "int" {
+                let value = receiver.as_ref().cloned().unwrap_or(Value::Blueprint(owner.clone()));
+                if let Some(integer) = self.integer_attribute(&value, &parts[1].bare()) { return Ok(integer); }
+            }
             if parts[0].bare() == "dict" && self.table.spells("ext.builtin.method.fromkeys", &parts[1].bare()) {
                 return Ok(Value::Member(Rc::new(Value::Blueprint(owner)), parts[1].bare()));
             }
