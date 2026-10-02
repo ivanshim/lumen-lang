@@ -482,17 +482,19 @@ class memoryview:
         import struct
         if self._format == 'w':
             raise NotImplementedError('memoryview: format w not supported')
-        return struct.unpack('@' + self._format, raw[:struct.calcsize('@' + self._format)])[0]
+        format = self._format[1:] if self._format.startswith('@') else self._format
+        return struct.unpack('@' + format, raw[:struct.calcsize('@' + format)])[0]
 
     def __setitem__(self, key, value):
         self._check()
+        format = self._format[1:] if self._format.startswith('@') else self._format
         if self._readonly:
             raise TypeError('cannot modify read-only memory')
         if isinstance(key, slice):
             places = self._offsets[key]
             if not isinstance(value, (bytes, bytearray, memoryview)):
                 raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
-            if self._format not in ('B', 'b'):
+            if format not in ('B', 'b'):
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
             values = list(value)
             if len(places) != len(values):
@@ -506,24 +508,29 @@ class memoryview:
                 raise IndexError('index out of bounds on dimension 1')
             except TypeError:
                 raise TypeError('memoryview: invalid slice key')
-            if self._format == 'w':
+            if format == 'w':
                 raise NotImplementedError('memoryview: format w not supported')
-            if self._format in 'fd':
+            if format == 'c':
+                if not isinstance(value, bytes) or len(value) != 1:
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
+            elif format == '?':
+                value = bool(value)
+            elif format in 'efd':
                 if not isinstance(value, (int, float)) and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
-                    raise TypeError("memoryview: invalid type for format '" + self._format + "'")
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
                 value = float(value)
             else:
                 if not isinstance(value, int) and not hasattr(type(value), '__index__'):
-                    raise TypeError("memoryview: invalid type for format '" + self._format + "'")
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
                 import operator
                 value = operator.index(value)
             import struct
             try:
-                raw = struct.pack('@' + self._format, value)
+                raw = struct.pack('@' + format, value)
             except struct.error:
-                raise ValueError("memoryview: invalid value for format '" + self._format + "'")
+                raise ValueError("memoryview: invalid value for format '" + format + "'")
             except OverflowError:
-                if self._format != 'f':
+                if format != 'f':
                     raise
                 raw = struct.pack('@f', float('-inf') if value < 0 else float('inf'))
             for i in range(len(raw)):
@@ -555,11 +562,9 @@ class memoryview:
         return self.tobytes().hex(sep, bytes_per_sep)
 
     def cast(self, format, shape=None):
+        if not isinstance(format, str):
+            raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
         self._check()
-        if shape is not None and (not isinstance(shape, (list, tuple)) or len(shape) != 1):
-            raise TypeError('memoryview: multi-dimensional casts are not supported')
-        if format not in 'bBhHiIlLqQfd':
-            raise TypeError('memoryview: destination format must be a native single character format')
         if self._offsets:
             start = self._offsets[0]
             for index, offset in enumerate(self._offsets):
@@ -567,8 +572,17 @@ class memoryview:
                     raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
+        if shape is not None and (not isinstance(shape, (list, tuple)) or len(shape) != 1):
+            raise TypeError('memoryview: multi-dimensional casts are not supported')
+        format.encode('ascii')
+        destination = format[1:] if format.startswith('@') else format
+        if len(destination) != 1 or destination not in 'cbBhHiIlLqQnNfde?P':
+            raise ValueError("memoryview: destination format must be a native single character format prefixed with an optional '@'")
+        source = self._format[1:] if self._format.startswith('@') else self._format
+        if source not in ('b', 'B', 'c') and destination not in ('b', 'B', 'c'):
+            raise TypeError('memoryview: cannot cast between two non-byte formats')
         import struct
-        width = struct.calcsize('@' + format)
+        width = struct.calcsize('@' + destination)
         if self.nbytes % width:
             raise TypeError('memoryview: length is not a multiple of itemsize')
         if shape is not None and shape[0] != self.nbytes // width:
