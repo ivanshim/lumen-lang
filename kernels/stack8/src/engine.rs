@@ -4994,7 +4994,7 @@ impl<'a> Engine<'a> {
                                     for (name, _) in space.fields.borrow().iter() {
                                         if name.starts_with('\0') { continue; }
                                         let suffix = format!(":{}:{}", path, name);
-                                        if let Some(at) = self.registry.idents.iter().position(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                                        if let Some(at) = self.registry.idents.iter().rposition(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
                                             aliases.push((name.clone(), self.registry.idents[at].clone()));
                                         }
                                     }

@@ -2166,7 +2166,9 @@ impl<'a> Engine<'a> {
                 // module.__dict__ write is a global write.
                 if module && value.is_some() && !o.fields.borrow().iter().any(|(n,_)| n == name) {
                     let suffix = format!(":{}:{}", o.class_now().name, name);
-                    if let Some(slot) = self.registry.idents.iter().position(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                    // The newest incarnation of the module answers for
+                    // the name: a module read in again owns fresh cells.
+                    if let Some(slot) = self.registry.idents.iter().rposition(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
                         let shared = Value::Bond(Rc::new(RefCell::new(value.clone().unwrap())));
                         self.world.resize(self.registry.idents.len(), Value::Blank);
                         self.world[slot] = shared.clone();
