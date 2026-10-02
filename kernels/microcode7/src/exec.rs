@@ -23007,6 +23007,9 @@ impl Machine<'_> {
                 *item = item.settled();
             }
         }
+        if self.has_class_order() && op == Prim::SortOf && !matches!(input.len(), 1 | 3) {
+            return Err("TypeError: type() takes 1 or 3 arguments".to_owned());
+        }
         if self.has_class_order() && op == Prim::SortOf && input.len() == 3 {
             for (word, value) in keywords { input.push(Value::Couple(Rc::new((Value::text(&word), value)))); }
             return self.class_from_type(input).map_err(|escape| self.suspension_fault(escape));
