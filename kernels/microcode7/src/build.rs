@@ -10408,13 +10408,6 @@ impl<'a> Builder<'a> {
             self.reading_yield |= answer.is_empty();
             let mut term = self.expr(0)?;
             self.reading_yield = previous;
-            if spread && self.table.has_any("ext.builtin.exceptions.syntax") {
-                let endpoint = &self.tokens[if dictionary { expression_at } else { self.pos - 1 }];
-                self.range_end = Some((endpoint.column + endpoint.lexeme.chars().count(), endpoint.row));
-                self.pos = expression_at;
-                let complaint = match dictionary { true => "dict unpacking cannot be used in dict comprehension", false => "iterable unpacking cannot be used in comprehension" };
-                return Err(format!("SyntaxError: {complaint}"));
-            }
             if dictionary && !spread {
                 self.need_sign(self.table.single("syntax.map.pair").unwrap(), "in a map comprehension")?;
                 let worth = self.expr(0)?;

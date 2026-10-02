@@ -11099,13 +11099,6 @@ impl<'a> Compiler<'a> {
             if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
             self.yield_operand = before_yield;
-            if spread && !self.lang.syntax_members.is_empty() {
-                let last = &self.tokens[if map { head } else { self.pos - 1 }];
-                self.registry.stopped_end = last.column + last.lexeme.chars().count();
-                self.registry.stopped_end_row = last.row;
-                self.pos = head;
-                return Err(if map { "SyntaxError: dict unpacking cannot be used in dict comprehension" } else { "SyntaxError: iterable unpacking cannot be used in comprehension" }.into());
-            }
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a comprehension key and value")?;
