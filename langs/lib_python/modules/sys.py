@@ -373,3 +373,9 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+
+def _getframemodulename(depth=0):
+    if not isinstance(depth, int):
+        raise TypeError('an integer is required')
+    return __frame_module(max(depth, 0) + 1)

@@ -4,6 +4,7 @@
 # test of another implementation's internals says nothing about this one
 # whichever way it comes out.
 # Helpers whose work is unavailable complain when called, never pass a test.
+import functools
 import gc
 import sys
 import unittest
@@ -231,6 +232,26 @@ class _NeverEqual:
         return 1
 
 NEVER_EQ = _NeverEqual()
+
+# Objects that compare greater than, or less than, everything else;
+# the ordering decorator fills in the reflected comparisons.
+@functools.total_ordering
+class _LARGEST:
+    def __eq__(self, other):
+        return isinstance(other, _LARGEST)
+    def __lt__(self, other):
+        return False
+
+LARGEST = _LARGEST()
+
+@functools.total_ordering
+class _SMALLEST:
+    def __eq__(self, other):
+        return isinstance(other, _SMALLEST)
+    def __gt__(self, other):
+        return False
+
+SMALLEST = _SMALLEST()
 
 # Tracing control is a stub; the kernel does not install trace callbacks.
 no_tracing = _identity
@@ -843,3 +864,33 @@ def captured_output(stream_name):
         yield getattr(sys, stream_name)
     finally:
         setattr(sys, stream_name, orig_stdout)
+
+def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
+    """Run a test method once per row of a table, one subTest each.
+
+    The reference helper also awaits async test methods; the runtime
+    adapters carry no coroutine tests, so the synchronous path is the
+    only one written here.
+    """
+    single_param = False
+    if isinstance(arg_names, str):
+        arg_names = arg_names.replace(',', ' ').split()
+        if len(arg_names) == 1:
+            single_param = True
+    arg_values = tuple(arg_values)
+    def decorator(func):
+        if isinstance(func, type):
+            raise TypeError('subTests() can only decorate methods, not classes')
+        def iter_subtest_kwargs():
+            for values in arg_values:
+                yield dict(zip(arg_names, (values,) if single_param else values))
+        @functools.wraps(func)
+        def wrapper(self, /, *args, **kwargs):
+            for subtest_kwargs in iter_subtest_kwargs():
+                with self.subTest(**subtest_kwargs):
+                    func(self, *args, **kwargs, **subtest_kwargs)
+                if _do_cleanups:
+                    self.doCleanups()
+        return wrapper
+    return decorator
+

@@ -526,6 +526,9 @@ class Match:
             return self.re.groupindex[group]
         return group
 
+    def __getitem__(self, group):
+        return self.group(group)
+
     def group(self, *numbers):
         if len(numbers) == 0:
             numbers = [0]

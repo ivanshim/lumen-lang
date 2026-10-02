@@ -324,6 +324,9 @@ class TestCase:
     def assertEndsWith(self, text, suffix, msg=None):
         self._check(suffix == '' or text[-len(suffix):] == suffix, _representation(text) + ' does not end with ' + _representation(suffix), msg)
 
+    def assertNotEndsWith(self, text, suffix, msg=None):
+        self._check(suffix != '' and text[-len(suffix):] != suffix, _representation(text) + ' ends with ' + _representation(suffix), msg)
+
     def _run_test(self):
         if getattr(self, '__unittest_skip__', False):
             self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
