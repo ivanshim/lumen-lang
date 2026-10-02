@@ -65,12 +65,14 @@ def hexlify(data, sep=_missing, bytes_per_sep=1):
             sep = bytes([ord(sep)])
     return _convert('hex', data, None if sep is _missing else sep, group)
 
-b2a_hex = hexlify
+def b2a_hex(data, sep=_missing, bytes_per_sep=1):
+    return hexlify(data, sep, bytes_per_sep)
 
 def unhexlify(data, /):
     return _convert('unhex', _buffer(data, True))
 
-a2b_hex = unhexlify
+def a2b_hex(data, /):
+    return unhexlify(data)
 
 def crc32(data, crc=0, /):
     return _convert('crc32', _buffer(data), operator.index(crc) & 4294967295)

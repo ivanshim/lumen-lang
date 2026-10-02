@@ -15675,9 +15675,11 @@ impl<'a> Engine<'a> {
             return Ok(Value::Null);
         }
         if task == 60 {
-            let [source] = args else { return Err(unready()); };
+            if args.is_empty() || args.len() > 2 { return Err(unready()); }
+            let source = &args[0];
             let held = Self::worth_of(source).unwrap_or_else(|| source.contents());
             let Value::Bytes(cell, true, _) = &held else { return Err(unready()); };
+            if args.len() == 2 { return Ok(Value::Flag(ByteExport::active(cell))); }
             return Ok(Value::Export(Rc::new(ByteExport::acquire(cell))));
         }
         if task == 40 {
@@ -16122,6 +16124,14 @@ impl<'a> Engine<'a> {
             // else out the ordinary way. Answers how many characters went.
             Builtin::StreamPut => {
                 use std::io::Write;
+                if self.lang.binary_streams && args.len() == 3 && self.truth(&args[2]) {
+                    let bytes = self.binary_buffer(&args[0])?;
+                    let result = if self.truth(&args[1]) {
+                        std::io::stderr().write_all(&bytes)
+                    } else { std::io::stdout().write_all(&bytes) };
+                    if result.is_err() { return Err(self.lang.stream_failed[0].clone()); }
+                    return Ok(Value::Small(bytes.len() as i64));
+                }
                 let (Some(Value::Text(text)), Some(to_error), None) = (args.first(), args.get(1), args.get(2)) else {
                     return Err(self.lang.stream_amiss[0].clone());
                 };
@@ -16141,6 +16151,22 @@ impl<'a> Engine<'a> {
             // spell a character, so a character never comes back in part.
             Builtin::StreamTake => {
                 use std::io::Read;
+                if self.lang.binary_streams && args.len() == 3 && self.truth(&args[2]) {
+                    let Value::Small(limit) = args[0] else { return Err(self.lang.stream_amiss[0].clone()); };
+                    let lines = self.truth(&args[1]);
+                    let mut input = std::io::stdin().lock();
+                    let mut bytes = Vec::new();
+                    while limit < 0 || bytes.len() < limit as usize {
+                        let mut next = [0];
+                        match input.read(&mut next) {
+                            Ok(0) => break,
+                            Ok(_) => bytes.push(next[0]),
+                            Err(_) => return Err(self.lang.stream_failed[0].clone()),
+                        }
+                        if lines && next[0] == b'\n' { break; }
+                    }
+                    return Ok(self.byte_make(bytes, false));
+                }
                 let (Some(Value::Small(wanted)), Some(by_line), None) = (args.first().cloned(), args.get(1).cloned(), args.get(2)) else {
                     return Err(self.lang.stream_amiss[0].clone());
                 };
@@ -16207,9 +16233,11 @@ impl<'a> Engine<'a> {
             // these labels can, and what cannot be done gives false
             // back rather than stopping, as such a language expects.
             Builtin::FileRead => {
-                arity(1)?;
+                let binary = self.lang.binary_streams && args.len() == 2 && self.truth(&args[1]);
+                if !(self.lang.binary_streams && args.len() == 2) { arity(1)?; }
                 let sp = self.wording();
                 match std::fs::read(args[0].display(&sp)) {
+                    Ok(bytes) if binary => self.byte_make(bytes, false),
                     Ok(bytes) => {
                         let header = bytes.split(|byte| *byte == b'\n').take(2).flatten()
                             .copied().map(char::from).collect::<String>().to_ascii_lowercase();
@@ -19943,6 +19971,7 @@ impl Engine<'_> {
     /// spell. Its routines keep those addresses after the reader returns.
     fn relative_module_name(&self, written: &str) -> Res<String> {
         if !written.starts_with('.') { return Ok(written.to_owned()); }
+        if !self.lang.import_relative_packages { return Err(self.lang.import_relative_unready.clone()); }
         let Some((_, owner)) = self.module_slots.get(&self.source) else {
             return Err("ImportError: attempted relative import with no known parent package".into());
         };

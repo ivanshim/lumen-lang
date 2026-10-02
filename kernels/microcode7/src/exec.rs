@@ -11281,9 +11281,11 @@ impl<'a> Machine<'a> {
                 return Ok(self.octets(self.octets_from_hex(source)?, operation == 49));
             }
             60 => {
-                let [source] = values else { return Err(refusal()); };
+                if !(1..=2).contains(&values.len()) { return Err(refusal()); }
+                let source = &values[0];
                 let held = Self::underlying(source).unwrap_or_else(|| source.settled());
                 let Value::Octets { cell, changeable: true, .. } = &held else { return Err(refusal()); };
+                if values.get(1).is_some() { return Ok(Value::Flag(OctetLease::held(cell))); }
                 return Ok(Value::Export(Rc::new(OctetLease::new(cell))));
             }
             40 => {
@@ -15878,9 +15880,12 @@ impl<'a> Machine<'a> {
             // spells these labels does at all. What cannot be done
             // answers false rather than stopping the run.
             Prim::Slurp => {
-                n(1)?;
+                let optional_mode = self.table.flag("ext.builtin.stream.binary") && v.len() == 2;
+                if !optional_mode { n(1)?; }
+                let raw = optional_mode && self.stands_true(&v[1]);
                 let w = self.wording();
                 match std::fs::read(v[0].render(w)) {
+                    Ok(content) if raw => self.octets(content, false),
                     Ok(bytes) => {
                         let opening = bytes.split(|part| *part == b'\n').take(2).flatten()
                             .copied().map(char::from).collect::<String>().to_ascii_lowercase();
@@ -17338,6 +17343,14 @@ impl<'a> Machine<'a> {
             // of characters poured is answered.
             Prim::PourOut => {
                 use std::io::Write;
+                if v.len() == 3 && self.table.flag("ext.builtin.stream.binary") && self.stands_true(&v[2]) {
+                    let payload = self.octet_buffer(&v[0])?;
+                    let failed = if self.stands_true(&v[1]) {
+                        std::io::stderr().lock().write_all(&payload).is_err()
+                    } else { std::io::stdout().lock().write_all(&payload).is_err() };
+                    if failed { return Err(self.argument_fault("ext.builtin.stream.failed", None)); }
+                    return Ok(Value::Small(payload.len() as i64));
+                }
                 let (Some(Value::Text(content)), true) = (v.first(), v.len() == 2) else {
                     return Err(self.argument_fault("ext.builtin.stream.amiss", None));
                 };
@@ -17355,6 +17368,20 @@ impl<'a> Machine<'a> {
             // its first byte says how many more belong to it.
             Prim::DrawIn => {
                 use std::io::Read;
+                if self.table.flag("ext.builtin.stream.binary") && v.len() == 3 && self.stands_true(&v[2]) {
+                    let count = match &v[0] { Value::Small(n) => *n, _ => return Err(self.argument_fault("ext.builtin.stream.amiss", None)) };
+                    let mut data = Vec::new();
+                    let mut channel = std::io::stdin().lock();
+                    loop {
+                        if count >= 0 && data.len() as i64 >= count { break; }
+                        let mut unit = [0u8; 1];
+                        let n = channel.read(&mut unit).map_err(|_| self.argument_fault("ext.builtin.stream.failed", None))?;
+                        if n == 0 { break; }
+                        data.extend_from_slice(&unit);
+                        if unit[0] == 10 && self.stands_true(&v[1]) { break; }
+                    }
+                    return Ok(self.octets(data, false));
+                }
                 let (Some(Value::Small(limit)), true) = (v.first(), v.len() == 2) else {
                     return Err(self.argument_fault("ext.builtin.stream.amiss", None));
                 };
@@ -19912,6 +19939,9 @@ impl Machine<'_> {
     fn qualify_relative(&self, request: &str) -> Result<String, String> {
         let level = request.chars().take_while(|c| *c == '.').count();
         if level == 0 { return Ok(request.into()); }
+        if !self.table.flag("ext.stmt.import.relative.packages") {
+            return Err(self.table.strings("ext.stmt.import.relative.unready").first().cloned().unwrap_or_default());
+        }
         let missing = || String::from("ImportError: attempted relative import with no known parent package");
         let origin = self.loaded_spaces.get(&self.written_in).ok_or_else(missing)?;
         let is_package = self.namespace_file_path(origin).is_some_and(|location| location.ends_with("/__init__.py"));

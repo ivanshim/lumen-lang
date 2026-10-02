@@ -1540,6 +1540,7 @@
   "ext.builtin.staticmethod": [
     "staticmethod"
   ],
+  "ext.builtin.stream.binary": true,
   "ext.builtin.stream.amiss": [
     "TypeError: invalid stream arguments"
   ],
@@ -3122,6 +3123,7 @@
     "ModuleNotFoundError: No module named '",
     "'"
   ],
+  "ext.stmt.import.relative.packages": true,
   "ext.stmt.import.relative.unready": [
     "NotImplementedError: relative imports require a package context"
   ],
