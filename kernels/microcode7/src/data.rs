@@ -571,6 +571,7 @@ impl Value {
     }
 
     pub fn proxy_pairs(&self) -> Value {
+        if let Value::Window(owner, 'm') = self { return owner.proxy_pairs(); }
         if let Value::Blueprint(blueprint) = self {
             let fields = blueprint.shared.borrow();
             return Value::Dict(Rc::new(fields.iter().filter_map(|(word, held)| {
@@ -1105,6 +1106,7 @@ impl Value {
             // A routine bound to a value is the one bound method where it
             // binds the one routine to the very same value.
             (Value::Wrapped(3,x), Value::Wrapped(3,y)) => Rc::ptr_eq(x,y) || x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p.equals(q)),
+            (Value::Wrapped(132, one), Value::Wrapped(132, two)) => one[0].equals(&two[0]) && one[1].one_place(&two[1]),
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             // A routine bound to a frame is one value with itself alone:
             // the same code bound in another frame is another closure,

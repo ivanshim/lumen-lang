@@ -168,10 +168,7 @@ impl<'a> Engine<'a> {
             if args.len() != 2 { return Err("TypeError: method expected 2 arguments".into()); }
             if !matches!(self.class_work(2, vec![args[0].clone()])?, Value::Flag(true)) { return Err("TypeError: first argument must be callable".into()); }
             if matches!(args[1], Value::Null) { return Err("TypeError: instance must not be None".into()); }
-            return Ok(match (&args[0], &args[1]) {
-                (Value::Routine(routine), Value::Object(object)) => Value::Method(object.clone(), routine.clone()),
-                _ => Self::adapter(3, args),
-            });
+            return Ok(Self::adapter(131, args));
         }
         if word == "module" {
             if args.is_empty() || args.len() > 2 { return Err("TypeError: module() takes at most 2 arguments".into()); }
@@ -186,7 +183,7 @@ impl<'a> Engine<'a> {
             if entries.len() != 1 || entries[0].0.is_some() { return Err("TypeError: mappingproxy() takes exactly one argument".into()); }
             let mapping = entries[0].1.clone();
             let held = mapping.contents();
-            if !matches!(held, Value::Map(_) | Value::Fields(_)) && !(matches!(held, Value::Object(_)) && self.special_value(&held, 11).is_some()) {
+            if !matches!(&mapping, Value::View(view) if view.1 == "mapping") && !matches!(held, Value::Map(_) | Value::Fields(_)) && !(matches!(held, Value::Object(_)) && self.special_value(&held, 11).is_some()) {
                 return Err(format!("TypeError: mappingproxy() argument must be a mapping, not {}", held.core_kind()).into());
             }
             return Ok(Value::View(Rc::new((mapping, "mapping".to_string()))));
@@ -763,7 +760,7 @@ impl<'a> Engine<'a> {
                     let Value::Small(mode) = w.1[0] else { return Err(self.class_refusal()); };
                     self.iterator_recipe_next(mode, &args[0])?.ok_or_else(|| self.core_fault("core.exhausted", "").into())
                 }
-                3 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
+                3 | 131 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
                 // A member a builtin kind carries, standing loose: the
                 // first value it is called with is the one it works
                 // upon, and the rest are what the member itself takes.
@@ -1768,9 +1765,16 @@ impl<'a> Engine<'a> {
                     if let Some(kind)=self.spelled_kind(&w.1[0].plain()) { return Ok(kind); }
                 }
             }
-            Value::Adapter(w) if w.0==3 => {
+            Value::Adapter(w) if matches!(w.0, 3 | 131) => {
                 if name==self.class_word("receiver") {return Ok(w.1[1].clone());}
                 if name==self.class_word("function") {return Ok(w.1[0].clone());}
+                if w.0 == 131 {
+                    if name == self.class_word("kind") { return self.class_type(vec![subject.clone()]); }
+                    if name == self.class_word("name") || name == self.class_word("qualified") {
+                        if let Value::Native(_, word) = &w.1[0] { return Ok(Value::text(word)); }
+                    }
+                    return self.class_get(w.1[0].clone(), name, true);
+                }
             }
             _ => {}
         }
@@ -2353,7 +2357,7 @@ impl<'a> Engine<'a> {
             // A method keeps nothing of its own: the thing and routine
             // it binds are fixed, its account of itself is the
             // routine's, and nothing else can be written or taken away.
-            Value::Method(..) => {
+            Value::Method(..) | Value::Adapter(_) if matches!(&subject, Value::Method(..)) || matches!(&subject, Value::Adapter(w) if w.0 == 131) => {
                 if name==self.class_word("receiver") || name==self.class_word("function") {return Err(self.class_word("property.readonly").to_string().into());}
                 if name==self.class_word("kind") {
                     let part=if value.is_some(){"kind.fixed"}else{"kind.kept"};
@@ -2691,7 +2695,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42|131))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{

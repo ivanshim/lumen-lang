@@ -253,10 +253,7 @@ impl<'a> Machine<'a> {
             if values.len() != 2 || !named.is_empty() { return Err(String::from("TypeError: method expected 2 arguments").into()); }
             if !matches!(self.work_on_class(2, vec![values[0].clone()])?, Value::Flag(true)) { return Err(String::from("TypeError: first argument must be callable").into()); }
             if matches!(values[1], Value::Nil) { return Err(String::from("TypeError: instance must not be None").into()); }
-            return match (&values[0], &values[1]) {
-                (Value::Routine(program), Value::Thing(instance)) => Ok(Value::Method(program.clone(), instance.clone())),
-                _ => Ok(Self::wrap(3, values)),
-            };
+            return Ok(Self::wrap(132, values));
         }
         if word == "module" {
             let (values, named) = self.open_arguments(given)?;
@@ -271,10 +268,13 @@ impl<'a> Machine<'a> {
             let (positional, keywords) = self.open_arguments(given)?;
             if positional.len() != 1 || !keywords.is_empty() { return Err(String::from("TypeError: mappingproxy() takes exactly one argument").into()); }
             let owner = positional[0].clone();
-            match owner.settled() {
+            match &owner {
+                Value::Window(_, 'm') => {},
+                _ => match owner.settled() {
                 Value::Dict(_) | Value::Attributes(_) => {},
                 Value::Thing(_) if self.appointment(&owner, 11).is_some() => {},
                 other => return Err(format!("TypeError: mappingproxy() argument must be a mapping, not {}", other.kind_word()).into()),
+                },
             }
             return Ok(Value::Window(Rc::new(owner), 'm'));
         }
@@ -863,7 +863,7 @@ impl<'a> Machine<'a> {
                             None => Err(self.core_complaint("core.exhausted", "").into()),
                         }
                     }
-                    3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
+                    3 | 132=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
                     // An entry a native kind carries, standing loose:
                     // the first value handed to it is the one it works
                     // upon, the rest being what the entry itself takes.
@@ -2151,9 +2151,15 @@ impl<'a> Machine<'a> {
             // the function itself would: a method of a class formed in
             // a function is bound this way, and its name, its full name
             // and what it says of itself are the function's.
-            if *tag==3 {
+            if matches!(*tag, 3 | 132) {
                 if key==self.detail("receiver"){return Ok(items[1].clone());}
                 if key==self.detail("function"){return Ok(items[0].clone());}
+                if *tag == 132 && key == self.detail("kind") {
+                    return self.class_from_type(vec![value.clone()]);
+                }
+                if *tag == 132 && (key == self.detail("qualified") || key == self.detail("name")) {
+                    if let Value::Intrinsic(_, ident) = &items[0] { return Ok(Value::text(ident)); }
+                }
                 return self.read_class_member(items[0].clone(),key,true);
             }
             if *tag==35&&key==self.detail("cell.contents"){
@@ -2550,7 +2556,7 @@ impl<'a> Machine<'a> {
             // A method holds nothing of its own: its thing and routine
             // are fixed, its account is its routine's, and nothing else
             // can be written into it or taken out.
-            Value::Method(..)|Value::Wrapped(3,_)=>{
+            Value::Method(..)|Value::Wrapped(3 | 132,_)=>{
                 if key==self.detail("receiver")||key==self.detail("function"){return Err(self.detail("property.readonly").to_owned().into());}
                 if key==self.detail("kind"){return Err(self.detail(if writing{"kind.fixed"}else{"kind.kept"}).to_owned().into());}
                 if key==self.detail("doc") {
@@ -2837,7 +2843,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=72))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=72|132))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

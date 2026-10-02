@@ -753,6 +753,7 @@ impl Value {
 
     pub fn proxy_dictionary(&self) -> Value {
         match self {
+            Value::View(proxy) if proxy.1 == "mapping" => proxy.0.proxy_dictionary(),
             Value::Class(class) => Value::Map(Rc::new(class.shared.borrow().iter()
                 .filter(|(key, _)| !key.starts_with(['\0', '#']))
                 .map(|(key, value)| (Value::text(key), value.clone())).collect())),
@@ -1278,6 +1279,9 @@ impl Value {
                     Rc::ptr_eq(&body(x), &body(y))
                 }
                 _ => Rc::ptr_eq(a, b),
+            },
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 131 && b.0 == 131 => {
+                a.1[0].equals(&b.1[0]) && (a.1[1].same_value(&b.1[1]) || a.1[1].same_place(&b.1[1]))
             },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
