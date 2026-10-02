@@ -433,7 +433,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
 
-    fn exception_classes(names: &[String]) -> HashMap<String, Value> {
+    fn exception_classes(names: &[String], root: &Rc<Class>) -> HashMap<String, Value> {
         let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
@@ -455,12 +455,15 @@ impl<'a> Engine<'a> {
             if at == 45 { fields.push(("\0unicode-translate".into(), Value::Flag(true))); }
             // The line a fault class descends by: its parent, then all
             // the parent descends from, so issubclass and __mro__ read
-            // the fault hierarchy as they read any other class's.
-            let base = parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned());
+            // the fault hierarchy as they read any other class's. The
+            // first of them stands on the root, and every line ends
+            // there, as the reference's own lines do.
+            let base = parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()).or_else(|| Some(root.clone()));
             let (direct, lineage) = match &base {
                 Some(parent) => {
                     let mut line = vec![parent.clone()];
                     line.extend(parent.lineage.iter().cloned());
+                    if !line.iter().any(|c| Rc::ptr_eq(c, root)) { line.push(root.clone()); }
                     (vec![parent.clone()], line)
                 }
                 None => (Vec::new(), Vec::new()),
@@ -1148,12 +1151,18 @@ impl<'a> Engine<'a> {
                 }));
             }
         }
-        let native_exceptions = Self::exception_classes(&lang.exceptions);
+        // The root stands before the fault classes are laid out, so
+        // their lines can end on it.
+        let root = Rc::new(Class { outline: Some(format!("<class '{}'>", lang.class_details.get("root").and_then(|v| v.first()).cloned().unwrap_or_default())),
+            name: lang.class_details.get("root").and_then(|v| v.first()).cloned().unwrap_or_default(),
+            direct: vec![], lineage: vec![], base: None, answers: vec![], fields: vec![], reaches: vec![],
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false) });
+        let native_exceptions = Self::exception_classes(&lang.exceptions, &root);
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
             native_exceptions,
             lang,
             world,

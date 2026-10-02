@@ -598,7 +598,7 @@ fn words_of(table: &Table) -> Names<'_> {
 
 impl<'a> Machine<'a> {
 
-    fn given_faults(table: &Table) -> HashMap<String, Value> {
+    fn given_faults(table: &Table, ancestor: &Rc<Blueprint>) -> HashMap<String, Value> {
         let mut chain: Vec<Rc<Blueprint>> = Vec::new();
         for (number, word) in table.strings("ext.builtin.exceptions").iter().enumerate() {
             let parent = match number {
@@ -628,12 +628,15 @@ impl<'a> Machine<'a> {
             }
             // The line a fault kind descends by: its parent, then all
             // the parent descends from, so issubclass and __mro__ read
-            // the fault hierarchy as they read any other class's.
-            let under = parent.and_then(|p| chain.get(p).cloned());
+            // the fault hierarchy as they read any other class's. The
+            // first of them stands on the common ancestor, and every
+            // line ends there, as the reference's own lines do.
+            let under = parent.and_then(|p| chain.get(p).cloned()).or_else(|| Some(ancestor.clone()));
             let (parents, ancestry) = match &under {
                 Some(forebear) => {
                     let mut line = vec![forebear.clone()];
                     line.extend(forebear.ancestry.iter().cloned());
+                    if !line.iter().any(|b| Rc::ptr_eq(b, ancestor)) { line.push(ancestor.clone()); }
                     (vec![forebear.clone()], line)
                 }
                 None => (Vec::new(), Vec::new()),
@@ -1259,7 +1262,13 @@ impl<'a> Machine<'a> {
                 outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(blueprint));
             }
         }
-        let fault_kinds = Self::given_faults(table);
+        // The common ancestor stands before the fault kinds are laid
+        // out, so their lines can end on it.
+        let root_title = table.single("ext.stmt.class.detail.root").unwrap_or_default().to_owned();
+        let ancestor = Rc::new(Blueprint { presentation: Some(format!("<class '{root_title}'>")), name: root_title,
+            parents: Vec::new(), ancestry: Vec::new(), under: None, answers: Vec::new(), fields: Vec::new(),
+            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()), weak_slot: Cell::new(None), sealed: Cell::new(false) });
+        let fault_kinds = Self::given_faults(table, &ancestor);
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = fault_kinds.get(word) { outermost.cells.borrow_mut()[i] = value.clone(); }
         }
@@ -1278,7 +1287,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),

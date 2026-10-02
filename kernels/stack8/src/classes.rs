@@ -2465,7 +2465,12 @@ impl<'a> Engine<'a> {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
                 let Some(builtin)=self.lang.builtins.get(word.as_ref()).copied().filter(Self::kind_builtin) else{return Err(self.unclassed(amiss));};
                 if subclass{
-                    if let Value::Class(c)=value{return Ok(Self::kind_beneath(c).as_deref()==Some(word.as_ref()));}
+                    // A class standing on a builtin kind descends from
+                    // the kind word as the kinds themselves descend: the
+                    // flag kind stands under the whole-number kind.
+                    if let Value::Class(c)=value{
+                        return Ok(match Self::kind_beneath(c) { Some(under)=>self.kinds_beneath(&under,word), None=>false });
+                    }
                     let Some(under)=self.kind_spelled(value) else{return Err(self.unclassed("core.issubclass.subject"));};
                     return Ok(self.kinds_beneath(&under,word));
                 }

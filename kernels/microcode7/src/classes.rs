@@ -2515,7 +2515,12 @@ impl<'a> Machine<'a> {
                 let Value::Text(word)=&names[0] else{return Err(self.not_a_class(amiss));};
                 let Some(op)=self.table.prims.get(word.as_ref()).copied().filter(Self::names_a_kind) else{return Err(self.not_a_class(amiss));};
                 if class_only{
-                    if let Value::Blueprint(b)=subject{return Ok(Self::native_beneath(b).as_deref()==Some(word.as_ref()));}
+                    // A class standing on a native kind descends from the
+                    // kind word as the kinds themselves descend: the flag
+                    // kind stands under the whole-number kind.
+                    if let Value::Blueprint(b)=subject{
+                        return Ok(match Self::native_beneath(b) { Some(under)=>self.kind_under(&under,word), None=>false });
+                    }
                     let Some(under)=self.kind_spelling(subject) else{return Err(self.not_a_class("core.issubclass.subject"));};
                     return Ok(self.kind_under(&under,word));
                 }
