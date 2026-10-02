@@ -16289,6 +16289,13 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 Value::Flag(std::fs::remove_dir_all(args[0].display(&sp)).is_ok())
             }
+            // One directory taken away where it stands, and nothing
+            // else: a directory holding anything is left standing.
+            Builtin::DirRemoveOne => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::remove_dir(args[0].display(&sp)).is_ok())
+            }
             // One directory made to stand at the path given: true
             // when it stands afterwards, false when it stood there
             // already or the way to it does not stand.
@@ -19903,7 +19910,7 @@ impl Engine<'_> {
                     // A member read by name reads through the cell a
                     // module keeps it in, as a member read in the
                     // program does.
-                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } }
+                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else if self.lang.syntax_members.is_empty() { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } else { fields[at].1.clone() } }
                         else if b == Builtin::GetAttr && args.len() == 3 { args[2].clone() }
                         else { let words = &self.lang.core_words["core.attribute"]; return Err(format!("{}{}{}{}{}", words[0], o.class_now().name, words[1], attr, words[2])); },
                 }

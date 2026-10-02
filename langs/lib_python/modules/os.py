@@ -62,6 +62,16 @@ def remove(path, *, dir_fd=None):
 
 unlink = remove
 
+def rmdir(path, *, dir_fd=None):
+    if dir_fd is not None:
+        raise 'NotImplementedError: os.rmdir directory descriptors are not supported'
+    if not __remove_dir(path):
+        if not _host_file_exists(path):
+            raise FileNotFoundError(2, 'No such file or directory', path)
+        if _host_file_kind(path) != 2:
+            raise OSError(20, 'Not a directory', path)
+        raise OSError(39, 'Directory not empty', path)
+
 class _Path:
     def join(self, path, *parts):
         for part in parts:

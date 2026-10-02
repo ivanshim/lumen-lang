@@ -205,6 +205,9 @@ pub enum Prim {
     /// A single directory raised at the place named, no others
     /// raised on the way there (ext.builtin.dir.make_one).
     DirOne,
+    /// One directory taken away where it stands, and nothing else
+    /// (ext.builtin.dir.remove).
+    DirRemoveOne,
     /// The folder a run takes itself over to, short paths opening
     /// from there ever after (ext.builtin.dir.change).
     DirStep,

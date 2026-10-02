@@ -15780,24 +15780,24 @@ impl<'a> Machine<'a> {
                 // as readily as from the start, and holds no place at
                 // all beyond itself: writing there is told of in the
                 // words for a place written into.
-                if let (true, Value::Vector(items)) = (self.works_sequences(), &v[0]) {
+                if let (true, Value::Vector(items)) = (self.works_sequences(), &standing) {
                     let offset = match &v[1] { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None };
                     // A key of some other kind names no place in a row.
                     // Writing at one is refused by the two kinds, just
                     // as reading at one is, and the row stays a row
                     // instead of becoming a map keyed by its places.
                     if offset.is_none() && !matches!(&v[1], Value::Span(_)) {
-                        return Err(self.key_refused(&v[0], &v[1]));
+                        return Err(self.key_refused(&standing, &v[1]));
                     }
                     if let Some(offset) = offset {
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
-                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&v[0])); }
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&standing)); }
                         let mut all = items.as_ref().clone();
                         all[position as usize] = v[2].clone();
                         return Ok(Value::Vector(crate::tuples::Sequence::plain(all)));
                     }
                 }
-                match &v[0] {
+                match &standing {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
                         let index = self.octet_at(&v[1], cell.borrow().len(), *changeable)?;
@@ -15955,6 +15955,14 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
+            }
+            // One directory taken away where it stands, and
+            // nothing else: a directory keeping anything inside
+            // stays put.
+            Prim::DirRemoveOne => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_dir(v[0].render(w)).is_ok())
             }
             // A single directory raised at the place named: true
             // when it stands there afterwards, false when it stood
@@ -18407,7 +18415,7 @@ impl<'a> Machine<'a> {
                 }
             };
         }
-        if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
+        if matches!(target, Value::Mutable(..) | Value::Shared(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;
             // A thing kept beside its hash comes back as the thing.
@@ -19460,7 +19468,7 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
 }
 
 fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>, cells_are_places: bool) -> Result<bool, String> {
-    if let Value::Mutable(cell, _) = held { return written_into(&mut cell.borrow_mut(), key, value, no_places, builds, letter, cells_are_places); }
+    if let Value::Mutable(cell, _) | Value::Shared(cell) = held { return written_into(&mut cell.borrow_mut(), key, value, no_places, builds, letter, cells_are_places); }
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
     if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {

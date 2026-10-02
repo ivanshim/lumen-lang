@@ -596,6 +596,9 @@ pub enum Builtin {
     DirList,
     DirMake,
     DirGone,
+    /// One directory taken away where it stands, and nothing else:
+    /// the directory must be empty (ext.builtin.dir.remove).
+    DirRemoveOne,
     /// One directory made to stand where the path given says, with
     /// none made along the way to it (ext.builtin.dir.make_one).
     DirMakeOne,

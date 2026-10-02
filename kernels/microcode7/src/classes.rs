@@ -403,7 +403,14 @@ impl<'a> Machine<'a> {
         let mut natives:Vec<String>=ranks.iter().filter_map(|b|Self::native_word(b)).collect();
         natives.dedup();
         if natives.len()>1 {return Err(self.table.single("ext.stmt.class.layout").unwrap_or(self.detail("unready")).to_owned().into());}
-        let module=self.detail("main").to_owned();
+        // A class is written in a module: the one the file being read
+        // was loaded as, or the run's own name when it is the program.
+        let module = if self.detail("module").is_empty() {
+            self.detail("main").to_owned()
+        } else {
+            self.loaded_spaces.get(&self.written_in).cloned()
+                .unwrap_or_else(|| self.detail("main").to_owned())
+        };
         if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(&module)));}
         if let Some((_, candidate)) = entries.iter().find(|(k, _)| k == self.detail("qualified")) {
             if !matches!(if self.detail("name").is_empty() { Self::underlying(candidate).unwrap_or_else(|| candidate.settled()) } else { candidate.type_text() }, Value::Text(_) | Value::Unpaired(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", Self::type_argument_kind(candidate)).into()); }
@@ -2738,7 +2745,7 @@ impl<'a> Machine<'a> {
             return match read {
                 // A member read by name reads through the cell a namespace
                 // keeps it in, as the program's own member read does.
-                Ok(v)=>Ok(if op==6{Value::Flag(true)}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
+                Ok(v)=>Ok(if op==6{Value::Flag(true)}else if self.table.has_any("ext.builtin.exceptions.syntax"){v}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
                 Err(escape) if self.missing_member_escape(&escape)=>{
                     if op==6{Ok(Value::Flag(false))}else if values.len()==3{Ok(values[2].clone())}else{Err(self.explain_absence(escape, &values[0], key))}
                 }
