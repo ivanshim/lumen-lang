@@ -5687,6 +5687,13 @@ impl<'a> Engine<'a> {
             // A class saying how its things are equal, in its methods or
             // its namespace, and nothing of their hash, has unhashable things.
             if place == 8 && self.lang.class_special.get(2).map_or(false, |eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.borrow().iter().any(|(n, _)| n == eq)) { return Some(Value::Null); }
+            // A builtin kind answers the member natively, which ends the
+            // walk: no later base's own method may override the kind's.
+            if let Some(word) = Self::own_kind(current) {
+                if let Some(sample) = self.kind_sample(&word) {
+                    if self.native_special(&sample, named) { return None; }
+                }
+            }
         }
         None
     }

@@ -11930,6 +11930,13 @@ impl<'a> Machine<'a> {
             // Equality given, in the methods or the namespace, without a
             // hash: the things cannot be hashed.
             if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal) || blueprint.shared.borrow().iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
+            // A builtin kind answers the member natively, which ends the
+            // walk: no later base's own method may override the kind's.
+            if let Some(native) = Self::native_word(blueprint) {
+                if let Some(sample) = self.kind_stand_in(&native) {
+                    if self.native_member(&sample, word) { return None; }
+                }
+            }
         }
         None
     }
