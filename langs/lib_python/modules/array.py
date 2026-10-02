@@ -28,8 +28,22 @@ class array:
     def tolist(self):
         return list(self.data)
 
+    def __len__(self):
+        return len(self.data)
+
+    def __iter__(self):
+        return iter(self.data)
+
     def __getitem__(self, index):
         return self.data[index]
+
+    # The reference writes an array the way it writes a call making one:
+    # the type code in quotes, and the items in a list after a comma,
+    # with an empty array naming its type code alone.
+    def __repr__(self):
+        if not self.data:
+            return "array('%s')" % self.typecode
+        return "array('%s', [%s])" % (self.typecode, ', '.join(map(repr, self.data)))
 
     def tobytes(self):
         if self.typecode == 'B':

@@ -23,6 +23,8 @@ class Protocol:
 class TypeVar:
     def __init__(self, name, *constraints, **options):
         self.__name__ = name
+        self.__bound__ = options.get('bound')
+        self.__constraints__ = constraints
 
     def __getitem__(self, parameters):
         return self

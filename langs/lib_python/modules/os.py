@@ -62,6 +62,58 @@ def remove(path, *, dir_fd=None):
 
 unlink = remove
 
+def rmdir(path, *, dir_fd=None):
+    if dir_fd is not None:
+        raise 'NotImplementedError: os.rmdir directory descriptors are not supported'
+    if not __remove_dir(path):
+        if not _host_file_exists(path):
+            raise FileNotFoundError(2, 'No such file or directory', path)
+        if _host_file_kind(path) == 1:
+            raise NotADirectoryError(20, 'Not a directory', path)
+        raise OSError(39, 'Directory not empty', path)
+
+def fspath(path):
+    # The string a path stands as: text answers as itself, and a
+    # path-like thing answers with the name it gives through
+    # __fspath__.
+    if isinstance(path, str):
+        return path
+    named = getattr(path, '__fspath__', None)
+    if named is not None:
+        answer = named()
+        if isinstance(answer, str):
+            return answer
+        raise TypeError('expected str, bytes or os.PathLike object, not ' + str(type(answer)))
+    raise TypeError('expected str, bytes or os.PathLike object, not ' + str(type(path)))
+
+def walk(top, topdown=True, onerror=None, followlinks=False):
+    # Every directory under a name, one at a time, with the names of
+    # its own directories and its own files beside it. The caller may
+    # rewrite the directory list it is given as it goes where the
+    # directories come first. A directory is not followed through a
+    # link unless asked for; the host tells no link from its end, so
+    # every directory reached is walked here.
+    try:
+        names = listdir(top)
+    except OSError as error:
+        if onerror is not None:
+            onerror(error)
+        return
+    directories = []
+    files = []
+    for name in names:
+        if path.isdir(path.join(top, name)):
+            directories.append(name)
+        else:
+            files.append(name)
+    if topdown:
+        yield (top, directories, files)
+    for name in directories:
+        for entry in walk(path.join(top, name), topdown, onerror, followlinks):
+            yield entry
+    if not topdown:
+        yield (top, directories, files)
+
 class _Path:
     def join(self, path, *parts):
         for part in parts:

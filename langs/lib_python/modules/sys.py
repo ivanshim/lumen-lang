@@ -134,43 +134,43 @@ def set_int_max_str_digits(maxdigits):
 # of a real terminal, whatever the host's own stdio happens to be, so
 # isatty() always answers no and a test that only runs against a tty
 # takes its own skip road instead of finding an attribute missing.
-class _Output:
-    def write(self, *args, **keywords):
-        if keywords:
-            raise TypeError("write() takes no keyword arguments")
-        return _host_stream_write(*args, False)
+# Each of the three standard streams is a stream wrapper of the
+# reference's own name, carrying the name the reference gives it and
+# the side of the host it stands for, so a program knows what it holds
+# by its type and by its name alike. What the side does not allow --
+# writing to the reading one, reading from the written ones -- answers
+# with the missing-attribute complaint of the old shaping.
+class TextIOWrapper:
+    def __init__(self, name, side):
+        self.name = name
+        self._side = side
 
-    def flush(self):
-        pass
-
-    def isatty(self):
-        return False
-
-class _Error:
-    def write(self, *args, **keywords):
-        if keywords:
-            raise TypeError("write() takes no keyword arguments")
-        return _host_stream_write(*args, True)
-
-    def flush(self):
-        pass
-
-    def isatty(self):
-        return False
-
-class _Input:
     def read(self, size=-1):
+        if self._side != 'in':
+            raise AttributeError('read')
         return _host_stream_read(size, False)
 
     def readline(self, size=-1):
+        if self._side != 'in':
+            raise AttributeError('readline')
         return _host_stream_read(size, True)
+
+    def write(self, *args, **keywords):
+        if self._side == 'in':
+            raise AttributeError('write')
+        if keywords:
+            raise TypeError("write() takes no keyword arguments")
+        return _host_stream_write(*args, self._side == 'err')
+
+    def flush(self):
+        pass
 
     def isatty(self):
         return False
 
-stdout = _Output()
-stderr = _Error()
-stdin = _Input()
+stdout = TextIOWrapper('<stdout>', 'out')
+stderr = TextIOWrapper('<stderr>', 'err')
+stdin = TextIOWrapper('<stdin>', 'in')
 __stdout__ = stdout
 __stderr__ = stderr
 __stdin__ = stdin
@@ -373,3 +373,7 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+# This module stands for the built-in one the interpreter carries:
+# no source file of its own answers for it, so it keeps none.
+del __file__

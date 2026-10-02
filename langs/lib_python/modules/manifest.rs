@@ -39,6 +39,8 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("functools", concat!(include_str!("functools.py"), "\n", include_str!("runtime_adapters/functools.py")), "functools.py"),
     ("gc", include_str!("gc.py"), "gc.py"),
     ("heapq", concat!(include_str!("heapq.py"), "\n", include_str!("runtime_adapters/heapq.py")), "heapq.py"),
+    ("importlib.util", include_str!("importlib/util.py"), "importlib/util.py"),
+    ("importlib", include_str!("importlib.py"), "importlib.py"),
     ("inspect", include_str!("inspect.py"), "inspect.py"),
     ("io", include_str!("io.py"), "io.py"),
     ("itertools", include_str!("itertools.py"), "itertools.py"),
