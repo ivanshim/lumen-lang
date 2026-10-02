@@ -13,8 +13,6 @@ S = 16
 DOTALL = S
 X = 64
 VERBOSE = X
-A = 256
-ASCII = A
 
 _DIGITS = '0123456789'
 _WORD_LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
@@ -123,12 +121,6 @@ class _Reader:
             return ['lit', '\f']
         if mark == 'v':
             return ['lit', '\v']
-        if mark == 'x':
-            hx = self.pattern[self.i:self.i+2]
-            if len(hx) < 2 or not all(c in '0123456789abcdefABCDEF' for c in hx):
-                raise 'ValueError: invalid \\x escape'
-            self.i += 2
-            return ['lit', chr(int(hx, 16))]
         if not inside and mark in '123456789':
             return ['backref', int(mark)]
         if mark in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789':
@@ -233,9 +225,9 @@ class _Reader:
 
     def _flags_group(self):
         # after '(?', the current character is a flag letter. The small
-        # engine carries ignorecase, multiline, dotall and ascii; verb
+        # engine carries only ignorecase, multiline and dotall; ascii, verb
         # locale and unicode are read and dropped.
-        add = [False, False, False, False]
+        add = [False, False, False]
         while self.i < len(self.pattern):
             letter = self.pattern[self.i]
             if letter == '-':
@@ -243,14 +235,11 @@ class _Reader:
             if letter in 'ims':
                 add['ims'.index(letter)] = True
                 self.i += 1
-            elif letter == 'a':
-                add[3] = True
-                self.i += 1
-            elif letter in 'xuL':
+            elif letter in 'axuL':
                 self.i += 1
             else:
                 break
-        flags = (add[0], add[1], add[2], add[3])
+        flags = (add[0], add[1], add[2])
         if self.i < len(self.pattern) and self.pattern[self.i] == ':':
             self.i += 1
             node = self.choice()
@@ -359,35 +348,24 @@ def _strip_verbose(pattern):
         i += 1
     return result
 
-def _word(letter, ascii_mode=False):
+def _word(letter):
     if letter == '':
         return False
     if letter in _WORD_LETTERS:
         return True
-    if ascii_mode:
-        return False
     if ord(letter) > 127:
         return letter.isalpha() or letter.isdecimal()
     return False
 
-def _fold(letter, lower, ascii_mode):
-    # Case folding for a comparison: Unicode by default, ASCII-only when
-    # the ASCII flag is on, the way the reference engine narrows it.
-    if not ascii_mode:
-        return letter.lower() if lower else letter.upper()
-    if lower:
-        return chr(ord(letter) + 32) if 'A' <= letter <= 'Z' else letter
-    return chr(ord(letter) - 32) if 'a' <= letter <= 'z' else letter
-
-def _accept(node, letter, ignorecase, ascii_mode=False):
+def _accept(node, letter, ignorecase):
     kind = node[0]
     if kind == 'lit':
         if ignorecase:
-            return _fold(letter, True, ascii_mode) == _fold(node[1], True, ascii_mode)
+            return letter.lower() == node[1].lower()
         return letter == node[1]
     if kind == 'range':
         if ignorecase:
-            for candidate in [letter, _fold(letter, True, ascii_mode), _fold(letter, False, ascii_mode)]:
+            for candidate in [letter, letter.lower(), letter.upper()]:
                 if ord(node[1]) <= ord(candidate) and ord(candidate) <= ord(node[2]):
                     return True
             return False
@@ -397,32 +375,32 @@ def _accept(node, letter, ignorecase, ascii_mode=False):
         if mark in 'dD':
             answer = letter in _DIGITS
         elif mark in 'wW':
-            answer = _word(letter, ascii_mode)
+            answer = _word(letter)
         else:
             answer = letter in ' \t\n\r\v\f'
         return not answer if mark in 'DWS' else answer
     return False
 
-def _set_accept(node, letter, ignorecase, ascii_mode=False):
+def _set_accept(node, letter, ignorecase):
     kind = node[0]
     if kind == 'class':
         answer = False
         for entry in node[2]:
-            if _accept(entry, letter, ignorecase, ascii_mode):
+            if _accept(entry, letter, ignorecase):
                 answer = True
         return not answer if node[1] else answer
     if kind == 'negate':
-        return not _set_accept(node[1], letter, ignorecase, ascii_mode)
+        return not _set_accept(node[1], letter, ignorecase)
     if kind == 'setop':
         op = node[1]
-        left = _set_accept(node[2], letter, ignorecase, ascii_mode)
+        left = _set_accept(node[2], letter, ignorecase)
         if op == '||':
             if left:
                 return True
-            return _set_accept(node[3], letter, ignorecase, ascii_mode)
+            return _set_accept(node[3], letter, ignorecase)
         if not left:
             return False
-        right = _set_accept(node[3], letter, ignorecase, ascii_mode)
+        right = _set_accept(node[3], letter, ignorecase)
         return right if op == '&&' else not right
     return False
 
@@ -430,7 +408,7 @@ def _walk(node, text, place, captures, opts):
     kind = node[0]
     if kind == 'scoped':
         flags = node[1]
-        new_opts = (opts[0] or flags[0], opts[1] or flags[1], opts[2] or flags[2], opts[3] or flags[3])
+        new_opts = (opts[0] or flags[0], opts[1] or flags[1], opts[2] or flags[2])
         return _walk(node[2], text, place, captures, new_opts)
     if kind == 'atomic':
         return _walk(node[1], text, place, captures, opts)[:1]
@@ -484,7 +462,7 @@ def _walk(node, text, place, captures, opts):
         piece = text[span[0]:span[1]]
         width = len(piece)
         candidate = text[place:place + width]
-        matched = _fold(candidate, True, opts[3]) == _fold(piece, True, opts[3]) if opts[0] else candidate == piece
+        matched = candidate.lower() == piece.lower() if opts[0] else candidate == piece
         return [[place + width, captures]] if matched and place + width <= len(text) else []
     if kind == 'start':
         if place == 0:
@@ -503,8 +481,8 @@ def _walk(node, text, place, captures, opts):
     if kind == 'end_abs':
         return [[place, captures]] if place == len(text) else []
     if kind == 'boundary':
-        before = _word(text[place - 1], opts[3]) if place > 0 else False
-        after = _word(text[place], opts[3]) if place < len(text) else False
+        before = _word(text[place - 1]) if place > 0 else False
+        after = _word(text[place]) if place < len(text) else False
         return [[place, captures]] if before != after else []
     if place >= len(text):
         return []
@@ -512,9 +490,9 @@ def _walk(node, text, place, captures, opts):
     if kind == 'dot':
         answer = opts[2] or letter != '\n'
     elif kind == 'class' or kind == 'setop' or kind == 'negate':
-        answer = _set_accept(node, letter, opts[0], opts[3])
+        answer = _set_accept(node, letter, opts[0])
     else:
-        answer = _accept(node, letter, opts[0], opts[3])
+        answer = _accept(node, letter, opts[0])
     return [[place + 1, captures]] if answer else []
 
 def _repeat(node, text, place, captures, count, opts):
@@ -655,7 +633,6 @@ class Pattern:
         self.ignorecase = (flags & IGNORECASE) != 0
         self.multiline = (flags & MULTILINE) != 0
         self.dotall = (flags & DOTALL) != 0
-        self.ascii = (flags & ASCII) != 0
         self.verbose = (flags & VERBOSE) != 0
         text = _strip_verbose(pattern) if self.verbose else pattern
         reader = _Reader(text)
@@ -665,7 +642,7 @@ class Pattern:
         self.groups = reader.groups
         self.groupindex = reader.names
         self.pattern = original
-        self._opts = (self.ignorecase, self.multiline, self.dotall, self.ascii)
+        self._opts = (self.ignorecase, self.multiline, self.dotall)
         # Whether the text a match runs against must be checked for
         # non-ASCII letters, computed once here rather than rescanning
         # the pattern's own text on every position a search tries.
