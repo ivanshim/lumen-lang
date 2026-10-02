@@ -1,6 +1,4 @@
-# From CPython 3.14, Lib/test/support/numbers.py, without changes.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Source: CPython Lib/test/support/numbers.py at v3.14.8 / 8e6e75d9102e; PSF License.
 # These are shared with test_tokenize and other test modules.
 #
 # Note: since several test cases filter out floats by looking for "e" and ".",

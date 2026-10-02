@@ -1,1 +1,1 @@
-ModuleNotFoundError: No module named 'sys.stdout.write'
+ModuleNotFoundError: No module named 'sys.stdout'; 'sys' is not a package

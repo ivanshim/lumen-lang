@@ -8,8 +8,8 @@ diary that used to live here is in `HISTORY.md`; read it when a question
 starts with "why is it like this".
 
 **Branch for work:** `claude/codebase-familiarization-t6vjhi`, reset to
-`main` after each batch merges. **Goal:** all 50 files in `tests/python/`
-(CPython 3.14's own tests) pass on both full kernels, `stack8` and
+`main` after each batch merges. **Goal:** all 60 reference files in `tests/python/`
+(CPython 3.14.8's own tests, tag v3.14.8 / 8e6e75d9102e) pass on both full kernels, `stack8` and
 `microcode7`, without weakening a test or a fixture.
 
 ---
@@ -21,7 +21,8 @@ starts with "why is it like this".
 PR bodies say what each one did). No branch holds unmerged work.
 
 **PHP** is unchanged throughout: `pass 399, differs 0, error 0, skipped
-23`. **The examples** agree on all six kernels. **No kernel
+23`. **The examples** agree on their supported kernels: Python uses stack8
+and microcode7, other languages use all six. **No kernel
 disagreements** in the reference run.
 
 ### The Python count
@@ -260,8 +261,8 @@ is run alone with a long cap.
   (`langs/lib_python/modules/manifest.rs`, `include_str!`): rebuild after
   any library edit, and a binary built mid-experiment carries the
   experiment.
-- Documented divergences not to chase: `//` truncates, `round()` rounds
-  half away from zero, `divmod` floors differently (§4).
+- The shared core keeps truncating quotient and half-away rounding for
+  other languages; Python selects its own arithmetic rules (§4).
 
 ---
 
@@ -278,7 +279,7 @@ python3 scripts/lang_table.py                   # no git diff after
 cp target/debug/lumen-lang /tmp/bin-<sha>       # count and long runs use a copy
 python3 scripts/suite/scratchcheck.py . $(ls scratch/*/*.py | grep -v reader-tail/4.py)
 python3 scripts/suite/scratchcheck.py . scratch/reader-tail/4.py     # alone, long cap
-bash scripts/suite/test-debug.sh --lang python  # 384 of 384
+bash scripts/suite/test-debug.sh --lang python  # 128 of 128
 bash scripts/suite/test-debug.sh --lang php     # 318 of 318
 bash scripts/suite/test-debug.sh --lang lumen   # 522 of 522
 LUMEN_ROOT=. python3 scripts/suite/count_run.py <rawdir> 900 /tmp/bin-<sha>
@@ -296,7 +297,8 @@ be restarted; `rerun_one.py` reruns one file with a longer cap.
 
 **GitHub Actions runs the same three ways on every push** —
 `build-and-test` (independence, the `-D warnings` build, ported examples,
-all examples on all six kernels, on the release binary), `reference` (the
+Python examples on both full kernels, other examples on all six kernels,
+on the release binary), `reference` (the
 PHP row, kernel disagreements, regressions) and `scratch` (every scratch
 program on both full kernels, comparing `.out` or the first `.err` line
 exactly). A run takes about 75 minutes. Push a batch once it is verified
@@ -310,13 +312,15 @@ the release binary itself.
 
 ## 4. What went wrong, so it is not done twice
 
-- **The six kernels must print alike** on the examples; the four
-  reference kernels read past every `ext.*` label, so a Python-only
-  behaviour must sit behind an `ext.*` label, and a behaviour every
-  language shares behind a core label all six read.
-- **`//` truncates and `round` rounds half away from zero** for every
-  language (the examples depend on it); CPython's flooring and
-  half-to-even are documented divergences in `langs/README.md`.
+- **Python examples run on stack8 and microcode7 only**, and both must
+  exit 0 and print identical output. The four reference kernels ignore
+  every `ext.*` label, including Python arithmetic. Other languages keep
+  the six-kernel comparison against stream35. Python-only behaviour sits
+  behind `ext.*`; behaviour every language shares uses a core label.
+- **The shared core truncates `//` and rounds halves away from zero** by
+  default (the other languages' examples depend on it). Python selects
+  its own floor, divisor-signed remainder, and half-to-even rules through
+  `ext.op.arithmetic.python_numbers`.
 - **Every roster line is one long line**, so a merge can take one side
   whole and drop the other side's labels without a conflict. After a
   merge, check each side's new labels are all still present.

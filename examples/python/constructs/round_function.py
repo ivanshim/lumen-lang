@@ -1,5 +1,5 @@
 import sys
-# Ported from examples/lumen/constructs/round_function.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+# Python numeric example, maintained by hand: floor division and ties to even.
 sys.stdout.write("Positive number tests:")
 sys.stdout.write("round(1.235, 2) = ")
 print(round(1.235, 2))
@@ -11,7 +11,7 @@ sys.stdout.write("round(1.5, 0) = ")
 print(round(1.5, 0))
 sys.stdout.write("round(2.5, 0) = ")
 print(round(2.5, 0))
-sys.stdout.write("\nNegative number tests (round half away from zero):")
+sys.stdout.write("\nNegative number tests (round halves to even):")
 sys.stdout.write("round(-1.235, 2) = ")
 print(round(-1.235, 2))
 sys.stdout.write("round(-1.234, 2) = ")

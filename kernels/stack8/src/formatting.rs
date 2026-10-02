@@ -28,6 +28,8 @@ pub enum Answer {
     Said(String),
     Whole(Value),
     Missing(String),
+    /// A known character-format type label, including a valid empty label.
+    CharacterType(String),
     BadMethod(String),
 }
 pub type Ask<'a> = dyn FnMut(&Value, char, bool) -> Result<Answer> + 'a;
@@ -39,6 +41,18 @@ pub struct Writer<'a> {
 
 impl Writer<'_> {
     pub fn fault(&self, key: &str, pieces: &[&str]) -> String {
+        if self.lang.python_numbers && key == "ext.op.rem.format.character" && pieces.len() == 3 {
+            let required = if pieces[1] == "an integer or a unicode character" { "an int or a unicode character" } else { pieces[1] };
+            return format!("TypeError: %c requires {}, not {}", required, pieces[2]);
+        }
+        if self.lang.python_numbers && matches!(key, "ext.op.rem.format.number" | "ext.op.rem.format.real") && pieces.len() == 3 {
+            let kind = pieces[2].rsplit('.').next().unwrap_or(pieces[2]);
+            return format!("TypeError: %{} format: a real number is required, not {}", pieces[1], kind);
+        }
+        if self.lang.python_numbers && key == "ext.op.rem.format.integer" && pieces.len() == 3 {
+            let kind = pieces[2].rsplit('.').next().unwrap_or(pieces[2]);
+            return format!("TypeError: %{} format: an integer is required, not {}", pieces[1], kind);
+        }
         let words = match key {
             "ext.text.format.zero.string" => &self.lang.fmt_text_format_zero_string,
             "ext.text.format.zero.integer" => &self.lang.fmt_text_format_zero_integer,
@@ -634,6 +648,11 @@ impl Writer<'_> {
                     _ => match asked(value, code, true)? {
                         Answer::Whole(whole) => self.character(&whole, of_bytes)
                             .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
+                        Answer::CharacterType(name) => {
+                            let required = if of_bytes { "an integer in range(256) or a single byte" }
+                                else { "an integer or a unicode character" };
+                            return Err(self.fault("ext.op.rem.format.character", &[&location, required, &name]));
+                        },
                         Answer::Missing(name) | Answer::BadMethod(name) => {
                             let required = if of_bytes { "an integer in range(256) or a single byte" }
                                 else { "an integer or a unicode character" };
@@ -727,6 +746,9 @@ impl Writer<'_> {
     }
 
     fn percent_unknown(&self, code: char, mark: usize, character: usize, bytes: bool) -> String {
+        if self.lang.python_numbers {
+            return format!("ValueError: unsupported format character '{}' (0x{:x}) at index {}", code, code as u32, character);
+        }
         if code.is_ascii_alphanumeric() {
             return self.fault("ext.op.rem.format.code", &[&code.to_string(), &mark.to_string()]);
         }

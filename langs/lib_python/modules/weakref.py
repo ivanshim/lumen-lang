@@ -84,6 +84,10 @@ class ProxyType:
             raise ReferenceError("weakly-referenced object no longer exists")
         return ob
 
+    @property
+    def __class__(self):
+        return type(self._object())
+
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
@@ -327,6 +331,16 @@ class WeakValueDictionary:
                 new[key] = o
         return new
 
+    # Runtime adapter derived from CPython Lib/weakref.py at v3.14.8 / 8e6e75d9102e; PSF License.
+    def __deepcopy__(self, memo):
+        from copy import deepcopy
+        new = self.__class__()
+        for key, wr in self.data.copy().items():
+            o = wr()
+            if o is not None:
+                new[deepcopy(key, memo)] = o
+        return new
+
     __copy__ = copy
 
     def get(self, key, default=None):
@@ -506,6 +520,16 @@ class WeakKeyDictionary:
             o = key()
             if o is not None:
                 new[o] = value
+        return new
+
+    # Runtime adapter derived from CPython Lib/weakref.py at v3.14.8 / 8e6e75d9102e; PSF License.
+    def __deepcopy__(self, memo):
+        from copy import deepcopy
+        new = self.__class__()
+        for key, value in self.data.copy().items():
+            o = key()
+            if o is not None:
+                new[o] = deepcopy(value, memo)
         return new
 
     __copy__ = copy

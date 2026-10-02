@@ -42,7 +42,7 @@
     "NotImplementedError: this complex operation is not supported"
   ],
   "ext.builtin.complex.zero": [
-    "ZeroDivisionError: complex division by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.builtin.file.exists": [
     "__file_exists"
@@ -92,6 +92,9 @@
   ],
   "ext.builtin.subprocess": [
     "__subprocess"
+  ],
+  "ext.builtin.signal": [
+    "__signal"
   ],
   "ext.builtin.wait": [
     "__wait"
@@ -153,6 +156,7 @@
   "ext.op.index.slice.amiss": [
     "SyntaxError: invalid syntax"
   ],
+  "ext.lexical.identifier.reserved": ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"],
   "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
@@ -743,6 +747,12 @@
     "TypeError: '",
     "' object is not reversible"
   ],
+  "ext.builtin.core.ord": [
+    "TypeError: ord() expected a character, but string of length ",
+    " found",
+    "TypeError: ord() expected string of length 1, but ",
+    " found"
+  ],
   "ext.builtin.core.chr.range": [
     "ValueError: chr() arg not in range(0x110000)"
   ],
@@ -772,7 +782,7 @@
     "TypeError: vars() argument must have __dict__ attribute"
   ],
   "ext.builtin.core.zero": [
-    "ZeroDivisionError: integer division or modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.builtin.default": [
     "default"
@@ -795,6 +805,7 @@
   "ext.builtin.iterable": [
     "iterable"
   ],
+  "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
   ],
@@ -938,7 +949,7 @@
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
-    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "gi_state"
+    "traceback", "tb_lineno", "tb_next", "tb_frame", "f_lineno", "f_code", "co_name", "co_filename", "co_firstlineno", "frame", "<module>", "f_back", "f_locals", "f_globals", "gi_frame", "gi_code", "tb_end_lineno", "tb_colno", "tb_end_colno", "ag_frame", "cr_frame", "gi_suspended", "cr_suspended", "cr_running", "gi_yieldfrom", "__unused_python314_generator_state__", "tb_lasti"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -1025,6 +1036,8 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin.math.sumprod": true,
+  "ext.system.module.path": ["__path__"],
   "ext.builtin.max": [
     "max"
   ],
@@ -1373,6 +1386,9 @@
   ],
   "ext.builtin.print.separator": [
     "sep"
+  ],
+  "ext.builtin.itertools.product_step": [
+    "__itertools_product_step"
   ],
   "ext.builtin.program.namespace": [
     "__program_namespace"
@@ -2172,6 +2188,7 @@
   "ext.literal.ellipsis.unready": [
     "NotImplementedError: ellipsis values are not supported"
   ],
+  "ext.op.arithmetic.python_numbers": true,
   "ext.op.arithmetic.binary": true,
   "ext.op.arithmetic.flags": true,
   "ext.op.arithmetic.strict": true,
@@ -2369,7 +2386,7 @@
     "ZeroDivisionError: 0.0 cannot be raised to a negative power"
   ],
   "ext.op.quot.real_zero": [
-    "ZeroDivisionError: float floor division by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.quot.zero": [
     "ZeroDivisionError: division by zero"
@@ -2465,7 +2482,7 @@
   ],
   "ext.op.rem.formats_text": true,
   "ext.op.rem.real_zero": [
-    "ZeroDivisionError: float modulo"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.op.sequence.assign": [
     "TypeError: '",
@@ -2536,6 +2553,25 @@
   "ext.stmt.async.stop": [
     "StopAsyncIteration"
   ],
+  "ext.stmt.async.generator.escaped": [
+    "RuntimeError: async generator raised StopIteration",
+    "RuntimeError: async generator raised StopAsyncIteration"
+  ],
+  "ext.stmt.async.generator.close.ignored": [
+    "RuntimeError: async generator ignored GeneratorExit"
+  ],
+  "ext.stmt.async.generator.fields": [
+    "ag_code",
+    "ag_frame",
+    "ag_running",
+    "ag_await"
+  ],
+  "ext.stmt.async.generator.methods": [
+    "asend",
+    "athrow",
+    "aclose",
+    "__await__"
+  ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
   ],
@@ -2582,7 +2618,10 @@
     "bytes",
     "bytearray",
     "complex",
-    "enumerate"
+    "enumerate",
+    "zip",
+    "map",
+    "filter"
   ],
   "ext.stmt.class.layout": [
     "TypeError: multiple bases have instance lay-out conflict"
@@ -3046,7 +3085,7 @@
     "SyntaxError: invalid parameter list"
   ],
   "ext.stmt.function.parameters.duplicate": [
-    "SyntaxError: duplicate parameter '",
+    "SyntaxError: duplicate argument '",
     "' in function definition"
   ],
   "ext.stmt.function.positional_only": [
@@ -3071,14 +3110,13 @@
   "ext.stmt.import.from": [
     "from"
   ],
-  "ext.stmt.import.lazy": [
-    "lazy"
-  ],
+  "ext.stmt.import.lazy": [],
   "ext.stmt.import.member.missing": [
     "ImportError: cannot import name '",
     "' from '",
     "'"
   ],
+  "ext.stmt.import.nonpackage": ["; '", "' is not a package"],
   "ext.stmt.import.missing": [
     "ModuleNotFoundError: No module named '",
     "'"
@@ -3508,7 +3546,7 @@
     "unsupported operand types"
   ],
   "ext.system.fault.modulo": [
-    "ZeroDivisionError: integer modulo by zero"
+    "ZeroDivisionError: division by zero"
   ],
   "ext.system.fault.name": [
     "name '",
@@ -3674,6 +3712,6 @@
   "ext.lexical.escape.named.amiss": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: malformed \\N character escape"],
   "ext.lexical.escape.named.unknown": ["SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position {}-{}: unknown Unicode character name"],
   "ext.lexical.escape.warning": ["warnings", "warn_explicit", "SyntaxWarning", "\"\\{}\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\{}\"? A raw string is also an option."],
-  "ext.builtin.iter.stop_value": ["stop_value"],
-  "ext.builtin.iter.stop_exception": ["stop_exception"]
+  "ext.builtin.iter.stop_value": [],
+  "ext.builtin.iter.stop_exception": []
 }

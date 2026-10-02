@@ -1,7 +1,5 @@
-# One thread runs here, so the pieces a single thread can honestly have
-# are the ones threading already defines: an identifier and a lock that
-# is never contended.
-from threading import Lock as allocate_lock
-from threading import get_ident
-
+# The single-thread primitives shared with threading. Starting threads remains
+# unavailable; these locks and the current thread identity are implemented there.
+from threading import RLock, Lock, get_ident, TIMEOUT_MAX
+allocate_lock = Lock
 error = RuntimeError

@@ -1,13 +1,11 @@
-# From CPython 3.14, Lib/test/seq_tests.py.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# Source: CPython Lib/test/seq_tests.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """
 Tests common to tuple, list and UserList.UserList
 """
 
 import unittest
 import sys
-# Trim: pickle is not carried; import it at its test instead.
+import pickle
 from test import support
 from test.support import ALWAYS_EQ, NEVER_EQ
 
@@ -91,12 +89,10 @@ def itermulti(seqn):
     return chain(map(lambda x:x, iterfunc(IterGen(Sequence(seqn)))))
 
 class LyingTuple(tuple):
-
     def __iter__(self):
         yield 1
 
 class LyingList(list):
-
     def __iter__(self):
         yield 1
 
@@ -438,7 +434,6 @@ class CommonTest(unittest.TestCase):
         self.assertRaises(ValueError, a.index, 2, 0, -10)
 
     def test_pickle(self):
-        import pickle
         lst = self.type2test([4, 5, 6, 7])
         for proto in range(pickle.HIGHEST_PROTOCOL + 1):
             lst2 = pickle.loads(pickle.dumps(lst, proto))
