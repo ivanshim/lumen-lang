@@ -37,6 +37,13 @@ def isclass(object):
     return isinstance(object, type)
 
 
+def iscoroutinefunction(obj):
+    # A coroutine function is a function whose compiled body carries the
+    # coroutine flag; the runtime keeps no other coroutine marker.
+    code = getattr(obj, '__code__', None)
+    return code is not None and bool(code.co_flags & CO_COROUTINE)
+
+
 def getmro(cls):
     return cls.__mro__
 

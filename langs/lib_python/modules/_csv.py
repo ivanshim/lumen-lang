@@ -213,8 +213,15 @@ class Reader:
         self._field = []
         self._state = START_RECORD
         self._unquoted = False
-        self.dialect = dialect
-        self.line_num = 0
+        self._line_num = 0
+
+    @property
+    def dialect(self):
+        return self._dialect
+
+    @property
+    def line_num(self):
+        return self._line_num
 
     def __iter__(self):
         return self
@@ -360,7 +367,7 @@ class Reader:
                             % _type_name(lineobj))
             if self._fields is None:
                 raise Error('iterator has already advanced the reader')
-            self.line_num += 1
+            self._line_num += 1
             for c in lineobj:
                 self._process_char(c)
             self._process_char(_EOL)
@@ -377,7 +384,10 @@ class Writer:
         self._dialect = dialect
         self._rec = []
         self._num_fields = 0
-        self.dialect = dialect
+
+    @property
+    def dialect(self):
+        return self._dialect
 
     def _join_append(self, field, quoted):
         d = self._dialect
@@ -393,13 +403,15 @@ class Writer:
                     c == '\n' or c == '\r' or c in d.lineterminator:
                 if d.quoting == QUOTE_NONE:
                     want_escape = True
-                elif c == d.quotechar:
-                    want_escape = not d.doublequote
-                elif c == d.escapechar:
-                    want_escape = True
                 else:
-                    want_escape = False
-                    quoted = True
+                    if c == d.quotechar:
+                        want_escape = not d.doublequote
+                    elif c == d.escapechar:
+                        want_escape = True
+                    else:
+                        want_escape = False
+                    if not want_escape:
+                        quoted = True
                 if want_escape and d.escapechar is None:
                     raise Error('need to escape, but no escapechar set')
         if self._num_fields > 0:
@@ -472,7 +484,11 @@ class Writer:
 
 
 def _is_number(value):
-    return isinstance(value, (int, float, complex))
+    if isinstance(value, complex):
+        return True
+    t = type(value)
+    return (hasattr(t, '__index__') or hasattr(t, '__int__') or
+            hasattr(t, '__float__'))
 
 
 def reader(iterator, dialect=None, **fmtparams):

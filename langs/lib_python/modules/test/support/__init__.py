@@ -6,6 +6,7 @@
 # Helpers whose work is unavailable complain when called, never pass a test.
 import gc
 import sys
+import inspect
 import unittest
 from io import StringIO
 
@@ -787,14 +788,26 @@ def subTests(arg_names, arg_values, /, *, _do_cleanups=False):
         if isinstance(func, type):
             raise TypeError('subTests() can only decorate methods, not classes')
 
-        @functools.wraps(func)
-        def wrapper(self, /, *args, **kwargs):
+        def iter_subtest_kwargs():
             for values in arg_values:
-                subtest_kwargs = dict(zip(arg_names, (values,) if single_param else values))
-                with self.subTest(**subtest_kwargs):
-                    func(self, *args, **kwargs, **subtest_kwargs)
-                if _do_cleanups:
-                    self.doCleanups()
+                yield dict(zip(arg_names, (values,) if single_param else values))
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def wrapper(self, /, *args, **kwargs):
+                for subtest_kwargs in iter_subtest_kwargs():
+                    with self.subTest(**subtest_kwargs):
+                        await func(self, *args, **kwargs, **subtest_kwargs)
+                    if _do_cleanups:
+                        self.doCleanups()
+        else:
+            @functools.wraps(func)
+            def wrapper(self, /, *args, **kwargs):
+                for subtest_kwargs in iter_subtest_kwargs():
+                    with self.subTest(**subtest_kwargs):
+                        func(self, *args, **kwargs, **subtest_kwargs)
+                    if _do_cleanups:
+                        self.doCleanups()
         return wrapper
     return decorator
 
