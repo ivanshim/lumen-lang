@@ -1840,14 +1840,20 @@ def write_mirror(lang, d, files, reasons):
         layout = json.loads(layout_path.read_text(encoding="utf-8")) if layout_path.is_file() else {}
         locations = layout.get("files", {})
         aliases = layout.get("aliases", {})
+        adapters = layout.get("adapters", {})
         packed = []
         for source in sorted(modules.rglob(f"*.{ext}")):
             relative = source.relative_to(modules).as_posix()
+            if relative in adapters.values():
+                continue
             name = relative[:-(len(ext) + 1)].replace("/", ".")
             if name.endswith(".__init__"):
                 name = name[:-9]
             location = locations.get(name, relative)
-            packed.append(f'    ({json.dumps(name)}, include_str!({json.dumps(relative)}), {json.dumps(location)}),\n')
+            source_expr = f'include_str!({json.dumps(relative)})'
+            if name in adapters:
+                source_expr = f'concat!({source_expr}, "\\n", include_str!({json.dumps(adapters[name])}))'
+            packed.append(f'    ({json.dumps(name)}, {source_expr}, {json.dumps(location)}),\n')
         (modules / "manifest.rs").write_text(
             "// Modules kept as source until a program asks for them.\n"
             "pub static MODULES: &[(&str, &str, &str)] = &[\n" + "".join(packed) + "];\n\n"

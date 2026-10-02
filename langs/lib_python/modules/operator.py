@@ -1,4 +1,4 @@
-# Source: CPython 3b564385e4c9, Lib/operator.py; PSF License.
+# Source: CPython Lib/operator.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """
 Operator Interface
 
@@ -91,30 +91,11 @@ def and_(a, b):
 
 def floordiv(a, b):
     "Same as a // b."
-    result = a // b
-    # The shared quotient truncates; the Python library supplies floor division.
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-        if (b > 0 and result * b > a) or (b < 0 and result * b < a):
-            result -= 1
-    return result
+    return a // b
 
 def index(a):
-    if isinstance(a, int):
-        return int.__index__(a)
-    method = getattr(type(a), '__index__', None)
-    if method is not None:
-        answer = method(a)
-        if isinstance(answer, int):
-            if type(answer) is not int:
-                import warnings
-                warnings.warn('__index__ returned non-int (type ' + type(answer).__name__ +
-                              ').  The ability to return an instance of a strict subclass of int '
-                              'is deprecated, and may be removed in a future version of Python.',
-                              DeprecationWarning, stacklevel=2)
-            return int.__index__(answer)
-        raise 'TypeError: __index__ returned non-int (type ' + type(answer).__name__ + ')'
-    raise 'TypeError: value cannot be interpreted as an integer'
-
+    "Same as a.__index__()."
+    return a.__index__()
 
 def inv(a):
     "Same as ~a."
@@ -127,8 +108,6 @@ def lshift(a, b):
 
 def mod(a, b):
     "Same as a % b."
-    if isinstance(a, int) and isinstance(b, int):
-        return a - floordiv(a, b) * b
     return a % b
 
 def mul(a, b):
@@ -231,10 +210,14 @@ def length_hint(obj, default=0):
     except TypeError:
         pass
 
-    # Native iterator types expose this operation through their bound value.
     try:
-        val = obj.__length_hint__()
-    except (AttributeError, TypeError):
+        hint = type(obj).__length_hint__
+    except AttributeError:
+        return default
+
+    try:
+        val = hint(obj)
+    except TypeError:
         return default
     if val is NotImplemented:
         return default
@@ -491,8 +474,3 @@ __irshift__ = irshift
 __isub__ = isub
 __itruediv__ = itruediv
 __ixor__ = ixor
-
-# Tie these imported classes to their defining module.
-attrgetter.__module__ = __name__
-itemgetter.__module__ = __name__
-methodcaller.__module__ = __name__
