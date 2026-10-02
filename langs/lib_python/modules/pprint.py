@@ -1,10 +1,4 @@
-# From CPython 3.14, Lib/pprint.py, adapted only where this run
-# cannot follow: instance __class__ reads become type() calls, the
-# dataclass test reads the class dictionary rather than the wrapped
-# repr CPython generates, the ChainMap and UserString formatters
-# register where collections carries them, the scalar set is a tuple
-# because class objects are not hashable here, and t-string formatters
-# register where the template type carries interpolations.
+# From CPython commit 3b564385e4c9, Lib/pprint.py.
 # Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
 # The PSF license is kept in tests/python/LICENSE.
 #  Author:      Fred L. Drake, Jr.
@@ -217,9 +211,9 @@ class PrettyPrinter:
             elif (is_dataclass(object) and
                   not isinstance(object, type) and
                   object.__dataclass_params__.repr and
-                  # The generated repr is the base record's own, so a class
-                  # that wrote its own __repr__ keeps it in its __dict__.
-                  '__repr__' not in type(object).__dict__):
+                  # Check dataclass has generated repr method.
+                  hasattr(object.__repr__, "__wrapped__") and
+                  "__create_fn__" in object.__repr__.__wrapped__.__qualname__):
                 context[objid] = 1
                 self._pprint_dataclass(object, stream, indent, allowance, context, level + 1)
                 del context[objid]
@@ -252,7 +246,7 @@ class PrettyPrinter:
         # Lazy import to improve module import time
         from dataclasses import fields as dataclass_fields
 
-        cls_name = type(object).__name__
+        cls_name = object.__class__.__name__
         if self._expand:
             indent += self._indent_per_level
         else:
@@ -282,7 +276,7 @@ class PrettyPrinter:
 
     def _pprint_frozendict(self, object, stream, indent, allowance, context, level):
         write = stream.write
-        cls = type(object)
+        cls = object.__class__
         if not len(object):
             write(repr(object))
             return
@@ -310,7 +304,7 @@ class PrettyPrinter:
         if not len(object):
             stream.write(repr(object))
             return
-        cls = type(object)
+        cls = object.__class__
         stream.write(cls.__name__ + '(')
         self._format(
             list(object.items()),
@@ -333,7 +327,7 @@ class PrettyPrinter:
 
         write = stream.write
         write(
-            self._format_block_start(type(object).__name__ + "([", indent)
+            self._format_block_start(object.__class__.__name__ + "([", indent)
         )
 
         if len(object):
@@ -349,7 +343,7 @@ class PrettyPrinter:
     def _pprint_mapping_abc_view(self, object, stream, indent, allowance, context, level):
         """Pretty print mapping views from collections.abc."""
         write = stream.write
-        write(type(object).__name__ + '(')
+        write(object.__class__.__name__ + '(')
         # Dispatch formatting to the view's _mapping
         self._format(object._mapping, stream, indent, allowance, context, level)
         write(')')
@@ -393,7 +387,7 @@ class PrettyPrinter:
         if not len(object):
             stream.write(repr(object))
             return
-        typ = type(object)
+        typ = object.__class__
         if typ is set:
             stream.write(self._format_block_start('{', indent))
             endchar = '}'
@@ -525,7 +519,7 @@ class PrettyPrinter:
             # name, so we do the same here. For subclasses; use the class name.
             cls_name = 'namespace'
         else:
-            cls_name = type(object).__name__
+            cls_name = object.__class__.__name__
         if self._expand:
             indent += self._indent_per_level
         else:
@@ -651,7 +645,7 @@ class PrettyPrinter:
             stream.write(repr(object))
             return
         rdf = self._repr(object.default_factory, context, level)
-        cls = type(object)
+        cls = object.__class__
         if self._expand:
             stream.write('%s(%s, ' % (cls.__name__, rdf))
         else:
@@ -667,7 +661,7 @@ class PrettyPrinter:
         if not len(object):
             stream.write(repr(object))
             return
-        cls = type(object)
+        cls = object.__class__
         stream.write(self._format_block_start(cls.__name__ + '({', indent))
         self._write_indent_padding(stream.write)
         items = object.most_common()
@@ -687,7 +681,7 @@ class PrettyPrinter:
         if not len(object.maps):
             stream.write(repr(object))
             return
-        cls = type(object)
+        cls = object.__class__
         stream.write(self._format_block_start(cls.__name__ + '(',
                                               indent + self._indent_per_level))
         if self._expand:
@@ -704,14 +698,13 @@ class PrettyPrinter:
                 self._format(m, stream, indent, 1, context, level)
                 stream.write(',\n' + ' ' * indent)
 
-    if hasattr(_collections, 'ChainMap'):
-        _dispatch[_collections.ChainMap.__repr__] = _pprint_chain_map
+    _dispatch[_collections.ChainMap.__repr__] = _pprint_chain_map
 
     def _pprint_deque(self, object, stream, indent, allowance, context, level):
         if not len(object):
             stream.write(repr(object))
             return
-        cls = type(object)
+        cls = object.__class__
         stream.write(self._format_block_start(cls.__name__ + '([', indent))
         if not self._expand:
             indent += len(cls.__name__) + 1
@@ -743,11 +736,10 @@ class PrettyPrinter:
     def _pprint_user_string(self, object, stream, indent, allowance, context, level):
         self._format(object.data, stream, indent, allowance, context, level - 1)
 
-    if hasattr(_collections, 'UserString'):
-        _dispatch[_collections.UserString.__repr__] = _pprint_user_string
+    _dispatch[_collections.UserString.__repr__] = _pprint_user_string
 
     def _pprint_template(self, object, stream, indent, allowance, context, level):
-        cls_name = type(object).__name__
+        cls_name = object.__class__.__name__
         if self._expand:
             indent += self._indent_per_level
         else:
@@ -766,7 +758,7 @@ class PrettyPrinter:
         )
 
     def _pprint_interpolation(self, object, stream, indent, allowance, context, level):
-        cls_name = type(object).__name__
+        cls_name = object.__class__.__name__
         if self._expand:
             indent += self._indent_per_level
             items = (
@@ -797,9 +789,8 @@ class PrettyPrinter:
             stream.write(")")
 
     t = t"{0}"
-    if hasattr(t, 'interpolations'):
-        _dispatch[type(t).__repr__] = _pprint_template
-        _dispatch[type(t.interpolations[0]).__repr__] = _pprint_interpolation
+    _dispatch[type(t).__repr__] = _pprint_template
+    _dispatch[type(t.interpolations[0]).__repr__] = _pprint_interpolation
     del t
 
     def _safe_repr(self, object, context, maxlevels, level):
@@ -821,7 +812,7 @@ class PrettyPrinter:
             is_frozendict = issubclass(typ, frozendict)
             if not object:
                 if is_frozendict:
-                    rep = f"{type(object).__name__}()"
+                    rep = f"{object.__class__.__name__}()"
                 else:
                     rep = "{}"
                 return rep, True, False
@@ -829,7 +820,7 @@ class PrettyPrinter:
             if maxlevels and level >= maxlevels:
                 rep = "{...}"
                 if is_frozendict:
-                    rep = f"{type(object).__name__}({rep})"
+                    rep = f"{object.__class__.__name__}({rep})"
                 return rep, False, objid in context
             if objid in context:
                 return _recursion(object), False, True
@@ -855,7 +846,7 @@ class PrettyPrinter:
             del context[objid]
             rep = "{%s}" % ", ".join(components)
             if is_frozendict:
-                rep = f"{type(object).__name__}({rep})"
+                rep = f"{object.__class__.__name__}({rep})"
             return rep, readable, recursive
 
         if (issubclass(typ, list) and r is list.__repr__) or \
@@ -932,8 +923,8 @@ class PrettyPrinter:
         return rep, (rep and not rep.startswith('<')), False
 
 
-_builtin_scalars = (str, bytes, bytearray, float, complex,
-                    bool, type(None))
+_builtin_scalars = frozenset({str, bytes, bytearray, float, complex,
+                              bool, type(None)})
 
 
 def _recursion(object):

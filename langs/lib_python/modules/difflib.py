@@ -1,4 +1,4 @@
-# From CPython 3.14, Lib/difflib.py.
+# From CPython commit 3b564385e4c9, Lib/difflib.py.
 # Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
 # The PSF license is kept in tests/python/LICENSE.
 """
