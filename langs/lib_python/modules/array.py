@@ -11,6 +11,31 @@ _type_sizes = {code: _native(0, "@" + ("I" if code in "uw" else code))[0] for co
 def _buffer_info(buffer):
     return _native(3, '', buffer)
 
+
+def _integer_overflow(code, value):
+    signed_long = 1 << (_type_sizes['l'] * 8 - 1)
+    if code in 'bBhHil' and not -signed_long <= value < signed_long:
+        raise OverflowError('Python int too large to convert to C long')
+    if code in 'IL':
+        if value < 0:
+            raise OverflowError("can't convert negative value to unsigned int")
+        if value >= signed_long * 2:
+            raise OverflowError('Python int too large to convert to C unsigned long')
+        raise OverflowError('unsigned int is greater than maximum')
+    if code in 'qQ':
+        if code == 'Q' and value < 0:
+            raise OverflowError("can't convert negative int to unsigned")
+        raise OverflowError('int too big to convert')
+    short_limit = 1 << (_type_sizes['h'] * 8 - 1)
+    int_limit = 1 << (_type_sizes['i'] * 8 - 1)
+    if code in 'bh' and not -short_limit <= value < short_limit:
+        words = 'signed short integer'
+    elif code in 'Hi' and not -int_limit <= value < int_limit:
+        words = 'signed integer'
+    else:
+        words = {'b': 'signed char', 'B': 'unsigned byte integer', 'h': 'signed short integer', 'H': 'unsigned short', 'i': 'signed integer'}[code]
+    raise OverflowError(words + (' is less than minimum' if value < 0 else ' is greater than maximum'))
+
 class array:
     __slots__ = ('_typecode', '_itemsize', '_buffer', '__weakref__')
     def __new__(cls, typecode, initializer=_missing, /, **kwargs):
@@ -61,19 +86,23 @@ class array:
 
     def _encode(self, value):
         if self._typecode in 'uw':
-            if not isinstance(value, str) or len(value) != 1:
-                raise TypeError('array item must be unicode character')
+            if not isinstance(value, str):
+                raise TypeError('array item must be a unicode character, not ' + type(value).__name__)
+            if len(value) != 1:
+                raise TypeError('array item must be a unicode character, not a string of length ' + str(len(value)))
             return _native(1, '@I', (ord(value),))
         if self._typecode in 'fd':
             if not isinstance(value, (int, float)) and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
                 raise TypeError('must be real number, not ' + type(value).__name__)
             value = float(value)
         else:
+            if not isinstance(value, int) and not hasattr(type(value), "__index__"):
+                raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer")
             value = operator.index(value)
         try:
             return _native(1, '@' + self._typecode, (value,))
         except ValueError:
-            raise OverflowError('array item is out of range')
+            _integer_overflow(self._typecode, value)
         except OverflowError:
             if self._typecode == 'f':
                 return _native(1, '@f', (float('-inf') if value < 0 else float('inf'),))
