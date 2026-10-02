@@ -2562,8 +2562,16 @@ impl<'a> Machine<'a> {
 
     fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
         if self.rules.has_any_ext_builtin_format {
+            // A thing of a native kind that holds its fields in a tuple
+            // is spread across the marks as that tuple, the way the
+            // reference's own formatting takes a named tuple apart.
+            let settled = rhs.settled();
+            let spread = match Self::underlying(&settled) {
+                Some(worth) if matches!(worth.settled(), Value::Tuple(_) | Value::Row(_)) => worth,
+                _ => settled,
+            };
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
-            return layout.remainder(pattern, rhs, self, false);
+            return layout.remainder(pattern, &spread, self, false);
         }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
@@ -14982,7 +14990,14 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                let mut values: Vec<Value> = match &v[0] {
+                // A thing of a native kind that says nothing itself of
+                // being walked is taken apart as the worth it keeps of
+                // that kind, the very members a walk over it would hand
+                // over.
+                let subject = if self.appointment(&v[0], 15).is_none() && self.placed_walk(&v[0]).is_none() {
+                    Self::underlying(&v[0]).unwrap_or_else(|| v[0].clone())
+                } else { v[0].clone() };
+                let mut values: Vec<Value> = match &subject {
                     Value::Generator(state) => {
                         let mut yielded = Vec::new();
                         loop {
@@ -15028,7 +15043,7 @@ impl<'a> Machine<'a> {
                     return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
                 }
                 if star.is_none() && values.len() != wanted {
-                    let count = match &v[0] {
+                    let count = match &subject {
                         Value::Vector(_) | Value::Tuple(_) | Value::Dict(_) => {
                             self.table.strings("ext.stmt.unpack.long").get(2)
                                 .map(|between| format!("{wanted}{between}{}", values.len()))

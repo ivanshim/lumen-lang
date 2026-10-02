@@ -9295,6 +9295,13 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?).contents();
+                // A thing of a builtin kind that says nothing itself of
+                // being walked is taken apart as the value it keeps of
+                // that kind, the very members a walk over it would hand
+                // over.
+                let source = if self.special_value(&source, 15).is_none() && self.indexed_walk(&source).is_none() {
+                    match Self::worth_of(&source) { Some(worth) => worth.contents(), None => source }
+                } else { source };
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {
@@ -11135,7 +11142,15 @@ impl<'a> Engine<'a> {
                 }
             } else { Answer::Missing(self.format_kind(value, code)) })
         };
-        writer.percent(template, arguments, &mut asked, false)
+        // A thing of a builtin kind that holds its fields in a tuple
+        // is spread across the marks as that tuple, the way the
+        // reference's own formatting takes a named tuple apart.
+        let settled = arguments.contents();
+        let spread = match Self::worth_of(&settled) {
+            Some(worth) if matches!(worth.contents(), Value::Tuple(_)) => worth.contents(),
+            _ => settled,
+        };
+        writer.percent(template, &spread, &mut asked, false)
     }
 
     /// Remainder over text fills one mark at a time. A list supplies
