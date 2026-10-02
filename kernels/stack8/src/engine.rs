@@ -12441,7 +12441,7 @@ impl<'a> Engine<'a> {
     }
 
     // Streaming partial sums from CPython v3.14.8 Modules/mathmodule.c.
-    fn accurate_float_sum(&mut self, source: &Value) -> Res<Value> {
+    fn accurate_float_sum(&mut self, source: &Value, convert: &Value) -> Res<Value> {
         let iterator = match Self::living_source(source) {
             Some(live) => Self::core_cursor(live),
             None => self.core_iterator(&source.contents())?,
@@ -12449,7 +12449,14 @@ impl<'a> Engine<'a> {
         let mut partials = Vec::<f64>::new();
         let (mut special, mut infinities) = (0.0_f64, 0.0_f64);
         while let Some(member) = self.core_step(&iterator)? {
-            let saved = Self::product_sum_float(&member.contents()).ok_or("TypeError: must be real number".to_string())?;
+            let item = member.contents();
+            let saved = match Self::product_sum_float(&item) {
+                Some(number) => number,
+                None => {
+                    let converted = self.core_apply(convert, vec![item])?;
+                    Self::product_sum_float(&converted.contents()).ok_or("TypeError: must be real number".to_string())?
+                }
+            };
             let mut x = saved;
             let mut kept = 0;
             for j in 0..partials.len() {
@@ -15882,8 +15889,8 @@ impl<'a> Engine<'a> {
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if builtin == Builtin::Math && self.lang.math_floating
             && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "fsum") {
-            if args.len() != 2 { return Err("TypeError: fsum expected one argument".into()); }
-            return self.accurate_float_sum(&args[1]);
+            if args.len() != 3 { return Err("TypeError: fsum needs an iterable and converter".into()); }
+            return self.accurate_float_sum(&args[1], &args[2]);
         }
         if builtin == Builtin::Math && self.lang.math_sumprod
             && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
@@ -17066,8 +17073,8 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 if working == "fsum" && self.lang.math_floating {
-                    if args.len() != 2 { return Err("TypeError: fsum expected one argument".into()); }
-                    return self.accurate_float_sum(&args[1]);
+                    if args.len() != 3 { return Err("TypeError: fsum needs an iterable and converter".into()); }
+                    return self.accurate_float_sum(&args[1], &args[2]);
                 }
                 if working == "sumprod" && self.lang.math_sumprod {
                     if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }

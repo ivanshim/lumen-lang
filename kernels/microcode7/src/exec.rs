@@ -14090,14 +14090,19 @@ impl<'a> Machine<'a> {
 
     // The release math_fsum algorithm (3.14.8), including immediate
     // intermediate overflow and the final same-sign rounding correction.
-    fn float_reduction(&mut self, offered: &Value) -> Result<Value, String> {
+    fn float_reduction(&mut self, offered: &Value, adapter: &Value) -> Result<Value, String> {
         let walk = if let Some(kind) = Self::live_walk(offered) { Self::cursor_value(kind) }
                    else { self.iterated_value(&offered.settled())? };
         let mut pieces: Vec<f64> = Vec::new();
         let mut exceptional = [0.0_f64; 2];
         loop {
             let Some(value) = self.next_value(&walk)? else { break };
-            let original = Self::dot_coordinate(&value.settled()).ok_or_else(|| "TypeError: must be real number".to_owned())?;
+            let plain = value.settled();
+            let original = if let Some(number) = Self::dot_coordinate(&plain) { number }
+                else {
+                    let ready = self.core_run(adapter, vec![plain])?;
+                    Self::dot_coordinate(&ready.settled()).ok_or_else(|| "TypeError: must be real number".to_owned())?
+                };
             let mut leading = original;
             let mut residuals = Vec::with_capacity(pieces.len() + 1);
             for mut smaller in pieces.drain(..) {
@@ -14284,8 +14289,8 @@ impl<'a> Machine<'a> {
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if self.rules.floating_math && op == Prim::Reckon
             && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "fsum") {
-            if v.len() != 2 { return Err("TypeError: fsum expected one argument".to_owned()); }
-            return self.float_reduction(&v[1]);
+            if v.len() != 3 { return Err("TypeError: fsum needs a source and conversion routine".to_owned()); }
+            return self.float_reduction(&v[1], &v[2]);
         }
         if op == Prim::Reckon && self.table.flag("ext.builtin.math.sumprod")
             && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
@@ -16616,8 +16621,8 @@ impl<'a> Machine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 if self.rules.floating_math && working == "fsum" {
-                    if v.len() != 2 { return Err("TypeError: fsum expected one argument".to_owned()); }
-                    return self.float_reduction(&v[1]);
+                    if v.len() != 3 { return Err("TypeError: fsum needs a source and conversion routine".to_owned()); }
+                    return self.float_reduction(&v[1], &v[2]);
                 }
                 if working == "sumprod" && self.table.flag("ext.builtin.math.sumprod") {
                     if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }

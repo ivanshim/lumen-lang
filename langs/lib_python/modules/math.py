@@ -259,10 +259,7 @@ def factorial(n):
     return value
 
 def fsum(values):
-    def converted():
-        for value in values:
-            yield value if type(value) == type(1.0) else _float_value(value)
-    return __math('fsum', converted())
+    return __math('fsum', values, _float_value)
 
 
 isclose = staticmethod(isclose)
