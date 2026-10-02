@@ -59,12 +59,14 @@ impl Ghost {
 pub struct Dim {
     pub ghost: Ghost,
     pub bearer: Weak<Thing>,
-    pub notify: Option<Value>,
+    pub notify: RefCell<Option<Value>>,
+    pub hash: RefCell<Option<Value>>,
 }
 
 thread_local! {
     static FAREWELL_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
     static LISTENING: Cell<usize> = const { Cell::new(0) };
+    static REFS: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
     static LISTENERS: RefCell<Vec<Rc<Dim>>> = const { RefCell::new(Vec::new()) };
     static STIRRED: Cell<bool> = const { Cell::new(false) };
     static LOST: Cell<bool> = const { Cell::new(false) };
@@ -161,14 +163,16 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
         let _ = LISTENERS.try_with(|l| {
             let mut all = l.borrow_mut();
             let mut still = Vec::with_capacity(all.len());
-            for dim in all.drain(..) {
+            for dim in all.drain(..).rev() {
+                if dim.bearer.strong_count() == 0 { continue; }
                 if !dim.ghost.departed() {
                     still.push(dim);
-                } else if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), dim.notify.as_ref()) {
-                    notices.push((notify.clone(), Value::Thing(bearer)));
+                } else if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), dim.notify.borrow_mut().take()) {
+                    notices.push((notify, Value::Thing(bearer)));
                 }
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
+            still.reverse();
             *all = still;
         });
     }
@@ -197,7 +201,12 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
 pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     note(ghost.clone());
     let wants_telling = notify.is_some();
-    let held = Rc::new(Dim { ghost, bearer, notify });
+    let held = Rc::new(Dim { ghost, bearer, notify: RefCell::new(notify), hash: RefCell::new(None) });
+    REFS.with(|refs| {
+        let mut refs = refs.borrow_mut();
+        refs.retain(|weak| weak.strong_count() != 0);
+        refs.push(Rc::downgrade(&held));
+    });
     if wants_telling {
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
         let _ = LISTENING.try_with(|n| n.set(n.get() + 1));
@@ -231,6 +240,7 @@ impl Knot {
         Some(match self {
             Knot::Frame(env) => Rc::as_ptr(env) as *const () as usize,
             Knot::Held(value) => match value {
+                Value::Dim(d) => Rc::as_ptr(d) as *const () as usize,
                 Value::Thing(t) | Value::Attributes(t) => Rc::as_ptr(t) as *const () as usize,
                 Value::Blueprint(b) => Rc::as_ptr(b) as *const () as usize,
                 Value::Generator(g) => Rc::as_ptr(g) as *const () as usize,
@@ -256,6 +266,7 @@ impl Knot {
         match self {
             Knot::Frame(env) => Rc::strong_count(env),
             Knot::Held(value) => match value {
+                Value::Dim(d) => Rc::strong_count(d).saturating_sub(usize::from(d.notify.borrow().is_some())),
                 Value::Thing(t) | Value::Attributes(t) => Rc::strong_count(t),
                 Value::Blueprint(b) => Rc::strong_count(b),
                 Value::Generator(g) => Rc::strong_count(g),
@@ -288,6 +299,7 @@ impl Knot {
                 if let Some(outer) = &env.outer { out.push(Knot::Frame(outer.clone())); }
             }
             Knot::Held(value) => match value {
+                Value::Dim(d) => if let Some(callback) = d.notify.borrow().as_ref() { held(out, callback); },
                 Value::Thing(t) | Value::Attributes(t) => {
                     out.push(Knot::Held(Value::Blueprint(t.of.clone())));
                     if let Ok(members) = t.holds.try_borrow() {
@@ -532,4 +544,29 @@ impl Web {
         }
         taken
     }
+}
+
+/// Living public weak references, with the two reusable kinds at the head.
+pub fn refs_for(subject: &Value) -> Vec<Value> {
+    let mut found = REFS.with(|refs| refs.borrow().iter().rev().filter_map(|entry| {
+        let dim = entry.upgrade()?;
+        let target = dim.ghost.revive()?;
+        if !subject.one_place(&target) { return None; }
+        dim.bearer.upgrade().map(Value::Thing)
+    }).collect::<Vec<_>>());
+    found.sort_by_key(|item| {
+        let Value::Thing(thing) = item else { return 2; };
+        let no_callback = thing.holds.borrow().iter().any(|(key, held)| {
+            key == "\0weak" && matches!(held, Value::Dim(dim) if dim.notify.borrow().is_none())
+        });
+        if no_callback {
+            match thing.blueprint().name.as_str() {
+                "ReferenceType" => return 0,
+                "ProxyType" | "CallableProxyType" => return 1,
+                _ => (),
+            }
+        }
+        2
+    });
+    found
 }

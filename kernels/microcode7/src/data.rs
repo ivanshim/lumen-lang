@@ -17,11 +17,14 @@ use crate::form::{Prim, Routine};
 pub struct Env {
     pub cells: RefCell<Vec<Value>>,
     pub outer: Option<Rc<Env>>,
+    /// Slots used by closures after this call returns.
+    pub retained: RefCell<HashSet<usize>>,
+    pub weak_callback_frame: Cell<bool>,
 }
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), outer: parent })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), outer: parent, retained: RefCell::new(HashSet::new()), weak_callback_frame: Cell::new(false) })
     }
 }
 

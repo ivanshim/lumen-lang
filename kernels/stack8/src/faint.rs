@@ -66,7 +66,8 @@ impl Hold {
 pub struct Faint {
     pub hold: Hold,
     pub bearer: Weak<Instance>,
-    pub told: Option<Value>,
+    pub told: RefCell<Option<Value>>,
+    pub cached_hash: RefCell<Option<Value>>,
 }
 
 thread_local! {
@@ -75,6 +76,7 @@ thread_local! {
     /// How many weak holds still want a word when their value goes.
     static WATCHING: Cell<usize> = const { Cell::new(0) };
     /// Those holds.
+    static REFERENCES: RefCell<Vec<Weak<Faint>>> = const { RefCell::new(Vec::new()) };
     static WATCHED: RefCell<Vec<Rc<Faint>>> = const { RefCell::new(Vec::new()) };
     /// Whether anything at all is waiting for the engine's next step.
     static PENDING: Cell<bool> = const { Cell::new(false) };
@@ -206,16 +208,18 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
         let _ = WATCHED.try_with(|w| {
             let mut watched = w.borrow_mut();
             let mut kept = Vec::with_capacity(watched.len());
-            for faint in watched.drain(..) {
+            for faint in watched.drain(..).rev() {
+                if faint.bearer.strong_count() == 0 { continue; }
                 if !faint.hold.gone() {
                     kept.push(faint);
                     continue;
                 }
-                if let (Some(bearer), Some(told)) = (faint.bearer.upgrade(), &faint.told) {
-                    gone.push((told.clone(), Value::Object(bearer)));
+                if let (Some(bearer), Some(told)) = (faint.bearer.upgrade(), faint.told.borrow_mut().take()) {
+                    gone.push((told, Value::Object(bearer)));
                 }
             }
             let _ = WATCHING.try_with(|n| n.set(kept.len()));
+            kept.reverse();
             *watched = kept;
         });
     }
@@ -241,8 +245,13 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
 /// asks for a word, and its value as one whose going may be noticed.
 pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
     remember(hold.clone());
-    let faint = Rc::new(Faint { hold, bearer, told });
-    if faint.told.is_some() {
+    let faint = Rc::new(Faint { hold, bearer, told: RefCell::new(told), cached_hash: RefCell::new(None) });
+    REFERENCES.with(|all| {
+        let mut all = all.borrow_mut();
+        all.retain(|r| r.strong_count() != 0);
+        all.push(Rc::downgrade(&faint));
+    });
+    if faint.told.borrow().is_some() {
         let _ = WATCHED.try_with(|w| w.borrow_mut().push(faint.clone()));
         let _ = WATCHING.try_with(|n| n.set(n.get() + 1));
     }
@@ -284,6 +293,7 @@ pub struct Graph {
 /// Where a value's pointer stands, for the kinds that live behind one.
 fn place_of(value: &Value) -> Option<usize> {
     Some(match value {
+        Value::Faint(r) => Rc::as_ptr(r) as *const () as usize,
         Value::Object(o) | Value::Fields(o) => Rc::as_ptr(o) as *const () as usize,
         Value::Class(c) => Rc::as_ptr(c) as *const () as usize,
         Value::Generator(g) => Rc::as_ptr(g) as *const () as usize,
@@ -308,6 +318,7 @@ fn place_of(value: &Value) -> Option<usize> {
 /// How many strong holds there are on a value's pointer.
 fn holds_on(value: &Value) -> usize {
     match value {
+        Value::Faint(r) => Rc::strong_count(r) - usize::from(r.told.borrow().is_some()),
         Value::Object(o) | Value::Fields(o) => Rc::strong_count(o),
         Value::Class(c) => Rc::strong_count(c),
         Value::Generator(g) => Rc::strong_count(g),
@@ -335,6 +346,7 @@ fn holds_on(value: &Value) -> usize {
 /// as held from outside, which errs on the side of keeping.
 fn reaches(value: &Value, out: &mut Vec<Value>) {
     match value {
+        Value::Faint(r) => out.extend(r.told.borrow().iter().cloned()),
         Value::Object(o) | Value::Fields(o) => {
             out.push(Value::Class(o.class.clone()));
             if let Ok(fields) = o.fields.try_borrow() {
@@ -596,4 +608,27 @@ impl Graph {
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
     walk.try_borrow().map_or(false, |g| g.started && !g.closed && g.program.is_some() && !g.resume.is_empty())
+}
+
+/// References in CPython list order: the shared plain reference first,
+/// then the shared proxy, then callback and subclass references newest first.
+pub fn references(object: &Value) -> Vec<Value> {
+    REFERENCES.with(|all| {
+        let mut result = Vec::new();
+        for weak in all.borrow().iter().rev() {
+            let Some(reference) = weak.upgrade() else { continue };
+            let Some(target) = reference.hold.revive() else { continue };
+            if !target.same_place(object) { continue; }
+            if let Some(bearer) = reference.bearer.upgrade() { result.push(Value::Object(bearer)); }
+        }
+        result.sort_by_key(|value| match value {
+            Value::Object(bearer) => match bearer.class_now().name.as_str() {
+                "ReferenceType" if bearer.fields.borrow().iter().any(|(n,v)| n == "\0weak" && matches!(v, Value::Faint(r) if r.told.borrow().is_none())) => 0,
+                "ProxyType" | "CallableProxyType" if bearer.fields.borrow().iter().any(|(n,v)| n == "\0weak" && matches!(v, Value::Faint(r) if r.told.borrow().is_none())) => 1,
+                _ => 2,
+            },
+            _ => 2,
+        });
+        result
+    })
 }

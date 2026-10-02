@@ -1136,6 +1136,18 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if !self.lang.weak_refused.is_empty() {
+            if let Value::Object(proxy) = subject.contents() {
+                if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
+                    let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
+                    if let Some(Value::Faint(weak)) = weak {
+                        let target = weak.hold.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
+                        return self.class_get(target, name, plain);
+                    }
+                }
+            }
+        }
+
         if let Value::Adapter(proxy) = &subject {
             if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
                 let dynamic = match receiver { Value::Object(o) => o.class_now().clone(), Value::Class(c) => c.clone(), _ => return Err(self.class_refusal()) };
@@ -1942,6 +1954,18 @@ impl<'a> Engine<'a> {
         Ok(made)
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        if !self.lang.weak_refused.is_empty() {
+            if let Value::Object(proxy) = subject.contents() {
+                if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
+                    let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
+                    if let Some(Value::Faint(weak)) = weak {
+                        let target = weak.hold.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
+                        return self.class_write(target, name, value, plain);
+                    }
+                }
+            }
+        }
+
         if !self.class_word("name").is_empty() && !matches!(&subject, Value::Class(_)) {
             if let Some(kind) = self.kind_word_of(&subject.contents()) {
                 return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{kind}'").into());
@@ -2323,7 +2347,10 @@ impl<'a> Engine<'a> {
     }
     fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         match value.contents() {
-            Value::Class(class) if Self::class_sealed(&class) => Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()),
+            Value::Class(class) if Self::class_sealed(&class) => {
+                let name = if !self.lang.weak_refused.is_empty() && matches!(class.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", class.name) } else { class.name.clone() };
+                Err(format!("TypeError: type '{name}' is not an acceptable base type").into())
+            },
             Value::Class(class) => Ok(class),
             Value::ByteKind(mutable, _) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
                 let word = self.byte_kind_word(mutable).to_string();

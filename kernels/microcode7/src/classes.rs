@@ -1567,6 +1567,20 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if self.table.has_any("ext.builtin.weak.get") {
+            if let Value::Thing(t) = value.settled() {
+                if ["ProxyType", "CallableProxyType"].contains(&t.blueprint().name.as_str()) {
+                    let held = t.holds.borrow().iter().find_map(|(name, v)| (name == "\0weak").then(|| v.clone()));
+                    if let Some(Value::Dim(reference)) = held {
+                        match reference.ghost.revive() {
+                            Some(target) => return self.read_class_member(target, key, direct),
+                            None => return Err("ReferenceError: weakly-referenced object no longer exists".to_owned().into()),
+                        }
+                    }
+                }
+            }
+        }
+
         if let Value::Wrapped(9, binding) = &value {
             if let [Value::Blueprint(defining), instance] = binding.as_slice() {
                 let actual = match instance { Value::Thing(t) => t.blueprint().clone(), Value::Blueprint(b) => b.clone(), _ => return Err(self.class_unready()) };
@@ -2128,6 +2142,18 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        if self.table.has_any("ext.builtin.weak.get") {
+            if let Value::Thing(t) = subject.settled() {
+                if ["ProxyType", "CallableProxyType"].contains(&t.blueprint().name.as_str()) {
+                    let held = t.holds.borrow().iter().find_map(|(name, v)| (name == "\0weak").then(|| v.clone()));
+                    if let Some(Value::Dim(reference)) = held {
+                        let target = reference.ghost.revive().ok_or_else(|| Escape::Error("ReferenceError: weakly-referenced object no longer exists".to_owned()))?;
+                        return self.alter_class_member(target, key, replacement, direct);
+                    }
+                }
+            }
+        }
+
         if self.table.has_any("ext.stmt.class.detail.name") && !matches!(&subject, Value::Blueprint(_)) {
             if let Some(kind) = self.kind_word_of(&subject.settled()) {
                 return Err(format!("TypeError: cannot set '{key}' attribute of immutable type '{kind}'").into());
@@ -2455,7 +2481,13 @@ impl<'a> Machine<'a> {
     fn parent_from_type(&mut self, parent: &Value) -> Res<Rc<Blueprint>> {
         let settled = parent.settled();
         if let Value::Blueprint(class) = settled {
-            if Self::sealed(&class) { return Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()); }
+            if Self::sealed(&class) {
+                let qualified = match class.name.as_str() {
+                    "ProxyType" | "CallableProxyType" if self.table.has_any("ext.builtin.weak.get") => "weakref.".to_owned() + &class.name,
+                    _ => class.name.clone(),
+                };
+                return Err(format!("TypeError: type '{qualified}' is not an acceptable base type").into());
+            }
             return Ok(class);
         }
         if let Value::OctetKind { changeable, .. } = &settled {

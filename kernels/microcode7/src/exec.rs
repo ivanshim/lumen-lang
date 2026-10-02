@@ -2953,7 +2953,7 @@ impl<'a> Machine<'a> {
             names.push(slot.ident.to_string());
             cells.push(held);
         }
-        (names, Rc::new(Env { cells: RefCell::new(cells), outer: under }))
+        (names, Rc::new(Env { cells: RefCell::new(cells), outer: under, retained: RefCell::new(std::collections::HashSet::new()), weak_callback_frame: Cell::new(false) }))
     }
 
     /// Build source against the globals this run already has and run it
@@ -3235,7 +3235,10 @@ impl<'a> Machine<'a> {
         if Rc::ptr_eq(f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
         }
-        let mut v = f.cells.borrow()[slot.at].clone();
+        let Some(mut v) = f.cells.borrow().get(slot.at).cloned() else {
+            let routine = self.frames_named.last().map_or("<unknown>", |body| body.ident.as_str());
+            return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
+        };
         if let Value::Shared(cell) = &v {
             if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
             let held = cell.borrow().clone();
@@ -4902,6 +4905,15 @@ impl<'a> Machine<'a> {
         }
         match node {
             Form::Const(Value::Routine(p)) => {
+                if self.rules.closes_over && !p.frameless {
+                    for address in &p.reaching {
+                        if address.up > 0 {
+                            let owner = ascend(frame, address.up - 1);
+                            owner.retained.borrow_mut().insert(address.at);
+                        }
+                    }
+                }
+
                 // A closure can keep its defining frame, which in turn keeps
                 // the closure. Remember the frame so collection can find and
                 // break that otherwise invisible cycle (and run finalizers).
@@ -5769,7 +5781,10 @@ impl<'a> Machine<'a> {
                     true => match given.next() {
                         // A class the seal marked unchangeable stands
                         // as no class's base.
-                        Some(Value::Blueprint(b)) if Self::sealed(&b) => return Err(format!("TypeError: type '{}' is not an acceptable base type", b.name).into()),
+                        Some(Value::Blueprint(b)) if Self::sealed(&b) => {
+                            let prefix = if self.table.has_any("ext.builtin.weak.get") && ["ProxyType", "CallableProxyType"].contains(&b.name.as_str()) { "weakref." } else { "" };
+                            return Err(format!("TypeError: type '{prefix}{}' is not an acceptable base type", b.name).into());
+                        },
                         Some(Value::Blueprint(b)) => Some(b),
                         // The kind primitive, built on: what is being
                         // made is a metaclass, and the things it makes
@@ -5794,7 +5809,10 @@ impl<'a> Machine<'a> {
                 let mut answers = Vec::with_capacity(plan.answers);
                 for _ in 0..plan.answers {
                     match given.next() {
-                        Some(Value::Blueprint(b)) if Self::sealed(&b) => return Err(format!("TypeError: type '{}' is not an acceptable base type", b.name).into()),
+                        Some(Value::Blueprint(b)) if Self::sealed(&b) => {
+                            let prefix = if self.table.has_any("ext.builtin.weak.get") && ["ProxyType", "CallableProxyType"].contains(&b.name.as_str()) { "weakref." } else { "" };
+                            return Err(format!("TypeError: type '{prefix}{}' is not an acceptable base type", b.name).into());
+                        },
                         Some(Value::Blueprint(b)) => answers.push(b),
                         Some(Value::Intrinsic(_,word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => { let kind = self.builder_blueprint(); answers.push(kind); }
                         Some(Value::Intrinsic(_,word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
@@ -8865,7 +8883,7 @@ impl<'a> Machine<'a> {
                         let Value::Wrapped(121, parts) = Self::recipe_tee_storage(thing)? else { return Err("TypeError: invalid tee data".to_owned()); };
                         let Value::Shared(cell) = &parts[4] else { return Err("TypeError: invalid tee readers".to_owned()); };
                         let mut values = match cell.borrow().settled() { Value::Vector(entries) => entries.to_vec(), _ => return Err("TypeError: invalid tee readers".to_owned()) };
-                        values.push(Value::Dim(Rc::new(crate::ghost::Dim { ghost: crate::ghost::Ghost::Thing(Rc::downgrade(thing)), bearer: std::rc::Weak::new(), notify: None })));
+                        values.push(Value::Dim(Rc::new(crate::ghost::Dim { ghost: crate::ghost::Ghost::Thing(Rc::downgrade(thing)), bearer: std::rc::Weak::new(), notify: RefCell::new(None), hash: RefCell::new(None) })));
                         *cell.borrow_mut() = Value::Vector(crate::tuples::Sequence::plain(values));
                         return Ok(Value::Nil);
                     }
@@ -10089,7 +10107,15 @@ impl<'a> Machine<'a> {
                     if !matches!(value, Value::Unset) { cells[*slot] = value; }
                 }
             }
-            let result = self.drive(program, frame)?;
+            let release_locals = self.rules.closes_over && !program.generator && !program.frameless;
+            let result = self.drive(program, frame.clone());
+            if release_locals && frame.weak_callback_frame.get() && result.is_ok() {
+                let retained = frame.retained.borrow();
+                for (index, slot) in frame.cells.borrow_mut().iter_mut().enumerate() {
+                    if !retained.contains(&index) { *slot = Value::Unset; }
+                }
+            }
+            let result = result?;
             if let (Value::Generator(g), Some(names)) = (&result, titles) { g.borrow_mut().titles = names; }
             return Ok(result);
         }
@@ -10119,7 +10145,16 @@ impl<'a> Machine<'a> {
             }
             frame
         };
-        let answer = self.drive(program, frame)?;
+        let clear_frame = self.rules.closes_over && !program.generator && !program.frameless;
+        let answer = self.drive(program, frame.clone());
+        if clear_frame && frame.weak_callback_frame.get() && answer.is_ok() {
+            let keep = frame.retained.borrow();
+            let count = frame.cells.borrow().len();
+            for index in 0..count {
+                if !keep.contains(&index) { frame.cells.borrow_mut()[index] = Value::Unset; }
+            }
+        }
+        let answer = answer?;
         if let (Value::Generator(g), Some(names)) = (&answer, titles) { g.borrow_mut().titles = names; }
         Ok(answer)
     }
@@ -14376,7 +14411,7 @@ impl<'a> Machine<'a> {
         if self.names_in_calls {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
-            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
+            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::WeakGet) {
                 self.prim_values(op, name, v)?
             } else if op == Prim::Quoted && v.first().map_or(false, |item| matches!(item, Value::Shared(_) | Value::Mutable(..)) && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_))))) {
                 self.prim_values(op, name, v)?
@@ -15344,7 +15379,10 @@ impl<'a> Machine<'a> {
                 n(3)?;
                 let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
                 let ancestor = match &v[1] {
-                    Value::Blueprint(old) if Self::sealed(old) => return Err(format!("TypeError: type '{}' is not an acceptable base type", old.name)),
+                    Value::Blueprint(old) if Self::sealed(old) => {
+                        let prefix = match old.name.as_str() { "ProxyType" | "CallableProxyType" if self.table.has_any("ext.builtin.weak.get") => "weakref.", _ => "" };
+                        return Err(format!("TypeError: type '{prefix}{}' is not an acceptable base type", old.name));
+                    },
                     Value::Blueprint(old) => old.clone(),
                     _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                 };
@@ -15974,25 +16012,118 @@ impl<'a> Machine<'a> {
             }
             Prim::WeakMake => {
                 n(3)?;
-                let allowed = match v[0].settled() {
-                    Value::Thing(t) => self.admits_weak(&t.blueprint()),
-                    _ => true,
-                };
-                let Some(ghost) = (if allowed { crate::ghost::ghost_of(&v[0]) } else { None }) else {
-                    let refusal = self.table.strings("ext.builtin.weak.refused");
-                    let kind = v[0].settled().kind_word();
-                    let (head, tail) = (refusal.first().map_or("", String::as_str), refusal.get(1).map_or("", String::as_str));
-                    return Err(format!("{head}{kind}{tail}"));
-                };
-                let bearer = match &v[1] { Value::Thing(thing) => Rc::downgrade(thing), _ => std::rc::Weak::new() };
-                let notify = match &v[2] { Value::Nil => None, told => Some(told.clone()) };
-                crate::ghost::dim(ghost, bearer, notify)
+                let target = v[0].settled();
+                if matches!(&target, Value::Thing(t) if !self.admits_weak(&t.blueprint())) || crate::ghost::ghost_of(&target).is_none() {
+                    let words = self.table.strings("ext.builtin.weak.refused");
+                    return Err(format!("{}{}{}", words.first().map_or("", String::as_str), target.kind_word(), words.get(1).map_or("", String::as_str)));
+                }
+                let ghost = crate::ghost::ghost_of(&target).unwrap();
+                let callback = v[2].settled();
+                if let Value::Bound(program, environment) = &callback {
+                    let captured = if program.carried.is_empty() { environment } else { environment.outer.as_ref().unwrap_or(environment) };
+                    if captured.outer.is_some() { captured.weak_callback_frame.set(true); }
+                }
+
+                let notify = (!matches!(callback, Value::Nil)).then_some(callback);
+                match v[1].settled() {
+                    Value::Blueprint(of) => {
+                        let reusable = notify.is_none() && ["ReferenceType", "ProxyType", "CallableProxyType"].contains(&of.name.as_str());
+                        if reusable {
+                            let previous = crate::ghost::refs_for(&target).into_iter().find(|item| {
+                                let Value::Thing(t) = item else { return false; };
+                                Rc::ptr_eq(&of, &t.blueprint()) && t.holds.borrow().iter().any(|(key, held)| key == "\0weak" && matches!(held, Value::Dim(d) if d.notify.borrow().is_none()))
+                            });
+                            if let Some(previous) = previous { return Ok(previous); }
+                        }
+                        self.made += 1;
+                        let reference = Rc::new(Thing { reclassified: RefCell::new(None), of, holds: RefCell::new(Vec::new()), turn: self.made });
+                        crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(&reference)));
+                        let weak = crate::ghost::dim(ghost, Rc::downgrade(&reference), notify);
+                        reference.holds.borrow_mut().push(("\0weak".to_owned(), weak));
+                        Value::Thing(reference)
+                    }
+                    Value::Thing(reference) => crate::ghost::dim(ghost, Rc::downgrade(&reference), notify),
+                    _ => crate::ghost::dim(ghost, Weak::new(), notify),
+                }
             }
             Prim::WeakGet => {
-                n(1)?;
-                match &v[0] {
-                    Value::Dim(dim) => dim.ghost.revive().unwrap_or(Value::Nil),
-                    _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                if v.len() == 1 {
+                    match v[0].settled() { Value::Dim(d) => d.ghost.revive().unwrap_or(Value::Nil), _ => return Err("TypeError: not a weakref".to_owned()) }
+                } else {
+                    let mode = v.get(1).map(Value::settled);
+                    let Some(Value::Text(mode)) = mode else { return Err(self.bad_answer()); };
+                    if mode.as_ref() == "seal" {
+                        match v[0].settled() {
+                            Value::Blueprint(class) => class.sealed.set(true),
+                            _ => return Err(self.bad_answer()),
+                        }
+                        return Ok(Value::Nil);
+                    }
+                    if mode.as_ref() == "refs" { return Ok(Value::Vector(crate::tuples::Sequence::plain(crate::ghost::refs_for(&v[0])))); }
+                    if mode.as_ref() == "remove" {
+                        n(3)?;
+                        let dict = &v[0];
+                        let key = self.hash_key(&v[2])?;
+                        let mut entries;
+                        let index;
+                        loop {
+                            let Value::Dict(store) = dict.settled() else { return Err("TypeError: first argument must be a dict".to_owned()); };
+                            let revision = store.serial;
+                            let (found, _) = self.map_locate(&store, Some(&store), &key)?;
+                            if matches!(dict.settled(), Value::Dict(current) if current.serial != revision) { continue; }
+                            entries = store.to_vec();
+                            index = found;
+                            break;
+                        }
+                        if let Some(at) = index {
+                            let weak = match entries[at].1.settled() {
+                                Value::Thing(t) => t.holds.borrow().iter().find_map(|(key, item)| (key == "\0weak").then(|| item.clone())),
+                                _ => None,
+                            };
+                            match weak {
+                                Some(Value::Dim(dim)) => if dim.ghost.departed() {
+                                    entries.remove(at);
+                                    let cell = Self::dict_cell(dict).ok_or_else(|| self.bad_answer())?;
+                                    cell.replace(Value::Dict(Rc::new(entries.into())));
+                                },
+                                _ => return Err("TypeError: not a weakref".to_owned()),
+                            }
+                        }
+                        return Ok(Value::Nil);
+                    }
+
+                    let Value::Thing(reference) = v[0].settled() else { return Err("TypeError: not a weakref".to_owned()); };
+                    let weak = reference.holds.borrow().iter().find_map(|(key, held)| if key == "\0weak" { Some(held.clone()) } else { None });
+                    let Some(Value::Dim(dim)) = weak else { return Err("TypeError: not a weakref".to_owned()); };
+                    match mode.as_ref() {
+                        "call" => dim.ghost.revive().unwrap_or(Value::Nil),
+                        "proxy" => dim.ghost.revive().ok_or("ReferenceError: weakly-referenced object no longer exists")?,
+                        "callback" => match dim.ghost.revive() { None => Value::Nil, Some(_) => dim.notify.borrow().clone().unwrap_or(Value::Nil) },
+                        "hash" => {
+                            let memo = dim.hash.borrow().clone();
+                            match memo {
+                                Some(number) => number,
+                                None => {
+                                    let live = dim.ghost.revive().ok_or("TypeError: weak object has gone away")?;
+                                    let number = self.prim(Prim::Hashed, "hash", &[live])?;
+                                    dim.hash.replace(Some(number.clone()));
+                                    number
+                                }
+                            }
+                        }
+                        "eq" | "ne" => {
+                            let rhs = v.get(2).ok_or_else(|| self.bad_answer())?;
+                            let held = match rhs.settled() {
+                                Value::Thing(t) => t.holds.borrow().iter().find_map(|(key, held)| (key == "\0weak").then(|| held.clone())),
+                                _ => None,
+                            };
+                            let Some(Value::Dim(other)) = held else { return Err("TypeError: not a weakref".to_owned()); };
+                            if let (Some(left), Some(right)) = (dim.ghost.revive(), other.ghost.revive()) {
+                                self.prim(if mode.as_ref() == "ne" { Prim::Ne } else { Prim::Eq }, "", &[left, right])?
+                            } else { Value::Flag(v[0].one_place(rhs) != (mode.as_ref() == "ne")) }
+                        }
+                        _ => return Err(self.bad_answer()),
+                    }
                 }
             }
             Prim::Collect => {
@@ -16019,6 +16150,9 @@ impl<'a> Machine<'a> {
                 Value::Small(match meta { Some(m) if m.is_file() => 1, Some(m) if m.is_dir() => 2, _ => 0 })
             }
             Prim::HostRow => {
+                if v.len() == 1 && matches!(&v[0], Value::Text(query) if query.as_ref() == "build") {
+                    return Ok(Value::text(option_env!("RUSTFLAGS").unwrap_or("")));
+                }
                 n(0)?;
                 let here = match std::env::current_dir() {
                     Ok(path) => path.to_str().map_or(Value::Nil, Value::text),

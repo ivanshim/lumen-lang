@@ -843,3 +843,18 @@ def captured_output(stream_name):
         yield getattr(sys, stream_name)
     finally:
         setattr(sys, stream_name, orig_stdout)
+
+
+# Build sanitizer detection for the runtime's Rust compiler flags.
+_build_flags = __host_info
+
+def check_sanitizer(*, address=False, memory=False, ub=False, thread=False,
+                    function=True):
+    if not (address or memory or ub or thread):
+        raise ValueError('At least one of address, memory, ub or thread must be True')
+    flags = _build_flags('build')
+    requested = ((address, 'address'), (memory, 'memory'),
+                 (ub, 'undefined'), (thread, 'thread'), (function, 'function'))
+    return any(enabled and ('sanitizer=' + name in flags or
+                            '-fsanitize=' + name in flags)
+               for enabled, name in requested)

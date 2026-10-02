@@ -3222,7 +3222,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(peers) = &state.1[3] else { return Err("TypeError: invalid tee peers".into()); };
                 let Value::Array(old) = peers.borrow().contents() else { return Err("TypeError: invalid tee peers".into()); };
                 let mut live = old.to_vec();
-                live.push(Value::Faint(Rc::new(crate::faint::Faint { hold: crate::faint::Hold::Object(Rc::downgrade(object)), bearer: std::rc::Weak::new(), told: None })));
+                live.push(Value::Faint(Rc::new(crate::faint::Faint { hold: crate::faint::Hold::Object(Rc::downgrade(object)), bearer: std::rc::Weak::new(), told: RefCell::new(None), cached_hash: RefCell::new(None) })));
                 *peers.borrow_mut() = Value::array(live);
                 return Ok(Value::Null);
             }
@@ -9592,7 +9592,10 @@ impl<'a> Engine<'a> {
                 let base = match plan.extends {
                     false => None,
                     true => match given.next() {
-                        Some(Value::Class(c)) if Self::class_sealed(&c) => return Err(format!("TypeError: type '{}' is not an acceptable base type", c.name).into()),
+                        Some(Value::Class(c)) if Self::class_sealed(&c) => {
+                            let title = if !self.lang.weak_refused.is_empty() && matches!(c.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", c.name) } else { c.name.clone() };
+                            return Err(format!("TypeError: type '{title}' is not an acceptable base type").into());
+                        },
                         Some(Value::Class(c)) => Some(c),
                         Some(Value::Native(Builtin::Bool, _)) if self.lang.bool_base.is_some() => return Err(self.lang.bool_base.clone().unwrap_or_default().into()),
                         // The kind builtin, stood on: what is being made
@@ -15905,7 +15908,7 @@ impl<'a> Engine<'a> {
         // A slice holds its bounds as they were handed over, cells and
         // all, so that a bound that is a list stays the very list.
         for (at, value) in args.iter_mut().enumerate() {
-            if writes && at + 1 == last || matches!(builtin, Builtin::MakeSlice | Builtin::Identity) { continue; }
+            if writes && at + 1 == last || matches!(builtin, Builtin::MakeSlice | Builtin::Identity | Builtin::WeakGet) { continue; }
             if let Value::Bond(cell) = value {
                 let held = cell.borrow().clone();
                 // A collection handed to be walked backwards, or to a
@@ -15943,7 +15946,7 @@ impl<'a> Engine<'a> {
                 return Ok(original);
             }
         }
-        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace | Builtin::MakeSlice | Builtin::Identity | Builtin::ValueMethod | Builtin::GetAttr) {
+        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace | Builtin::MakeSlice | Builtin::Identity | Builtin::ValueMethod | Builtin::GetAttr | Builtin::WeakGet) {
             for value in args.iter_mut() {
                 // `type` asks after a view itself, keys or values or
                 // pairs, not after the row its members would stand as;
@@ -16319,19 +16322,100 @@ impl<'a> Engine<'a> {
                     _ => true,
                 };
                 let Some(hold) = eligible.then(|| crate::faint::hold_of(&args[0])).flatten() else {
-                    let kind = args[0].core_kind();
                     let head = self.lang.weak_refused.first().cloned().unwrap_or_default();
                     let tail = self.lang.weak_refused.get(1).cloned().unwrap_or_default();
-                    return Err(format!("{head}{kind}{tail}"));
+                    return Err(format!("{head}{}{tail}", args[0].core_kind()));
                 };
-                let bearer = match &args[1] { Value::Object(o) => Rc::downgrade(o), _ => std::rc::Weak::new() };
-                let told = match &args[2] { Value::Null => None, other => Some(other.clone()) };
-                crate::faint::make(hold, bearer, told)
+                let told = match args[2].contents() { Value::Null => None, other => Some(other) };
+                if let Value::Class(class) = args[1].contents() {
+                    if told.is_none() && matches!(class.name.as_str(), "ReferenceType" | "ProxyType" | "CallableProxyType") {
+                        for old in crate::faint::references(&args[0]) {
+                            if let Value::Object(bearer) = &old {
+                                if Rc::ptr_eq(&bearer.class_now(), &class) && bearer.fields.borrow().iter().any(|(key, v)| key == "\0weak" && matches!(v, Value::Faint(r) if r.told.borrow().is_none())) { return Ok(old); }
+                            }
+                        }
+                    }
+                    self.made += 1;
+                    let bearer = Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(Vec::new()), mark: self.made });
+                    crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&bearer)));
+                    let handle = crate::faint::make(hold, Rc::downgrade(&bearer), told);
+                    bearer.fields.borrow_mut().push(("\0weak".to_string(), handle));
+                    Value::Object(bearer)
+                } else {
+                    let bearer = match args[1].contents() { Value::Object(o) => Rc::downgrade(&o), _ => Weak::new() };
+                    crate::faint::make(hold, bearer, told)
+                }
             }
             Builtin::WeakGet => {
-                arity(1)?;
-                let Value::Faint(faint) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()) };
-                faint.hold.revive().unwrap_or(Value::Null)
+                if args.len() == 1 {
+                    let Value::Faint(faint) = args[0].contents() else { return Err(self.lang.module_helper_amiss.clone()) };
+                    faint.hold.revive().unwrap_or(Value::Null)
+                } else {
+                    let Some(Value::Text(mode)) = args.get(1).map(Value::contents) else { return Err(self.lang.module_helper_amiss.clone()) };
+                    if mode.as_ref() == "seal" {
+                        let Value::Class(class) = args[0].contents() else { return Err(self.lang.module_helper_amiss.clone()) };
+                        class.sealed.set(true);
+                        return Ok(Value::Null);
+                    }
+                    if mode.as_ref() == "refs" { return Ok(Value::array(crate::faint::references(&args[0]))); }
+                    if mode.as_ref() == "remove" {
+                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let receiver = &args[0];
+                        let key = self.special_key(&args[2])?;
+                        let (store, found) = loop {
+                            let Value::Map(store) = receiver.contents() else { return Err("TypeError: first argument must be a dict".to_string()) };
+                            let (found, _) = self.map_locate(&store, Some(&store), &key)?;
+                            if Self::map_cell(receiver).is_some_and(|cell| Self::map_size(&cell).1 != store.revision) { continue; }
+                            break (store, found);
+                        };
+                        if let Some(index) = found {
+                            let target = store[index].1.contents();
+                            let handle = match target {
+                                Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone()),
+                                _ => None,
+                            };
+                            let Some(Value::Faint(weak)) = handle else { return Err("TypeError: not a weakref".to_string()) };
+                            if weak.hold.gone() {
+                                let mut remaining = store.to_vec();
+                                remaining.remove(index);
+                                let cell = Self::map_cell(receiver).ok_or_else(|| self.lang.module_helper_amiss.clone())?;
+                                *cell.borrow_mut() = Value::Map(Rc::new(remaining.into()));
+                            }
+                        }
+                        return Ok(Value::Null);
+                    }
+
+                    let Value::Object(bearer) = args[0].contents() else { return Err("TypeError: not a weakref".to_string()) };
+                    let handle = bearer.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
+                    let Some(Value::Faint(reference)) = handle else { return Err("TypeError: not a weakref".to_string()) };
+                    match mode.as_ref() {
+                        "call" => reference.hold.revive().unwrap_or(Value::Null),
+                        "callback" => if reference.hold.gone() { Value::Null } else { reference.told.borrow().clone().unwrap_or(Value::Null) },
+                        "proxy" => reference.hold.revive().ok_or_else(|| "ReferenceError: weakly-referenced object no longer exists".to_string())?,
+                        "hash" => {
+                            let saved = reference.cached_hash.borrow().clone();
+                            if let Some(hash) = saved { hash } else {
+                                let target = reference.hold.revive().ok_or_else(|| "TypeError: weak object has gone away".to_string())?;
+                                let hash = self.builtin(Builtin::Hash, "hash", &mut vec![target])?;
+                                *reference.cached_hash.borrow_mut() = Some(hash.clone());
+                                hash
+                            }
+                        }
+                        "eq" | "ne" => {
+                            let Some(other) = args.get(2) else { return Err(self.lang.module_helper_amiss.clone()) };
+                            let other_hold = match other.contents() {
+                                Value::Object(o) => o.fields.borrow().iter().find(|(n, _)| n == "\0weak").map(|(_, v)| v.clone()),
+                                _ => None,
+                            };
+                            let Some(Value::Faint(right)) = other_hold else { return Err("TypeError: not a weakref".to_string()) };
+                            match (reference.hold.revive(), right.hold.revive()) {
+                                (Some(a), Some(b)) => self.special_dyad(&if mode.as_ref() == "eq" { Action::Eq } else { Action::Ne }, &a, &b)?,
+                                _ => Value::Flag(args[0].same_place(other) == (mode.as_ref() == "eq")),
+                            }
+                        }
+                        _ => return Err(self.lang.module_helper_amiss.clone()),
+                    }
+                }
             }
             Builtin::Collect => {
                 arity(0)?;
@@ -16356,6 +16440,9 @@ impl<'a> Engine<'a> {
             // system, the word for the machine, and the environment as
             // a map, in that order.
             Builtin::HostFacts => {
+                if args.len() == 1 && matches!(&args[0], Value::Text(query) if query.as_ref() == "build") {
+                    return Ok(Value::text(option_env!("RUSTFLAGS").unwrap_or("")));
+                }
                 arity(0)?;
                 let directory = std::env::current_dir().ok().and_then(|d| d.to_str().map(Value::text)).unwrap_or(Value::Null);
                 let surroundings: Vec<(Value, Value)> = std::env::vars_os()
