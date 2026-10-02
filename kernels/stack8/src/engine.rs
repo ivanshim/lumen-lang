@@ -3516,6 +3516,7 @@ impl<'a> Engine<'a> {
     }
 
     fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+        if program.body_of_all { return None; }
         let address = Rc::as_ptr(program) as usize;
         let known = self.constructor_holders.borrow().get(&address).and_then(|(code, holder)| {
             if !code.upgrade().is_some_and(|code| Rc::ptr_eq(&code, program)) { return None; }
@@ -21998,7 +21999,9 @@ impl Engine<'_> {
         for name in &local.idents[offset..] { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(),Value::Blank);
         self.text_books.push(TextBook {near:outer,outer:None,from:offset,upto:local.idents.len(),declared:local.declared_outer});
-        let function=Value::Routine(program);
+        let mut callable=(*program).clone();
+        callable.parameter_rules=Some(Vec::new());
+        let function=Value::Routine(Rc::new(callable));
         let at=self.function_storage(&function);
         self.routine_namespace_write(at,Some(globals)).map_err(|fault|match fault {Fault::Note(said)=>said,other=>{self.carried=Some(other);self.special_fault()}})?;
         Ok(function)

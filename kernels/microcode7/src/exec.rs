@@ -10060,7 +10060,7 @@ impl<'a> Machine<'a> {
         if let Some(manners) = &program.taking {
             let values = self.value_list(args, caller)?;
             let fitted = self.fit_arguments(program, manners, values)?;
-            let frame = self.frame_for(program, &env);
+            let frame = match program.frameless { true => env, false => self.frame_for(program, &env) };
             for (slot, worth) in program.formal_slots.iter().zip(fitted) {
                 if !matches!(worth, Value::Unset) { frame.cells.borrow_mut()[*slot] = worth; }
             }
@@ -10326,6 +10326,7 @@ impl<'a> Machine<'a> {
     }
 
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+        if body.frameless { return None; }
         let pointer = Rc::as_ptr(body) as usize;
         let remembered = {
             let entries = self.world_records.borrow();
@@ -10368,7 +10369,7 @@ impl<'a> Machine<'a> {
         } else { None };
         if let Some(manners) = &program.taking {
             let fitted = self.fit_arguments(&program, manners, args)?;
-            let frame = self.frame_for(&program, &env);
+            let frame = if program.frameless { env.clone() } else { self.frame_for(&program, &env) };
             {
                 let mut cells = frame.cells.borrow_mut();
                 for (slot, value) in program.formal_slots.iter().zip(fitted) {
@@ -22099,7 +22100,9 @@ impl<'a> Machine<'a> {
         self.idents.extend(built.globals[start..].iter().map(|word|format!("\0names/{start}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(),Value::Unset);
         self.readings.push(Namebook {near:room,outer:None,from:start,upto:built.globals.len(),declared:built.outer_aliases});
-        let function=Value::Bound(built.program,self.outermost.clone());
+        let mut routine=(*built.program).clone();
+        routine.taking=Some(Vec::new());
+        let function=Value::Bound(Rc::new(routine),self.outermost.clone());
         let record=self.routine_storage(&function);
         self.routine_members[record].1.holds.borrow_mut().push(("\0handed".to_owned(),namespace));
         Ok(function)
