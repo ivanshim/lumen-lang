@@ -1044,9 +1044,10 @@ impl<'a> Machine<'a> {
         let args_key = self.table.single("ext.builtin.exceptions.args").unwrap_or("args");
         let old = held.iter().find(|(name, _)| name == "\0raised-values").and_then(|(_, item)| match item { Value::Arguments(items) => Some(items.clone()), _ => None });
         if old.as_ref().is_some_and(|items| items.is_empty() || items.len() == 1 && items[0].bare() == key) {
-            let replacement = Value::Arguments(crate::tuples::Sequence::plain(vec![Value::text(&said)]));
+            let fresh = crate::tuples::Sequence::plain(vec![Value::text(&said)]);
             for (name, item) in held.iter_mut() {
-                if name == "\0raised-values" || name == args_key { *item = replacement.clone(); }
+                if name == "\0raised-values" { *item = Value::Arguments(fresh.clone()); }
+                if name == args_key { *item = Value::Tuple(fresh.clone()); }
             }
         }
         for (name, item) in held.iter_mut() {
@@ -2211,13 +2212,13 @@ impl<'a> Machine<'a> {
             Value::Thing(t)=>{
                 if self.is_fault_kind(&t.blueprint()) && self.table.single("ext.builtin.exceptions.args") == Some(key) {
                     if let Some(supplied) = replacement.as_ref() {
-                        let sequence = match supplied.settled() {
-                            Value::Arguments(items) | Value::Tuple(items) | Value::Vector(items) => Value::Arguments(items),
+                        let kept = match supplied.settled() {
+                            Value::Arguments(items) | Value::Tuple(items) | Value::Vector(items) => items,
                             other => return Err(format!("TypeError: '{}' object is not iterable", other.kind_word()).into()),
                         };
                         let mut storage = t.holds.borrow_mut();
-                        Self::change_entry(&mut storage, key, Some(sequence.clone()));
-                        Self::change_entry(&mut storage, "\0raised-values", Some(sequence));
+                        Self::change_entry(&mut storage, key, Some(Value::Tuple(kept.clone())));
+                        Self::change_entry(&mut storage, "\0raised-values", Some(Value::Arguments(kept)));
                         return Ok(Value::Nil);
                     }
                 }
