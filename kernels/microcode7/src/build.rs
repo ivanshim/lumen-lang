@@ -8486,7 +8486,14 @@ impl<'a> Builder<'a> {
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
-            let class_expression = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len());
+            // An await stands in a class body, and not in a method of
+            // the class: the body is read where the class is read, so a
+            // class begun at or beneath the nearest function around the
+            // await -- a gathering or a routine's -- puts the await in
+            // one.
+            let mut around = self.layers.len() - 1;
+            while self.layers[around].gathering_kind.is_some() { around -= 1; }
+            let class_expression = self.class_bindings.iter().any(|(depth, _)| *depth > around);
             if self.forbids_await || !self.layers.last().unwrap().permits_async || class_expression {
                 let scope = if self.layers.len() == 1 || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {scope}"));

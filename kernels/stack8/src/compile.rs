@@ -8820,7 +8820,13 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
-            let class_expression = self.class_names.last().map_or(false, |(depth, _)| *depth >= self.pieces.len());
+            // An await stands in a class body, and not in a method of
+            // the class: the body is read where the class is read, so a
+            // class begun at or beneath the nearest function around the
+            // await -- a walk or a routine's -- puts the await in one.
+            let mut around = self.pieces.len() - 1;
+            while self.pieces[around].comprehension_kind.is_some() { around -= 1; }
+            let class_expression = self.class_names.iter().any(|(depth, _)| *depth > around);
             if self.forbids_await || !self.piece().asynchronous || class_expression {
                 let phrase = if self.piece().outermost || class_expression { "outside function" } else { "outside async function" };
                 return Err(format!("SyntaxError: 'await' {phrase}"));
