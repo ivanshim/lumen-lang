@@ -14088,6 +14088,59 @@ impl<'a> Machine<'a> {
         else { self.sum_added(x, y) }
     }
 
+    // The release math_fsum algorithm (3.14.8), including immediate
+    // intermediate overflow and the final same-sign rounding correction.
+    fn float_reduction(&mut self, offered: &Value) -> Result<Value, String> {
+        let walk = if let Some(kind) = Self::live_walk(offered) { Self::cursor_value(kind) }
+                   else { self.iterated_value(&offered.settled())? };
+        let mut pieces: Vec<f64> = Vec::new();
+        let mut exceptional = [0.0_f64; 2];
+        loop {
+            let Some(value) = self.next_value(&walk)? else { break };
+            let original = Self::dot_coordinate(&value.settled()).ok_or_else(|| "TypeError: must be real number".to_owned())?;
+            let mut leading = original;
+            let mut residuals = Vec::with_capacity(pieces.len() + 1);
+            for mut smaller in pieces.drain(..) {
+                if smaller.abs() > leading.abs() { std::mem::swap(&mut smaller, &mut leading); }
+                let combined = leading + smaller;
+                let error = smaller - (combined - leading);
+                if error != 0.0 { residuals.push(error); }
+                leading = combined;
+            }
+            if leading.is_finite() {
+                if leading != 0.0 { residuals.push(leading); }
+                pieces = residuals;
+            } else {
+                if original.is_finite() { return Err("OverflowError: intermediate overflow in fsum".to_owned()); }
+                exceptional[0] += original;
+                if original.is_infinite() { exceptional[1] += original; }
+            }
+        }
+        let rounded = if exceptional[0] != 0.0 {
+            if exceptional[1].is_nan() { return Err("ValueError: -inf + inf in fsum".to_owned()); }
+            exceptional[0]
+        } else {
+            let mut result = pieces.pop().unwrap_or(0.0);
+            let mut tail = 0.0;
+            while let Some(term) = pieces.pop() {
+                let previous = result;
+                result += term;
+                tail = term - (result - previous);
+                if tail != 0.0 { break; }
+            }
+            let leaning = pieces.last().is_some_and(|next| (tail < 0.0 && *next < 0.0) || (tail > 0.0 && *next > 0.0));
+            if leaning {
+                let twice = tail + tail;
+                let nudged = result + twice;
+                if nudged - result == twice { result = nudged; }
+            }
+            result
+        };
+        let mut value = crate::data::worth_of_binary(rounded, self.real_figures());
+        if let Value::Frac(number) = &mut value { Rc::make_mut(number).float_style = true; }
+        Ok(value)
+    }
+
     fn dot_product(&mut self, first: &Value, second: &Value) -> Result<Value, String> {
         let mut begin = |offered: &Value| match Self::live_walk(offered) {
             Some(kind) => Ok(Self::cursor_value(kind)),
@@ -14229,6 +14282,11 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.rules.floating_math && op == Prim::Reckon
+            && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "fsum") {
+            if v.len() != 2 { return Err("TypeError: fsum expected one argument".to_owned()); }
+            return self.float_reduction(&v[1]);
+        }
         if op == Prim::Reckon && self.table.flag("ext.builtin.math.sumprod")
             && matches!(v.first().map(Value::settled), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
             if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
@@ -16557,6 +16615,10 @@ impl<'a> Machine<'a> {
                 let Some(working) = v.first().map(|x| x.render(w)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if self.rules.floating_math && working == "fsum" {
+                    if v.len() != 2 { return Err("TypeError: fsum expected one argument".to_owned()); }
+                    return self.float_reduction(&v[1]);
+                }
                 if working == "sumprod" && self.table.flag("ext.builtin.math.sumprod") {
                     if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
                     return self.dot_product(&v[1], &v[2]);

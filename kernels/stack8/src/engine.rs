@@ -12440,6 +12440,63 @@ impl<'a> Engine<'a> {
         }
     }
 
+    // Streaming partial sums from CPython v3.14.8 Modules/mathmodule.c.
+    fn accurate_float_sum(&mut self, source: &Value) -> Res<Value> {
+        let iterator = match Self::living_source(source) {
+            Some(live) => Self::core_cursor(live),
+            None => self.core_iterator(&source.contents())?,
+        };
+        let mut partials = Vec::<f64>::new();
+        let (mut special, mut infinities) = (0.0_f64, 0.0_f64);
+        while let Some(member) = self.core_step(&iterator)? {
+            let saved = Self::product_sum_float(&member.contents()).ok_or("TypeError: must be real number".to_string())?;
+            let mut x = saved;
+            let mut kept = 0;
+            for j in 0..partials.len() {
+                let mut y = partials[j];
+                if x.abs() < y.abs() { std::mem::swap(&mut x, &mut y); }
+                let high = x + y;
+                let low = y - (high - x);
+                if low != 0.0 { partials[kept] = low; kept += 1; }
+                x = high;
+            }
+            partials.truncate(kept);
+            if x != 0.0 {
+                if x.is_finite() { partials.push(x); }
+                else {
+                    if saved.is_finite() { return Err("OverflowError: intermediate overflow in fsum".into()); }
+                    if saved.is_infinite() { infinities += saved; }
+                    special += saved;
+                    partials.clear();
+                }
+            }
+        }
+        let mut high = 0.0_f64;
+        let mut low = 0.0_f64;
+        if special != 0.0 {
+            if infinities.is_nan() { return Err("ValueError: -inf + inf in fsum".into()); }
+            high = special;
+        } else if let Some(last) = partials.pop() {
+            high = last;
+            while let Some(y) = partials.pop() {
+                let x = high;
+                high = x + y;
+                low = y - (high - x);
+                if low != 0.0 { break; }
+            }
+            if let Some(&remaining) = partials.last() {
+                if low < 0.0 && remaining < 0.0 || low > 0.0 && remaining > 0.0 {
+                    let doubled = low * 2.0;
+                    let adjusted = high + doubled;
+                    if doubled == adjusted - high { high = adjusted; }
+                }
+            }
+        }
+        let mut answer = crate::value::real_of(high, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+        if let Value::Real(real) = &mut answer { Rc::make_mut(real).floating = true; }
+        Ok(answer)
+    }
+
     fn product_sum(&mut self, p: &Value, q: &Value) -> Res<Value> {
         let mut iterator = |source: &Value| match Self::living_source(source) {
             Some(live) => Ok(Self::core_cursor(live)),
@@ -15823,6 +15880,11 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::Math && self.lang.math_floating
+            && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "fsum") {
+            if args.len() != 2 { return Err("TypeError: fsum expected one argument".into()); }
+            return self.accurate_float_sum(&args[1]);
+        }
         if builtin == Builtin::Math && self.lang.math_sumprod
             && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
             if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
@@ -17003,6 +17065,10 @@ impl<'a> Engine<'a> {
                 let Some(working) = args.first().map(|v| v.display(&sp)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "fsum" && self.lang.math_floating {
+                    if args.len() != 2 { return Err("TypeError: fsum expected one argument".into()); }
+                    return self.accurate_float_sum(&args[1]);
+                }
                 if working == "sumprod" && self.lang.math_sumprod {
                     if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
                     return self.product_sum(&args[1], &args[2]);

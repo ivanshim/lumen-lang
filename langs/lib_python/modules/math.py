@@ -251,80 +251,14 @@ def factorial(n):
     return value
 
 def fsum(values):
-    # Compensation keeps small terms which a plain sum would lose. A
-    # value past every number is carried apart from this, both because
-    # working it into the compensation would answer nan of its own
-    # account (inf met by however the terms around it happen to fall)
-    # and because two of opposite sign here have no sum to agree on.
-    partials = []
-    pos_inf = False
-    neg_inf = False
-    saw_nan = False
-    for x in values:
-        if type(x) != type(1.0):
-            _check_real(x)
-            x = float(x)
-        if x != x:
-            saw_nan = True
-            continue
-        if x == inf:
-            pos_inf = True
-            continue
-        if x == -inf:
-            neg_inf = True
-            continue
-        kept = []
-        for y in partials:
-            # These operands are already binary reals. Compare their
-            # magnitudes without re-entering the conversion protocol.
-            if (-x if x < 0 else x) < (-y if y < 0 else y):
-                x, y = y, x
-            high = x + y
-            low = y - (high - x)
-            if low != 0:
-                kept.append(low)
-            x = high
-        kept.append(x)
-        partials = kept
-    # Two infinities of opposite sign have no sum to agree on, and that
-    # objection stands even when a NaN walked in among them; CPython says
-    # so before it answers a NaN of its own.
-    if pos_inf and neg_inf:
-        raise 'ValueError: -inf + inf in fsum'
-    if saw_nan:
-        return nan
-    if pos_inf:
-        return inf
-    if neg_inf:
-        return -inf
-    # The partials are carried smallest first; folded back together
-    # from the top, the way they were built, a tie is carried past the
-    # figure it lands on when what is left still leans the same way.
-    count = len(partials)
-    high = 0.0
-    low = 0.0
-    if count > 0:
-        count -= 1
-        high = partials[count]
-        while count > 0:
-            x = high
-            count -= 1
-            y = partials[count]
-            high = x + y
-            residue = high - x
-            low = y - residue
-            if low != 0:
-                break
-        if count > 0 and ((low < 0 and partials[count - 1] < 0) or (low > 0 and partials[count - 1] > 0)):
-            doubled = low * 2.0
-            nudged = high + doubled
-            if doubled == nudged - high:
-                high = nudged
-    if not isfinite(high):
-        # Every value handed in was finite, so a working that came out
-        # otherwise did so only by outgrowing the width along the way.
-        raise 'OverflowError: intermediate overflow in fsum'
-    return __math('fdiv', high, 1.0)
+    def converted():
+        for value in values:
+            if type(value) != type(1.0):
+                _check_real(value)
+                value = float(value)
+            yield value
+    return __math('fsum', converted())
+
 
 isclose = staticmethod(isclose)
 
