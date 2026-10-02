@@ -171,14 +171,18 @@ class _IndexWalk:
     def __init__(self, sequence):
         self._sequence = sequence
         self._place = 0
+        self._finished = False
 
     def __iter__(self):
         return self
 
     def __next__(self):
+        if self._finished:
+            raise StopIteration
         try:
             value = self._sequence[self._place]
         except IndexError:
+            self._finished = True
             raise StopIteration
         self._place = self._place + 1
         return value
@@ -549,17 +553,19 @@ class MutableMapping(Mapping):
             except KeyError:
                 return
 
-    def update(self, other=None, **keywords):
-        if other is not None:
-            if isinstance(other, dict) or isinstance(other, Mapping):
-                for key in list(other):
-                    self[key] = other[key]
-            elif hasattr(other, 'keys'):
-                for key in list(other.keys()):
-                    self[key] = other[key]
-            else:
-                for key, value in other:
-                    self[key] = value
+    def update(self, other=(), /, **keywords):
+        # `self`, `other`, `dict` and `iterable` may all be given as
+        # keyword names without colliding with the receiver or the
+        # first parameter, which is why the parameter is positional.
+        if isinstance(other, dict) or isinstance(other, Mapping):
+            for key in list(other):
+                self[key] = other[key]
+        elif hasattr(other, 'keys'):
+            for key in list(other.keys()):
+                self[key] = other[key]
+        else:
+            for key, value in other:
+                self[key] = value
         for key in list(keywords):
             self[key] = keywords[key]
 
