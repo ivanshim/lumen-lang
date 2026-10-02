@@ -11202,7 +11202,6 @@ impl<'a> Compiler<'a> {
         let mut start = self.pos;
         let mut comma = false;
         let mut generator = false;
-        let mut generator_token = self.pos;
         let mut target = false;
         for i in self.pos..self.tokens.len() {
             let t = &self.tokens[i];
@@ -11224,16 +11223,16 @@ impl<'a> Compiler<'a> {
             }
             if depth == 0 && (word == ")" || (word == "," && !target)) {
                 if generator && (comma || word == ",") {
-                    let keyword = &self.tokens[generator_token];
-                    self.registry.stopped_end = keyword.column + keyword.lexeme.chars().count();
-                    self.registry.stopped_end_row = keyword.row;
-                    self.pos = generator_token;
+                    let end = &self.tokens[i - 1];
+                    self.registry.stopped_end = end.column + end.lexeme.chars().count();
+                    self.registry.stopped_end_row = end.row;
+                    self.pos = start;
                     return Err("SyntaxError: Generator expression must be parenthesized".into());
                 }
                 if word == ")" { break; }
                 comma = true; start = i + 1; generator = false;
             }
-            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) { generator = true; generator_token = i; target = true; }
+            if depth == 0 && Lang::spells(&self.lang.comprehension_for, word) { generator = true; target = true; }
             if depth == 0 && Lang::spells(&self.lang.comprehension_in, word) { target = false; }
             if ["(", "[", "{"].contains(&word) { depth += 1; }
             else if [")", "]", "}"].contains(&word) {
