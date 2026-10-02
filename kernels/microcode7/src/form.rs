@@ -778,6 +778,8 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    pub annotation_is_text: bool,
+    pub annotation_protocol: bool,
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
     pub referenced: Vec<String>,

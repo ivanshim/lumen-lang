@@ -3139,6 +3139,12 @@ impl<'a> Engine<'a> {
             self.data.extend(bound);
             count
         } else { n };
+        if program.checks_annotation_format && n == 1 {
+            self.data.push(self.data.last().expect("annotation format").clone());
+            self.data.push(Value::Small(2));
+            self.perform(&Action::Gt, 2)?;
+            if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
+        }
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
         let most = if self.lang.spare_args || program.rest_at.is_some() { usize::MAX } else { program.formals.len() };
@@ -6032,6 +6038,7 @@ impl<'a> Engine<'a> {
             return Ok(self.render(std::slice::from_ref(value)));
         }
         if let Value::Object(object) = value {
+            if let Some((_, spelling)) = object.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr") { return Ok(spelling.plain()); }
             if self.exception_class(&object.class_now()) && self.special_value(value, if representation { 1 } else { 0 }).is_none() {
                 if !representation && (43..=45).any(|at| self.stands_on(&object.class_now(), at)) {
                     let field = |key: &str| object.fields.borrow().iter().find(|(n, _)| n == key).map(|(_, v)| v.clone());
@@ -7773,6 +7780,12 @@ impl<'a> Engine<'a> {
                     && self.data.last().map_or(false, |value| matches!(value.contents(), Value::Class(_) | Value::Native(Builtin::AsReal, _))) => {
                     let class = self.drop_top()?.contents();
                     Some(self.class_get(class, name, false)?)
+                },
+                Action::Grab(name) if self.data.last().is_some_and(|value| self.module_holding(value).is_some())
+                    && (self.lang.class_annotations.first().is_some_and(|word| word == name.as_ref())
+                        || self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).is_some_and(|word| word == name.as_ref())) => {
+                    let module = self.drop_top()?;
+                    Some(self.class_get(module, name, false)?)
                 },
                 Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
@@ -18821,6 +18834,8 @@ impl Engine<'_> {
     /// A module owns cells in the same world, under names no source can
     /// spell. Its routines keep those addresses after the reader returns.
     fn import_module(&mut self, path: &str) -> Flow<Value> {
+        if path == "_typing" && self.lang.type_parameters { return Ok(self.typing_module()); }
+
         if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
         // A name a program's own code took out of `sys.modules` is
         // read in again rather than handed the standing instance: that

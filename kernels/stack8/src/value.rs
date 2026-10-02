@@ -1557,7 +1557,8 @@ impl Value {
             Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
             Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
             Value::Adapter(_) => "<member wrapper>".to_string(),
-            Value::Object(o) => format!("<object {}>", o.class_now().name),
+            Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
+                .map(|(_, value)| value.plain()).unwrap_or_else(|| format!("<object {}>", o.class_now().name)),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
         }
