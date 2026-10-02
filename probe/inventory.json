@@ -1,0 +1,858 @@
+[
+  {
+    "path": "tests/python/LICENSE",
+    "upstream": "LICENSE",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231"
+  },
+  {
+    "path": "tests/python/mathdata/cmath_testcases.txt",
+    "upstream": "Lib/test/mathdata/cmath_testcases.txt",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "6a41e9bf349e4de95f44133eb3fd4804d2c373436fc48a26f94df39f26aeca04"
+  },
+  {
+    "path": "tests/python/mathdata/floating_points.txt",
+    "upstream": "Lib/test/mathdata/floating_points.txt",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "9f6ff59deff9a407d6d7f7f41759eef338bb6ebb5d3abae9180efe6c9589b34f"
+  },
+  {
+    "path": "tests/python/mathdata/formatfloat_testcases.txt",
+    "upstream": "Lib/test/mathdata/formatfloat_testcases.txt",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "220712cfdcb43c8f5d292b5226a036a0453f958379594d6a89b8c29fde14a4af"
+  },
+  {
+    "path": "tests/python/mathdata/ieee754.txt",
+    "upstream": "Lib/test/mathdata/ieee754.txt",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "73c725be019c2c1a745963d3f374414f36fce512b3ecc20a7c3d60ac03bbb854"
+  },
+  {
+    "path": "tests/python/mathdata/math_testcases.txt",
+    "upstream": "Lib/test/mathdata/math_testcases.txt",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "bb3a7ccb8adc60317861bf79402f9a5ee0f1e35f81010f694effb86d78e5d985"
+  },
+  {
+    "path": "tests/python/test/__init__.py",
+    "upstream": "Lib/test/__init__.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "836cdb388117cf81e78d9fa2a141cca1b14b0179733322e710067749a1b16fe9"
+  },
+  {
+    "path": "tests/python/test/support/__init__.py",
+    "upstream": "Lib/test/support/__init__.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "450e2f52f881c64b617aa07c77535e3125d806038e8015596105589adcf358bc"
+  },
+  {
+    "path": "tests/python/test/support/import_helper.py",
+    "upstream": "Lib/test/support/import_helper.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "028ab3a396d3b5f57e12e755351458dc26604de96540fec0bf6d9904b3ca8f11"
+  },
+  {
+    "path": "tests/python/test/support/os_helper.py",
+    "upstream": "Lib/test/support/os_helper.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "d42f1738a54a378b5d1c4c61f6ab6e7eb12735aff6785a2ec14e28240843b66f"
+  },
+  {
+    "path": "tests/python/test/support/script_helper.py",
+    "upstream": "Lib/test/support/script_helper.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "d94c1502c2b7a3f1e57deb1c8913e1890049c73979261f205fc2f7e96fc03677"
+  },
+  {
+    "path": "tests/python/test/support/threading_helper.py",
+    "upstream": "Lib/test/support/threading_helper.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "93976321a0592dda85d769089d443f7ce6f0742911852d3d875de5f03a8d7471"
+  },
+  {
+    "path": "tests/python/test_augassign.py",
+    "upstream": "Lib/test/test_augassign.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "fa336b354cb98b5e290f71d9565cc0c1fc26d603450c9b96a2ee2a927ff99ea6"
+  },
+  {
+    "path": "tests/python/test_bigmem.py",
+    "upstream": "Lib/test/test_bigmem.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "ac1d57d159608e00ad5b71272399d6d4a2e76ab35b4621d1a90028acf8d0ec44"
+  },
+  {
+    "path": "tests/python/test_binop.py",
+    "upstream": "Lib/test/test_binop.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "996d2011b0f3a8e6fc12100de0595ec4a7bcfc554f249f6df061b30e652171e2"
+  },
+  {
+    "path": "tests/python/test_bisect.py",
+    "upstream": "Lib/test/test_bisect.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "c2cc55581e637768faa0f51cbb66acbaa6664eb023e287b37db687faefa2c1c4"
+  },
+  {
+    "path": "tests/python/test_bool.py",
+    "upstream": "Lib/test/test_bool.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "02ccd047602471cb4f75ffe796155b08068230327cae3cd173a36dae1784b19f"
+  },
+  {
+    "path": "tests/python/test_builtin.py",
+    "upstream": "Lib/test/test_builtin.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "db50992a5a133a8768d4a17191a3e4bf8b80e14b13e5ebf96fb3fb80355ea6c3"
+  },
+  {
+    "path": "tests/python/test_class.py",
+    "upstream": "Lib/test/test_class.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "1351ff05dee068c66222e5c5bda2bce811113cac4c4c6e3dc2275fcad1d0521c"
+  },
+  {
+    "path": "tests/python/test_cmath.py",
+    "upstream": "Lib/test/test_cmath.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "9faf90143def82c49eb3ebab20a6c7d7ccb40fb503053991bc91ed07876ca8aa"
+  },
+  {
+    "path": "tests/python/test_compare.py",
+    "upstream": "Lib/test/test_compare.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "2e20846df813bba0eef6a62f47ba0d4a10d40e0feb76cd8a63118567464d165a"
+  },
+  {
+    "path": "tests/python/test_complex.py",
+    "upstream": "Lib/test/test_complex.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "47dbdd670f1535eebc54314b840cd1f8380ee6fab6c1249ce3c965a5fff43448"
+  },
+  {
+    "path": "tests/python/test_contains.py",
+    "upstream": "Lib/test/test_contains.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "a9b7724072a69c7838cf73708aec2acedbefe87c4cf53a3a6ad0a38d26248d97"
+  },
+  {
+    "path": "tests/python/test_copy.py",
+    "upstream": "Lib/test/test_copy.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "0d61d4914bb03b0366ef7001da52b593553d811845810cab653056b4bcc13b32"
+  },
+  {
+    "path": "tests/python/test_decorators.py",
+    "upstream": "Lib/test/test_decorators.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "aaae14f65ce1c6f7678f9e6f43a0d588405fa88d7d7a66484e69f06bf64288a7"
+  },
+  {
+    "path": "tests/python/test_dict.py",
+    "upstream": "Lib/test/test_dict.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "a8e06fff81d187fb5d42408049225b47ff39b42e97d72045017eda7e00cfee91"
+  },
+  {
+    "path": "tests/python/test_dictcomps.py",
+    "upstream": "Lib/test/test_dictcomps.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "c746036c505688ce9bb648b1439f5addba02533a0eed4c55ebf384bf3cb6fbfd"
+  },
+  {
+    "path": "tests/python/test_enumerate.py",
+    "upstream": "Lib/test/test_enumerate.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "e33940c26dfedc499f41a67bbbaebc69a6a198e967bd6c86fee1f36b75edc181"
+  },
+  {
+    "path": "tests/python/test_eof.py",
+    "upstream": "Lib/test/test_eof.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "8b007aff9d3dafab2104a38c9854c25b4a3f6b559704c7cff9734619243b2181"
+  },
+  {
+    "path": "tests/python/test_exceptions.py",
+    "upstream": "Lib/test/test_exceptions.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "f2c42e15d139b41a56e9c3596c4284aae973bb19a3c9c4e91f3ef7c6520449d1"
+  },
+  {
+    "path": "tests/python/test_float.py",
+    "upstream": "Lib/test/test_float.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "e74222668dabab1c5796c963ee55e0e088bf12f5edeb363ac7da0b53f3c6b04b"
+  },
+  {
+    "path": "tests/python/test_fnmatch.py",
+    "upstream": "Lib/test/test_fnmatch.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "b6218bf75e1920ca273339589b88e522969184dc02eefe5272e1798fa7cc2f0c"
+  },
+  {
+    "path": "tests/python/test_format.py",
+    "upstream": "Lib/test/test_format.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "e19f83084178bd67b9fe3ca1e1accb2b73b07e2192392cc09c00b1d32743f99b"
+  },
+  {
+    "path": "tests/python/test_fractions.py",
+    "upstream": "Lib/test/test_fractions.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "bb2339ac50efb7c21ae4ae4bbe01cda87891efd1cfa207c1abb492d92181bac9"
+  },
+  {
+    "path": "tests/python/test_fstring.py",
+    "upstream": "Lib/test/test_fstring.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "4bc35482d8cba4acc5ecf8eb1027aba4330d877b1e8a0766998d7a2f047d3b83"
+  },
+  {
+    "path": "tests/python/test_funcattrs.py",
+    "upstream": "Lib/test/test_funcattrs.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "c1f89670c7e3b5175909e5e28e82e2e2c818d2275abe62a25b2404a576d76895"
+  },
+  {
+    "path": "tests/python/test_functools.py",
+    "upstream": "Lib/test/test_functools.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "799a3880de33573a8529d13585d0b251ce6c14459af631532202096403c30fc2"
+  },
+  {
+    "path": "tests/python/test_generators.py",
+    "upstream": "Lib/test/test_generators.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "791f9d3a7785ccefc69715db742733f39e629bc047ad99b9d94214b864ad746a"
+  },
+  {
+    "path": "tests/python/test_genexps.py",
+    "upstream": "Lib/test/test_genexps.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "3aab90c405d53fbcc276f99049aac670b1e535fe3976001979636d19ea1af34a"
+  },
+  {
+    "path": "tests/python/test_global.py",
+    "upstream": "Lib/test/test_global.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "be58eab13bc0f261f744c5d7f3bf1ddd74d5607f05ee657bd46028894d0415a3"
+  },
+  {
+    "path": "tests/python/test_grammar.py",
+    "upstream": "Lib/test/test_grammar.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "d5506a6a6a9ef7aa3e5bae712e9696cb8e190aa305446fc2eea034d55c4d174c"
+  },
+  {
+    "path": "tests/python/test_heapq.py",
+    "upstream": "Lib/test/test_heapq.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "bf78080cb1f095dcaa2dc68b7da9a86767d0a55f8199e747d5d1ff1b97a51af2"
+  },
+  {
+    "path": "tests/python/test_import/data/syntax_warnings.py",
+    "upstream": "Lib/test/test_import/data/syntax_warnings.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": false,
+    "sha256": null
+  },
+  {
+    "path": "tests/python/test_index.py",
+    "upstream": "Lib/test/test_index.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "bc74f38459434a91477197a4c9b3a58bb2bd4c70027472003c0e363c6d7efad5"
+  },
+  {
+    "path": "tests/python/test_int.py",
+    "upstream": "Lib/test/test_int.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "729765b11c8027cda64d26d320b9d860d9080c504e4355083cfd35e93f4f2f89"
+  },
+  {
+    "path": "tests/python/test_int_literal.py",
+    "upstream": "Lib/test/test_int_literal.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "2dd1dd8ca1e049abef5e5548179aba2532952f9f5362bc7c6d09bd73f80c5974"
+  },
+  {
+    "path": "tests/python/test_iter.py",
+    "upstream": "Lib/test/test_iter.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "2255bb4dac0165fd5f9bcc56112ec938722d425b819099749efdd24b9193887e"
+  },
+  {
+    "path": "tests/python/test_itertools.py",
+    "upstream": "Lib/test/test_itertools.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "ab7e8807a69486342097e69e831b4dcfa725681f26636f39e4928d72975c7a6b"
+  },
+  {
+    "path": "tests/python/test_keyword.py",
+    "upstream": "Lib/test/test_keyword.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "9af1d7e94d0027baca8b67db0013cc94bd81c5df01d28a76dc3198537a16e8df"
+  },
+  {
+    "path": "tests/python/test_keywordonlyarg.py",
+    "upstream": "Lib/test/test_keywordonlyarg.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "f2b0fbe9258dc917eb73b5255f5657781f20cbf4b3c6de19456f70153f3d2f3b"
+  },
+  {
+    "path": "tests/python/test_list.py",
+    "upstream": "Lib/test/test_list.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "54456d043d05ad304fe6ee8e42da1556f43642ec0b23b37371303c2936444192"
+  },
+  {
+    "path": "tests/python/test_listcomps.py",
+    "upstream": "Lib/test/test_listcomps.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "8184fa4a214866802f275a821add0cff9b91ecff290ff185f70160eed59e0d91"
+  },
+  {
+    "path": "tests/python/test_long.py",
+    "upstream": "Lib/test/test_long.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "3b509f42eda5e992bfd8056ded0e180d090243c1833b88ca152bdb46b76488ec"
+  },
+  {
+    "path": "tests/python/test_math.py",
+    "upstream": "Lib/test/test_math.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "17a9b4e60bcf3e0ac185d0b4f4d97ab1ea91c4f94069c3032ba56d7994930b03"
+  },
+  {
+    "path": "tests/python/test_opcodes.py",
+    "upstream": "Lib/test/test_opcodes.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "6d274bd701ff9942033ee46059e8c3e74893ce326921c2ca7b321374c4b47d29"
+  },
+  {
+    "path": "tests/python/test_operator.py",
+    "upstream": "Lib/test/test_operator.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "295422fa870a1df8c7a1d4f744caadefe8d8d471cfc67db81e3bc82b7ed42166"
+  },
+  {
+    "path": "tests/python/test_positional_only_arg.py",
+    "upstream": "Lib/test/test_positional_only_arg.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "7423293eea2e517d305962dc701b6bfe2ec550e5175b067871d8c7ae2e9ba0aa"
+  },
+  {
+    "path": "tests/python/test_pow.py",
+    "upstream": "Lib/test/test_pow.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "0cfbf5bc3b271db92d5f728c649b9501b4c786d42db74bc75afeb41a54dde27d"
+  },
+  {
+    "path": "tests/python/test_print.py",
+    "upstream": "Lib/test/test_print.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "2f4e82209c9a0c5a3df2ed8efb38cd8db08b7fedf234e3acb9f5c726072bf8d1"
+  },
+  {
+    "path": "tests/python/test_range.py",
+    "upstream": "Lib/test/test_range.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "603d1ca7b740d2e4702b3ff42202de4c261b41d51078227526c7447caa3bf80e"
+  },
+  {
+    "path": "tests/python/test_scope.py",
+    "upstream": "Lib/test/test_scope.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "b5f7f18ea9e254f7d224eb2f0cd0d2e166bafb4f0a100c3cf20b9a42a52e22d9"
+  },
+  {
+    "path": "tests/python/test_set.py",
+    "upstream": "Lib/test/test_set.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "c0e8d4db20c0acd036f4f07e9a32ec9cdd3470c98e3725ed73905e4410419acc"
+  },
+  {
+    "path": "tests/python/test_setcomps.py",
+    "upstream": "Lib/test/test_setcomps.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "b8128d8cb68956742f1e264842b878c029a304b7887c96c4804f6011a63e68f4"
+  },
+  {
+    "path": "tests/python/test_shlex.py",
+    "upstream": "Lib/test/test_shlex.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "827b997a337d9dfc1227bba9fe10f5079d2f7c37ce47225e2136ec524164881b"
+  },
+  {
+    "path": "tests/python/test_slice.py",
+    "upstream": "Lib/test/test_slice.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "0eeed7ae5e6c9e261942d68ad4453eea48e12d987bf7d9b5ff10737528d1e2b3"
+  },
+  {
+    "path": "tests/python/test_str.py",
+    "upstream": "Lib/test/test_str.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "ca6746758afd1394cdcc846f858ad0cc6eab2d8548b2eed7bfb518ec60f434b6"
+  },
+  {
+    "path": "tests/python/test_string_literals.py",
+    "upstream": "Lib/test/test_string_literals.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "810a28fdcb552c1c460fc77d1c9a81d575a437d21c6d7c8db0d5efcd08256436"
+  },
+  {
+    "path": "tests/python/test_syntax.py",
+    "upstream": "Lib/test/test_syntax.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "d1ab6674b0b4d7d0ac4b013e8dd2b7e0be51932c3ddfa5aff6e5d746027c8403"
+  },
+  {
+    "path": "tests/python/test_textwrap.py",
+    "upstream": "Lib/test/test_textwrap.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "e9f9d41bebad018baa8647210040fda75b97c547b4b320ee3a99addd63a986e2"
+  },
+  {
+    "path": "tests/python/test_tuple.py",
+    "upstream": "Lib/test/test_tuple.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "57bc350caa2e630e80338289ee1d578a8a132bccabbef809688ac7db5d1e0b54"
+  },
+  {
+    "path": "tests/python/test_unary.py",
+    "upstream": "Lib/test/test_unary.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "867adb0ac3eddbe957c0137a84f2dbac75bfd09c0a8b51e3e75a7af9eaa3f8eb"
+  },
+  {
+    "path": "tests/python/test_unpack.py",
+    "upstream": "Lib/test/test_unpack.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "0f0a7ef9ab75d88d2daeeef79cdff1e471d0738ce7134ff45442946702e4cad2"
+  },
+  {
+    "path": "tests/python/test_with.py",
+    "upstream": "Lib/test/test_with.py",
+    "kind": "test",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "bb59290a33d49a35fb6579deb8310efb85ccca4695fa865b6b60ce7eb9309db8"
+  },
+  {
+    "path": "langs/lib_python/modules/_bisect.py",
+    "upstream": "Lib/bisect.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "f1cf7b85fc36b5da249813fc5ab97d9464f8cc1bc817f7146206fa2713e35999"
+  },
+  {
+    "path": "langs/lib_python/modules/_heapq.py",
+    "upstream": "Lib/heapq.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea"
+  },
+  {
+    "path": "langs/lib_python/modules/_namedtuple.py",
+    "upstream": "Lib/collections/__init__.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "cb8367b8edd188662143ea2e3942d360c2deae51c72fd779ec898f5076d2c2b9"
+  },
+  {
+    "path": "langs/lib_python/modules/annotationlib.py",
+    "upstream": "Lib/annotationlib.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "1cce29393714b91e3f71571ffbedacc7f73f11ad26be10701debeb86ec059a32"
+  },
+  {
+    "path": "langs/lib_python/modules/bisect.py",
+    "upstream": "Lib/bisect.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "f1cf7b85fc36b5da249813fc5ab97d9464f8cc1bc817f7146206fa2713e35999"
+  },
+  {
+    "path": "langs/lib_python/modules/copy.py",
+    "upstream": "Lib/copy.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "15154fde290d6e65b5007905689a47a9a5a724822c5e06eec35d9ffbb2a3aa69"
+  },
+  {
+    "path": "langs/lib_python/modules/copyreg.py",
+    "upstream": "Lib/copyreg.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "6376eb5722806396f5842997ac18add369ea9ac3ff4fcfe1460c41a088cac425"
+  },
+  {
+    "path": "langs/lib_python/modules/fnmatch.py",
+    "upstream": "Lib/fnmatch.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "ce582bc266922e4c682e2a85d72095124430a6bf58716c6f2537103480eae742"
+  },
+  {
+    "path": "langs/lib_python/modules/functools.py",
+    "upstream": "Lib/functools.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "9db56d38172c4c9e689b21cc58c8538008b09d86b682faf4dd193b529cdd79d5"
+  },
+  {
+    "path": "langs/lib_python/modules/heapq.py",
+    "upstream": "Lib/heapq.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea"
+  },
+  {
+    "path": "langs/lib_python/modules/itertools.py",
+    "upstream": "Modules/itertoolsmodule.c",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "11e8e8186a779a26ffd33bb5042b286bd08750a946c1398756225450d6bee6cc"
+  },
+  {
+    "path": "langs/lib_python/modules/keyword.py",
+    "upstream": "Lib/keyword.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "18c2be738c04ad20ad375f6a71db34b3823c7f40b0340f5294d0e89f3c9b093b"
+  },
+  {
+    "path": "langs/lib_python/modules/operator.py",
+    "upstream": "Lib/operator.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "a9f9910965c31f841caad0447ee47299ac539a371422aefe200c86c60f3b4697"
+  },
+  {
+    "path": "langs/lib_python/modules/posixpath.py",
+    "upstream": "Lib/posixpath.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "8a5bc2b6674e76efe0f507b873a41d746beba466a191153ed18a7580ef6e08e1"
+  },
+  {
+    "path": "langs/lib_python/modules/reprlib.py",
+    "upstream": "Lib/reprlib.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f"
+  },
+  {
+    "path": "langs/lib_python/modules/shlex.py",
+    "upstream": "Lib/shlex.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "aeda1c54188363d907654a19d338e5961416ebec2e2f506afab19be61ada8120"
+  },
+  {
+    "path": "langs/lib_python/modules/test/list_tests.py",
+    "upstream": "Lib/test/list_tests.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "41c15b8e00b1e1474e519567b1124d3c5fd7fef975a200a5be276fd2ec8eaaf7"
+  },
+  {
+    "path": "langs/lib_python/modules/test/mapping_tests.py",
+    "upstream": "Lib/test/mapping_tests.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "864213137e72ec2ea142c5c4596755c52b21b58095223884b2432e73469671fb"
+  },
+  {
+    "path": "langs/lib_python/modules/test/mathdata/cmath_testcases.txt",
+    "upstream": "Lib/test/mathdata/cmath_testcases.txt",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "6a41e9bf349e4de95f44133eb3fd4804d2c373436fc48a26f94df39f26aeca04"
+  },
+  {
+    "path": "langs/lib_python/modules/test/mathdata/math_testcases.txt",
+    "upstream": "Lib/test/mathdata/math_testcases.txt",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "bb3a7ccb8adc60317861bf79402f9a5ee0f1e35f81010f694effb86d78e5d985"
+  },
+  {
+    "path": "langs/lib_python/modules/test/seq_tests.py",
+    "upstream": "Lib/test/seq_tests.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "8d3af229c2b6d204410badfaf530e902aa451ae10500662049c7941709d3a591"
+  },
+  {
+    "path": "langs/lib_python/modules/test/string_tests.py",
+    "upstream": "Lib/test/string_tests.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "da69e072f4b439480d1fd434973e0fe8e969abb8d5150cadf6580106038ee04b"
+  },
+  {
+    "path": "langs/lib_python/modules/test/support/__init__.py",
+    "upstream": "Lib/test/support/__init__.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "450e2f52f881c64b617aa07c77535e3125d806038e8015596105589adcf358bc"
+  },
+  {
+    "path": "langs/lib_python/modules/test/support/numbers.py",
+    "upstream": "Lib/test/support/numbers.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "fd9c8f35ef65c32612599a89a3ff8fe320268bd139a1c1a773cdfdd44096202c"
+  },
+  {
+    "path": "langs/lib_python/modules/textwrap.py",
+    "upstream": "Lib/textwrap.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "7f05d89c983f5aa8cefcff707a9cc561ed60c51fc8a68e2e3ab61cc6dfa84544"
+  },
+  {
+    "path": "langs/lib_python/modules/typing.py",
+    "upstream": "Lib/typing.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "de569368c2c4958b7aaddbe755056860a89b1d313f69d437177864f37cb2503b"
+  },
+  {
+    "path": "langs/lib_python/modules/weakref.py",
+    "upstream": "Lib/weakref.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "5e5f727a19a858cb4c56dbaf3e0a138ded02fb954a9a58a840a0764216ae9522"
+  },
+  {
+    "path": "langs/lib_python/modules/test/test_import/data/syntax_warnings.py",
+    "upstream": "Lib/test/test_import/data/syntax_warnings.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": false,
+    "sha256": null
+  },
+  {
+    "path": "langs/lib_python/modules/test/test_iter.py",
+    "upstream": "Lib/test/test_iter.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "2255bb4dac0165fd5f9bcc56112ec938722d425b819099749efdd24b9193887e"
+  },
+  {
+    "path": "langs/lib_python/modules/test/test_math.py",
+    "upstream": "Lib/test/test_math.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "17a9b4e60bcf3e0ac185d0b4f4d97ab1ea91c4f94069c3032ba56d7994930b03"
+  },
+  {
+    "path": "langs/lib_python/modules/test/typinganndata/__init__.py",
+    "upstream": "Lib/test/typinganndata/__init__.py",
+    "kind": "copy",
+    "old_match": true,
+    "new_exists": true,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "langs/lib_python/modules/test/typinganndata/ann_module.py",
+    "upstream": "Lib/test/typinganndata/ann_module.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "54ac1c9629d3e0ff311ef13b019604dc8d7b17a1dafd3ff113c9dba095717ee2"
+  },
+  {
+    "path": "langs/lib_python/modules/test/typinganndata/ann_module2.py",
+    "upstream": "Lib/test/typinganndata/ann_module2.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "2f1214af1113c659b37ff02aa9727f3341812e066c82524c471e4325bcde6f72"
+  },
+  {
+    "path": "langs/lib_python/modules/test/typinganndata/ann_module3.py",
+    "upstream": "Lib/test/typinganndata/ann_module3.py",
+    "kind": "adapter",
+    "old_match": false,
+    "new_exists": true,
+    "sha256": "c72c7dfa54f5af1bb9ad263964adf130597666ae1e5cd125f5a435b565d6c15f"
+  }
+]
