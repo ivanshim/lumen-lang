@@ -601,10 +601,6 @@ impl<'a> Engine<'a> {
         let Some(Value::Object(handling)) = self.caught.last().map(Value::contents) else { return };
         if Rc::ptr_eq(&handling, &object) { return; }
         let behind = |link: &Rc<Instance>| link.fields.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.contents());
-        // A value raised already standing behind another keeps the link
-        // it has: the reference chains a value only where it stands
-        // behind nothing.
-        if matches!(behind(&object), Some(Value::Object(_))) { return; }
         let mut link = handling.clone();
         // A chain already standing behind `handling` may loop back on
         // itself without ever passing through the value being raised
@@ -4216,9 +4212,9 @@ impl<'a> Engine<'a> {
             }
         }
         if let Some(value) = hurled {
-            // Raised where the body left off, so what the body itself
-            // was handling stands behind it.
-            self.chain_context(&value);
+            // Raised where the body left off, keeping whatever it
+            // already stands behind, the way the reference's own throw
+            // leaves a value's context alone.
             return Err(Fault::Thrown(value));
         }
         let mut counted = 0u32;

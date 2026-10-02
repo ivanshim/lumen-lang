@@ -167,6 +167,10 @@ enum Owed {
     Restore(Box<Result<Value, Escape>>, usize),
     /// Let go of a held fault, and of the place a clause held it in.
     Unhold(usize, Option<Address>),
+    /// Tell a manager still open that the body is done with it: a
+    /// return met it in the nesting order, or an unwinding comes by
+    /// with what was raised.
+    Leave(Address, bool),
     /// Nothing more is owed: the body is over.
     Stop,
 }
@@ -771,10 +775,6 @@ impl<'a> Machine<'a> {
         let Some(Value::Thing(handled)) = self.holding_fault.last().map(Value::settled) else { return };
         if Rc::ptr_eq(&handled, &thing) { return; }
         let context_of = |of: &Rc<Thing>| of.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.settled());
-        // A value raised already standing behind another keeps the link
-        // it has: the reference chains a value only where it stands
-        // behind nothing.
-        if matches!(context_of(&thing), Some(Value::Thing(_))) { return; }
         let mut step = handled.clone();
         // A chain already standing behind `handled` may loop back on
         // itself without ever passing through the value being raised
@@ -3947,20 +3947,20 @@ impl<'a> Machine<'a> {
                 Owed::Finish => {
                     state.result = state.found.pop().unwrap_or(Value::Nil);
                     // A return leaves by way of every last part still
-                    // owed, innermost first, before the body is over.
-                    let mut parts = Vec::new();
+                    // owed, innermost first, before the body is over:
+                    // each owed thing is queued in the order it is met,
+                    // a manager's leaving among the last parts, so an
+                    // inner finally always runs before the exit of the
+                    // with that stands around it.
+                    let mut parts: Vec<Owed> = Vec::new();
                     while let Some(owed) = state.owed.pop() {
                         match owed {
                             Owed::Lastly(plan, _, held) => {
                                 self.holding_fault.truncate(self.holding_below + held);
-                                if let Some(last) = plan.last.clone() { parts.push(last); }
+                                if let Some(last) = plan.last.clone() { parts.push(Owed::Find(last)); }
                             }
-                            // A manager still open is told the body is
-                            // done with it before the return goes on, as
-                            // a body falling off its end tells it.
                             Owed::Warding(plan, _, _) if plan.context.is_some() => {
-                                let address = plan.context.as_ref().expect("a manager still open");
-                                self.leaving(&frame, address, None, plan.async_context)?;
+                                parts.push(Owed::Leave(plan.context.clone().expect("a manager still open"), plan.async_context));
                             }
                             _ => {}
                         }
@@ -3968,10 +3968,16 @@ impl<'a> Machine<'a> {
                     if parts.is_empty() { return Ok(Stepped::Over); }
                     state.found.clear();
                     state.owed.push(Owed::Stop);
-                    for last in parts.into_iter().rev() {
+                    for part in parts.into_iter().rev() {
                         state.owed.push(Owed::Drop);
-                        state.owed.push(Owed::Find(last));
+                        state.owed.push(part);
                     }
+                }
+                Owed::Leave(address, async_context) => {
+                    // A return is on its way out with nothing raised:
+                    // the manager hears only that the body is done.
+                    self.leaving(&state.frame.clone(), &address, None, async_context)?;
+                    state.found.push(Value::Nil);
                 }
                 Owed::Stop => return Ok(Stepped::Over),
                 Owed::Warding(plan, floor, held) => {
@@ -4043,6 +4049,27 @@ impl<'a> Machine<'a> {
                     state.owed.push(Owed::Restore(Box::new(Err(escape)), floor));
                     state.owed.push(Owed::Find(last));
                     return Ok(());
+                }
+                Owed::Leave(address, async_context) => {
+                    // Words stand in for a value raised where the run
+                    // could only read; the exit is shown the value
+                    // itself, as the with around it would see it, and
+                    // may swallow it the same way.
+                    escape = match escape {
+                        Escape::Error(_) if self.got_away.is_some() => self.got_away.take().expect("what got away"),
+                        Escape::Error(told) if self.table.has_any("ext.builtin.exceptions") => match self.as_raised(&told) {
+                            Some(value) => Escape::Thrown(value),
+                            None => Escape::Error(told),
+                        },
+                        other => other,
+                    };
+                    let Escape::Thrown(raised) = &escape else { continue };
+                    let raised = raised.clone();
+                    match self.leaving(&frame, &address, Some(&raised), async_context) {
+                        Ok(true) => { state.found.push(Value::Nil); return Ok(()); }
+                        Ok(false) => continue,
+                        Err(met) => { escape = met; continue; }
+                    }
                 }
                 Owed::Warding(plan, floor, held) => {
                     state.found.truncate(floor);
@@ -4183,9 +4210,9 @@ impl<'a> Machine<'a> {
         state.receiving = false;
         match hurled {
             Some(value) => {
-                // Raised where the body left off, so what the body
-                // itself was handling stands behind it.
-                self.keep_context(&value);
+                // Raised where the body left off, keeping whatever it
+                // already stands behind, the way the reference's own
+                // throw leaves a value's context alone.
                 self.unwind(state, Escape::Thrown(value))?;
             }
             None => if taking { state.found.push(sent.clone()); },

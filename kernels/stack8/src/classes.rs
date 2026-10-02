@@ -416,8 +416,8 @@ impl<'a> Engine<'a> {
         }
         // A property is abstract when any accessor it keeps is: the mark
         // is read off the accessors and weighed the way truth is weighed.
-        if self.lang.class_details.get("abstract").and_then(|words| words.first()).map_or(false, |word| !word.is_empty()) {
-            members.push(("__isabstractmethod__".to_string(), Self::adapter(28, vec![Value::text("\0abstract")])));
+        if let Some(mark) = self.lang.class_details.get("abstractmethod").and_then(|words| words.first()).filter(|word| !word.is_empty()) {
+            members.push((mark.clone(), Self::adapter(28, vec![Value::text("\0abstract")])));
         }
         let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
             direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
@@ -1349,7 +1349,7 @@ impl<'a> Engine<'a> {
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
                 // The classes written beneath this one, the live ones,
                 // as the reference's own type.__subclasses__ tells them.
-                if name=="__subclasses__" { return Ok(Self::adapter(44, vec![subject.clone()])); }
+                if !self.class_word("subclasses").is_empty() && name==self.class_word("subclasses") { return Ok(Self::adapter(44, vec![subject.clone()])); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
                 // A class standing on a builtin kind reads that kind's
@@ -1595,7 +1595,7 @@ impl<'a> Engine<'a> {
                 if name=="__wrapped__" { return Ok(w.1[0].clone()); }
                 // The abstract mark of the routine within is read through
                 // the wrapper as well; a routine with no mark answers no.
-                if name=="__isabstractmethod__" {
+                if name==self.class_word("abstractmethod") && !self.class_word("abstractmethod").is_empty() {
                     return match self.class_get(w.1[0].clone(),name,true) {
                         Ok(held) => Ok(held),
                         Err(fault) if self.attribute_fault(&fault) => Ok(Value::Flag(false)),

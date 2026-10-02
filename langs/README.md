@@ -5554,6 +5554,10 @@ Frames are allocated on demand when an exception first records its location.
 leaves its set of unanswered abstract method names under, and words the
 refusal for making a thing of such a class: the opening, then the middle
 for one name and the middle for many.
+`ext.stmt.class.detail.abstractmethod` names the abstract-method mark a
+wrapped routine answers for through its wrapper.
+`ext.stmt.class.detail.subclasses` names the metaclass method that lists a
+class's living subclasses.
 
 `ext.stmt.class.detail.flags` names class layout flags; `ext.builtin.inline_values` inspects whether an instance retains its compact attribute layout, before growth, dictionary replacement, or dictionary deletion.
 `ext.builtin.core.abs.type` names an unsupported magnitude operand;

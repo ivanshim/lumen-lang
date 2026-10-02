@@ -419,8 +419,8 @@ impl<'a> Machine<'a> {
         }
         // A property counts as abstract when one of its accessors does:
         // the mark is read off the accessors and counted as truth is.
-        if self.table.strings("ext.stmt.class.detail.abstract").first().map_or(false,|w|!w.is_empty()) {
-            entries.push(("__isabstractmethod__".to_owned(),Self::wrap(58,vec![Value::text("\0abstract")])));
+        if let Some(mark)=self.table.strings("ext.stmt.class.detail.abstractmethod").into_iter().next().filter(|w|!w.is_empty()) {
+            entries.push((mark.clone(),Self::wrap(58,vec![Value::text("\0abstract")])));
         }
         let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
             parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
@@ -1689,7 +1689,7 @@ impl<'a> Machine<'a> {
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
             // The classes built beneath this one, the live ones, as the
             // reference's own type.__subclasses__ tells them.
-            if key=="__subclasses__" { return Ok(Self::wrap(44, vec![value.clone()])); }
+            if key==self.detail("subclasses") && !self.detail("subclasses").is_empty() { return Ok(Self::wrap(44, vec![value.clone()])); }
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
             // A blueprint standing on a native kind reads that kind's
             // own class method too, bound to the blueprint, so that
@@ -1895,7 +1895,7 @@ impl<'a> Machine<'a> {
                 if key=="__wrapped__" { return Ok(items[0].clone()); }
                 // The routine within answers for its own abstract mark
                 // through the wrapper; a routine with no mark says no.
-                if key=="__isabstractmethod__" {
+                if key==self.detail("abstractmethod") && !self.detail("abstractmethod").is_empty() {
                     return match self.read_class_member(items[0].clone(),key,true) {
                         Ok(held)=>Ok(held),
                         Err(escape) if self.missing_member_escape(&escape)=>Ok(Value::Flag(false)),

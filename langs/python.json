@@ -2704,6 +2704,12 @@
     " without an implementation for abstract method ",
     " without an implementation for abstract methods "
   ],
+  "ext.stmt.class.detail.abstractmethod": [
+    "__isabstractmethod__"
+  ],
+  "ext.stmt.class.detail.subclasses": [
+    "__subclasses__"
+  ],
   "ext.stmt.class.detail.slots": [
     "__slots__"
   ],
