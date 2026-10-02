@@ -640,8 +640,9 @@ impl<'a> Engine<'a> {
                 }
                 48 => {
                     if args.len() != 1 { return Err("TypeError: constevaluator.__call__() takes exactly 1 argument (0 given)".into()); }
-                    let format = args[0].contents();
-                    if format.same_place(&Value::Small(4)) {
+                    self.data.extend([args[0].clone(), Value::Small(4)]);
+                    self.perform(&Action::Eq, 2)?;
+                    if self.drop_top()?.is_true() {
                         let shown = w.1[0].plain();
                         let text = shown.strip_prefix("<class '").and_then(|s| s.strip_suffix("'>")).unwrap_or(&shown);
                         return Ok(Value::text(text));

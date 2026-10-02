@@ -7570,8 +7570,9 @@ impl<'a> Builder<'a> {
         let expression_end = self.pos;
         let mut execution = Vec::new();
         if let Some((key, flag)) = site {
-            let flag = self.read_to_write(&flag);
-            execution.push(prim_call(Prim::Replace, vec![flag, constant(Value::Small(0)), constant(Value::Flag(true))]));
+            let flag = self.read(&flag);
+            let record = constant(Value::Wrapped(76, Rc::new(Vec::new()).into()));
+            execution.push(Form::Apply(Callee::Code(Box::new(record)), vec![flag]));
             if self.annotations_as_strings {
                 let member = table.single("ext.stmt.class.annotations").unwrap_or_default();
                 let target = self.read_to_write(member);

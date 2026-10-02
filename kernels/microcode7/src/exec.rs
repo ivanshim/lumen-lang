@@ -9407,7 +9407,6 @@ impl<'a> Machine<'a> {
         if program.annotation_protocol {
             let format = frame.cells.borrow()[program.formal_slots[0]].clone();
             let format = format.settled();
-            if math::ratio_of(&format).is_none() { return Err(self.unordered_complaint(Prim::Gt, &format, &Value::Small(2)).into()); }
             let exceeds = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
             if exceeds.is_true() { return Err(String::from("NotImplementedError: ").into()); }
         }

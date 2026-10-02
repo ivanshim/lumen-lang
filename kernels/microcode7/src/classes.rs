@@ -639,6 +639,24 @@ impl<'a> Machine<'a> {
                         }
                         Ok(alias)
                     }
+                    76 if values.len() == 1 => {
+                        let mut mask = values[0].clone();
+                        loop {
+                            match mask {
+                                Value::Mutable(cell, _) | Value::Shared(cell) => {
+                                    let current = cell.borrow().clone();
+                                    if let Value::Vector(row) = current {
+                                        let mut entries = row.as_ref().clone();
+                                        entries[0] = Value::Flag(true);
+                                        *cell.borrow_mut() = Value::Vector(Rc::new(entries).into());
+                                        return Ok(Value::Nil);
+                                    }
+                                    mask = current;
+                                },
+                                _ => return Err(String::from("TypeError: annotation execution mask is not mutable").into()),
+                            }
+                        }
+                    }
                     74 if values.len() == 3 => {
                         if let Value::Blueprint(class) = values[0].settled() {
                             if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
@@ -651,7 +669,7 @@ impl<'a> Machine<'a> {
                     }
                     48 => {
                         if values.len() != 1 { return Err(String::from("TypeError: constevaluator.__call__() takes exactly 1 argument (0 given)").into()); }
-                        let string_format = values[0].settled().selfsame(&Value::Small(4));
+                        let string_format = self.prim(Prim::Eq, "", &[values[0].clone(), Value::Small(4)])?.is_true();
                         let answer = kept[0].clone();
                         if string_format {
                             let spelling = answer.bare();
@@ -662,7 +680,6 @@ impl<'a> Machine<'a> {
                     47 => {
                         if values.len() > 1 { return Err(String::from("TypeError: evaluator takes at most one argument").into()); }
                         let format = values.first().cloned().unwrap_or(Value::Small(1)).settled();
-                        if math::ratio_of(&format).is_none() { return Err(self.unordered_complaint(Prim::Gt, &format, &Value::Small(2)).into()); }
                         if self.prim(Prim::Gt, "", &[format, Value::Small(2)])?.is_true() { return Err(String::from("NotImplementedError: ").into()); }
                         self.apply_class_member(kept[0].clone(), Vec::new())
                     }
@@ -689,7 +706,6 @@ impl<'a> Machine<'a> {
                     44 => {
                         if values.len() != 1 { return Err(String::from("TypeError: __annotate__() requires one argument").into()); }
                         let format = values[0].settled();
-                        if math::ratio_of(&format).is_none() { return Err(self.unordered_complaint(Prim::Gt, &format, &Value::Small(2)).into()); }
                         let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
                         if rejected.is_true() { return Err(String::from("NotImplementedError: ").into()); }
                         match &kept[0] {
