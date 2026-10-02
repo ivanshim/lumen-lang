@@ -545,27 +545,32 @@ impl<'a> Engine<'a> {
     }
     /// What a property's kept accessor reads as: the accessor itself, or
     /// for its first string, the one it was given, else its getter's.
-    fn property_reading(&mut self, property: &Instance, place: &str) -> Value {
-        // Whether the property's getter is one nobody has answered: a
-        // plain yes or no, as the reference gives it, taken from the
-        // getter's own mark and from nothing else.
+    fn property_reading(&mut self, property: &Instance, place: &str) -> Flow<Value> {
+        // Whether the property stands for a question nobody has
+        // answered: a plain yes or no, taken from the marks on its
+        // getter, its setter and its deleter alike. What a mark holds
+        // is weighed as any truth is, and a complaint other than a
+        // mark simply not being there travels on.
         if place == "\0abstract" {
             let word = self.class_word("property.is_abstract").to_string();
-            let getter = Self::property_accessor(property, "\0fget");
-            let marked = getter.and_then(|held| self.class_get(held, &word, true).ok()).map(|v| v.contents());
-            return Value::Flag(match marked {
-                Some(Value::Flag(answers)) => answers,
-                Some(Value::Null) | Some(Value::Blank) | None => false,
-                Some(_) => true,
-            });
+            for accessor in ["\0fget", "\0fset", "\0fdel"] {
+                let Some(held) = Self::property_accessor(property, accessor) else { continue };
+                let marked = match self.class_get(held, &word, false) {
+                    Ok(v) => v,
+                    Err(fault) if self.attribute_fault(&fault) => continue,
+                    Err(fault) => return Err(fault),
+                };
+                if self.special_truth(&marked)? { return Ok(Value::Flag(true)); }
+            }
+            return Ok(Value::Flag(false));
         }
-        if let Some(v) = Self::property_accessor(property, place) { return v; }
+        if let Some(v) = Self::property_accessor(property, place) { return Ok(v); }
         if place == "\0doc" {
             if let Some(Value::Routine(getter)) = Self::property_accessor(property, "\0fget") {
-                return getter.doc.clone().map_or(Value::Null, |s| Value::text(&s));
+                return Ok(getter.doc.clone().map_or(Value::Null, |s| Value::text(&s)));
             }
         }
-        Value::Null
+        Ok(Value::Null)
     }
     /// The hook a class member answers the protocol with, where the
     /// member is a thing whose class furnishes one.
@@ -1100,7 +1105,7 @@ impl<'a> Engine<'a> {
                 // A working of the property class, read through a
                 // property: bound to it. Its kept accessors read plainly.
                 20..=27 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                28 => match subject { Some(Value::Object(o)) => Ok(self.property_reading(&o, &w.1[0].plain())), _ => Ok(value) },
+                28 => match subject { Some(Value::Object(o)) => self.property_reading(&o, &w.1[0].plain()), _ => Ok(value) },
                 _ => Ok(value),
             };
         }
@@ -1719,12 +1724,15 @@ impl<'a> Engine<'a> {
         if !f.type_params.is_empty() {
             let maker = self.type_holder()?;
             for (name, bound) in &f.type_params {
-                let mut given = vec![Value::text(name)];
-                if let Some(held) = bound {
-                    let worth = self.class_apply(Value::Routine(held.clone()), Vec::new())?;
-                    given.push(Value::Tie(Rc::new((Value::text("bound"), worth))));
+                let made = self.class_apply(maker.clone(), vec![Value::text(name)])?;
+                // The bound a declaration wrote stands beside the
+                // parameter as the evaluator that works it out where
+                // the declaration stands, not as its answer: naming
+                // the parameter asks nothing of it.
+                if let (Some(held), Value::Object(o)) = (bound, &made) {
+                    o.fields.borrow_mut().push(("\0type_bound".to_owned(), Value::Routine(held.clone())));
                 }
-                items.push(self.class_apply(maker.clone(), given)?);
+                items.push(made);
             }
         }
         Ok(Value::tuple(items))

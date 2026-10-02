@@ -23,8 +23,22 @@ class Protocol:
 class TypeVar:
     def __init__(self, name, *constraints, **options):
         self.__name__ = name
-        self.__bound__ = options.get('bound')
         self.__constraints__ = constraints
+        self.__bound_stood = options.get('bound')
+        self.__bound_read = False
+
+    @property
+    def __bound__(self):
+        # The bound a declaration wrote stands beside the parameter as
+        # the evaluator that works it out where the declaration stands,
+        # and answers only here: naming the parameter asks nothing of
+        # it. A bound handed in as a value stands as itself.
+        if not self.__bound_read:
+            evaluator = getattr(self, '\0type_bound', None)
+            if evaluator is not None:
+                self.__bound_stood = evaluator()
+            self.__bound_read = True
+        return self.__bound_stood
 
     def __getitem__(self, parameters):
         return self

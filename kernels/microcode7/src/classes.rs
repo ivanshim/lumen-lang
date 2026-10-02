@@ -585,28 +585,32 @@ impl<'a> Machine<'a> {
     }
     /// What a property's kept accessor shows: itself; or, for the first
     /// string, the one given, else the getter's own.
-    fn accessor_shown(&mut self,property:&Thing,key:&str)->Value {
-        // Whether the property's getter is one nobody has answered: a
-        // plain yes or no, as the reference gives it, read off the
-        // getter's own mark and off nothing else.
+    fn accessor_shown(&mut self,property:&Thing,key:&str)->Res {
+        // Whether the property stands for a question nobody has
+        // answered: a plain yes or no, taken from the marks on its
+        // getter, its setter and its deleter alike. What a mark holds
+        // is weighed as any truth is, and a complaint other than a
+        // mark simply not being there travels on.
         if key=="\0abstract" {
             let word=self.detail("property.is_abstract").to_owned();
-            let marked=Self::kept_accessor(property,"\0fget")
-                .and_then(|held|self.read_class_member(held,&word,true).ok())
-                .map(|worth|worth.settled());
-            return Value::Flag(match marked {
-                Some(Value::Flag(answers))=>answers,
-                Some(Value::Nil)|Some(Value::Unset)|None=>false,
-                Some(_)=>true,
-            });
+            for accessor in ["\0fget","\0fset","\0fdel"] {
+                let Some(held)=Self::kept_accessor(property,accessor) else { continue };
+                let marked=match self.read_class_member(held,&word,false) {
+                    Ok(worth)=>worth,
+                    Err(escape) if self.missing_member_escape(&escape)=>continue,
+                    Err(escape)=>return Err(escape),
+                };
+                if self.object_truth(&marked)? { return Ok(Value::Flag(true)); }
+            }
+            return Ok(Value::Flag(false));
         }
-        if let Some(v)=Self::kept_accessor(property,key){return v;}
+        if let Some(v)=Self::kept_accessor(property,key){return Ok(v);}
         if key=="\0doc" {
             if let Some(Value::Routine(getter)|Value::Bound(getter,_))=Self::kept_accessor(property,"\0fget") {
-                return getter.doc.as_ref().map_or(Value::Nil,|d|Value::text(d));
+                return Ok(getter.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));
             }
         }
-        Value::Nil
+        Ok(Value::Nil)
     }
     /// The workings of the property blueprint. Each is handed the
     /// property first, then whatever the program gave.
@@ -1111,7 +1115,7 @@ impl<'a> Machine<'a> {
             // A working of the property blueprint, reached through a
             // property, is tied to it; a kept accessor reads at once.
             Value::Wrapped(50..=57,_) if receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
-            Value::Wrapped(58,items)=>return Ok(match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>entry}),
+            Value::Wrapped(58,items)=>return match receiver {Some(Value::Thing(t))=>self.accessor_shown(&t,&items[0].bare()),_=>Ok(entry)},
             _=>{}
         }
         // A member whose blueprint furnishes a reader answers through it,
@@ -1468,12 +1472,15 @@ impl<'a> Machine<'a> {
         if !code.type_params.is_empty() {
             let maker = self.hint_maker()?;
             for (name, bound) in &code.type_params {
-                let mut given = vec![Value::text(name)];
-                if let Some(held) = bound {
-                    let worth = self.apply_class_member(held.clone(), Vec::new())?;
-                    given.push(Value::Couple(Rc::new((Value::text("bound"), worth))));
+                let made = self.apply_class_member(maker.clone(), vec![Value::text(name)])?;
+                // The bound a declaration wrote stands beside the
+                // parameter as the evaluator that works it out where
+                // the declaration stands, not as its answer: naming
+                // the parameter asks nothing of it.
+                if let (Some(held), Value::Thing(o)) = (bound, &made) {
+                    o.holds.borrow_mut().push(("\0type_bound".to_owned(), held.clone()));
                 }
-                items.push(self.apply_class_member(maker.clone(), given)?);
+                items.push(made);
             }
         }
         Ok(Value::tuple(items))

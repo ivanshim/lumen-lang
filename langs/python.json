@@ -50,6 +50,9 @@
   "ext.builtin.file.kind": [
     "__file_kind"
   ],
+  "ext.builtin.file.link": [
+    "__file_link"
+  ],
   "ext.builtin.weak.make": [
     "__weak_make"
   ],
@@ -83,6 +86,13 @@
   ],
   "ext.builtin.dir.change": [
     "__change_dir"
+  ],
+  "ext.builtin.cell.repr": [
+    "<cell at 0x",
+    ": ",
+    " object at 0x",
+    ">",
+    "empty"
   ],
   "ext.builtin.dir.remove": [
     "__remove_dir"

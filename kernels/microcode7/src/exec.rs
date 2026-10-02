@@ -12117,12 +12117,20 @@ impl<'a> Machine<'a> {
         // -- plain, quoted or shown within a collection -- asked.
         if matches!(subject.settled(), Value::Huge(_)) { self.figures_allowed(subject)?; }
         // A cell a closure keeps a name in is shown the way the
-        // reference shows it: the place it stands and the kind of what
-        // it holds there, or its emptiness before it holds anything.
+        // reference shows it: the identity of the cell and of what it
+        // holds there, or its emptiness before it holds anything.
         if let Value::Wrapped(35, items) = subject {
+            let words = self.table.strings("ext.builtin.cell.repr");
+            if words.len() < 5 { return Ok(subject.render(self.wording())); }
+            let here = self.core_primitive(Prim::IdentityOf, "id", vec![subject.clone()], Vec::new())?;
+            let one = match here { Value::Small(n) => format!("{n:x}"), other => other.bare() };
             return Ok(match self.cell_contents(items) {
-                Some(held) => format!("<cell at 0x1: {} object at 0x1>", held.kind_word()),
-                None => String::from("<cell at 0x1: empty>"),
+                Some(held) => {
+                    let at = self.core_primitive(Prim::IdentityOf, "id", vec![held.clone()], Vec::new())?;
+                    let two = match at { Value::Small(n) => format!("{n:x}"), other => other.bare() };
+                    format!("{}{}{}{}{}{}{}", words[0], one, words[1], held.kind_word(), words[2], two, words[3])
+                },
+                None => format!("{}{}{}{}{}", words[0], one, words[1], words[4], words[3]),
             });
         }
         let celled = match subject {
@@ -15941,6 +15949,14 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
+            }
+            // Whether the name given is a link standing for somewhere
+            // else: asked of the link itself, and not of whatever
+            // stands at its far end.
+            Prim::Linked => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::symlink_metadata(v[0].render(w)).map(|m| m.file_type().is_symlink()).unwrap_or(false))
             }
             // A directory's own entries, sorted so a run answers the
             // same way twice: the bare name of each, nothing before it.
@@ -22551,6 +22567,10 @@ impl Machine<'_> {
                     Value::Attributes(owner) => Rc::as_ptr(owner) as usize as u64,
                     Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
                     Value::Method(code, instance) => (Rc::as_ptr(code) as usize as u64).rotate_right(9) ^ (Rc::as_ptr(instance) as usize as u64),
+                    Value::Wrapped(35, items) => {
+                        let (room, at) = self.cell_place(items).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                        (Rc::as_ptr(&room) as usize as u64).rotate_left(11) ^ (at as u64)
+                    }
                     Value::Wrapped(_, payload) => Rc::as_ptr(payload) as usize as u64,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Octets { cell, .. } => Rc::as_ptr(cell) as usize as u64,

@@ -2613,6 +2613,12 @@ only. The extension labels so far, all from PHP:
   what a language spelling them expects.
 - `ext.builtin.file.kind`: a builtin answering one for a path naming a
   file, two for a directory, nought for neither.
+- `ext.builtin.cell.repr`: the five words a closure's cell is written
+  with -- around the identity of the cell, then of what it stands for,
+  with the word for its emptiness where it stands for nothing yet.
+- `ext.builtin.file.link`: a builtin answering whether a name is a link
+  standing for somewhere else, asked of the link itself and not of what
+  stands at its far end.
 - `ext.builtin.dir.remove`: a builtin taking one directory away where it
   stands, answering whether it is gone afterward. It refuses a directory
   that still holds anything, where taking the whole tree
@@ -4450,6 +4456,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | `__warning_calls` | - | `__calls` | - | - | - | - | - |
+| `ext.builtin.cell.repr` | - | - | `<cell at 0x` `: ` ` object at 0x` `>` `empty` | - | - | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
@@ -4570,6 +4577,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
+| `ext.builtin.file.link` | - | - | `__file_link` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |

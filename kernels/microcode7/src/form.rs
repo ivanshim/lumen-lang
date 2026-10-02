@@ -196,6 +196,7 @@ pub enum Prim {
     Spill,
     There,
     Gone,
+    Linked,
     /// A directory's own entries, by name; a fresh directory made
     /// uniquely under one already there; and a directory taken away
     /// with everything under it (ext.builtin.dir.*).

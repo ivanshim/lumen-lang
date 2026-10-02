@@ -588,6 +588,7 @@ pub enum Builtin {
     FileRead,
     FileWrite,
     FileThere,
+    FileLink,
     FileGone,
     /// A directory's own entries, by name alone; a fresh directory made
     /// under one already there, named uniquely from a prefix and a

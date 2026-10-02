@@ -6619,6 +6619,26 @@ impl<'a> Engine<'a> {
         // figures than the definition allows, whichever conversion --
         // writing, representing or quoting -- asked for the text.
         if matches!(value.contents(), Value::Huge(_)) { self.digits_shown(value)?; }
+        // A cell a closure keeps a name in is written with the
+        // identities of the cell and of what it holds, as the
+        // reference writes its own cells, before any walk of a
+        // collection considers what the cell stands in for.
+        if let Value::Adapter(w) = value {
+            if w.0 == 31 {
+                let words = &self.lang.cell_repr;
+                if words.len() < 5 { return Ok(value.display(&self.wording())); }
+                let here = self.core_call(Builtin::Identity, "id", vec![value.clone()], Vec::new())?;
+                let one = match here { Value::Small(n) => format!("{n:x}"), other => other.plain().trim_start_matches("0x").to_string() };
+                return Ok(match Self::cell_held(w) {
+                    Some(held) => {
+                        let at = self.core_call(Builtin::Identity, "id", vec![held.clone()], Vec::new())?;
+                        let two = match at { Value::Small(n) => format!("{n:x}"), other => other.plain().trim_start_matches("0x").to_string() };
+                        format!("{}{}{}{}{}{}{}", words[0], one, words[1], held.core_kind(), words[2], two, words[3])
+                    },
+                    None => format!("{}{}{}{}{}", words[0], one, words[1], words[4], words[3]),
+                });
+            }
+        }
         // Where the definition asks it, a collection reads the same
         // whether or not a representation was asked for: the members
         // inside it are always written as representations, so that text
@@ -16378,6 +16398,15 @@ impl<'a> Engine<'a> {
                 let path = std::path::PathBuf::from(args[0].display(&sp));
                 Value::Small(if path.is_file() { 1 } else if path.is_dir() { 2 } else { 0 })
             }
+            // Whether the name given is a link standing for somewhere
+            // else: asked of the link itself, and not of whatever
+            // stands at its far end.
+            Builtin::FileLink => {
+                arity(1)?;
+                let sp = self.wording();
+                let path = std::path::PathBuf::from(args[0].display(&sp));
+                Value::Flag(std::fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(false))
+            }
             // The working directory (or nothing), the word for the
             // system, the word for the machine, and the environment as
             // a map, in that order.
@@ -19383,6 +19412,25 @@ impl Engine<'_> {
                 // A whole number is quoted only where it holds no more
                 // figures than the definition allows.
                 if matches!(args[0].contents(), Value::Huge(_)) { self.digits_shown(&args[0])?; }
+                // A cell a closure keeps a name in is written with the
+                // identities of the cell and of what it holds.
+                if let Value::Adapter(w) = &args[0] {
+                    if w.0 == 31 {
+                        let words = &self.lang.cell_repr;
+                        if words.len() >= 5 {
+                            let here = self.core_call(Builtin::Identity, name, vec![args[0].clone()], Vec::new())?;
+                            let one = match here { Value::Small(n) => format!("{n:x}"), other => other.plain().trim_start_matches("0x").to_string() };
+                            return Ok(Value::text(&match Self::cell_held(w) {
+                                Some(held) => {
+                                    let at = self.core_call(Builtin::Identity, name, vec![held.clone()], Vec::new())?;
+                                    let two = match at { Value::Small(n) => format!("{n:x}"), other => other.plain().trim_start_matches("0x").to_string() };
+                                    format!("{}{}{}{}{}{}{}", words[0], one, words[1], held.core_kind(), words[2], two, words[3])
+                                },
+                                None => format!("{}{}{}{}{}", words[0], one, words[1], words[4], words[3]),
+                            }));
+                        }
+                    }
+                }
                 // A cursor is written by its kind and its identity, and
                 // the writing does not advance it; so is a walk of this
                 // kernel's own making, such as a map walked backwards,
@@ -19437,6 +19485,14 @@ impl Engine<'_> {
                         return Ok(Value::Small(match &*cell.borrow() { Value::Collection(inner, _) => Rc::as_ptr(inner) as usize as i64, _ => Rc::as_ptr(cell) as usize as i64 }));
                     }
                     Value::Collection(cell, _) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
+                    // A cell a closure keeps a name in is known by the
+                    // cell itself, the same however many facades of it
+                    // a program has taken hold of.
+                    Value::Adapter(w) if w.0 == 31 => {
+                        if let Some(Value::Binding(place)) | Some(Value::Bond(place)) = w.1.first() {
+                            return Ok(Value::Small(Rc::as_ptr(place) as usize as i64));
+                        }
+                    }
                     _ => {}
                 }
                 let held = args[0].contents();
