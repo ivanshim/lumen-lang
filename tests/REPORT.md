@@ -653,3 +653,19 @@ Not spelled:
 | `python/test_unary.py` | error | error | Uncaught test run failed |
 | `python/test_unpack.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
 | `python/test_with.py` | error | error | Invalid assignment target before '=' |
+
+
+## JSON package validation
+
+The pinned `python/test_json/` package is discovered through its `__main__.py`
+entry point. Its suite contains 233 cases, including two doctest cases whose
+examples total 32 on each full kernel. The CLI file now imports its real library
+dependencies: all 34 CLI methods ran in the official Lambda class and method
+groups on each kernel, with 32 passes and two existing color capability skips.
+The `_json` interface has its own scanner and encoder implementations; fresh
+and blocked imports retain the optional-module semantics.
+
+These grouped runs are distinct from a whole-package certification. Whole
+Lambda invocations have exceeded their 870-second limit; no whole-package pass
+is claimed here. Existing generated reference rows above remain as recorded;
+CI's reference regression check compares the existing pass rows.
