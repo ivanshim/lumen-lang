@@ -570,11 +570,22 @@ impl Value {
         self
     }
 
+    pub fn proxy_pairs(&self) -> Value {
+        if let Value::Blueprint(blueprint) = self {
+            let fields = blueprint.shared.borrow();
+            return Value::Dict(Rc::new(fields.iter().filter_map(|(word, held)| {
+                if word.starts_with('\0') || word.starts_with('#') { None }
+                else { Some((Value::text(word), held.clone())) }
+            }).collect()));
+        }
+        self.settled()
+    }
+
     pub fn settled(&self) -> Value {
         if let Value::Mutable(place, _) | Value::Shared(place) = self { return place.borrow().settled(); }
         if let Value::Window(owner, portion) = self {
             let mut items=Vec::new();
-            if let Value::Dict(entries)=owner.settled() {
+            if let Value::Dict(entries)=owner.proxy_pairs() {
                 // A window upon the pairs shows each of them as a
                 // tuple, which is what it is: a pair written between
                 // round marks, of the kind a pair may be a key by, and
@@ -1069,7 +1080,20 @@ impl Value {
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
-            (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+            (Value::Thing(a), Value::Thing(b)) => {
+                let is_union = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "Union"));
+                if is_union(a) && is_union(b) {
+                    let args = |thing: &Thing| thing.holds.borrow().iter().find_map(|(name, item)| {
+                        if name != "__args__" { return None; }
+                        if let Value::Tuple(row) = item { Some(row.to_vec()) } else { None }
+                    });
+                    if let (Some(left), Some(right)) = (args(a), args(b)) {
+                        return left.len() == right.len() && right.iter().all(|item| left.iter().any(|candidate| candidate.equals(item)));
+                    }
+                    return false;
+                }
+                Rc::ptr_eq(a, b)
+            },
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
             // Code read off two routines is the one code where both
@@ -1152,7 +1176,7 @@ impl Value {
             Value::Mutable(cell, true) => within_cell(cell, |inner| inner.repr(&w)),
             Value::Mutable(cell, false) => within_cell(cell, |inner| inner.render(w)),
             Value::Row(_) => self.repr(&w),
-            Value::Window(owner, 'm') => format!("mappingproxy({})", owner.settled().repr(&w)),
+            Value::Window(owner, 'm') => format!("mappingproxy({})", owner.proxy_pairs().repr(&w)),
             Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
             Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
@@ -1478,6 +1502,9 @@ impl Value {
     /// CPython 3.11 has it.
     pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
         match kind {
+            "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
+            "function" if name == "__globals__" => Some(("member", "member_descriptor")),
+            "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),
             "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
             "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),
             "range" | "slice" if matches!(name, "start" | "stop" | "step") => Some(("member", "member_descriptor")),

@@ -57,14 +57,16 @@ impl Value {
                 IteratorKind::Select(..) => "filter",
                 _ => state.walks.as_deref().unwrap_or("iterator"),
             })),
+            Self::Backtrace(_) => "traceback",
             Self::Span(_) => "slice", Self::Ellipsis => "ellipsis", Self::Refusal(_) => "NotImplementedType",
             Self::Blueprint(_) | Self::KindOf(_) | Self::OctetKind { .. } => "type",
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
+            Self::Wrapped(130, _) => "function",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
-            Self::Wrapped(120, _) => "wrapper_descriptor",
+            Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
             Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
@@ -72,6 +74,7 @@ impl Value {
             Self::Wrapped(7, _) => "code",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
+            Self::Wrapped(3, _) => "method-wrapper",
             // A method or a data member read off a native kind's own
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same

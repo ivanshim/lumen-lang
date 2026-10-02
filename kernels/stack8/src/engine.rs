@@ -5901,6 +5901,12 @@ impl<'a> Engine<'a> {
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
         };
+        if word.as_ref() == "function" && [self.class_word("code"), self.class_word("globals")].contains(&name) {
+            return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));
+        }
+        if word.as_ref() == "dict" && self.lang.value_methods.get(name).map(String::as_str) == Some("fromkeys") {
+            return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));
+        }
         let sample = self.kind_sample(&word)?;
         if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
             return Some(Value::Native(Builtin::Text(crate::strings::TextOp::Maketrans), Rc::from(name)));
@@ -5924,6 +5930,11 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if let Value::View(view) = value {
+            if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
+                return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));
+            }
+        }
         if let Some(directory) = self.builtin_directory_method(value, name) { return Ok(Some(directory)); }
         // A view of a map's keys, values or pairs keeps a reading of
         // the map itself under this name: a fresh view of its own,
@@ -5956,10 +5967,11 @@ impl<'a> Engine<'a> {
                 other => self.kind_spelled(other),
             };
             if let Some(kind) = kind {
-                let mut keys = self.kind_special_names(&kind);
+                let mut keys = self.kind_sample(&kind).map_or_else(Vec::new, |sample| self.kind_member_names(&sample));
+                if kind.as_ref() == "dict" { keys.extend(self.lang.value_methods.iter().filter(|(_, op)| op.as_str() == "fromkeys").map(|(word, _)| word.clone())); }
                 keys.push(name.to_string());
-                let members:Vec<(Value,Value)>=keys.into_iter().map(|key| {
-                    (Value::text(&key),Value::text(&format!("<attribute '{key}' of '{kind}' objects>")))
+                let members: Vec<(Value, Value)> = keys.into_iter().filter_map(|key| {
+                    self.loose_kind_member(&held, &key).map(|member| (Value::text(&key), member))
                 }).collect();
                 let map=Value::Map(Rc::new(members.into()));
                 return Ok(Some(Value::View(Rc::new((map,"mapping".to_string())))));
@@ -7428,16 +7440,7 @@ impl<'a> Engine<'a> {
             if let Value::Native(kind, name) = a {
                 if matches!(kind, Builtin::List | Builtin::Tuple | Builtin::Dict | Builtin::Set | Builtin::Frozen)
                     && matches!(name.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset") {
-                    let module = match self.import_module("types") {
-                        Ok(module) => module,
-                        Err(Fault::Note(words)) => return Err(words),
-                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-                    };
-                    let maker = match self.class_get(module, "GenericAlias", false) {
-                        Ok(maker) => maker,
-                        Err(Fault::Note(words)) => return Err(words),
-                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-                    };
+                    let maker = Value::Class(self.kind_class("GenericAlias"));
                     return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
                         Ok(alias) => Ok(alias),
                         Err(Fault::Note(words)) => Err(words),
@@ -9633,7 +9636,9 @@ impl<'a> Engine<'a> {
                 };
                 if self.fuller_classes() {
                     let mut members=take(&plan.shared_names);
-                    members.extend(plan.methods.iter().map(|(n,p)|(n.clone(),Value::Routine(p.clone()))));
+                    for (name, method) in &plan.methods {
+                        if !members.iter().any(|(bound, _)| bound == name) { members.push((name.clone(), Value::Routine(method.clone()))); }
+                    }
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
                     // its current pairs replace whatever a place of the
@@ -11626,6 +11631,9 @@ impl<'a> Engine<'a> {
         // A view of a map's keys or pairs meets a set, or another view,
         // as a set does under the set signs; elsewhere it stands for
         // its items.
+        if matches!(op, Action::At) {
+            if let Value::View(window) = a { if window.1 == "mapping" { return self.element(&window.0.proxy_dictionary(), b, Reading::Plain); } }
+        }
         if matches!(a, Value::View(_)) || matches!(b, Value::View(_)) {
             // The reading of the map itself answers `==` as the map
             // does: every key with its very value, not merely its keys.
@@ -11633,7 +11641,7 @@ impl<'a> Engine<'a> {
                 let pairs_of = |v: &Value| -> Option<Rc<crate::value::KeyedPairs>> {
                     match v {
                         Value::Map(pairs) => Some(pairs.clone()),
-                        Value::View(view) if view.1 == "mapping" => match view.0.contents() { Value::Map(pairs) => Some(pairs), _ => None },
+                        Value::View(view) if view.1 == "mapping" => match view.0.proxy_dictionary() { Value::Map(pairs) => Some(pairs), _ => None },
                         _ => None,
                     }
                 };
@@ -11704,7 +11712,7 @@ impl<'a> Engine<'a> {
         // another union; but at least one side must itself be a kind or
         // an already-built union; `None` on both sides is no union.
         if matches!(op, Action::BitEither) && self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
-            return Ok(Value::tuple(vec![a.clone(), b.clone()]));
+            return Ok(self.join_types(a, b));
         }
         // Rows, tuples and text as a language of sequences works them:
         // adding joins two of one kind, multiplying repeats one a whole
@@ -12861,6 +12869,9 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::View(window) = target {
+            if window.1 == "mapping" { return self.element(&window.0.proxy_dictionary(), at, how); }
+        }
         if matches!(target, Value::Collection(..) | Value::Bond(_) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if let Some(cell) = self.walked_set(target)? {
             let held = cell.borrow();
@@ -13443,7 +13454,7 @@ impl<'a> Engine<'a> {
         let turned;
         let args = if op == SetDisjoint && matches!(args.first(), Some(Value::View(view)) if view.1 != "values" && view.1 != "mapping") {
             let Some(Value::View(view)) = args.first() else { unreachable!() };
-            let items = match view.0.contents() { Value::Map(pairs) => pairs.iter().map(|(k, v)| {
+            let items = match view.0.proxy_dictionary() { Value::Map(pairs) => pairs.iter().map(|(k, v)| {
                 let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
                 if view.1 == "keys" { bare } else { Value::tuple(vec![bare, v.clone()]) }
             }).collect(), _ => Vec::new() };
@@ -14057,6 +14068,15 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if let Value::View(view) = receiver {
+            if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&operation) {
+                if let Value::Class(_) = &view.0 {
+                    if args.is_empty() && named.is_empty() && matches!(operation, "keys" | "values" | "items") { return Ok(Value::View(Rc::new((view.0.clone(), operation.to_string())))); }
+                    return self.value_method(&view.0.proxy_dictionary(), operation, args, named);
+                }
+                return self.value_method(&view.0, operation, args, named);
+            }
+        }
         if self.builtin_directory_method(receiver, operation).is_some() {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             return Ok(self.default_directory(receiver));
@@ -14114,8 +14134,8 @@ impl<'a> Engine<'a> {
             let entries = Self::fields_entries(&object);
             let map = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(entries.into())))), true);
             let result = self.value_method(&map, operation, args, named);
-            if let Value::Map(entries) = map.contents() {
-                Self::fields_restore(&object, entries.iter().cloned().collect());
+            if matches!(operation, "setdefault" | "update" | "pop" | "popitem" | "clear") {
+                if let Value::Map(entries) = map.contents() { Self::fields_restore(&object, entries.iter().cloned().collect()); }
             }
             return result;
         }
@@ -15809,6 +15829,15 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if matches!(builtin, Builtin::Replace | Builtin::Restore | Builtin::Erase) {
+            fn proxy(value: &Value) -> bool { match value {
+                Value::View(w) => w.1 == "mapping",
+                Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => proxy(&c.borrow()),
+                _ => false,
+            } }
+            if (if builtin == Builtin::Erase { args.first() } else { args.last() }).is_some_and(proxy) { return Err(format!("TypeError: 'mappingproxy' object does not support item {}", if builtin == Builtin::Erase { "deletion" } else { "assignment" })); }
+        }
+
         if builtin == Builtin::Math && self.lang.math_sumprod
             && matches!(args.first().map(Value::contents), Some(Value::Text(word)) if word.as_ref() == "sumprod") {
             if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
@@ -19062,7 +19091,7 @@ impl Engine<'_> {
 
     /// The size of the map a window looks upon.
     fn window_size(window: &Value) -> (usize, u64) {
-        match window { Value::View(view) => match view.0.contents() { Value::Map(pairs) => (pairs.len(), pairs.revision), _ => (0, 0) }, _ => (0, 0) }
+        match window { Value::View(view) => match view.0.proxy_dictionary() { Value::Map(pairs) => (pairs.len(), pairs.revision), _ => (0, 0) }, _ => (0, 0) }
     }
 
     /// What iter is handed before its cell is opened: a list's own cell,
@@ -19257,7 +19286,7 @@ impl Engine<'_> {
             if matches!(b, Builtin::SetAttr | Builtin::DelAttr) && matches!(args.first(), Some(Value::Generator(_))) {
                 return self.class_work(if b == Builtin::SetAttr { 4 } else { 5 }, args).map_err(|fault| fault.told(&self.wording()));
             }
-            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || (matches!(b, Builtin::SetAttr | Builtin::DelAttr) && self.stands_for_kind(v))) {
+            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || self.stands_for_kind(v)) {
                 let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
                 if let Some(work) = work {
                     return match self.class_work(work, args) {
@@ -19365,7 +19394,7 @@ impl Engine<'_> {
                 }
                 if let Some(view) = window {
                     return Ok(Value::text(&if view.1 == "mapping" {
-                        format!("mappingproxy({})", view.0.contents().core_repr(self.lang.shortest_reals))
+                        format!("mappingproxy({})", self.special_text(&view.0.proxy_dictionary(), true)?)
                     } else {
                         format!("dict_{}({})", view.1, args[0].core_repr(self.lang.shortest_reals))
                     }));
@@ -20652,7 +20681,12 @@ impl Engine<'_> {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
         let book = if kind == Builtin::OuterNames || program.body_of_all {
-            self.book_here(kind == Builtin::OuterNames)
+            let loaded = program.written_in.as_ref().and_then(|source| self.module_slots.get(source))
+                .and_then(|(_, path)| self.modules.get(path));
+            if self.reading_in.is_none() {
+                if let Some(Value::Object(module)) = loaded { Rc::new(RefCell::new(Value::Fields(module.clone()))) }
+                else { self.book_here(kind == Builtin::OuterNames) }
+            } else { self.book_here(kind == Builtin::OuterNames) }
         } else {
             let mut pairs = Vec::new();
             for (name, held) in program.idents.iter().zip(frame.iter()) {
@@ -20727,7 +20761,7 @@ impl Engine<'_> {
     fn dyn_lookup(&mut self, held: &Value, name: &str) -> Flow<Option<Value>> {
         match held {
             Value::Map(pairs) => Ok(pairs.iter().find(|(key, _)| key_spells(key, name)).map(|(_, v)| v.clone())),
-            Value::View(w) if w.1 == "mapping" => self.dyn_lookup(&w.0.clone(), name),
+            Value::View(w) if w.1 == "mapping" => self.dyn_lookup(&w.0.proxy_dictionary(), name),
             // Anything else is read the very way any subscript reads
             // it, so a value with no way to answer a key at all is
             // named so, rather than silently standing for an empty
@@ -21378,7 +21412,7 @@ impl Engine<'_> {
             };
             if let Some(held) = &existing {
                 let kept = held.contents();
-                if !matches!(kept, Value::Map(_) | Value::Object(_)) {
+                if held.core_kind() != "mappingproxy" && !matches!(kept, Value::Map(_) | Value::Object(_)) {
                     return Err(format!("TypeError: '{}' object is not subscriptable", kept.core_kind()));
                 }
             }

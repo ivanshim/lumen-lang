@@ -5816,7 +5816,9 @@ impl<'a> Machine<'a> {
                 let constants = named(&plan.constant_names);
                 if self.has_class_order() {
                     let mut entries=shared;
-                    entries.extend(plan.methods.iter().map(|(key,p)|(key.clone(),Value::Routine(p.clone()))));
+                    for (word, body) in plan.methods.iter() {
+                        if entries.iter().all(|(key, _)| key != word) { entries.push((word.to_owned(), Value::Routine(body.clone()))); }
+                    }
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
                     // its current pairs replace whatever a place of the
@@ -6264,6 +6266,14 @@ impl<'a> Machine<'a> {
                     let mut key = values.pop().map(|k| self.as_key_spoken(&k));
                     if self.rules.has_any_ext_stmt_class_special {
                         let original = self.fetch(slot, frame)?;
+                        fn readonly_mapping(value: &Value) -> bool {
+                            match value {
+                                Value::Window(_, 'm') => true,
+                                Value::Shared(cell) | Value::Mutable(cell, _) => readonly_mapping(&cell.borrow()),
+                                _ => false,
+                            }
+                        }
+                        if readonly_mapping(&original) { return Err(String::from("TypeError: 'mappingproxy' object does not support item assignment").into()); }
                         // A thing over a native worth is written into
                         // through that worth, where its blueprint has no
                         // method of its own for the writing.
@@ -7437,6 +7447,12 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
             _ => return None,
         };
+        if word == "function" && (name == self.detail("code") || name == self.detail("globals")) {
+            return Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into()));
+        }
+        if word == "dict" && self.table.spells("ext.builtin.method.fromkeys", name) {
+            return Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into()));
+        }
         let stand_in = self.kind_stand_in(&word)?;
         if let (Value::Text(_), Some(op @ Prim::Textual(crate::text::Work::MAKETRANS))) = (&stand_in, self.table.prims.get(name)) {
             return Some(Value::Intrinsic(*op, Rc::from(name)));
@@ -7478,6 +7494,9 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if matches!(value, Value::Window(_, 'm')) && matches!(name, "get" | "keys" | "values" | "items" | "copy") {
+            return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
+        }
         if self.rules.has_any_ext_stmt_class_special && name == self.rules.detail_receiver {
             if let Value::Member(owner, _) = value.settled() { return Some(owner.as_ref().clone()); }
         }
@@ -7544,12 +7563,12 @@ impl<'a> Machine<'a> {
                 other => self.kind_spelling(other),
             };
             if let Some(word)=named {
-                let mut methods=self.kind_member_names(&word);
-                methods.push(name.to_owned());
-                let entries:Vec<(Value,Value)>=methods.into_iter().map(|member| {
-                    let detail=format!("<attribute '{member}' of '{word}' objects>");
-                    (Value::text(&member),Value::text(&detail))
-                }).collect();
+                let mut methods = self.kind_stand_in(&word).map_or_else(Vec::new, |sample| self.native_directory(&sample));
+                if word.as_ref() == "dict" { methods.extend(self.table.strings("ext.builtin.method.fromkeys").iter().cloned()); }
+                let entries = methods.iter().filter_map(|member| {
+                    let descriptor = self.carried_by_kind(&actual, member)?;
+                    Some((Value::text(member), descriptor))
+                }).collect::<Vec<_>>();
                 return Some(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))),'m'));
             }
         }
@@ -8081,6 +8100,18 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if let Value::Window(owner, 'm') = receiver {
+            if matches!(name, "get" | "keys" | "values" | "items" | "copy") {
+                if matches!(owner.as_ref(), Value::Blueprint(_)) {
+                    if arguments.is_empty() && keywords.is_empty() {
+                        let portion = match name { "keys" => Some('k'), "values" => Some('v'), "items" => Some('i'), _ => None };
+                        if let Some(portion) = portion { return Ok(Value::Window(owner.clone(), portion)); }
+                    }
+                    return self.value_member(&owner.proxy_pairs(), name, arguments, keywords);
+                }
+                return self.value_member(owner, name, arguments, keywords);
+            }
+        }
         if self.directory_attribute(receiver, name).is_some() {
             if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
             return Ok(self.ordinary_directory(receiver));
@@ -8133,8 +8164,8 @@ impl<'a> Machine<'a> {
             let snapshot = Self::attribute_entries(&owner);
             let storage = Rc::new(RefCell::new(Value::Dict(Rc::new(snapshot.into()))));
             let outcome = self.value_member(&Value::Mutable(storage.clone(), true), name, arguments, keywords);
-            if let Value::Dict(changed) = &*storage.borrow() {
-                Self::attribute_restore(&owner, changed.iter().cloned().collect());
+            if matches!(name, "clear" | "popitem" | "pop" | "update" | "setdefault") {
+                if let Value::Dict(changed) = &*storage.borrow() { Self::attribute_restore(&owner, changed.iter().cloned().collect()); }
             }
             return outcome;
         }
@@ -13020,8 +13051,7 @@ impl<'a> Machine<'a> {
                 let eligible = matches!(kind, Prim::Listed | Prim::Tupling | Prim::Dictionary | Prim::Uniques | Prim::Unchanging)
                     && matches!(label.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset");
                 if eligible {
-                    let namespace = self.load_namespace("types")?;
-                    let alias_class = self.namespace_item(&namespace, "types", "GenericAlias")?;
+                    let alias_class = Value::Blueprint(self.native_kind("GenericAlias"));
                     let made = self.apply_class_member(alias_class, vec![operands[0].clone(), parameter.clone()]);
                     return made.map(Some).map_err(|escape| self.suspension_fault(escape));
                 }
@@ -14404,6 +14434,16 @@ impl<'a> Machine<'a> {
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Placed | Prim::Erase) {
+            fn proxy(held: &Value) -> bool { match held {
+                Value::Window(_, 'm') => true,
+                Value::Shared(c) | Value::Mutable(c, _) => proxy(&c.borrow()),
+                _ => false,
+            } }
+            if v.first().is_some_and(proxy) {
+                return Err(format!("TypeError: 'mappingproxy' object does not support item {}", if op == Prim::Erase { "deletion" } else { "assignment" }));
+            }
+        }
         if self.reads_manners() && matches!(op, Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
             return self.text_operation(op, name, v);
         }
@@ -14502,7 +14542,7 @@ impl<'a> Machine<'a> {
                     let pairs_of = |value: &Value| -> Option<Vec<(Value, Value)>> {
                         match value {
                             Value::Dict(pairs) => Some(pairs.to_vec()),
-                            Value::Window(owner, 'm') => match owner.settled() { Value::Dict(pairs) => Some(pairs.to_vec()), _ => None },
+                            Value::Window(owner, 'm') => match owner.proxy_pairs() { Value::Dict(pairs) => Some(pairs.to_vec()), _ => None },
                             held => {
                                 let plain=Self::underlying(held).unwrap_or_else(|| held.clone()).settled();
                                 if let Value::Dict(pairs)=plain { Some(pairs.to_vec()) } else { None }
@@ -14545,6 +14585,9 @@ impl<'a> Machine<'a> {
         // answers to as a set does, needs the view whole to tell that
         // apart from a view of its values, which answers to no set
         // working at all.
+        if let (Prim::At, [Value::Window(owner, 'm'), key]) = (op, v) {
+            return self.element(&owner.proxy_pairs(), key, Reading::Plain);
+        }
         let view_kept = matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14));
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
@@ -14565,7 +14608,7 @@ impl<'a> Machine<'a> {
         // no union.
         if let (Prim::BitsEither, [a, b]) = (op, v) {
             if self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
-                return Ok(Value::tuple(vec![a.clone(), b.clone()]));
+                return Ok(self.combined_types(v));
             }
         }
         // Rows, tuples and text as a language of sequences works them.
@@ -18407,6 +18450,7 @@ impl<'a> Machine<'a> {
                 }
             };
         }
+        if let Value::Window(owner, 'm') = target { return self.element(&owner.proxy_pairs(), at, how); }
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;
@@ -20558,7 +20602,12 @@ impl<'a> Machine<'a> {
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
         let book = if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
-            self.book_about(op == Prim::WorldBook)
+            let origin = self.frames_named.last().and_then(|body| body.written_in.as_ref());
+            let imported = origin.and_then(|file| self.loaded_spaces.get(file)).and_then(|word| self.imported.get(word));
+            match (self.reading_now, imported) {
+                (None, Some(Value::Thing(module))) => Rc::new(RefCell::new(Value::Attributes(module.clone()))),
+                _ => self.book_about(op == Prim::WorldBook),
+            }
         } else {
             let mut entries = Vec::new();
             if let Some(program) = self.frames_named.last() {
@@ -20645,7 +20694,7 @@ impl<'a> Machine<'a> {
     fn mapping_read(&mut self, held: &Value, name: &str) -> Result<Option<Value>, Escape> {
         match held {
             Value::Dict(entries) => Ok(entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, v)| v.clone())),
-            Value::Window(owner, 'm') => { let owner = owner.as_ref().clone(); self.mapping_read(&owner, name) }
+            Value::Window(owner, 'm') => { let dictionary = owner.proxy_pairs(); self.mapping_read(&dictionary, name) }
             _ => match self.prim(Prim::At, "", &[held.clone(), Value::text(name)]) {
                 Ok(v) => Ok(Some(v)),
                 Err(words) => {
@@ -21169,6 +21218,9 @@ impl<'a> Machine<'a> {
                                         Value::Shared(_) => held,
                                         other => Value::Shared(Rc::new(RefCell::new(other))),
                                     }))
+                                }).or_else(|| match parts.as_slice() {
+                                    [Value::Shared(cell)] => Some(Some(Value::Shared(cell.clone()))),
+                                    _ => None,
                                 }),
                                 thing @ Value::Thing(_) => self.read_class_member(thing, "cell_contents", false).ok()
                                     .map(|content| Some(Value::Shared(Rc::new(RefCell::new(content))))),
@@ -21209,6 +21261,9 @@ impl<'a> Machine<'a> {
                                         Some(cell)
                                     }
                                 }
+                            }).or_else(|| match items.as_slice() {
+                                [Value::Shared(cell)] => Some(cell.clone()),
+                                _ => None,
                             }),
                             thing @ Value::Thing(_) => self.read_class_member(thing, "cell_contents", false).ok()
                                 .map(|content| Rc::new(RefCell::new(content))),
@@ -21283,7 +21338,7 @@ impl<'a> Machine<'a> {
             };
             if let Some(value) = &already {
                 let kept = value.settled();
-                if !matches!(kept, Value::Dict(_) | Value::Thing(_)) {
+                if value.kind_word() != "mappingproxy" && !matches!(kept, Value::Dict(_) | Value::Thing(_)) {
                     return Err(format!("TypeError: '{}' object is not subscriptable", kept.kind_word()));
                 }
             }
@@ -22162,7 +22217,7 @@ impl Machine<'_> {
 
     /// How many entries the dictionary behind a window holds.
     fn window_extent(window: &Value) -> (usize, u64) {
-        match window { Value::Window(owner, _) => match owner.settled() { Value::Dict(entries) => (entries.len(), entries.serial), _ => (0, 0) }, _ => (0, 0) }
+        match window { Value::Window(owner, _) => match owner.proxy_pairs() { Value::Dict(entries) => (entries.len(), entries.serial), _ => (0, 0) }, _ => (0, 0) }
     }
 
     /// The cell a list lives in, or a window upon a dictionary, taken as
@@ -22287,7 +22342,7 @@ impl Machine<'_> {
         // iter is handed is looked at before it is settled into a copy.
         let live = if op == Prim::Iterator && input.len() == 1 { Self::live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
-        let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some(owner.settled()), _ => None };
+        let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some(owner.proxy_pairs()), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
         // one; the value is kept before it settles into a copy.
@@ -22319,7 +22374,7 @@ impl Machine<'_> {
                 let job = if op == Prim::SetMember { 4 } else { 5 };
                 return self.work_on_class(job, input).map_err(|fault| self.suspension_fault(fault));
             }
-            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || (matches!(op, Prim::SetMember | Prim::DropMember) && self.stands_for_a_kind(v))) {
+            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || self.stands_for_a_kind(v)) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
                 if let Some(job) = job {
                     let outcome = self.work_on_class(job, input);
@@ -22433,7 +22488,8 @@ impl Machine<'_> {
                 // A reading of the map itself is quoted as the map is,
                 // under the name CPython gives it.
                 if let Some(owner) = &window_owner {
-                    return Ok(Value::text(&format!("mappingproxy({})", owner.quoted(self.rules.lone_system_real_render == Some("shortest")))));
+                    let rendering = self.object_words(owner, true)?;
+                    return Ok(Value::text(&format!("mappingproxy({rendering})")));
                 }
                 let quoted = input[0].quoted(self.rules.lone_system_real_render == Some("shortest"));
                 // A window upon a dictionary is quoted under its own name.
