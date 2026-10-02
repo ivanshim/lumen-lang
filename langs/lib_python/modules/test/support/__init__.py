@@ -1365,10 +1365,11 @@ def _discover_package_tests(pkg_dir, loader, top_dir, pattern):
             if package:
                 if not os.path.isfile(os.path.join(path, '__init__.py')):
                     continue
-            elif not filename.endswith('.py') or not filename[:-3].isidentifier():
-                continue
-            if not fnmatch.fnmatch(filename, pattern):
-                continue
+            else:
+                if (not filename.endswith('.py')
+                        or not filename[:-3].isidentifier()
+                        or not fnmatch.fnmatch(filename, pattern)):
+                    continue
             absolute = os.path.abspath(path)
             if not absolute.startswith(prefix):
                 raise ImportError('test package is outside the top level directory')
