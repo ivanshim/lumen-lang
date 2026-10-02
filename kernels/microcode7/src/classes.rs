@@ -118,7 +118,7 @@ impl<'a> Machine<'a> {
             for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
                 if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
             }
-            for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
+            for word in [14, 15, 21, 24].iter().filter_map(|i| self.table.strings("ext.builtin.exceptions.traceback").get(*i).cloned()) {
                 if !word.is_empty() { names.push(word); }
             }
             names.sort();names.dedup();
@@ -775,6 +775,10 @@ impl<'a> Machine<'a> {
                         for (word, held) in keywords { positional.push(Value::Couple(Rc::new((Value::text(&word), held)))); }
                         self.construct_plainly(target, positional)
                     }
+                    143 => {
+                        if !values.is_empty() { return Err(String::from("TypeError: this code object takes no arguments").into()); }
+                        self.text_performed(true, "eval", &kept[..2]).map_err(|message| self.got_away.take().unwrap_or(Escape::Error(message)))
+                    }
                     43 => {
                         if let Some(first) = values.first() { self.make_iterator(first.clone())?; }
                         self.apply_class_member(kept[0].clone(), values)
@@ -984,6 +988,16 @@ impl<'a> Machine<'a> {
     /// Making a thing of a class. A class built by a metaclass is called
     /// through that metaclass's own call, which says what comes of it.
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        if Self::native_word(&class).as_deref() == Some("function") {
+            let (inputs, named) = self.open_arguments(given.clone())?;
+            if inputs.first().is_some_and(|value| matches!(value.settled(), Value::Thing(code) if self.table.single("ext.builtin.compile.kind").is_some_and(|word| word == code.blueprint().name))) {
+                if inputs.len() < 2 || inputs.len() > 3 || !named.is_empty() { return Err(String::from("TypeError: invalid function arguments").into()); }
+                if !matches!(inputs[1].settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+                let name = inputs.get(2).cloned().unwrap_or_else(|| Value::text("<module>"));
+                if !matches!(name.settled(), Value::Text(_) | Value::Nil) { return Err(String::from("TypeError: function() argument 'name' must be str").into()); }
+                return Ok(Self::wrap(143, vec![inputs[0].clone(), inputs[1].clone(), name]));
+            }
+        }
         if (class.name == "FunctionType" || Self::native_word(&class).as_deref() == Some("function")) && self.table.has_any("ext.builtin.exceptions.traceback") && matches!(given.first().map(Value::settled), Some(Value::Wrapped(7, _))) {
             let (positional, keywords) = self.open_arguments(given)?;
             let mut options = vec![None; 5];
@@ -1691,6 +1705,15 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if let Value::Wrapped(143, payload) = value.settled() {
+            for (word, position) in [("code", 0), ("globals", 1), ("name", 2), ("qualified", 2)] {
+                if key == self.detail(word) { return Ok(payload[position].clone()); }
+            }
+            if key == self.detail("kind") { return Ok(Value::Blueprint(self.native_kind("function"))); }
+            if key == self.detail("call") { return Ok(value.clone()); }
+            if ["defaults", "keywords", "closure"].iter().any(|word| key == self.detail(word)) { return Ok(Value::Nil); }
+        }
+
         if let Value::Wrapped(125, parts) = &value {
             if ["descriptor.get", "descriptor.set", "descriptor.delete"].iter().any(|field| self.detail(field) == key) {
                 return Ok(Self::wrap(126, vec![value.clone(), Value::text(key)]));
@@ -2687,7 +2710,7 @@ impl<'a> Machine<'a> {
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         // A method or a data member read off a native kind's own word
         // is of the descriptor kind CPython gives it.
-        if let [Value::Wrapped(3|4|5|7|14|35|60|62|120,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        if let [Value::Wrapped(3|4|5|7|14|35|60|62|120|143,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind
@@ -2702,6 +2725,7 @@ impl<'a> Machine<'a> {
             own.extend(options.into_iter().map(|(name, value)| (format!("\0handed:{name}"), value)));
             return self.build_named_class(title_object.unwrap_or_else(|| Value::text(title)),parents,own);
         }
+        if values.len() == 1 { return Ok(self.kind_named_after(&values[0])); }
         Err("TypeError: type() requires a name, a tuple of bases, and a dict".to_owned().into())
     }
     /// A class whose metaclass keeps the entry for one of these
@@ -2769,7 +2793,7 @@ impl<'a> Machine<'a> {
     /// own for, named as the reference names that kind. It is built
     /// once and kept, so two askings answer with the very same one.
     pub(super) fn kind_named_after(&mut self,value:&Value)->Value{
-        let word=if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
+        let word=if matches!(value, Value::Wrapped(143, _)) { String::from("function") } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
         // A table spelling that very kind answers with its intrinsic
         // word, so that the kind asked for and the kind answered with
         // are one value: `type(enumerate(r)) is enumerate`.
@@ -2917,6 +2941,7 @@ impl<'a> Machine<'a> {
         if op == 16 { return self.dispatch_class_builder(values); }
         if op == 18 { return self.class_namespace_read(values); }
         if op == 19 || op == 20 { return self.class_namespace_write(values, op == 20); }
+        if op == 21 { return self.require_generator_cursor(values.remove(0)); }
         if matches!(op, 3|4|5|6) {
             if let Some(name) = values.get_mut(1) {
                 if let Some(text @ Value::Text(_)) = Self::underlying(name) { *name = text; }
@@ -2938,7 +2963,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=72))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|50..=57|59|60|70..=72|143))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

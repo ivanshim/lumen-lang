@@ -42,3 +42,10 @@ a runtime limitation.
 `_ordering` preserves the inherited stable-ordering runtime helper outside the
 unchanged upstream `heapq` source. The existing `pprint` and `statistics` adapters
 import it directly; their algorithms are unchanged.
+
+Compiled module code can be used with the native function constructor and
+executes through the existing code reader, retaining its code and globals.
+That constructor currently accepts positional code, globals and an optional
+name for module code; the remaining optional constructor arguments are not
+yet supported on this code representation. Generator expression operands
+retain their `.0` binding and are checked as iterators when resumed.

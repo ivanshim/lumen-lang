@@ -649,6 +649,7 @@ pub struct Machine<'a> {
     /// own. The text is read as a piece of that routine, so the
     /// routine's names are its own to read.
     text_within: Option<(Vec<String>, Rc<Env>)>,
+    text_caller_book: Option<Rc<RefCell<Value>>>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints still to be handed
     /// over, since one may be raised where the run is only reading; and
@@ -1621,6 +1622,7 @@ impl<'a> Machine<'a> {
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
             text_within: None,
+            text_caller_book: None,
             hearer: RefCell::new(None),
             untaken: RefCell::new(None),
             written_out: std::cell::Cell::new(false),
@@ -3575,6 +3577,14 @@ impl<'a> Machine<'a> {
         Ok(taken)
     }
 
+    pub(super) fn require_generator_cursor(&mut self, input: Value) -> Res {
+        let exposed = input.settled();
+        if matches!(exposed, Value::Iterator(_) | Value::Cursor(_) | Value::Generator(_) | Value::Traversal(..) | Value::SetCursor { .. }) { return Ok(input); }
+        if self.appointment(&exposed, 16).is_some() { return Ok(Self::cursor_value(IteratorKind::Handed(exposed))); }
+        let kind = Self::format_spec_complaint_kind(&exposed);
+        Err(self.core_complaint("core.not_iterator", &kind).into())
+    }
+
     pub(super) fn make_iterator(&mut self, source: Value) -> Res {
         if let Value::Generator(_) = source { return Ok(source); }
         if self.table.flag("ext.op.arithmetic.python_numbers") {
@@ -4891,15 +4901,11 @@ impl<'a> Machine<'a> {
         }
         let index = words.iter().position(|word| word == key)?;
         match value {
-            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 25) => {
-                if index == 25 && cell.try_borrow().is_err() { return Some(Value::text("GEN_RUNNING")); }
+            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24) => {
                 if index == 23 { return Some(Value::Flag(cell.try_borrow().is_err())); }
                 if index == 24 && cell.try_borrow().is_err() { return Some(Value::Nil); }
                 let state = cell.try_borrow().ok()?;
                 if index == 24 { return Some(state.inner.clone().unwrap_or(Value::Nil)); }
-                if index == 25 {
-                    return Some(Value::text(if state.ended { "GEN_CLOSED" } else if state.begun { "GEN_SUSPENDED" } else { "GEN_CREATED" }));
-                }
                 if matches!(index, 21 | 22) { return Some(Value::Flag(state.begun && !state.ended)); }
                 if matches!(index, 14 | 19 | 20) {
                     if let Some(item) = &state.trace_state {
@@ -5275,6 +5281,7 @@ impl<'a> Machine<'a> {
             let given = self.value_list(args, frame)?;
             return self.call_adornment(adornment, given, frame);
         }
+        if let Some(answer) = self.scoped_text_call(&stands, args, frame) { return answer; }
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
@@ -6144,7 +6151,8 @@ impl<'a> Machine<'a> {
                     let given = self.value_list(args, frame)?;
                     return self.call_adornment(adornment, given, frame);
                 }
-                if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
+                if let Some(answer) = self.scoped_text_call(&stands, args, frame) { return answer; }
+        if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut values=self.value_list(args,frame)?;
                     if matches!(&stands,Value::Wrapped(..)) { values=self.opened_arguments(values)?; }
@@ -7126,6 +7134,29 @@ impl<'a> Machine<'a> {
     /// the words that work on the values handed to them can be reached
     /// this way: the ones that hold on to the pieces they are written
     /// with have nothing to work on when there are none.
+    fn scoped_text_call(&mut self, callable: &Value, inputs: &[Form], caller: &Rc<Env>) -> Option<Res> {
+        let primitive = match callable {
+            Value::Intrinsic(operation, _) => *operation,
+            Value::Wrapped(8, words) => *self.table.prims.get(words.first()?.bare().as_str())?,
+            _ => return None,
+        };
+        if !self.reads_manners() || !matches!(primitive, Prim::Weigh | Prim::Perform) { return None; }
+        Some((|| {
+            let values = self.value_list(inputs, caller)?;
+            let copied = self.frame_aside(caller);
+            let previous = self.text_within.replace(copied);
+            let former_book = self.text_caller_book.take();
+            let Value::Shared(book) = self.names_here(caller, Prim::WorldBook)? else { return Err(self.bad_answer().into()) };
+            self.text_caller_book = Some(book);
+            let (positioned, named) = self.open_arguments(values)?;
+            let spelling = match callable { Value::Intrinsic(_, name) => name.to_string(), _ => match primitive { Prim::Weigh => "eval".into(), _ => "exec".into() } };
+            let result = self.core_primitive(primitive, &spelling, positioned, named).map_err(Escape::Error);
+            self.text_within = previous;
+            self.text_caller_book = former_book;
+            result
+        })())
+    }
+
     fn text_called(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res> {
         let Value::TextCall { subject, work, name } = stands else { return None };
         Some((|| {
@@ -16929,6 +16960,7 @@ impl<'a> Machine<'a> {
                     }
                     here = class.under.clone();
                 }
+                if op == Prim::ClassMethods && self.table.has_any("ext.stmt.class.builder") { gathered.retain(|called| !called.starts_with('\0')); }
                 Value::Vector(crate::tuples::Sequence::plain(gathered.iter().map(|called| Value::text(called)).collect()))
             }
             // The class a class stands on, by name: a thing is asked of
@@ -21842,10 +21874,11 @@ impl<'a> Machine<'a> {
     /// Text or a code value run: as one expression where it is to be
     /// weighed, else as statements; in the dictionaries handed over,
     /// else where the call stands.
-    fn text_performed(&mut self, weighing: bool, name: &str, v: &[Value]) -> Result<Value, String> {
+    pub(super) fn text_performed(&mut self, weighing: bool, name: &str, v: &[Value]) -> Result<Value, String> {
         // The names set aside are only for a reading handed no
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
+        let caller_book = self.text_caller_book.take();
         if !weighing {
             if let Some(Value::Wrapped(7, parts)) = v.first().map(Value::settled) {
                 if v.len() > 4 { return Err(self.core_complaint("core.arity", name)); }
@@ -21986,7 +22019,7 @@ impl<'a> Machine<'a> {
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
-            (None, near) => (self.book_about(true), near),
+            (None, near) => (caller_book.unwrap_or_else(|| self.book_about(true)), near),
         };
         // A dictionary handed over for the outer names is given the
         // builtins as well, unless it names a dictionary of its own.

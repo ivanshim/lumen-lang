@@ -7783,7 +7783,7 @@ impl<'a> Builder<'a> {
             Form::Apply(Callee::Prim(Prim::At, _), args)
                 if matches!(args.first(), Some(Form::Apply(Callee::Code(_), _))));
         // Attributes and call results cannot yet retain writes in these scopes.
-        if (attribute && !self.table.has_any("ext.op.member") || temporary_index)
+        if (attribute && !self.table.has_any("ext.op.member") || temporary_index && !self.table.has_any("ext.stmt.class.builder"))
             && self.table.has_any("ext.system.scope.unready") {
             self.advance();
             let _right = self.comma_value()?;
@@ -7969,9 +7969,9 @@ impl<'a> Builder<'a> {
         };
         // The live class book can supply an object with no writable name.
         // Keep the evaluated object and key, then perform its actual write.
-        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+        if self.table.has_any("ext.stmt.class.builder") {
             if let Form::Apply(Callee::Prim(Prim::At, _), operands) = &expr {
-                if operands.len() == 2 {
+                if operands.len() == 2 && (self.in_class_body() || matches!(&operands[0], Form::Apply(Callee::Code(_), _))) {
                     let object = self.gensym("target_object");
                     let key = self.gensym("target_key");
                     let put = self.gensym("target_value");
@@ -10243,10 +10243,10 @@ impl<'a> Builder<'a> {
         let begins = self.pos;
         let source = self.expr(1)?;
         let ends = self.pos;
-        let parameter = self.gather_name("first_source");
+        let parameter = String::from(".0");
         let previous = self.source_before.replace((begins, ends, parameter.clone()));
         let mut async_result = false;
-        let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
+        let routine = self.routine("<genexpr>", Holds::Every, Traps::Yields, vec![parameter.clone()], 1, |r| {
             r.layers.last_mut().unwrap().gathering_kind = Some("generator expression");
             r.pos = clause;
             let before = r.gather_names.len();
@@ -10257,6 +10257,12 @@ impl<'a> Builder<'a> {
             r.reject_gathering_assignment("generator expression")?;
             async_result = r.layers.last().unwrap().async_walk_seen;
             r.generator_seen = true;
+            if r.table.has_any("ext.stmt.class.builder") && !r.table.spells("ext.op.comprehension.async", &r.tokens[clause].lexeme) {
+                let input = r.read(&parameter);
+                let checked = prim_call(Prim::ClassWork(21), vec![input]);
+                let binding = r.write(&parameter, checked);
+                return Ok(sequence(vec![binding, body]));
+            }
             Ok(body)
         })?;
         self.source_before = previous;

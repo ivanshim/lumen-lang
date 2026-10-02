@@ -131,6 +131,7 @@ pub struct Engine<'a> {
     /// of its own. The text is read as a piece of that routine, so the
     /// routine's names are its to read.
     text_within: Option<(Vec<String>, Vec<Value>)>,
+    text_caller_book: Option<Rc<RefCell<Value>>>,
     /// The dictionary of builtin words, and the class of a code value,
     /// each made once a program asks for it.
     natives: Option<Rc<RefCell<Value>>>,
@@ -1288,6 +1289,7 @@ impl<'a> Engine<'a> {
             text_books: Vec::new(),
             reading_in: None,
             text_within: None,
+            text_caller_book: None,
             natives: None,
             builtins_view: None,
             class_body_capture: None,
@@ -4277,6 +4279,14 @@ impl<'a> Engine<'a> {
         }
     }
 
+    pub(super) fn generator_iterator(&mut self, source: Value) -> Flow<Value> {
+        match source.contents() {
+            Value::Generator(_) | Value::Cursor(_) | Value::Walk(_) | Value::Walking(_) | Value::SetWalk(..) => Ok(source),
+            Value::Object(_) if self.special_value(&source, 16).is_some() => Ok(Self::core_cursor(crate::value::CursorSource::Handed(source))),
+            value => Err(self.core_fault("core.not_iterator", &Self::shown_kind(&value)).into()),
+        }
+    }
+
     pub(super) fn iterator(&mut self, source: Value) -> Flow<Value> {
         if matches!(source, Value::Generator(_)) { return Ok(source); }
         if self.lang.python_numbers {
@@ -5065,9 +5075,13 @@ impl<'a> Engine<'a> {
                                 Value::Binding(cell) => Value::Binding(Rc::new(RefCell::new(cell.borrow().clone()))),
                                 other => other.clone(),
                             }).collect();
+                            let saved_book = self.text_caller_book.take();
+                            let Value::Bond(book) = self.names_about(program, frame, Builtin::OuterNames)? else { unreachable!() };
+                            self.text_caller_book = Some(book);
                             let held = std::mem::replace(&mut self.text_within, Some((program.idents.clone(), mine)));
                             let done = self.perform(op, *argc);
                             self.text_within = held;
+                            self.text_caller_book = saved_book;
                             done
                         }
                         // The names standing where the call is made are
@@ -5082,6 +5096,21 @@ impl<'a> Engine<'a> {
                         Action::Builtin(Builtin::Given | Builtin::GivenCount | Builtin::GivenAt, _) if !program.body_of_all => {
                             self.as_they_stand(program, frame);
                             self.perform(op, *argc)
+                        }
+                        Action::Invoke(_) if !program.body_of_all && !self.lang.compile_modes.is_empty()
+                            && self.data.last().is_some_and(|held| matches!(self.what_it_spells(held.clone()), Value::Native(Builtin::Eval | Builtin::RunText, _))) => {
+                            let copied = frame.iter().map(|value| match value {
+                                Value::Binding(cell) => Value::Binding(Rc::new(RefCell::new(cell.borrow().clone()))),
+                                value => value.clone(),
+                            }).collect();
+                            let earlier_book = self.text_caller_book.take();
+                            let Value::Bond(book) = self.names_about(program, frame, Builtin::OuterNames)? else { unreachable!() };
+                            self.text_caller_book = Some(book);
+                            let preceding = self.text_within.replace((program.idents.clone(), copied));
+                            let result = self.perform(op, *argc);
+                            self.text_within = preceding;
+                            self.text_caller_book = earlier_book;
+                            result
                         }
                         Action::Invoke(_) if *argc == 1 && !self.lang.class_builder.is_empty()
                             && self.data.last().is_some_and(|held| matches!(self.what_it_spells(held.clone()), Value::Native(Builtin::ClassTool(8) | Builtin::NearNames | Builtin::Vars | Builtin::OuterNames, _))) => {
@@ -6115,18 +6144,13 @@ impl<'a> Engine<'a> {
                 return Ok(Some(Value::text(if name == self.class_word("name") { &state.name } else { &state.qualified })));
             }
             if !self.is_async_generator(&Value::Generator(held.clone())) {
-            if let Some(index @ (14 | 15 | 19..=25)) = self.lang.trace_fields.iter().position(|key| key == name) {
-                if index == 25 && held.try_borrow().is_err() { return Ok(Some(Value::text("GEN_RUNNING"))); }
+            if let Some(index @ (14 | 15 | 19..=24)) = self.lang.trace_fields.iter().position(|key| key == name) {
                 if index == 23 { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
                 if index == 24 && held.try_borrow().is_err() { return Ok(Some(Value::Null)); }
                 let state = held.try_borrow().map_err(|_| self.lang.class_unready.first().cloned().unwrap_or_default())?;
                 if matches!(index, 14 | 19 | 20) { return Ok(Some(if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) })); }
                 if matches!(index, 21 | 22) { return Ok(Some(Value::Flag(state.started && !state.closed))); }
                 if index == 24 { return Ok(Some(state.delegate.clone().unwrap_or(Value::Null))); }
-                if index == 25 {
-                    let status = if state.closed { "GEN_CLOSED" } else if state.started { "GEN_SUSPENDED" } else { "GEN_CREATED" };
-                    return Ok(Some(Value::text(status)));
-                }
                 if let Some(program) = &state.program { return Ok(Some(self.routine_code(program))); }
             }
             }
@@ -14100,7 +14124,7 @@ impl<'a> Engine<'a> {
             args.extend(named.into_iter().map(|(key, value)| Value::Tie(Rc::new((Value::text(&key), value)))));
             return self.class_work(11, args).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
         }
-        if self.fuller_classes() && builtin == Builtin::SortOf && args.len() == 3 {
+        if self.fuller_classes() && builtin == Builtin::SortOf && (args.len() != 1 || !named.is_empty()) {
             args.extend(named.into_iter().map(|(word, value)| Value::Tie(Rc::new((Value::text(&word), value)))));
             return self.class_type(args).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
         }
@@ -17195,6 +17219,7 @@ impl<'a> Engine<'a> {
                     }
                     here = class.base.clone();
                 }
+                if builtin == Builtin::ClassMethods && !self.lang.class_builder.is_empty() { named.retain(|name| !name.starts_with('\0')); }
                 let mut seen = Vec::new();
                 for name in named {
                     if !seen.iter().any(|held: &String| held == &name) {
@@ -21773,10 +21798,11 @@ impl Engine<'_> {
     /// Text, or a code value, run: as one expression where it was asked
     /// to be weighed, else as statements; in the dictionaries handed
     /// over, else where the call stands.
-    fn text_run(&mut self, weighing: bool, name: &str, args: Vec<Value>) -> Res<Value> {
+    pub(super) fn text_run(&mut self, weighing: bool, name: &str, args: Vec<Value>) -> Res<Value> {
         // The names about the call are only for a reading handed no
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
+        let caller_book = self.text_caller_book.take();
         if !weighing {
             if let Some(Value::Adapter(code)) = args.first().map(Value::contents) {
                 if code.0 == 7 {
@@ -21864,7 +21890,7 @@ impl Engine<'_> {
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
-            (None, near) => (self.book_here(true), near),
+            (None, near) => (caller_book.unwrap_or_else(|| self.book_here(true)), near),
         };
         // A dictionary given for the outer names is given the builtins
         // too, unless it names a dictionary of its own for them; a

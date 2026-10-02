@@ -680,6 +680,11 @@ impl<'a> Engine<'a> {
                     let Value::Class(class) = values.remove(0) else { return Err(self.class_refusal()); };
                     self.class_construct(class, values)
                 }
+                143 => {
+                    if !args.is_empty() { return Err("TypeError: this code object takes no arguments".into()); }
+                    let result = self.text_run(true, "eval", w.1[..2].to_vec());
+                    match result { Ok(value) => Ok(value), Err(message) => Err(self.carried.take().unwrap_or_else(|| message.into())) }
+                }
                 43 => {
                     if let Some(first) = args.first() { self.iterator(first.clone())?; }
                     self.class_apply(w.1[0].clone(), args)
@@ -878,6 +883,16 @@ impl<'a> Engine<'a> {
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
+        }
+        if Self::own_kind(&c).as_deref() == Some("function") {
+            let supplied = self.call_items(args.clone())?;
+            if supplied.len() >= 2 && matches!(supplied[0].1.contents(), Value::Object(ref code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str())) {
+                if supplied.len() > 3 || supplied.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: invalid function arguments".into()); }
+                if !matches!(supplied[1].1.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
+                let title = supplied.get(2).map_or_else(|| Value::text("<module>"), |(_, value)| value.clone());
+                if !matches!(title.contents(), Value::Text(_) | Value::Null) { return Err("TypeError: function() argument 'name' must be str".into()); }
+                return Ok(Self::adapter(143, vec![supplied[0].1.clone(), supplied[1].1.clone(), title]));
+            }
         }
         if (c.name == "FunctionType" || Self::own_kind(&c).as_deref() == Some("function")) && self.lang.trace_fields.len() > 18 && matches!(args.first().map(Value::contents), Some(Value::Adapter(code)) if code.0 == 7) {
             let mut parts = vec![None; 5];
@@ -1765,6 +1780,14 @@ impl<'a> Engine<'a> {
                     || self.lang.class_annotations.first().map_or(false,|word|word==name);
                 if copied { return self.class_get(inner,name,true); }
             }
+            Value::Adapter(w) if w.0 == 143 => {
+                if name == self.class_word("code") { return Ok(w.1[0].clone()); }
+                if name == self.class_word("globals") { return Ok(w.1[1].clone()); }
+                if name == self.class_word("name") || name == self.class_word("qualified") { return Ok(w.1[2].clone()); }
+                if name == self.class_word("call") { return Ok(subject.clone()); }
+                if name == self.class_word("defaults") || name == self.class_word("keywords") || name == self.class_word("closure") { return Ok(Value::Null); }
+                if name == self.class_word("kind") { return Ok(Value::Class(self.kind_class("function"))); }
+            }
             Value::Adapter(w) if w.0==32 => {
                 if ["send", "throw", "close"].contains(&name)
                     || self.lang.class_special.get(15).is_some_and(|word| word == name)
@@ -2543,13 +2566,14 @@ impl<'a> Engine<'a> {
             // word is of the descriptor kind CPython gives it.
             [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
-            [Value::Adapter(w)] if matches!(w.0,4|5|7|14|31|32|119)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,4|5|7|14|31|32|119|143)=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){parents.push(self.type_base(b)?);}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}
                 own.extend(named);
                 self.form_named_class(original_title.unwrap_or_else(|| Value::text(name)),parents,own)
             }
+            [one] => Ok(self.named_kind(one)),
             _=>Err("TypeError: type() requires a name, a tuple of bases, and a dict".to_string().into()),
         }
     }
@@ -2618,7 +2642,7 @@ impl<'a> Engine<'a> {
     /// own for, named as the reference names that kind. It is made once
     /// and kept, so that two askings answer with the very same class.
     pub(super) fn named_kind(&mut self,value:&Value)->Value {
-        let word=if self.is_async_generator(value) { String::from("async_generator") } else { match self.module_holding(value) {Some(_)=>String::from("module"),None=>value.core_kind()} };
+        let word=if matches!(value, Value::Adapter(parts) if parts.0 == 143) { "function".to_string() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.module_holding(value) {Some(_)=>String::from("module"),None=>value.core_kind()} };
         // Where the definition spells that very kind, its builtin word
         // is the answer, so that a kind asked for and a kind answered
         // with are the one value: `type(enumerate(r)) is enumerate`.
@@ -2794,6 +2818,7 @@ impl<'a> Engine<'a> {
             16 => self.dispatch_class_builder(args),
             18 => self.class_namespace_read(args),
             20 => self.class_namespace_remove(args),
+            21 => self.generator_iterator(one),
             12 if args.len() == 1 => Ok(Value::Flag(match &one {
                 Value::Object(object) => self.slots_allow(&object.class_now(), self.class_word("namespace"))
                     && Self::kind_beneath(&object.class_now()).is_none()
@@ -2804,7 +2829,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=42|143))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
@@ -2931,7 +2956,7 @@ impl<'a> Engine<'a> {
             for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
                 if let Some(w)=words.first() { names.push(w.clone()); }
             }
-            for word in [14, 15, 21, 24, 25].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()) {
+            for word in [14, 15, 21, 24].iter().filter_map(|i| self.lang.trace_fields.get(*i).cloned()) {
                 if !word.is_empty() { names.push(word); }
             }
             names.sort();names.dedup();

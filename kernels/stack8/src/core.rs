@@ -84,6 +84,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 31 => "cell",
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
+            Value::Adapter(w) if w.0 == 143 => "function",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => return o.class_now().name.clone(),
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => return c.borrow().core_kind(),

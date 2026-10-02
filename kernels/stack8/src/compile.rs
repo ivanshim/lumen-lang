@@ -7899,7 +7899,7 @@ impl<'a> Compiler<'a> {
         let temporary_index = keys.first().map_or(false, |at| {
             matches!(instructions.get(at - 1), Some(Instr::Act(Action::Invoke(_), _)))
         });
-        if (dotted && self.lang.member_mark.is_none() || temporary_index)
+        if (dotted && self.lang.member_mark.is_none() || temporary_index && self.lang.class_builder.is_empty())
             && !self.lang.scope_unready.is_empty() && self.on_writing() {
             self.take();
             self.scope_value()?;
@@ -8108,7 +8108,8 @@ impl<'a> Compiler<'a> {
         }
         // Python composite stores mutate the evaluated object. They do not
         // assign the object expression back into the class namespace.
-        if !self.lang.class_builder.is_empty() && self.in_class_body()
+        if !self.lang.class_builder.is_empty()
+            && (self.in_class_body() || target.iter().any(|word| matches!(word, Instr::Act(Action::Invoke(_), _))))
             && matches!(target.last(), Some(Instr::Act(Action::At, 2))) {
             let value = self.gensym("target_value");
             if compound.is_none() { self.value_written(keep)?; self.write(&value); }
@@ -10874,12 +10875,17 @@ impl<'a> Compiler<'a> {
         let source_end = self.pos;
         let first_async = Lang::spells(&self.lang.comprehension_async, &self.tokens[clause].lexeme);
         self.act(if first_async { Action::AsyncWalk } else { Action::WalkFrom }, 1);
-        let seed = self.gensym("generator_source");
+        let seed = ".0".to_string();
         let name = "<genexpr>".to_string();
         let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
         let mut asynchronous = false;
-        let program = self.routine(&name, vec![seed], 1, true, |r| {
+        let program = self.routine(&name, vec![seed.clone()], 1, true, |r| {
             r.piece().comprehension_kind = Some("generator expression");
+            if !first_async && !r.lang.class_builder.is_empty() {
+                r.read(&seed);
+                r.act(Action::Builtin(Builtin::ClassTool(21), Rc::from("")), 1);
+                r.write(&seed);
+            }
             r.pos = clause;
             let names = r.comprehension_names.len();
             r.reserve_comprehension(clause)?;
