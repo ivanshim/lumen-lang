@@ -508,19 +508,39 @@ class TextIOWrapper(_TextIOBase):
         import _pyio
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
+        if (encoding is not None and '\0' in encoding) or (errors is not None and '\0' in errors):
+            raise ValueError('embedded null character')
         line_buffering = bool(_whence(line_buffering))
         write_through = bool(_whence(write_through))
         _pyio.TextIOWrapper.__init__(self, buffer, encoding, errors, newline, line_buffering, write_through)
     def __repr__(self):
+        if self._buffer is None:
+            return '<{}.{} encoding={!r}>'.format(type(self).__module__, type(self).__qualname__, self.encoding)
         return _method(self, 'TextIOWrapper', '__repr__')()
     def reconfigure(self, *, encoding=None, errors=None, newline=Ellipsis, line_buffering=None, write_through=None):
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
+        if encoding is not None and encoding != 'locale':
+            import codecs
+            codecs.lookup(encoding.split('\0', 1)[0])
         if line_buffering is not None:
             line_buffering = bool(_whence(line_buffering))
         if write_through is not None:
             write_through = bool(_whence(write_through))
         return _method(self, 'TextIOWrapper', 'reconfigure')(encoding=encoding, errors=errors, newline=newline, line_buffering=line_buffering, write_through=write_through)
+    def _get_encoder(self):
+        import codecs
+        factory = codecs.getincrementalencoder(self._encoding.split('\0', 1)[0])
+        self._encoder = factory(self._errors.split('\0', 1)[0])
+        return self._encoder
+    def _get_decoder(self):
+        import codecs
+        create = codecs.getincrementaldecoder(self._encoding.split('\0', 1)[0])
+        decoded = create(self._errors.split('\0', 1)[0])
+        if self._readuniversal:
+            decoded = IncrementalNewlineDecoder(decoded, self._readtranslate)
+        self._decoder = decoded
+        return decoded
     def __getattr__(self, name):
         return _method(self, 'TextIOWrapper', name)
     @property

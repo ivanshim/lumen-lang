@@ -170,6 +170,10 @@ class CodecInfo(tuple):
         self.incrementaldecoder = incrementaldecoder
 
 def lookup(encoding):
+    if isinstance(encoding, str):
+        encoding.encode('utf-8')
+        if '\0' in encoding:
+            raise ValueError('embedded null character')
     name = _normalize(encoding)
     if name in _charmaps or name in ('ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'unicode_escape', 'raw_unicode_escape', 'idna'):
         return CodecInfo(lambda obj, errors='strict': (_encode(obj, name, errors), len(obj)),
