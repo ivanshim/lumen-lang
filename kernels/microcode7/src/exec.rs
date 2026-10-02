@@ -783,7 +783,7 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 => Some(20), 42 => Some(19),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53 => Some(20), 42 => Some(19),
                 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
             };
             let mut seed = Vec::new();
@@ -5232,20 +5232,24 @@ impl<'a> Machine<'a> {
                     }
                     return Err(format!("Cannot share property '{}' of {}", called, thing.bare()).into());
                 };
+                let mut field = called.to_string();
+                if let Some(Value::Wrapped(32, parts)) = self.inherited_entry(&thing.blueprint(), called) {
+                    field = self.slot_key(&Value::Thing(thing.clone()), &parts)?;
+                }
                 let mut holds = thing.holds.borrow_mut();
-                let found = self.member_place(&holds, called);
+                let found = self.member_place(&holds, &field);
                 // A thing holding nothing of that name reads the class's
                 // own value, and a write within it is a write within
                 // that shared holding rather than a property made on the
                 // thing, which a write of the name itself would make.
-                if found.is_none() && self.has_class_order() && thing.blueprint().keeper(called).is_some() {
+                if field == called.as_ref() && found.is_none() && self.has_class_order() && thing.blueprint().keeper(called).is_some() {
                     drop(holds);
                     return Ok(Value::Shared(self.own_cell(&thing.blueprint(), called)));
                 }
                 let at = match found {
                     Some(at) => at,
                     None => {
-                        holds.push((called.to_string(), Value::Nil));
+                        holds.push((field, Value::Nil));
                         holds.len() - 1
                     }
                 };
@@ -7981,6 +7985,11 @@ impl<'a> Machine<'a> {
     /// bound to the value, save that the parts of a number are members
     /// read rather than methods left standing to be called.
     fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
+        if operation == "__index__" {
+            if self.native_place(&receiver, operation).is_none() {
+                return Err(self.member_missing(&receiver, operation).into());
+            }
+        }
         // A view of a map's keys, values or pairs keeps a reading of
         // the map itself under this name: a fresh view of its own,
         // read-only, and equal to the map for as long as it stands.
@@ -10430,7 +10439,7 @@ impl<'a> Machine<'a> {
     /// lies, so a fixed row answers to none of them; their words are
     /// the ones a row's own methods go by.
     const OCTET_CHANGERS: &'static [(&'static str, u8)] = &[
-        ("append", 52), ("clear", 57), ("copy", 59), ("extend", 53), ("insert", 54),
+        ("resize", 61), ("append", 52), ("clear", 57), ("copy", 59), ("extend", 53), ("insert", 54),
         ("pop", 55), ("remove", 56), ("reverse", 58),
     ];
 
@@ -11280,11 +11289,37 @@ impl<'a> Machine<'a> {
                 let [Value::Text(source)] = values else { return Err(wrong()); };
                 return Ok(self.octets(self.octets_from_hex(source)?, operation == 49));
             }
+            61 => {
+                if values.len() != 2 { return Err(wrong()); }
+                let integral = match self.stood_for_whole(&values[1])? {
+                    Some(index) => index,
+                    None => values[1].settled(),
+                };
+                if !matches!(integral.kind(), Some(Kind::Whole | Kind::Truth)) {
+                    return Err(self.core_complaint("core.integer", &values[1].kind_word()));
+                }
+                let count = integral.as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C ssize_t")?;
+                if count < 0 { return Err(format!("ValueError: Can only resize to positive sizes, got {}", count)); }
+                let Value::Octets { cell, changeable: true, .. } = &values[0] else { return Err(self.octet_error("unready")); };
+                let size = usize::try_from(count).map_err(|_| String::from("OverflowError: bytearray size too large"))?;
+                let previous = cell.borrow().len();
+                if size != previous && OctetLease::held(cell) {
+                    return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized"));
+                }
+                let mut storage = cell.borrow_mut();
+                if size > previous {
+                    storage.try_reserve(size - previous).map_err(|_| String::from("MemoryError: "))?;
+                }
+                storage.resize(size, 0);
+                return Ok(Value::Nil);
+            }
             60 => {
-                let [source] = values else { return Err(refusal()); };
+                let source = values.first().ok_or_else(refusal)?;
+                if values.len() > 2 { return Err(wrong()); }
                 let held = Self::underlying(source).unwrap_or_else(|| source.settled());
                 let Value::Octets { cell, changeable: true, .. } = &held else { return Err(refusal()); };
-                return Ok(Value::Export(Rc::new(OctetLease::new(cell))));
+                return Ok(if values.len() > 1 { Value::Flag(OctetLease::held(cell)) }
+                    else { Value::Export(Rc::new(OctetLease::new(cell))) });
             }
             40 => {
                 let [from, onto] = values else { return Err(wrong()); };
@@ -13077,6 +13112,9 @@ impl<'a> Machine<'a> {
             // native worth on either side, which no method took, is
             // refused with its sign and both kinds named.
             let bare = |v: &Value| matches!(v, Value::Thing(_)) && Self::underlying(v).is_none();
+            if operation == Prim::Plus && matches!(left, Value::Octets { .. }) && self.table.has_any("ext.builtin.bytes") {
+                return Ok(None);
+            }
             if forward >= 18 && (bare(left) || bare(right)) {
                 let sign = self.written_as(&operation);
                 return Err(self.operands_refused(&sign, left, right));
@@ -14576,6 +14614,14 @@ impl<'a> Machine<'a> {
         // so that a row standing on the left is named by them. A row
         // laid down again asks the same question there, so that the
         // count, and not the row, is the side those words name.
+        if op == Prim::Plus && self.table.has_any("ext.builtin.bytes") {
+            if let [left @ Value::Octets { .. }, right @ Value::Thing(_)] = v {
+                let module = self.namespace_for("builtins")?;
+                let routine = self.attribute(&module, "_buffer_bytes").ok_or_else(|| self.octet_error("arguments"))?;
+                let bytes = self.apply_within(routine, vec![right.clone()])?;
+                return self.prim(op, name, &[left.clone(), bytes]);
+            }
+        }
         if matches!(op, Prim::Plus | Prim::Times) && v.iter().any(|item| matches!(item, Value::Octets { .. })) {
             if let Some(words) = self.kinds_refused(op, v) { return Err(words); }
         }
@@ -18535,7 +18581,7 @@ impl<'a> Machine<'a> {
         let handed = &settled;
         if let Value::Octets { cell, changeable, .. } = held {
             if !*changeable { return Err(self.octet_error("immutable")); }
-            let incoming = self.octet_contents(handed, true)?;
+            let incoming = self.octet_lengthening(handed)?;
             let (range, positions, contiguous) = self.span_selection(bounds, cell.borrow().len())?;
             if contiguous {
                 if OctetLease::held(cell) && range.len() != incoming.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }

@@ -512,7 +512,7 @@ impl<'a> Machine<'a> {
     }
     /// The key a slot's worth is kept under in a thing. A thing not of
     /// the declaring blueprint's line has no such key, and is told so.
-    fn slot_key(&self,thing:&Value,parts:&[Value])->Result<String,Escape> {
+    pub(super) fn slot_key(&self,thing:&Value,parts:&[Value])->Result<String,Escape> {
         let (Value::Thing(t),Some(Value::Blueprint(declared)))=(thing,parts.get(1)) else{return Err(self.class_unready())};
         let name=parts[0].bare();
         let of_line=Rc::ptr_eq(&t.blueprint(),declared)||t.blueprint().ancestry.iter().any(|b|Rc::ptr_eq(b,declared));

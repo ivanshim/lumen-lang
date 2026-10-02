@@ -578,6 +578,7 @@
   "ext.builtin.bytes.hex": [
     "hex"
   ],
+  "ext.builtin.bytes.resize": ["resize"],
   "ext.builtin.bytes._export": ["_export"],
   "ext.builtin.bytes.join": [
     "join"
@@ -879,7 +880,8 @@
     "MemoryError",
     "BufferError",
     "StopAsyncIteration",
-    "SystemError"
+    "SystemError",
+    "BlockingIOError"
   ],
   "ext.builtin.exceptions.args": [
     "args"

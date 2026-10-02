@@ -517,7 +517,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -5863,6 +5863,9 @@ impl<'a> Engine<'a> {
     /// gives the method: a number keeps its parts as members, so those
     /// are read rather than left standing as something to call.
     pub(super) fn bound_value_method(&mut self, target: Value, operation: &str) -> Res<Value> {
+        if operation == "__index__" && !self.native_special(&target, operation) {
+            return Err(self.member_amiss(&target, operation));
+        }
         // A view of a map's keys, values or pairs keeps a reading of
         // the map itself under this name: a fresh view of its own,
         // read-only, and equal to the map for as long as it stands.
@@ -7514,6 +7517,9 @@ impl<'a> Engine<'a> {
             // An arithmetic, matrix or bit working that a plain thing
             // stands in and neither side's methods took is refused with
             // its sign and both kinds named.
+            if matches!(op, Action::Add) && matches!(a, Value::Bytes(..)) && !self.lang.byte_prefixes.is_empty() {
+                return self.dyadic(op, a, b);
+            }
             if direct >= 18 && (Self::plain_thing(a) || Self::plain_thing(b)) {
                 let sign = self.sign_of(op);
                 return Err(self.operands_complaint(&sign, a, b));
@@ -10090,14 +10096,19 @@ impl<'a> Engine<'a> {
                         Value::Bond(Rc::new(RefCell::new(Value::Fields(o))))
                     }
                     Value::Object(o) => {
+                        let storage = match self.class_value(&o.class_now(), name) {
+                            Some(Value::Adapter(adapter)) if adapter.0 == 16 =>
+                                self.slot_place(&Value::Object(o.clone()), &adapter.1)?,
+                            _ => name.to_string(),
+                        };
                         let mut held = o.fields.borrow_mut();
-                        let found = self.member_at(&held, name);
+                        let found = self.member_at(&held, &storage);
                         // A thing holding nothing of that name reads its
                         // class's own value, so a write within the place
                         // lands in that shared holding rather than making
                         // a property only the thing would see, as a write
                         // of the name itself still does.
-                        if found.is_none() && self.lang.member_pipes && o.class_now().holder(name).is_some() {
+                        if storage == name.as_ref() && found.is_none() && self.lang.member_pipes && o.class_now().holder(name).is_some() {
                             drop(held);
                             self.data.push(Value::Bond(Self::own_cell(&o.class_now(), name)));
                             return Ok(());
@@ -10105,7 +10116,7 @@ impl<'a> Engine<'a> {
                         let at = match found {
                             Some(at) => at,
                             None => {
-                                held.push((name.to_string(), Value::Null));
+                                held.push((storage, Value::Null));
                                 held.len() - 1
                             }
                         };
@@ -11578,6 +11589,14 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::Add) && !self.lang.byte_prefixes.is_empty() {
+            if let (Value::Bytes(_, _, _), Value::Object(_)) = (a, b) {
+                let namespace = self.route_module("builtins")?;
+                let copier = self.member_of(namespace, "_buffer_bytes")?.ok_or_else(|| self.byte_fault("arguments"))?;
+                let copied = self.call_held(copier, vec![b.clone()])?;
+                return self.dyadic(op, a, &copied);
+            }
+        }
         if matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_)) {
             if let (Some(mut left), Some(right)) = (a.text_codes(), b.text_codes()) {
                 if matches!(op, Action::Add | Action::Join) { left.extend(right); return Ok(Value::from_codes(left)); }
@@ -12990,7 +13009,7 @@ impl<'a> Engine<'a> {
         let given = collection_contents(&given);
         if let Value::Bytes(row, mutable, _) = &target {
             if !mutable { return Err(self.byte_fault("immutable")); }
-            let replacement = self.byte_row(&given, false)?;
+            let replacement = self.byte_taken(&given)?;
             let (start, stop, step, places) = self.slice_places(parts, row.borrow().len())?;
             if step != 1 && places.len() != replacement.len() { return Err(self.byte_fault("arguments")); }
             if step == 1 {
@@ -14778,11 +14797,11 @@ impl<'a> Engine<'a> {
     /// The names a changeable row of bytes answers to besides those.
     /// Each writes where the row lies, so a fixed row answers to none
     /// of them; their words are the ones a list's own methods go by.
-    const BYTE_CHANGERS: &'static [&'static str] = &["append", "extend", "insert", "pop", "remove", "clear", "reverse", "copy"];
+    const BYTE_CHANGERS: &'static [&'static str] = &["append", "extend", "insert", "pop", "remove", "clear", "reverse", "copy", "resize"];
 
     /// The bytes primitives those names go by, which a fixed row is
     /// never handed.
-    const BYTE_CHANGES: &'static [u8] = &[52, 53, 54, 55, 56, 57, 58, 59];
+    const BYTE_CHANGES: &'static [u8] = &[52, 53, 54, 55, 56, 57, 58, 59, 61];
 
     /// The working a row of bytes answers to under this name, where the
     /// definition spells one for it. The words are sought in the bytes
@@ -14814,7 +14833,7 @@ impl<'a> Engine<'a> {
             "isascii" => 43, "isdigit" => 44, "islower" => 45, "isspace" => 46, "istitle" => 47, "isupper" => 48,
             "fromhex" => 50, "maketrans" => 51,
             "append" => 52, "extend" => 53, "insert" => 54, "pop" => 55,
-            "remove" => 56, "clear" => 57, "reverse" => 58, "copy" => 59,
+            "remove" => 56, "clear" => 57, "reverse" => 58, "copy" => 59, "resize" => 61,
             _ => return None,
         })
     }
@@ -15632,7 +15651,7 @@ impl<'a> Engine<'a> {
         // the change and every name for the row sees it. None of them
         // is worth anything but the one that hands a byte back and the
         // one that hands a fresh row back.
-        if Self::BYTE_CHANGES.contains(&task) {
+        if (52..=59).contains(&task) {
             let Some(Value::Bytes(cell, true, _)) = args.first() else { return Err(unready()); };
             let rest = &args[1..];
             let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(bad()) };
@@ -15672,10 +15691,30 @@ impl<'a> Engine<'a> {
             }
             return Ok(Value::Null);
         }
+        if task == 61 {
+            let [Value::Bytes(cell, true, _), requested] = args else { return Err(bad()); };
+            let converted = self.special_index(requested)?.unwrap_or_else(|| requested.clone());
+            if !matches!(converted, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                return Err(self.core_fault("core.integer", &requested.core_kind()));
+            }
+            let length = converted.as_big()?.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C ssize_t".to_string())?;
+            if length < 0 { return Err(format!("ValueError: Can only resize to positive sizes, got {length}")); }
+            let length = usize::try_from(length).map_err(|_| "OverflowError: bytearray size too large".to_string())?;
+            if length != cell.borrow().len() {
+                if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                let mut bytes = cell.borrow_mut();
+                let extra = length.saturating_sub(bytes.len());
+                bytes.try_reserve(extra).map_err(|_| "MemoryError: ".to_string())?;
+                bytes.resize(length, 0);
+            }
+            return Ok(Value::Null);
+        }
         if task == 60 {
-            let [source] = args else { return Err(unready()); };
+            if args.is_empty() || args.len() > 2 { return Err(unready()); }
+            let source = &args[0];
             let held = Self::worth_of(source).unwrap_or_else(|| source.contents());
             let Value::Bytes(cell, true, _) = &held else { return Err(unready()); };
+            if args.len() == 2 { return Ok(Value::Flag(ByteExport::active(cell))); }
             return Ok(Value::Export(Rc::new(ByteExport::acquire(cell))));
         }
         if task == 40 {

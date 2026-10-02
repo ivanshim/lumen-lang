@@ -416,7 +416,7 @@ impl<'a> Engine<'a> {
     /// Where a slot's value is kept in a thing: under the slot's name and
     /// the class that declared it. A thing not of that class has no such
     /// place, and the descriptor says so.
-    fn slot_place(&self, thing: &Value, parts: &[Value]) -> Flow<String> {
+    pub(super) fn slot_place(&self, thing: &Value, parts: &[Value]) -> Flow<String> {
         let (Value::Object(o), Some(Value::Class(owner))) = (thing, parts.get(1)) else { return Err(self.class_refusal()) };
         let word = parts[0].plain();
         if !Rc::ptr_eq(&o.class_now(), owner) && !o.class_now().lineage.iter().any(|b| Rc::ptr_eq(b, owner)) {
