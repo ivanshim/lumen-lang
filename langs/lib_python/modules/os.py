@@ -144,4 +144,95 @@ class _Path:
         # for a file a run has made itself.
         return self.abspath(path)
 
+    def normcase(self, path):
+        # The path rules below are POSIX, where normcase is the identity;
+        # fnmatch measures it against the reference.
+        return path
+
 path = _Path()
+
+# POSIX open flags for the Linux host interface.
+O_RDONLY = 0
+O_WRONLY = 1
+O_RDWR = 2
+O_CREAT = 64
+O_EXCL = 128
+O_TRUNC = 512
+O_APPEND = 1024
+O_CLOEXEC = 524288
+O_DIRECTORY = 16384
+O_NOFOLLOW = 32768
+O_NONBLOCK = 2048
+
+
+def fspath(path):
+    if isinstance(path, (str, bytes)):
+        return path
+    try:
+        result = type(path).__fspath__(path)
+    except AttributeError:
+        raise TypeError('expected str, bytes or os.PathLike object, not ' + type(path).__name__)
+    if not isinstance(result, (str, bytes)):
+        raise TypeError('__fspath__() must return str or bytes')
+    return result
+
+from _os_pathlike import PathLike
+
+
+class stat_result(tuple):
+    n_sequence_fields = 10
+    n_fields = 19
+    n_unnamed_fields = 3
+
+    def __new__(cls, sequence, dict=None):
+        values = tuple(sequence)
+        if len(values) < 10 or len(values) > 19:
+            raise TypeError('os.stat_result() takes a 10-sequence')
+        result = tuple.__new__(cls, values[:10])
+        names = ('st_atime', 'st_mtime', 'st_ctime', 'st_atime_ns', 'st_mtime_ns', 'st_ctime_ns', 'st_blksize', 'st_blocks', 'st_rdev')
+        for i, name in enumerate(names):
+            default = values[7+i] if i < 3 else None
+            value = values[10+i] if len(values) > 10+i else (dict or {}).get(name, default)
+            setattr(result, name, value)
+        return result
+
+    st_mode = property(lambda self: self[0])
+    st_ino = property(lambda self: self[1])
+    st_dev = property(lambda self: self[2])
+    st_nlink = property(lambda self: self[3])
+    st_uid = property(lambda self: self[4])
+    st_gid = property(lambda self: self[5])
+    st_size = property(lambda self: self[6])
+
+
+def stat(path, *, dir_fd=None, follow_symlinks=True):
+    if dir_fd is not None or isinstance(path, int):
+        raise NotImplementedError('stat file descriptors are unavailable')
+    path = fspath(path)
+    fields = _host_file_kind(path, bool(follow_symlinks))
+    if len(fields) == 2:
+        raise OSError(fields[0], fields[1], path)
+    return stat_result(fields)
+
+
+def lstat(path, *, dir_fd=None):
+    return stat(path, dir_fd=dir_fd, follow_symlinks=False)
+
+class terminal_size(tuple):
+    def __new__(cls, sequence):
+        values = tuple(sequence)
+        if len(values) != 2:
+            raise TypeError('os.terminal_size() takes a 2-sequence')
+        return tuple.__new__(cls, values)
+    columns = property(lambda self: self[0])
+    lines = property(lambda self: self[1])
+
+
+def readlink(path, *, dir_fd=None):
+    if dir_fd is not None:
+        raise NotImplementedError('os.readlink directory descriptors are not supported')
+    path = fspath(path)
+    raw = _host_file_kind(fsdecode(path), None)
+    if isinstance(raw, tuple):
+        raise OSError(raw[0], raw[1], path)
+    return fsencode(raw) if isinstance(path, bytes) else raw

@@ -50,7 +50,9 @@ def _stream_mode(stream, is_stderr=False):
 
 
 class _Readable:
-    def __init__(self, handle, which):
+    def __init__(self, handle, which, encoding=None, errors=None):
+        self._encoding = encoding
+        self._errors = errors or "strict"
         self._handle = handle
         self._which = which
         self.closed = False
@@ -60,22 +62,39 @@ class _Readable:
             raise ValueError('I/O operation on closed file')
         result = _subprocess(3, self._handle, self._which)
         if result is None or result is False:
-            return b''
+            result = b''
+        if self._encoding is not None:
+            return result.decode(self._encoding, self._errors).replace('\r\n', '\n').replace('\r', '\n')
         return result
 
     def close(self):
-        self.closed = True
+        if not self.closed:
+            _subprocess(7, self._handle, self._which)
+            self.closed = True
 
 
 class _Writable:
-    def __init__(self, handle):
+    def __init__(self, handle, encoding=None, errors=None):
+        self._encoding = encoding
+        self._errors = errors or "strict"
         self._handle = handle
         self.closed = False
 
     def write(self, data):
         if self.closed:
             raise ValueError('I/O operation on closed file')
-        return _subprocess(1, self._handle, data)
+        if self._encoding is not None:
+            if not isinstance(data, str):
+                raise TypeError('write() argument must be str, not ' + type(data).__name__)
+            encoded = data.encode(self._encoding, self._errors)
+            result = _subprocess(1, self._handle, encoded)
+            if result is False:
+                raise BrokenPipeError(32, 'Broken pipe')
+            return len(data)
+        result = _subprocess(1, self._handle, data)
+        if result is False:
+            raise BrokenPipeError(32, 'Broken pipe')
+        return result
 
     def close(self):
         if not self.closed:
@@ -96,6 +115,8 @@ class Popen:
             argv = [args]
         else:
             argv = list(args)
+        import os
+        argv = [os.fspath(argument) for argument in argv]
         if env is None:
             env = {}
         in_mode = _stream_mode(stdin)
@@ -104,13 +125,18 @@ class Popen:
         handle = _subprocess(0, argv, env, in_mode, out_mode, err_mode)
         if handle is False:
             raise OSError(2, 'No such file or directory', argv[0])
+        if text is not None and universal_newlines is not None and bool(text) != bool(universal_newlines):
+            raise SubprocessError('Cannot disambiguate when both text and universal_newlines are supplied but different.')
+        self.text_mode = bool(text or universal_newlines or encoding or errors)
+        self.encoding = (encoding or 'utf-8') if self.text_mode else None
+        self.errors = errors or 'strict'
         self._handle = handle
         self._stderr_to_stdout = stderr == STDOUT
         self.args = argv
         self.returncode = None
-        self.stdin = _Writable(handle) if in_mode == 1 else None
-        self.stdout = _Readable(handle, 0) if out_mode == 1 else None
-        self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1) if err_mode in (1, 3) else None)
+        self.stdin = _Writable(handle, self.encoding, self.errors) if in_mode == 1 else None
+        self.stdout = _Readable(handle, 0, self.encoding, self.errors) if out_mode == 1 else None
+        self.stderr = None if self._stderr_to_stdout else (_Readable(handle, 1, self.encoding, self.errors) if err_mode in (1, 3) else None)
 
     def poll(self):
         if self.returncode is not None:
@@ -168,12 +194,15 @@ class Popen:
                     self.kill()
                     raise TimeoutExpired(self.args, timeout)
                 _wait(10000)
-        out = self.stdout.read() if self.stdout is not None else b''
+        out = self.stdout.read() if self.stdout is not None and not self.stdout.closed else None
         if self._stderr_to_stdout:
-            out = out + self._read_stream(1)
+            additional = self._read_stream(1)
+            if self.text_mode:
+                additional = additional.decode(self.encoding, self.errors).replace('\r\n', '\n').replace('\r', '\n')
+            out = (out or ('' if self.text_mode else b'')) + additional
             err = None
         else:
-            err = self.stderr.read() if self.stderr is not None else b''
+            err = self.stderr.read() if self.stderr is not None and not self.stderr.closed else None
         if self.returncode is None:
             self.returncode = self.wait()
         return (out, err)

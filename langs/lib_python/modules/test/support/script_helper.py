@@ -25,7 +25,9 @@ def _to_file_args(args):
             with open(file, 'w', encoding='utf-8') as out:
                 out.write(code)
             i += 2
-        elif a in ('-m', '-X', '-W', '-Q') and i + 1 < n:
+        elif a == '-m' and i + 1 < n:
+            return '-m', args[i + 1:]
+        elif a in ('-X', '-W', '-Q') and i + 1 < n:
             i += 2
         elif len(a) > 2 and a[:2] in ('-X', '-W', '-Q'):
             i += 1

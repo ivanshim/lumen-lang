@@ -149,6 +149,16 @@ impl Pattern {
 /// they are asked for; a name no program can spell.
 pub const ANNOTATE_WORD: &str = "\0annotate";
 
+/// What a Python `import` asks of `__import__` as its fromlist: nothing
+/// for a plain or aliased import, the star for `from m import *`, or
+/// the names a from-import takes out together.
+#[derive(Debug, Clone)]
+pub enum ImportStyle {
+    Plain,
+    Star,
+    Names(Vec<String>),
+}
+
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -171,7 +181,8 @@ pub enum Action {
     ContextEnter,
     AsyncContextEnter,
     SettleObjects,
-    Import(String, Option<String>, bool),
+    Import(String, ImportStyle),
+    ImportFrom(String, String),
     ImportAll,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
@@ -494,6 +505,7 @@ pub enum Builtin {
     MemberSet,
     MemberGet,
     ProgramNamespace,
+    ProductStep,
     FrameModule,
     ClassSeal,
     Bytes(u8),
@@ -623,7 +635,16 @@ pub enum Builtin {
     /// word that is told which step it is on. Only a language spelling
     /// this may run a second interpreter beside itself and read its
     /// writing back.
+    AsciiSpan,
+    JsonString,
     Subprocess,
+    /// The host's own signals, one word told which step it is on
+    /// (ext.builtin.signal): give a number the handler it answers with,
+    /// ask which handler a number was given, or leave a number pending
+    /// so the run takes it up where one statement gives way to the
+    /// next. Only a language spelling this may have signals taken up
+    /// between its statements at all.
+    Signal,
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,
@@ -715,6 +736,7 @@ pub enum Builtin {
     /// built-in writing for out to bytes and read it back: `None`
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
+    HeapNative,
     ReduceNative,
     RebuildNative,
     CharAtIndex,

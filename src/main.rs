@@ -182,6 +182,7 @@ struct Invocation {
     /// A language to write the program in instead of running it (microcode11 only).
     emit: Option<Language>,
     program_args: Vec<String>,
+    supplied_source: Option<String>,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -550,10 +551,10 @@ fn run_all() {
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
 
-    let written = fs::read(&inv.file).unwrap_or_else(|e| {
+    let written = inv.supplied_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
-    });
+    }));
     let source = if inv.language.name() == "python" && honours_extensions(&inv.kernel) {
         python_file_source(written, &inv.file)
     } else {
@@ -606,8 +607,12 @@ fn run_all() {
         let modules = root.join("langs/lib_python/modules");
         request.push(("SELF".to_string(), "library_root".to_string(), modules.to_string_lossy().into_owned(), false));
     }
-    for (name, source) in embedded_modules::MODULES {
+    for (name, source, file) in embedded_modules::MODULES {
         request.push(("MODULE".to_string(), name.to_string(), source.to_string(), false));
+        request.push(("MODULE_FILE".to_string(), name.to_string(), file.to_string(), false));
+    }
+    for (name, member) in embedded_modules::MODULE_ALIASES {
+        request.push(("MODULE_ALIAS".to_string(), name.to_string(), member.to_string(), false));
     }
     // Where the program itself lies. A definition may give names to
     // these, and only the full kernels read those labels.
@@ -854,6 +859,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut language: Option<Language> = None;
     let mut emit: Option<Language> = None;
     let mut file: Option<String> = None;
+    let mut supplied_source = None;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -884,6 +890,31 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 language = Some(language_from_flag(&said(&rest[1])));
                 rest = &rest[2..];
+            }
+            Some("-c") if file.is_none() => {
+                if rest.len() < 2 { usage(program); }
+                supplied_source = Some(said(&rest[1]));
+                file = Some("<string>".to_owned());
+                language = Some(Language::Named("python".into()));
+                rest = &rest[2..];
+                break;
+            }
+            Some("-m") if file.is_none() => {
+                if rest.len() < 2 { usage(program); }
+                let requested = said(&rest[1]);
+                let (location, body, owner) = module_entry(&requested).unwrap_or_else(|message| {
+                    eprintln!("{}: {}", program, message); process::exit(1);
+                });
+                let quoted = format!("'{owner}'");
+                let parent = if owner.is_empty() { String::new() } else { format!("import {owner}\n") };
+                supplied_source = Some(format!("{parent}__package__ = {quoted}\n{body}"));
+                file = Some(location);
+                language = Some(Language::Named("python".into()));
+                rest = &rest[2..];
+                break;
+            }
+            Some("-E" | "-I" | "-s" | "-S" | "-u" | "-B" | "-q" | "-P") if file.is_none() => {
+                rest = &rest[1..];
             }
             Some("--serve") => {
                 if rest.len() < 2 {
@@ -978,7 +1009,34 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     });
 
-    Invocation { kernel, file, serve, language, emit, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, program_args: rest.iter().map(said).collect(), supplied_source }
+}
+
+/// Find the source executed by Python's module switch, including package entry points.
+fn module_entry(name: &str) -> Result<(String, String, String), String> {
+    if name.is_empty() || !name.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c == '_' || c.is_alphanumeric())) {
+        return Err(format!("No module named {name}"));
+    }
+    let relative = name.replace('.', "/");
+    let mut roots = vec![env::current_dir().map_err(|e| e.to_string())?];
+    if let Some(paths) = env::var_os("PYTHONPATH") { roots.extend(env::split_paths(&paths)); }
+    for directory in roots {
+        let ordinary = directory.join(format!("{relative}.py"));
+        let package = directory.join(&relative).join("__init__.py");
+        let (file, owner) = if package.is_file() { (package.with_file_name("__main__.py"), name.to_owned()) }
+            else { (ordinary, name.rsplit_once('.').map_or("", |(head, _)| head).to_owned()) };
+        if let Ok(source) = fs::read_to_string(&file) { return Ok((file.to_string_lossy().into_owned(), source, owner)); }
+    }
+    let module = embedded_modules::MODULES.iter().find(|(key, _, _)| *key == name).ok_or_else(|| format!("No module named {name}"))?;
+    let (key, source, file, owner) = if module.2.ends_with("/__init__.py") {
+        let main = format!("{name}.__main__");
+        let entry = embedded_modules::MODULES.iter().find(|(key, _, _)| *key == main).ok_or_else(|| format!("No module named {main}; '{name}' is a package and cannot be directly executed"))?;
+        (entry.0, entry.1, entry.2, name.to_owned())
+    } else { (module.0, module.1, module.2, name.rsplit_once('.').map_or("", |(head, _)| head).to_owned()) };
+    let _ = key;
+    let directory = env::var_os("LUMEN_ROOT").map(std::path::PathBuf::from).map(|root| root.join("langs/lib_python/modules"))
+        .unwrap_or_else(|| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules")));
+    Ok((directory.join(file).to_string_lossy().into_owned(), source.to_owned(), owner))
 }
 
 /// The language whose embedded definition claims the file's extension.

@@ -1,5 +1,5 @@
 import sys
-# Ported from examples/lumen/constructs/ord_chr.lm by scripts/port_examples.py; edit the Lumen original, not this file.
+# Maintained as a Python example: ord() requires exactly one character.
 print("=== ord() and chr() Tests ===")
 print("")
 sys.stdout.write("ord('A'): ")
@@ -41,7 +41,10 @@ sys.stdout.write("ord(chr(72)): ")
 print(ord(chr(72)))
 print("")
 sys.stdout.write("ord('Hello'): ")
-print(ord("Hello"))
+try:
+    print(ord("Hello"))
+except TypeError as error:
+    print(type(error).__name__ + ": " + str(error))
 print("")
 result = chr(72) + chr(101) + chr(108) + chr(108) + chr(111)
 sys.stdout.write("chr(72).chr(101).chr(108).chr(108).chr(111): ")

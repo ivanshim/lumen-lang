@@ -833,3 +833,5 @@ class memoryview:
 # FileExistsError, InterruptedError, NotADirectoryError,
 # PermissionError, ProcessLookupError and TimeoutError -- along with
 # the old spellings EnvironmentError and IOError.
+
+BrokenPipeError = BrokenPipeError

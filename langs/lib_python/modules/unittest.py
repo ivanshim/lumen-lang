@@ -435,6 +435,9 @@ class TestSuite:
     def addTest(self, test):
         self.tests = [*self.tests, test]
 
+    def __iter__(self):
+        return iter(self.tests)
+
     def addTests(self, tests):
         for test in tests:
             self.addTest(test)
@@ -839,20 +842,18 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     suite = loader.loadTestsFromModule(module)
     only = _only_classes()
     if only is not None:
-        # Keep the loader's class and method order when running a long file
-        # in parts. A plain class name selects every method in that class.
-        selected = []
-        for tests in suite.tests:
-            name = tests.class_.__name__
-            if name in only:
-                selected.append(tests)
-            else:
-                methods = [test for test in tests.tests if name + '.' + test._method in only]
-                if len(methods) > 0:
-                    part = TestSuite(methods)
-                    part.class_ = tests.class_
-                    selected.append(part)
-        suite = TestSuite(selected)
+        def select(test):
+            if isinstance(test, TestSuite):
+                selected = [select(child) for child in test.tests]
+                result = TestSuite([child for child in selected if child is not None])
+                result.class_ = test.class_
+                return result if result.countTestCases() else None
+            name = type(test).__name__
+            method = getattr(test, '_method', '')
+            if name in only or name + '.' + method in only:
+                return test
+            return None
+        suite = select(suite) or TestSuite()
     if testRunner is None:
         testRunner = TextTestRunner(verbosity=verbosity)
     result = testRunner.run(suite)

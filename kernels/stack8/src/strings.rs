@@ -521,3 +521,23 @@ fn mapping_format(s: &str, mapping: &Value, lang: &Lang, words: &Wording, depth:
     }
     Ok(out)
 }
+
+
+/// Immutable text keeps the same code-point extent throughout its life.
+pub(crate) fn character_length(text: &Rc<str>) -> usize {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::rc::Weak;
+    thread_local! {
+        static LENGTHS: RefCell<HashMap<usize, (Weak<str>, usize)>> = RefCell::new(HashMap::new());
+    }
+    LENGTHS.with(|cache| {
+        let mut entries = cache.borrow_mut();
+        let address = text.as_ptr() as usize;
+        if let Some((_, length)) = entries.get(&address) { return *length; }
+        if entries.len() >= 1024 { entries.retain(|_, (text, _)| text.strong_count() != 0); }
+        let count = text.chars().count();
+        entries.insert(address, (Rc::downgrade(text), count));
+        count
+    })
+}

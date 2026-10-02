@@ -4,6 +4,7 @@
 # here. A class claimed for a kind through register belongs to it, as
 # the builtin containers claimed at the foot of this file do.
 from abc import ABC, abstractmethod
+from types import GenericAlias
 
 __all__ = ['Hashable', 'Sized', 'Container', 'Callable', 'Iterable',
            'Iterator', 'Reversible', 'Generator', 'Collection',
@@ -53,6 +54,7 @@ def _check_methods(candidate, *methods):
 
 
 class _Kind(ABC):
+    __class_getitem__ = classmethod(GenericAlias)
     # A kind every container kind below stands on. The claim a class
     # makes to belong to a kind is kept by the metaclass, which every
     # kind here has from ABC.

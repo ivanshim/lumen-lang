@@ -106,3 +106,48 @@ class StringIO:
     def _check(self):
         if self.closed:
             raise ValueError('I/O operation on closed file')
+
+# Text adaptation for a binary stream, with incremental encoding at the boundary.
+def text_encoding(encoding, stacklevel=2):
+    return encoding if encoding is not None else 'utf-8'
+
+class TextIOWrapper:
+    def __init__(self, buffer, encoding=None, errors=None, newline=None,
+                 line_buffering=False, write_through=False):
+        self.buffer = buffer
+        self.encoding = text_encoding(encoding)
+        self.errors = errors or 'strict'
+        self.newlines = None
+        self.closed = False
+        self.line_buffering = line_buffering
+        self.write_through = write_through
+
+    def read(self, size=-1):
+        value = self.buffer.read(size)
+        return value.decode(self.encoding, self.errors)
+
+    def write(self, value):
+        if not isinstance(value, str):
+            raise TypeError('write() argument must be str')
+        self.buffer.write(value.encode(self.encoding, self.errors))
+        if self.write_through or self.line_buffering and '\n' in value:
+            self.flush()
+        return len(value)
+
+    def flush(self):
+        return self.buffer.flush()
+
+    def close(self):
+        if not self.closed:
+            self.flush()
+            self.buffer.close()
+            self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self.buffer, name)

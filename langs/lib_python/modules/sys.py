@@ -6,9 +6,10 @@ _host_stream_write = __stream_write
 argv = __program_namespace()['__program_argv']
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# Nothing stands here by default, since nothing outside the library
-# this run carries is on the way until a program puts it there.
-path = [argv[0].rsplit('/', 1)[0] if '/' in argv[0] else '']
+# The isolated default contains the library's own source location.
+# Callers add other directories explicitly; a program's directory is not
+# placed ahead of the embedded library merely because it contains a script.
+path = [__file__.rsplit('/', 1)[0]]
 maxsize = 9223372036854775807
 version_info = (3, 14, 0, 'final', 0)
 platform = 'linux'
@@ -131,39 +132,85 @@ def set_int_max_str_digits(maxdigits):
 # of a real terminal, whatever the host's own stdio happens to be, so
 # isatty() always answers no and a test that only runs against a tty
 # takes its own skip road instead of finding an attribute missing.
-class _Output:
+class _Stream:
+    encoding = 'utf-8'
+    errors = 'surrogateescape'
+    closed = False
+
+    def _check_open(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file.')
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        self._check_open()
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def flush(self):
+        self._check_open()
+
+class _Output(_Stream):
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
-        return _host_stream_write(*args, False)
+        self._check_open()
+        result = _host_stream_write(*args, False)
+        if isinstance(result, tuple):
+            if result[0] == 32:
+                raise BrokenPipeError(*result)
+            raise OSError(*result)
+        return result
 
     def flush(self):
-        pass
+        self._check_open()
 
     def isatty(self):
         return False
 
-class _Error:
+class _Error(_Stream):
     def write(self, *args, **keywords):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
-        return _host_stream_write(*args, True)
+        self._check_open()
+        result = _host_stream_write(*args, True)
+        if isinstance(result, tuple):
+            if result[0] == 32:
+                raise BrokenPipeError(*result)
+            raise OSError(*result)
+        return result
 
     def flush(self):
-        pass
+        self._check_open()
 
     def isatty(self):
         return False
 
-class _Input:
+class _Input(_Stream):
     def read(self, size=-1):
+        self._check_open()
         return _host_stream_read(size, False)
 
     def readline(self, size=-1):
+        self._check_open()
         return _host_stream_read(size, True)
 
     def isatty(self):
         return False
+
+_Input.__iter__ = lambda self: self
+
+def _next_line(self):
+    line = self.readline()
+    if not line:
+        raise StopIteration
+    return line
+
+_Input.__next__ = _next_line
 
 stdout = _Output()
 stderr = _Error()
@@ -253,7 +300,7 @@ def exc_info():
 # a private directory of the run's own stands in the binary's place.
 # Where nothing was named -- a reference kernel reads no such label --
 # the empty string stands, and a test that needs its own program skips.
-executable = globals().get('__runner__', '')
+executable = __program_namespace().get('__runner__', '')
 
 float_repr_style = 'short'
 byteorder = 'little'
@@ -370,3 +417,9 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+# The installation prefix is the parent of the directory holding the executable.
+prefix = '/'.join(executable.split('/')[:-2])
+base_prefix = prefix
+exec_prefix = prefix
+base_exec_prefix = prefix

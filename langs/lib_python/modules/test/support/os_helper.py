@@ -142,8 +142,9 @@ class EnvironmentVarGuard:
     def set(self, envvar, value):
         self[envvar] = value
 
-    def unset(self, envvar):
-        del self[envvar]
+    def unset(self, *envvars):
+        for envvar in envvars:
+            del self[envvar]
 
     def copy(self):
         return dict(self._environ)

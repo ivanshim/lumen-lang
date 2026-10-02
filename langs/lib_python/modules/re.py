@@ -1,9 +1,11 @@
 # Host primitives used by class bodies need non-private module bindings.
 _host_copy_value = __copy_value
+_host_ascii_span = __text_scan_ascii
 
-# A backtracking reader over text. Backreferences, inline flags, bytes and
-# locale rules are not carried by this small engine. Unsupported escapes
-# and group forms raise a complaint when compiled.
+# A backtracking reader over text. Inline flags, atomic groups and set
+# operations are read; backreferences, bytes and locale rules are carried
+# as far as this small engine needs them. Unsupported escapes and group
+# forms raise a complaint when compiled.
 I = 2
 IGNORECASE = I
 M = 8
@@ -12,6 +14,7 @@ S = 16
 DOTALL = S
 X = 64
 VERBOSE = X
+A = ASCII = 256
 
 _DIGITS = '0123456789'
 _WORD_LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
@@ -172,6 +175,13 @@ class _Reader:
             if self.i >= len(self.pattern):
                 raise 'ValueError: unexpected end of pattern'
             marker = self.pattern[self.i]
+            if marker == '>':
+                self.i += 1
+                node = self.choice()
+                self._close_group()
+                return ['atomic', node]
+            if marker in 'aiLmsux':
+                return self._flags_group()
             if marker == ':':
                 self.i += 1
                 node = self.choice()
@@ -226,6 +236,33 @@ class _Reader:
         self._close_group()
         return ['group', number, node]
 
+    def _flags_group(self):
+        # after '(?', the current character is a flag letter. The small
+        # engine carries only ignorecase, multiline and dotall; ascii, verb
+        # locale and unicode are read and dropped.
+        add = [False, False, False]
+        while self.i < len(self.pattern):
+            letter = self.pattern[self.i]
+            if letter == '-':
+                raise 'NotImplementedError: removing an inline flag is not supported'
+            if letter in 'ims':
+                add['ims'.index(letter)] = True
+                self.i += 1
+            elif letter in 'axuL':
+                self.i += 1
+            else:
+                break
+        flags = (add[0], add[1], add[2])
+        if self.i < len(self.pattern) and self.pattern[self.i] == ':':
+            self.i += 1
+            node = self.choice()
+            self._close_group()
+            return ['scoped', flags, node]
+        if self.i < len(self.pattern) and self.pattern[self.i] == ')':
+            self.i += 1
+            raise 'NotImplementedError: a bare inline flag change is not supported'
+        raise 'ValueError: unknown extension ?' + self.pattern[self.i - 1]
+
     def _close_group(self):
         if self.i == len(self.pattern) or self.pattern[self.i] != ')':
             raise 'ValueError: unterminated group'
@@ -236,24 +273,58 @@ class _Reader:
         if self.i < len(self.pattern) and self.pattern[self.i] == '^':
             self.i += 1
             reverse = True
+        root, term = self._set_operand(False)
+        while term is not None:
+            operand, term = self._set_operand(True)
+            root = ['setop', term, root, operand]
+        return ['negate', root] if reverse else root
+
+    def _set_operand(self, allow_nested):
         entries = []
-        while self.i < len(self.pattern) and (self.pattern[self.i] != ']' or len(entries) == 0):
+        compound = None
+        if allow_nested and self.i < len(self.pattern) and self.pattern[self.i] == '[':
+            self.i += 1
+            compound = self._class()
+        while True:
+            if self.i >= len(self.pattern):
+                raise 'ValueError: unterminated character class'
             letter = self.pattern[self.i]
+            if entries or compound is not None:
+                if letter == ']':
+                    self.i += 1
+                    return self._operand_node(entries, compound), None
+                if letter in '-&|~' and self.i + 1 < len(self.pattern) and self.pattern[self.i + 1] == letter:
+                    if letter != '~':
+                        self.i += 2
+                        return self._operand_node(entries, compound), letter + letter
+            if compound is not None:
+                raise 'ValueError: unsupported nested set operand'
             self.i += 1
             entry = self.escaped(True) if letter == '\\' else ['lit', letter]
-            if self.i + 1 < len(self.pattern) and self.pattern[self.i] == '-' and self.pattern[self.i + 1] != ']':
+            if self.i < len(self.pattern) and self.pattern[self.i] == '-':
                 self.i += 1
+                if self.i >= len(self.pattern):
+                    raise 'ValueError: unterminated character class'
                 last = self.pattern[self.i]
+                if last == ']':
+                    entries.append(entry)
+                    entries.append(['lit', '-'])
+                    self.i += 1
+                    return self._operand_node(entries, compound), None
+                if last == '-':
+                    entries.append(entry)
+                    return self._operand_node(entries, compound), '--'
                 self.i += 1
                 end = self.escaped(True) if last == '\\' else ['lit', last]
                 if entry[0] != 'lit' or end[0] != 'lit' or ord(entry[1]) > ord(end[1]):
                     raise 'ValueError: bad character range'
                 entry = ['range', entry[1], end[1]]
             entries.append(entry)
-        if self.i == len(self.pattern):
-            raise 'ValueError: unterminated character class'
-        self.i += 1
-        return ['class', reverse, entries]
+
+    def _operand_node(self, entries, compound):
+        if compound is not None:
+            return compound
+        return ['class', False, entries]
 
 def _strip_verbose(pattern):
     # VERBOSE drops whitespace and `#` comments that fall outside a
@@ -290,10 +361,16 @@ def _strip_verbose(pattern):
         i += 1
     return result
 
-def _word(letter):
-    return letter != '' and letter in _WORD_LETTERS
+def _word(letter, ascii_only=False):
+    if letter == '':
+        return False
+    if letter in _WORD_LETTERS:
+        return True
+    if ord(letter) > 127 and not ascii_only:
+        return letter.isalpha() or letter.isdecimal()
+    return False
 
-def _accept(node, letter, ignorecase):
+def _accept(node, letter, ignorecase, ascii_only=False):
     kind = node[0]
     if kind == 'lit':
         if ignorecase:
@@ -309,16 +386,45 @@ def _accept(node, letter, ignorecase):
     if kind == 'kind':
         mark = node[1]
         if mark in 'dD':
-            answer = letter in _DIGITS
+            answer = letter in _DIGITS if ascii_only else letter.isdecimal()
         elif mark in 'wW':
-            answer = _word(letter)
+            answer = _word(letter, ascii_only)
         else:
-            answer = letter in ' \t\n\r\v\f'
+            answer = letter in ' \t\n\r\v\f' if ascii_only else letter.isspace()
         return not answer if mark in 'DWS' else answer
+    return False
+
+def _set_accept(node, letter, ignorecase, ascii_only=False):
+    kind = node[0]
+    if kind == 'class':
+        answer = False
+        for entry in node[2]:
+            if _accept(entry, letter, ignorecase, ascii_only):
+                answer = True
+        return not answer if node[1] else answer
+    if kind == 'negate':
+        return not _set_accept(node[1], letter, ignorecase, ascii_only)
+    if kind == 'setop':
+        op = node[1]
+        left = _set_accept(node[2], letter, ignorecase, ascii_only)
+        if op == '||':
+            if left:
+                return True
+            return _set_accept(node[3], letter, ignorecase, ascii_only)
+        if not left:
+            return False
+        right = _set_accept(node[3], letter, ignorecase, ascii_only)
+        return right if op == '&&' else not right
     return False
 
 def _walk(node, text, place, captures, opts):
     kind = node[0]
+    if kind == 'scoped':
+        flags = node[1]
+        new_opts = (opts[0] or flags[0], opts[1] or flags[1], opts[2] or flags[2], opts[3])
+        return _walk(node[2], text, place, captures, new_opts)
+    if kind == 'atomic':
+        return _walk(node[1], text, place, captures, opts)[:1]
     if kind == 'seq':
         return _sequence(node[1], 0, text, place, captures, opts)
     if kind == 'or':
@@ -372,23 +478,18 @@ def _walk(node, text, place, captures, opts):
     if kind == 'end_abs':
         return [[place, captures]] if place == len(text) else []
     if kind == 'boundary':
-        before = _word(text[place - 1]) if place > 0 else False
-        after = _word(text[place]) if place < len(text) else False
+        before = _word(text[place - 1], opts[3]) if place > 0 else False
+        after = _word(text[place], opts[3]) if place < len(text) else False
         return [[place, captures]] if before != after else []
     if place >= len(text):
         return []
     letter = text[place]
     if kind == 'dot':
         answer = opts[2] or letter != '\n'
-    elif kind == 'class':
-        answer = False
-        for entry in node[2]:
-            if _accept(entry, letter, opts[0]):
-                answer = True
-        if node[1]:
-            answer = not answer
+    elif kind == 'class' or kind == 'setop' or kind == 'negate':
+        answer = _set_accept(node, letter, opts[0], opts[3])
     else:
-        answer = _accept(node, letter, opts[0])
+        answer = _accept(node, letter, opts[0], opts[3])
     return [[place + 1, captures]] if answer else []
 
 def _sequence(parts, index, text, place, captures, opts):
@@ -567,11 +668,11 @@ def _atom_matches(node, letter, opts):
     if node[0] == 'class':
         matched = False
         for entry in node[2]:
-            if _accept(entry, letter, opts[0]):
+            if _accept(entry, letter, opts[0], opts[3]):
                 matched = True
                 break
         return not matched if node[1] else matched
-    return _accept(node, letter, opts[0])
+    return _accept(node, letter, opts[0], opts[3])
 
 
 def _ascii_members(node, opts):
@@ -582,6 +683,10 @@ def _ascii_members(node, opts):
 class Pattern:
     def __init__(self, pattern, flags=0):
         self.flags = flags
+        self.is_bytes = isinstance(pattern, bytes)
+        original = pattern
+        if self.is_bytes:
+            pattern = str(pattern, 'latin-1')
         self.ignorecase = (flags & IGNORECASE) != 0
         self.multiline = (flags & MULTILINE) != 0
         self.dotall = (flags & DOTALL) != 0
@@ -595,8 +700,8 @@ class Pattern:
             raise 'ValueError: unbalanced parenthesis'
         self.groups = reader.groups
         self.groupindex = reader.names
-        self.pattern = pattern
-        self._opts = (self.ignorecase, self.multiline, self.dotall)
+        self.pattern = original
+        self._opts = (self.ignorecase, self.multiline, self.dotall, self.is_bytes or bool(flags & ASCII))
         # A complete pattern containing one repeated atom needs no
         # alternative states for match(), which selects its first answer.
         atom = _single_node(self.tree)
@@ -630,11 +735,6 @@ class Pattern:
     def _check_text(self, string):
         if self._bytes != isinstance(string, (bytes, bytearray)):
             raise TypeError('cannot use a bytes pattern on a string-like object' if self._bytes else 'cannot use a string pattern on a bytes-like object')
-        if self._shorthand:
-            text = string.decode('latin-1') if self._bytes else string
-            for letter in text:
-                if ord(letter) > 127:
-                    raise NotImplementedError('Unicode shorthand classes are not supported')
 
     def match(self, string, pos=0, endpos=None):
         self._check_text(string)
@@ -655,15 +755,11 @@ class Pattern:
             if not greedy:
                 limit = min(limit, pos + minimum)
             while end < limit:
-                chunk = text[end:min(limit, end + 256)]
-                advance = len(chunk) - len(chunk.lstrip(ascii_members))
-                end += advance
+                end = _host_ascii_span(text, end, ascii_members, limit - end)
                 if end == limit:
                     break
-                if advance == len(chunk):
-                    continue
                 letter = text[end]
-                if not _atom_matches(atom, letter, self._opts):
+                if letter < '\x80' or not _atom_matches(atom, letter, self._opts):
                     break
                 end += 1
             return Match(self, string, pos, [end, {}]) if end - pos >= minimum else None
@@ -671,13 +767,9 @@ class Pattern:
             left, right, delimiter, ascii_members, ascii_skip = self._chunk
             end = pos
             while end < len(text):
-                chunk = text[end:end + 256]
-                advance = len(chunk) - len(chunk.lstrip(ascii_skip))
-                end += advance
+                end = _host_ascii_span(text, end, ascii_skip, len(text) - end)
                 if end == len(text):
                     break
-                if advance == len(chunk):
-                    continue
                 letter = text[end]
                 accepted = letter in ascii_members if letter < '\x80' else _atom_matches(delimiter, letter, self._opts)
                 if accepted:

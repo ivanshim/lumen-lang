@@ -61,12 +61,22 @@ GeneratorType = type(__generator_probe())
 del __generator_probe
 
 
-class CoroutineType:
-    pass
+async def __coroutine_probe():
+    return None
 
 
-class AsyncGeneratorType:
-    pass
+__coroutine = __coroutine_probe()
+CoroutineType = type(__coroutine)
+__coroutine.close()
+del __coroutine, __coroutine_probe
+
+
+async def __async_generator_probe():
+    yield None
+
+
+AsyncGeneratorType = type(__async_generator_probe())
+del __async_generator_probe
 
 
 class FrameType:
@@ -246,6 +256,9 @@ class GenericAlias:
             self.__args__ = args
         else:
             self.__args__ = (args,)
+
+    def __mro_entries__(self, bases):
+        return (self.__origin__,)
 
     def __call__(self, *args, **keywords):
         return self.__origin__(*args, **keywords)

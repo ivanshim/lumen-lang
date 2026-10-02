@@ -113,3 +113,78 @@ def getcoroutinestate(coroutine):
 
 def __getattr__(name):
     raise 'NotImplementedError: inspect.' + name + ' needs to read a compiled body, which this runtime does not hand out'
+
+
+# A signature reconstructed from the code fields the runtime exposes.
+# Frame walking and builtin text signatures remain unavailable.
+class Signature:
+    @classmethod
+    def from_callable(cls, obj, *, follow_wrapped=True, globals=None, locals=None,
+                      eval_str=False, annotation_format=1):
+        if follow_wrapped:
+            seen = set()
+            while hasattr(obj, '__wrapped__'):
+                if id(obj) in seen:
+                    raise ValueError('wrapper loop when unwrapping ' + repr(obj))
+                seen.add(id(obj))
+                obj = obj.__wrapped__
+        given = getattr(obj, '__signature__', None)
+        if given is not None:
+            if not isinstance(given, cls):
+                raise TypeError('unexpected object in __signature__ attribute')
+            return given
+        bound = getattr(obj, '__self__', None) is not None
+        if hasattr(obj, '__func__'):
+            obj = obj.__func__
+        if isinstance(obj, type):
+            obj = obj.__init__
+            bound = True
+        elif not hasattr(obj, '__code__'):
+            if not callable(obj):
+                raise TypeError(repr(obj) + ' is not a callable object')
+            obj = obj.__call__
+            bound = True
+        code = getattr(obj, '__code__', None)
+        if code is None:
+            raise ValueError('no signature found for builtin ' + repr(obj))
+        names = code.co_varnames
+        count = code.co_argcount
+        posonly = code.co_posonlyargcount
+        kwonly = code.co_kwonlyargcount
+        defaults = getattr(obj, '__defaults__', None) or ()
+        kwdefaults = getattr(obj, '__kwdefaults__', None) or {}
+        parts = []
+        for i in range(1 if bound else 0, count):
+            part = names[i]
+            if i >= count - len(defaults):
+                part += '=' + repr(defaults[i - count + len(defaults)])
+            parts.append(part)
+            if i + 1 == posonly:
+                parts.append('/')
+        cursor = count + kwonly
+        if code.co_flags & CO_VARARGS:
+            parts.append('*' + names[cursor])
+            cursor += 1
+        elif kwonly:
+            parts.append('*')
+        for i in range(count, count + kwonly):
+            part = names[i]
+            if part in kwdefaults:
+                part += '=' + repr(kwdefaults[part])
+            parts.append(part)
+        if code.co_flags & CO_VARKEYWORDS:
+            parts.append('**' + names[cursor])
+        result = cls()
+        result._text = '(' + ', '.join(parts) + ')'
+        return result
+
+    def __str__(self):
+        return self._text
+
+
+def signature(obj, *, follow_wrapped=True, globals=None, locals=None,
+              eval_str=False, annotation_format=1):
+    return Signature.from_callable(obj, follow_wrapped=follow_wrapped,
+                                   globals=globals, locals=locals,
+                                   eval_str=eval_str,
+                                   annotation_format=annotation_format)
