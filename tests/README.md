@@ -11,8 +11,8 @@ order the reference suites need it.
 | Directory | Source | Commit | License |
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
-| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, and the support data they read (`mathdata/`, `test_import/data/syntax_warnings.py`) | `3b564385e4c9` (2026-09-07) | [python/LICENSE](python/LICENSE) (PSF License) |
-| `python/test/` | [python/cpython](https://github.com/python/cpython) `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper}.py` | `3b564385e4c9` (2026-09-07) | [python/LICENSE](python/LICENSE) (PSF License) |
+| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, and the support data they read (`mathdata/`) | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
+| `python/test/` | [python/cpython](https://github.com/python/cpython) `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper}.py` | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
 
 The `python/test/` package and its support, import, threading, OS, and script helpers
 are also preserved byte for byte at that commit. The embedded runtime support
@@ -20,8 +20,10 @@ modules in `langs/lib_python/modules/test/` provide the interpreter adapters.
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a
-`unittest` module; none can run yet, and each stops at the first construct
-the definition or a kernel does not know, which the report records.
+`unittest` module. The suite measures released CPython 3.14.8 semantics;
+unsupported behaviour remains visible as a failure or error.
+The repin inventory, per-method before/after measurements, and lost-pass
+classifications are recorded in `probe/repin-report.md`.
 
 The suites run on the two full kernels, stack8 and microcode7, which are
 the ones that implement the `ext.` labels the languages need beyond the

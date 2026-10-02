@@ -3489,9 +3489,8 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.import`, `ext.stmt.import.from` and `ext.stmt.import.as`:
   lists of words for asking for modules, asking for names within a
   module, and giving a wanted name another name here.
-  `ext.stmt.import.lazy` names the word that may stand before either
-  asking (`lazy import os`, `lazy from sys import path`); the asking is
-  read as it would be without the word, and answered at once. A module path
+  `ext.stmt.import.lazy` is unset for Python 3.14; `lazy` remains an
+  ordinary identifier, including in relative module paths. A module path
   is a name with dots in it, using the pipe spelling as its divider,
   never a pipe expression. A plain import binds the first word of
   each path, or its alias; a from-import binds each wanted name, or
@@ -4554,7 +4553,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.setstate` | - | - | `__setstate__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `gi_state` `tb_lasti` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `__unused_python314_generator_state__` `tb_lasti` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
@@ -4593,8 +4592,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.issubclass` | - | - | `issubclass` | - | - | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
-| `ext.builtin.iter.stop_exception` | - | - | `stop_exception` | - | - | - | - | - | - | - |
-| `ext.builtin.iter.stop_value` | - | - | `stop_value` | - | - | - | - | - | - | - |
+| `ext.builtin.iter.stop_exception` | - | - | - | - | - | - | - | - | - | - |
+| `ext.builtin.iter.stop_value` | - | - | - | - | - | - | - | - | - | - |
 | `ext.builtin.iterable` | - | - | `iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.itertools.product_step` | - | - | `__itertools_product_step` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
@@ -5336,7 +5335,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.outermost` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.own_names` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
-| `ext.stmt.function.parameters.duplicate` | - | - | `SyntaxError: duplicate parameter '` `' in function definition` | - | - | - | - | - | - | - |
+| `ext.stmt.function.parameters.duplicate` | - | - | `SyntaxError: duplicate argument '` `' in function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
 | `ext.stmt.function.short` | - | - | `lambda` `:` | - | `fn` `=>` | - | - | - | - | - |
@@ -5344,7 +5343,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
-| `ext.stmt.import.lazy` | - | - | `lazy` | - | - | - | - | - | - | - |
+| `ext.stmt.import.lazy` | - | - | - | - | - | - | - | - | - | - |
 | `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.nonpackage` | - | - | `; '` `' is not a package` | - | - | - | - | - | - | - |
@@ -5626,12 +5625,10 @@ use these to report integer storage sizes, including inherited attributes.
 `ext.builtin.core.power.integer` optionally carries three further strings for
 the prefix, separator and suffix of a refused three-operand power, naming
 all three operand types after their special methods have declined.
-Python iter() also names its sentinel as stop_value and accepts a
-stop_exception class or tuple of classes for callable iterators.
-
-`ext.builtin.iter.stop_value` names the corresponding keyword accepted by Python callable iterators.
-
-`ext.builtin.iter.stop_exception` names the corresponding keyword accepted by Python callable iterators.
+Python 3.14 iter() accepts its sentinel positionally and takes no keywords.
+`ext.builtin.iter.stop_value` and `ext.builtin.iter.stop_exception` are unset
+in Python's definition; the kernels retain their optional mechanisms for
+other definitions.
 `ext.stmt.class.detail.code.fields` names code metadata members (name, qualified name, positional-only and keyword-only counts, local count, names, constants, flags, filename, first line) and the lazy function annotation member. Code values use the same wrapper as traceback frame code.
 
 The Python class detail labels `name`, `qualified`, `doc`, and `module`
@@ -5659,7 +5656,7 @@ with checked integer accumulation, three-part compensated binary products,
 and ordinary multiplication/addition for other numeric types.
 
 The embedded `test/test_iter.py` is byte-for-byte CPython `Lib/test/test_iter.py`
-from commit `3b564385e4c9` (the suite source recorded in `tests/README.md`),
+from tag `v3.14.8`, commit `8e6e75d9102e` (the suite source recorded in `tests/README.md`),
 under the PSF license in `tests/python/LICENSE`. It supplies the original
 module for imports by the unchanged math tests.
 
@@ -5695,3 +5692,27 @@ protocols.
 `ext.builtin.heap_native` exposes the Python-only heap accelerator. It operates
 on list storage directly, retaining aliases and catching size changes across
 user comparisons; the four reference kernels ignore this label.
+
+
+The Python reference pin is CPython v3.14.8 / 8e6e75d9102e (2026-09-30).
+`sys.version`, `sys.version_info`, `sys.hexversion`, and platform reporting
+advertise 3.14.8. Python does not expose sentinel, frozendict, gi_state,
+or the twelve math functions introduced after 3.14. The traceback roster
+retains its unused generator-state slot to keep later field indices stable;
+that slot supplies no generator attribute or directory entry.
+
+Copied library files retain release bytes below their provenance line.
+`modules/manifest-layout.json` can name runtime adapter suffixes under
+`runtime_adapters/`; port_examples.py concatenates those at embedding time
+without changing the copied source. Copy, copyreg, and functools use these
+suffixes for the existing native-object bridges. Heapq retains its native
+iterator bridge and private statistics helper in a suffix, and operator
+retains class module metadata there. `_operator.py` implements
+native index conversion as a separate accelerator adapter. Source locations
+continue to identify the copied module, and adapters are not public modules.
+
+Python rejects starred list, set, and dictionary comprehensions, which
+were introduced after 3.14. Integer math arguments use the index protocol,
+including int subclasses and objects implementing __index__.
+Percent-format type errors follow the release wording; successful ordered
+unittest assertions do not stringify their operands.
