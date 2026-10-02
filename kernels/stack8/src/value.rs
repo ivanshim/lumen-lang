@@ -1952,7 +1952,10 @@ pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
         0 => (part, -1074i64),
         _ => (part | (1u64 << 52), power - 1075),
     };
-    let mut p = BigInt::from(whole);
+    // Cancel powers of two in the native mantissa before allocating.
+    let zeros = whole.trailing_zeros();
+    let twos = twos + i64::from(zeros);
+    let mut p = BigInt::from(whole >> zeros);
     if below {
         p = -p;
     }
@@ -2306,6 +2309,12 @@ fn nearest_real(p: &BigInt, q: &BigInt) -> f64 {
     let minus = p.is_negative() != q.is_negative();
     let sign = u64::from(minus) << 63;
     if q.is_zero() || p.is_zero() { return as_binary(p, q); }
+    // Integers round directly. A dyadic with at most 53 significant bits
+    // and no bit below the smallest subnormal is already representable.
+    if q.is_one() || (p.bits() <= 53 && q.bits() <= 1075
+        && q.trailing_zeros() == Some(q.bits() - 1)) {
+        return as_binary(p, q);
+    }
     let n = p.abs();
     let d = q.abs();
     let mut order = n.bits() as i64 - d.bits() as i64;

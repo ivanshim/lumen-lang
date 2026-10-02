@@ -88,6 +88,8 @@ pub struct Table {
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
     pub prims: HashMap<String, Prim>,
+    /// Method spellings indexed once from the immutable definition.
+    pub method_names: HashMap<String, &'static str>,
     /// One word for each primitive, kept in the order the labels write
     /// them. A map keyed by word cannot say which word came first, and
     /// a primitive spelled several ways has to answer by a settled one.
@@ -536,6 +538,7 @@ impl Table {
             monadic: HashMap::new(),
             precedence: HashMap::new(),
             prims: HashMap::new(),
+            method_names: HashMap::new(),
             prim_words: Vec::new(),
             compound: HashMap::new(),
             given: map.keys().cloned().collect(),
@@ -557,6 +560,16 @@ impl Table {
             ends.extend(extra_ends);
         }
         table.precedence_tables()?;
+        let mut methods = HashMap::new();
+        for (label, primitive) in BUILTIN_LABELS {
+            if primitive != Prim::ValueMethod { continue; }
+            let operation = label.strip_prefix("ext.builtin.method.").unwrap_or(label);
+            for spelling in table.strings(label) {
+                // The roster's first matching label retains precedence.
+                methods.entry(spelling.clone()).or_insert(operation);
+            }
+        }
+        table.method_names = methods;
         Ok(table)
     }
 
@@ -651,12 +664,12 @@ impl Table {
     /// sets where the table has them, and with the division the table
     /// writes.
     pub fn landing_working(&self, place: u8) -> Prim {
-        let octets = self.has_any("ext.builtin.bytes");
-        let sets = self.flag("ext.syntax.set");
+        // Only workings whose meaning depends on a feature consult it.
+        // Shifts and numeric landings need no label lookup.
         match place {
-            0 => if octets { Prim::OctetAssign(false) } else { Prim::Plus },
-            1 => if sets { Prim::SetAssign(2) } else { Prim::Minus },
-            2 => if octets { Prim::OctetAssign(true) } else { Prim::Times },
+            0 => if self.has_any("ext.builtin.bytes") { Prim::OctetAssign(false) } else { Prim::Plus },
+            1 => if self.flag("ext.syntax.set") { Prim::SetAssign(2) } else { Prim::Minus },
+            2 => if self.has_any("ext.builtin.bytes") { Prim::OctetAssign(true) } else { Prim::Times },
             3 => self.compound.values().find(|p| matches!(p, Prim::Over | Prim::OverReal)).copied().unwrap_or(Prim::OverReal),
             4 => Prim::IntDiv,
             5 => Prim::Mod,
@@ -664,9 +677,9 @@ impl Table {
             7 => Prim::MatrixProduct,
             8 => Prim::BitsUp,
             9 => Prim::BitsDown,
-            10 => if sets { Prim::SetAssign(1) } else { Prim::BitsBoth },
-            11 => if sets { Prim::SetAssign(0) } else { Prim::BitsEither },
-            _ => if sets { Prim::SetAssign(3) } else { Prim::BitsOne },
+            10 => if self.flag("ext.syntax.set") { Prim::SetAssign(1) } else { Prim::BitsBoth },
+            11 => if self.flag("ext.syntax.set") { Prim::SetAssign(0) } else { Prim::BitsEither },
+            _ => if self.flag("ext.syntax.set") { Prim::SetAssign(3) } else { Prim::BitsOne },
         }
     }
 

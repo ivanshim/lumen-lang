@@ -1916,8 +1916,13 @@ impl<'a> Engine<'a> {
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
+        let at = self.function_members.len();
+        match function {
+            Value::Routine(program) => { self.constructor_records.entry(Rc::as_ptr(program) as usize).or_insert(at); }
+            _ => {}
+        }
         self.function_members.push((function.clone(), fields));
-        self.function_members.len() - 1
+        at
     }
     fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,v)|(Value::text(n),v.clone())).collect()))}
     /// The annotations a class carries: its own, worked out the first

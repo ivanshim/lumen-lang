@@ -1170,7 +1170,23 @@ only. The extension labels so far, all from PHP:
   the worth no number answers to, and dividing by nought answers with
   what lies past every number. PHP's `sqrt`, `log`, `sin`, `atan2`,
   `hypot`, `fdiv` and the rest of them are written on it, and so are its
-  `NAN` and `INF`.
+  `NAN` and `INF`. The unary `frexp` working returns a tuple of the
+  signed binary mantissa and its integer exponent; zero and non-finite
+  inputs keep their value with exponent zero. It reads the binary fields
+  directly, including subnormals, for Python's float decomposition.
+  `frexp_plain` also handles native whole numbers through 2**53 in magnitude;
+  `ldexp_plain` handles native floats and whole numbers with a whole exponent.
+  They use the same arithmetic directly; other inputs return null so Python
+  retains its existing conversion and validation paths.
+  `fsum_partial` merges one binary float with an ordered list of summation
+  partials, returning the new partial list and carried term. It performs
+  every compensated addition in order; inputs needing language protocols
+  return null so the library retains its ordinary arithmetic path.
+  `fsum_finite` has the same accumulation but declines a non-finite first
+  term as well, leaving the library to record NaN and infinity inputs.
+  `dist_float` subtracts equally sized vectors of native binary floats,
+  returning their differences and an infinity/NaN classification. Other
+  coordinates return null, preserving conversion protocols in the library.
 - `ext.builtin.output.begun`: a builtin answering whether anything has
   gone out of the run yet. What is held back in a piece of output kept
   aside has not gone out. PHP's `headers_sent` and
@@ -3551,6 +3567,9 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
+  This Python-only switch also enables the `frexp`, `frexp_plain`,
+  `ldexp_plain`, `fsum_partial`, `fsum_finite` and `dist_float` workings.
+  Without it these names retain the unknown-working path and its arity.
 - `ext.builtin.module.helper.amiss`: the complaint for unsuitable
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
   holds two pieces surrounding an attribute name which lookup cannot find.

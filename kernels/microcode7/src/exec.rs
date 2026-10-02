@@ -47,7 +47,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
-use num_traits::{ToPrimitive, Zero};
+use num_traits::{One, ToPrimitive, Zero};
 
 use crate::math::{self, Calc};
 use crate::table::Table;
@@ -488,6 +488,7 @@ pub struct Machine<'a> {
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
+    routine_worlds: HashMap<usize, usize>,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
     /// routine was, kept so the pair stays its own, what calls of it now
@@ -1533,7 +1534,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), routine_worlds: HashMap::new(), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -6364,6 +6365,7 @@ impl<'a> Machine<'a> {
                                 if matches!(beneath, Value::Vector(_)) { return Err(self.key_refused(&beneath, index).into()); }
                             }
                             let letter = self.letter_places.then(|| value.render(self.wording()));
+                            drop(target);
                             written_into(&mut cell.borrow_mut(), Some(index.clone()), value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?;
                             return Ok(Value::Nil);
                         }
@@ -6470,6 +6472,9 @@ impl<'a> Machine<'a> {
                         } else { cell.borrow_mut().push(byte); }
                         return Ok(Value::Nil);
                     }
+                    // The byte inspection must not keep a list snapshot
+                    // alive while its own cell is written into.
+                    drop(held);
                     // Worked out before the place is reached, since
                     // reaching it holds the frame the name lives in.
                     let letter = self.letter_places.then(|| value.render(self.wording()));
@@ -7416,9 +7421,7 @@ impl<'a> Machine<'a> {
     /// The working a value's method of this name stands for, where the
     /// table gives one a builtin kind answers to.
     fn value_method_named(&self, name: &str) -> Option<String> {
-        crate::table::BUILTIN_LABELS.iter()
-            .find(|(label, prim)| *prim == Prim::ValueMethod && self.table.spells(label, name))
-            .map(|(label, _)| label.strip_prefix("ext.builtin.method.").unwrap_or(label).to_string())
+        self.table.method_names.get(name).map(|operation| (*operation).to_owned())
     }
 
     /// A pair of a thing and a method's name, standing where a routine
@@ -10055,10 +10058,8 @@ impl<'a> Machine<'a> {
     }
 
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
-            Value::Bound(code, _) | Value::Routine(code) => Rc::ptr_eq(code, body),
-            _ => false,
-        })?;
+        let slot = self.routine_worlds.get(&(Rc::as_ptr(body) as usize))?;
+        let record = &self.routine_members[*slot].1;
         let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
         if let Value::Shared(cell) | Value::Mutable(cell, _) = worth { Some(cell) }
         else if matches!(worth, Value::Dict(_)) { Some(Rc::new(RefCell::new(worth))) }
@@ -16528,7 +16529,9 @@ impl<'a> Machine<'a> {
                     if v.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".to_owned()); }
                     return self.dot_product(&v[1], &v[2]);
                 }
-                let takes = math::worked_takes(&working);
+                let takes = if !self.rules.floating_math && matches!(working.as_str(), "ldexp_plain" | "fsum_partial" | "fsum_finite" | "dist_float") {
+                    1
+                } else { math::worked_takes(&working) };
                 if v.len() != takes + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
                 }
@@ -16559,6 +16562,75 @@ impl<'a> Machine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
+                if working == "dist_float" && self.rules.floating_math {
+                    if !self.rules.binary_arithmetic || self.rules.lone_system_real_render != Some("shortest") || self.real_figures() != math::DEFAULT_PLACES { return Ok(Value::Nil); }
+                    let coordinates = |input: &Value| -> Option<Vec<f64>> {
+                        let sequence = match input.settled() { Value::Tuple(row) | Value::Vector(row) => row, _ => return None };
+                        sequence.iter().map(|value| {
+                            let Value::Frac(r) = value.settled() else { return None };
+                            if r.places != Some(math::DEFAULT_PLACES) { return None; }
+                            let small = r.above.bits() <= 53 && r.beneath.bits() <= 1075
+                                && r.beneath.trailing_zeros().is_some_and(|n| n + 1 == r.beneath.bits());
+                            let integer = r.beneath.is_one() && r.above.bits() <= 1024
+                                && r.above.bits().saturating_sub(r.above.trailing_zeros().unwrap_or(0)) <= 53;
+                            if !r.past_numbers() && !small && !integer { return None; }
+                            let raw = crate::data::nearest_binary(&r.above, &r.beneath);
+                            Some(if r.under && r.above.is_zero() { -raw } else { raw })
+                        }).collect()
+                    };
+                    let (Some(left), Some(right)) = (coordinates(&v[1]), coordinates(&v[2])) else { return Ok(Value::Nil) };
+                    if left.len() != right.len() { return Ok(Value::Nil); }
+                    let mut differences = Vec::with_capacity(left.len());
+                    let mut status = 0;
+                    for (x, y) in left.into_iter().zip(right) {
+                        let delta = x - y;
+                        if delta.is_infinite() { status = 1; }
+                        else if delta.is_nan() && status == 0 { status = 2; }
+                        differences.push(crate::data::worth_of_binary(delta, math::DEFAULT_PLACES));
+                    }
+                    return Ok(Value::tuple(vec![Value::Small(status), Value::Vector(crate::tuples::Sequence::plain(differences)).keep(true)]));
+                }
+                if matches!(working.as_str(), "frexp_plain" | "ldexp_plain") && self.rules.floating_math {
+                    let native = match v[1].settled() {
+                        Value::Frac(r) => r.places.is_some(),
+                        Value::Small(n) => working == "ldexp_plain" || n.unsigned_abs() <= 9007199254740992,
+                        Value::Huge(_) => working == "ldexp_plain",
+                        Value::Flag(_) => true,
+                        _ => false,
+                    };
+                    let exponent = working != "ldexp_plain" || matches!(v[2].settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_));
+                    if !native || !exponent { return Ok(Value::Nil); }
+                }
+                if matches!(working.as_str(), "fsum_partial" | "fsum_finite") && self.rules.floating_math {
+                    if !self.rules.binary_arithmetic || self.real_figures() != math::DEFAULT_PLACES { return Ok(Value::Nil); }
+                    let first = if working == "fsum_finite" { v[1].settled() } else { self.worth_of(&v[1]) };
+                    let Value::Vector(parts) = v[2].settled() else { return Ok(Value::Nil) };
+                    let read = |item: &Value| -> Option<f64> {
+                        let Value::Frac(ratio) = item else { return None };
+                        if ratio.places != Some(math::DEFAULT_PLACES) { return None; }
+                        let integral = ratio.beneath.is_one() && ratio.above.bits() <= 1024
+                            && ratio.above.bits() - ratio.above.trailing_zeros().unwrap_or(0) <= 53;
+                        let fractional = ratio.above.bits() <= 53 && ratio.beneath.bits() <= 1075
+                            && ratio.beneath.trailing_zeros().is_some_and(|twos| twos + 1 == ratio.beneath.bits());
+                        if !ratio.past_numbers() && !integral && !fractional { return None; }
+                        let raw = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+                        Some(if ratio.under && ratio.above.is_zero() { -raw } else { raw })
+                    };
+                    let Some(mut total) = read(&first) else { return Ok(Value::Nil) };
+                    if working == "fsum_finite" && !total.is_finite() { return Ok(Value::Nil); }
+                    let Some(numbers) = parts.iter().map(read).collect::<Option<Vec<_>>>() else { return Ok(Value::Nil) };
+                    let mut kept = Vec::with_capacity(numbers.len() + 1);
+                    for mut next in numbers {
+                        if total.abs() < next.abs() { std::mem::swap(&mut total, &mut next); }
+                        let high = total + next;
+                        let tail = next - (high - total);
+                        if tail != 0.0 { kept.push(crate::data::worth_of_binary(tail, math::DEFAULT_PLACES)); }
+                        total = high;
+                    }
+                    let carried = if parts.is_empty() { first } else { crate::data::worth_of_binary(total, math::DEFAULT_PLACES) };
+                    kept.push(carried.clone());
+                    return Ok(Value::tuple(vec![Value::Vector(crate::tuples::Sequence::plain(kept)).keep(true), carried]));
+                }
                 let two = match takes {
                     2 | 3 => width(2)?,
                     _ => 0.0,
@@ -16572,7 +16644,24 @@ impl<'a> Machine<'a> {
                     return Ok(result);
                 }
                 let one = width(1)?;
-                match math::worked(&working, one, two) {
+                if matches!(working.as_str(), "frexp" | "frexp_plain") && self.rules.floating_math {
+                    let mut exponent = 0;
+                    let mantissa = match one {
+                        n if n == 0.0 || !n.is_finite() => n,
+                        n => {
+                            let small = n.is_subnormal();
+                            let bits = (if small { n * (2.0f64).powi(54) } else { n }).to_bits();
+                            exponent = ((bits >> 52) & 0x7ff) as i64 - 1022;
+                            if small { exponent -= 54; }
+                            let sign_and_digits = bits & !(0x7ffu64 << 52);
+                            f64::from_bits(sign_and_digits | (1022u64 << 52))
+                        }
+                    };
+                    let mut worth = crate::data::worth_of_binary(mantissa, self.real_figures());
+                    if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = self.rules.floating_math; }
+                    return Ok(Value::tuple(vec![worth, Value::Small(exponent)]));
+                }
+                match math::worked(if working == "ldexp_plain" && self.rules.floating_math { "ldexp" } else { &working }, one, two) {
                     Some(got) => {
                         // A working handed only reals of the width
                         // already, and answering past every number of
@@ -17913,6 +18002,14 @@ impl<'a> Machine<'a> {
             let (left, right) = match self.holds_reals_to_width() && (self.a_real(&v[0]) || self.a_real(&v[1])) {
                 true => {
                     let carry = |v: &Value| -> Result<Value, String> {
+                        if let Value::Frac(r) = v {
+                            let fits = r.above.bits() < 54 && r.beneath.bits() < 1076
+                                && r.beneath.trailing_zeros().is_some_and(|n| n + 1 == r.beneath.bits());
+                            // A real already at this precision needs no new
+                            // normalized ratio on its way into binary arithmetic.
+                            if fits && r.places == Some(self.real_figures()) && self.rules.binary_arithmetic
+                                && self.rules.lone_system_real_render == Some("shortest") { return Ok(v.clone()); }
+                        }
                         let wide = self.as_wide_real(v);
                         if !self.a_real(v) {
                             if let Value::Frac(e) = &wide {

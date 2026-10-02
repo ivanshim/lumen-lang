@@ -39,7 +39,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use std::rc::{Rc, Weak};
 
-use num_traits::{ToPrimitive, Signed, Zero};
+use num_traits::{ToPrimitive, Signed, Zero, One};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
@@ -111,6 +111,7 @@ pub struct Engine<'a> {
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
     function_members: Vec<(Value, Rc<Instance>)>,
+    constructor_records: HashMap<usize, usize>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
@@ -1226,7 +1227,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), constructor_records: HashMap::new(),
             native_exceptions,
             lang,
             world,
@@ -3453,7 +3454,8 @@ impl<'a> Engine<'a> {
     }
 
     fn constructor_book(&self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, holder) = self.function_members.iter().find(|(value, _)| matches!(value, Value::Routine(code) if Rc::ptr_eq(code, program)))?;
+        let address = Rc::as_ptr(program) as usize;
+        let holder = &self.function_members[*self.constructor_records.get(&address)?].1;
         let book = holder.fields.borrow().iter().find(|(name, _)| name == "\0 namespace")?.1.clone();
         match book {
             Value::Bond(cell) | Value::Binding(cell) => Some(cell),
@@ -12557,6 +12559,16 @@ impl<'a> Engine<'a> {
             // only happens to overflow the working stays quiet, as it
             // was already at the width before this was asked.
             let widened = |v: &Value| -> Res<Value> {
+                if self.lang.arithmetic_binary && self.lang.shortest_reals {
+                    if let Value::Real(r) = v {
+                        // These finite dyadics already fit the arithmetic width.
+                        // Their precision and point remain the operand's own.
+                        if r.places == places && r.p.bits() <= 53 && (1..=1075).contains(&r.q.bits())
+                            && r.q.trailing_zeros() == Some(r.q.bits() - 1) {
+                            return Ok(v.clone());
+                        }
+                    }
+                }
                 match arith::to_real(v, places) {
                     Some(real) => {
                         if !matches!(v, Value::Real(_)) {
@@ -15870,6 +15882,31 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if builtin == Builtin::Replace && self.lang.sequence_values && args.len() == 3 {
+            if let Value::Bond(storage) = &args[2] {
+                let index = self.key(&args[0]);
+                let offset = match index {
+                    Value::Small(n) => Some(n), Value::Huge(n) => n.to_i64(),
+                    Value::Flag(yes) => Some(i64::from(yes)), _ => None,
+                };
+                let position = offset.and_then(|offset| {
+                    let source = storage.borrow();
+                    let Value::Array(row) = &*source else { return None };
+                    let at = if offset < 0 { offset + row.len() as i64 } else { offset };
+                    (at >= 0 && (at as usize) < row.len()).then_some(at as usize)
+                });
+                if let Some(at) = position {
+                    let storage = storage.clone();
+                    let replacement = args[1].clone();
+                    {
+                        let mut source = storage.borrow_mut();
+                        let Value::Array(row) = &mut *source else { unreachable!("array checked without a callback") };
+                        Rc::make_mut(row)[at] = replacement;
+                    }
+                    return Ok(Value::Bond(storage));
+                }
+            }
+        }
         if builtin == Builtin::Replace && args.len() == 3 {
             if let Some(cell) = Self::map_cell(&args[2]) {
                 if let Some(told) = self.unkeyable(&args[0]) { return Err(told); }
@@ -16987,6 +17024,7 @@ impl<'a> Engine<'a> {
                 }
                 let wants = match working.as_str() {
                     "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
+                    "ldexp_plain" | "fsum_partial" | "fsum_finite" | "dist_float" if self.lang.math_floating => 2,
                     "fma" => 3,
                     _ => 1,
                 };
@@ -17019,7 +17057,121 @@ impl<'a> Engine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
+                if self.lang.math_floating && working == "dist_float" {
+                    if !(self.lang.arithmetic_binary && self.lang.shortest_reals) || self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES) != arith::DEFAULT_PLACES {
+                        return Ok(Value::Null);
+                    }
+                    let read_point = |source: &Value| -> Option<Vec<f64>> {
+                        let items = match source.contents() { Value::Array(items) | Value::Tuple(items) => items, _ => return None };
+                        let mut point = Vec::with_capacity(items.len());
+                        for value in items.iter() {
+                            let Value::Real(number) = value.contents() else { return None };
+                            let pbits = number.p.bits();
+                            let denominator_bits = number.q.bits();
+                            let dyadic = pbits < 54 && (1..=1075).contains(&denominator_bits)
+                                && number.q.trailing_zeros() == Some(denominator_bits - 1);
+                            let whole = number.q.is_one() && pbits < 1025
+                                && pbits.saturating_sub(number.p.trailing_zeros().unwrap_or(0)) < 54;
+                            if number.places != arith::DEFAULT_PLACES || (!number.outside() && !dyadic && !whole) { return None; }
+                            let n = crate::value::as_binary(&number.p, &number.q);
+                            point.push(if number.below && number.p.is_zero() { -n } else { n });
+                        }
+                        Some(point)
+                    };
+                    let a = match read_point(&args[1]) { Some(point) => point, None => return Ok(Value::Null) };
+                    let b = match read_point(&args[2]) { Some(point) => point, None => return Ok(Value::Null) };
+                    if a.len() != b.len() { return Ok(Value::Null); }
+                    let mut deltas = Vec::new();
+                    let (mut infinite, mut undefined) = (false, false);
+                    for at in 0..a.len() {
+                        let difference = a[at] - b[at];
+                        infinite |= difference.is_infinite();
+                        undefined |= difference.is_nan();
+                        deltas.push(crate::value::real_of(difference, arith::DEFAULT_PLACES));
+                    }
+                    let category = if infinite { 1 } else if undefined { 2 } else { 0 };
+                    return Ok(Value::tuple(vec![Value::Small(category), Value::array(deltas).held(true)]));
+                }
+                match working.as_str() {
+                    "frexp_plain" | "ldexp_plain" if self.lang.math_floating => {
+                        let accepts = match args[1].contents() {
+                            Value::Real(_) | Value::Flag(_) => true,
+                            Value::Small(number) => wants == 2 || (-9007199254740992..=9007199254740992).contains(&number),
+                            Value::Huge(_) => wants == 2,
+                            _ => false,
+                        };
+                        if !accepts { return Ok(Value::Null); }
+                        if wants == 2 {
+                            match args[2].contents() {
+                                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {}
+                                _ => return Ok(Value::Null),
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                if self.lang.math_floating && matches!(working.as_str(), "fsum_partial" | "fsum_finite") {
+                    if !self.lang.arithmetic_binary || self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES) != arith::DEFAULT_PLACES {
+                        return Ok(Value::Null);
+                    }
+                    let original = args[1].contents();
+                    let Value::Array(sequence) = args[2].contents() else { return Ok(Value::Null) };
+                    let as_double = |value: &Value| -> Option<f64> {
+                        match value {
+                            Value::Real(number) if number.places == arith::DEFAULT_PLACES => {
+                                let whole_bits = number.p.bits();
+                                let valid_integer = number.q.is_one() && whole_bits <= 1024
+                                    && whole_bits.saturating_sub(number.p.trailing_zeros().unwrap_or(0)) <= 53;
+                                let valid_fraction = whole_bits < 54 && (1..=1075).contains(&number.q.bits())
+                                    && number.q.trailing_zeros() == Some(number.q.bits() - 1);
+                                if !number.outside() && !valid_integer && !valid_fraction { return None; }
+                                let positive_zero = crate::value::as_binary(&number.p, &number.q);
+                                Some(if number.below && number.p.is_zero() { -positive_zero } else { positive_zero })
+                            }
+                            _ => None,
+                        }
+                    };
+                    let Some(mut sum) = as_double(&original) else { return Ok(Value::Null) };
+                    if !sum.is_finite() && working != "fsum_partial" { return Ok(Value::Null); }
+                    let mut doubles = Vec::new();
+                    for value in sequence.iter() {
+                        match as_double(value) { Some(n) => doubles.push(n), None => return Ok(Value::Null) }
+                    }
+                    let mut remaining = Vec::with_capacity(doubles.len() + 1);
+                    for value in doubles {
+                        let (larger, smaller) = if sum.abs() < value.abs() { (value, sum) } else { (sum, value) };
+                        let combined = larger + smaller;
+                        let residue = smaller - (combined - larger);
+                        if residue != 0.0 { remaining.push(crate::value::real_of(residue, arith::DEFAULT_PLACES)); }
+                        sum = combined;
+                    }
+                    let last = match sequence.len() {
+                        0 => original,
+                        _ => crate::value::real_of(sum, arith::DEFAULT_PLACES),
+                    };
+                    remaining.push(last.clone());
+                    return Ok(Value::tuple(vec![Value::array(remaining).held(true), last]));
+                }
                 let (x, y) = (given(1)?, if wants >= 2 { given(2)? } else { 0.0 });
+                if self.lang.math_floating && (working == "frexp" || working == "frexp_plain") {
+                    let (mantissa, exponent) = if x == 0.0 || !x.is_finite() {
+                        (x, 0)
+                    } else {
+                        let mut normalized = x;
+                        let mut adjustment = 0i64;
+                        if x.is_subnormal() {
+                            normalized *= 18014398509481984.0;
+                            adjustment = -54;
+                        }
+                        let bits = normalized.to_bits();
+                        let exponent = ((bits >> 52) & 2047) as i64 - 1022 + adjustment;
+                        let mantissa = f64::from_bits((bits & 0x800fffffffffffff) | 0x3fe0000000000000);
+                        (mantissa, exponent)
+                    };
+                    let mut number = crate::value::real_of(mantissa, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut number { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    return Ok(Value::tuple(vec![number, Value::Small(exponent)]));
+                }
                 if working == "fma" {
                     let z = given(3)?;
                     let got = arith::fused(x, y, z)?;
@@ -17059,7 +17211,7 @@ impl<'a> Engine<'a> {
                     // Scaled a thousand powers at a time, so that a result
                     // down among the smallest reals is reached rather than
                     // lost against a power that was nought on its own.
-                    "ldexp" => {
+                    "ldexp" | "ldexp_plain" if working == "ldexp" || self.lang.math_floating => {
                         let (mut held, mut by) = (x, y as i64);
                         if held != 0.0 && held.is_finite() {
                             while by > 1000 && held.is_finite() { held *= 2f64.powi(1000); by -= 1000; }
