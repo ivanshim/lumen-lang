@@ -487,6 +487,7 @@ pub struct Machine<'a> {
     builder_kind: Option<Rc<Blueprint>>,
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
+    native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
     /// Routines whose spare arguments or code the program wrote over,
     /// each under the program and frame it was bound as: what the
@@ -1533,7 +1534,7 @@ impl<'a> Machine<'a> {
             natives_book: None,
             builtins_stand_in: None,
             code_kind: None,
-            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), written_over: HashMap::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -7474,7 +7475,23 @@ impl<'a> Machine<'a> {
         if self.table.strings("ext.stmt.class.detail.root.members").get(9).is_some_and(|word| word == name) {
             return Some(Value::Wrapped(36, Rc::new(vec![Value::text(name)]).into()));
         }
-        if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
+        let available = if self.table.has_any("ext.stmt.class.special") {
+            // A native kind's spellings come from the immutable language table.
+            // Remember only those words, never a Python value or its frame.
+            let remembered = self.native_kind_names.borrow().get(&word).map(|names| names.contains(name));
+            match remembered {
+                Some(answer) => answer,
+                None => {
+                    let names: std::collections::HashSet<_> = self.native_directory(&stand_in).into_iter().collect();
+                    let present = names.contains(name);
+                    self.native_kind_names.borrow_mut().insert(word.clone(), names);
+                    present
+                }
+            }
+        } else {
+            self.native_directory(&stand_in).binary_search(&name.to_string()).is_ok()
+        };
+        if !available { return None; }
         Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)]).into()))
     }
 
