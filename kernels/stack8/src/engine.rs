@@ -15846,6 +15846,31 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if builtin == Builtin::Replace && self.lang.sequence_values && args.len() == 3 {
+            if let Value::Bond(storage) = &args[2] {
+                let index = self.key(&args[0]);
+                let offset = match index {
+                    Value::Small(n) => Some(n), Value::Huge(n) => n.to_i64(),
+                    Value::Flag(yes) => Some(i64::from(yes)), _ => None,
+                };
+                let position = offset.and_then(|offset| {
+                    let source = storage.borrow();
+                    let Value::Array(row) = &*source else { return None };
+                    let at = if offset < 0 { offset + row.len() as i64 } else { offset };
+                    (at >= 0 && (at as usize) < row.len()).then_some(at as usize)
+                });
+                if let Some(at) = position {
+                    let storage = storage.clone();
+                    let replacement = args[1].clone();
+                    {
+                        let mut source = storage.borrow_mut();
+                        let Value::Array(row) = &mut *source else { unreachable!("array checked without a callback") };
+                        Rc::make_mut(row)[at] = replacement;
+                    }
+                    return Ok(Value::Bond(storage));
+                }
+            }
+        }
         if builtin == Builtin::Replace && args.len() == 3 {
             if let Some(cell) = Self::map_cell(&args[2]) {
                 if let Some(told) = self.unkeyable(&args[0]) { return Err(told); }

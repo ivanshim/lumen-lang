@@ -6364,6 +6364,7 @@ impl<'a> Machine<'a> {
                                 if matches!(beneath, Value::Vector(_)) { return Err(self.key_refused(&beneath, index).into()); }
                             }
                             let letter = self.letter_places.then(|| value.render(self.wording()));
+                            drop(target);
                             written_into(&mut cell.borrow_mut(), Some(index.clone()), value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?;
                             return Ok(Value::Nil);
                         }
@@ -6470,6 +6471,9 @@ impl<'a> Machine<'a> {
                         } else { cell.borrow_mut().push(byte); }
                         return Ok(Value::Nil);
                     }
+                    // The byte inspection must not keep a list snapshot
+                    // alive while its own cell is written into.
+                    drop(held);
                     // Worked out before the place is reached, since
                     // reaching it holds the frame the name lives in.
                     let letter = self.letter_places.then(|| value.render(self.wording()));
