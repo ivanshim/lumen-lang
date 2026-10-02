@@ -9376,7 +9376,10 @@ impl<'a> Engine<'a> {
                 Value::array(together)
             }
             Action::Unpack(count, rest) => {
-                let source = collection_contents(&self.drop_top()?).contents();
+                let mut source = collection_contents(&self.drop_top()?).contents();
+                if let Value::Class(owner) = &source {
+                    if let Some(sequence) = self.class_walked(&owner.clone())? { source = collection_contents(&sequence).contents(); }
+                }
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {

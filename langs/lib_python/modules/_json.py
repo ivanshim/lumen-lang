@@ -106,7 +106,7 @@ def encode_basestring_ascii(string):
     return _quote(string, True)
 
 
-class make_scanner:
+class Scanner:
     def __init__(self, context):
         self.strict = bool(context.strict)
         self.parse_float = context.parse_float
@@ -162,7 +162,10 @@ class make_scanner:
         raise StopIteration(index)
 
 
-class make_encoder:
+make_scanner = Scanner
+
+
+class Encoder:
     def __init__(self, markers, default, encoder, indent, key_separator,
                  item_separator, sort_keys, skipkeys, allow_nan):
         if markers is not None and not isinstance(markers, dict):
@@ -287,3 +290,6 @@ class make_encoder:
             return left + self.item_separator.join(parts) + right
         child_indent = '\n' + self.indent * (level + 1)
         return left + child_indent + (self.item_separator + child_indent).join(parts) + '\n' + self.indent * level + right
+
+
+make_encoder = Encoder

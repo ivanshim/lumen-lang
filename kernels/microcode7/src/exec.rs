@@ -15111,7 +15111,11 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                let mut values: Vec<Value> = match &v[0] {
+                let input = match &v[0] {
+                    Value::Blueprint(kind) => self.blueprint_walk(kind)?.unwrap_or_else(|| v[0].clone()).settled(),
+                    other => other.clone(),
+                };
+                let mut values: Vec<Value> = match &input {
                     Value::Generator(state) => {
                         let mut yielded = Vec::new();
                         loop {
@@ -15134,12 +15138,12 @@ impl<'a> Machine<'a> {
                         self.apart_members(&walk, wanted, star.is_some())?
                     }
                     Value::Tuple(items) | Value::Row(items) => items.to_vec(),
-                    Value::TextRow(..) | Value::Octets { .. } | Value::Progression(_) => self.gathered_members(&v[0])?,
+                    Value::TextRow(..) | Value::Octets { .. } | Value::Progression(_) => self.gathered_members(&input)?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
                     Value::Vector(v) => v.to_vec(),
                     _ => {
-                        let said = self.apart_words("ext.stmt.unpack.unwalkable", &[v[0].kind_word()]);
+                        let said = self.apart_words("ext.stmt.unpack.unwalkable", &[input.kind_word()]);
                         return Err(said.unwrap_or_else(|| "Value cannot be taken apart".to_string()));
                     }
                 };
