@@ -5,6 +5,7 @@
 import pickle as _pickle
 import types
 import weakref
+_MethodType = types.MethodType
 d = _deepcopy_dispatch
 
 Error.__module__ = __name__
@@ -131,7 +132,7 @@ def _deepcopy_method(x, memo): # Copy instance methods
     bound = getattr(owner, function.__name__, None)
     if getattr(bound, "__func__", None) is function:
         return bound
-    return types.MethodType(function, owner)
+    return _MethodType(function, owner)
 
 class _MethodProbe:
     def method(self):
