@@ -241,10 +241,10 @@ def lcm(*integers):
     return result
 
 def factorial(n):
+    from operator import index
+    n = index(n)
     if n < 0:
         raise 'ValueError: factorial() not defined for negative values'
-    if type(n) != type(1) and type(n) != type(True):
-        raise 'TypeError: factorial needs an integer'
     value = 1
     for i in range(2, n + 1):
         value *= i
@@ -336,8 +336,8 @@ def prod(values, *, start=1):
 tau = 2 * pi
 
 def comb(n, k):
-    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
-        raise 'TypeError: comb needs integers'
+    from operator import index
+    n, k = index(n), index(k)
     if n < 0 or k < 0:
         raise 'ValueError: comb arguments must be non-negative'
     if k > n:
@@ -351,8 +351,8 @@ def comb(n, k):
 def perm(n, k=None):
     if k is None:
         return factorial(n)
-    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
-        raise 'TypeError: perm needs integers'
+    from operator import index
+    n, k = index(n), index(k)
     if n < 0 or k < 0:
         raise 'ValueError: perm arguments must be non-negative'
     if k > n:
@@ -363,8 +363,8 @@ def perm(n, k=None):
     return result
 
 def isqrt(n):
-    if type(n) != type(1) and type(n) != type(True):
-        raise 'TypeError: isqrt needs an integer'
+    from operator import index
+    n = index(n)
     if n < 0:
         raise 'ValueError: isqrt argument must be non-negative'
     low = 0

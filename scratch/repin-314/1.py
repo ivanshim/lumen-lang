@@ -31,6 +31,25 @@ else:
     raise AssertionError('duplicate argument accepted')
 assert bytes in {bytes, super}
 assert super in {bytes, super}
+for source in ('[*x for x in xs]', '{*x for x in xs}', '{**x for x in xs}'):
+    try:
+        compile(source, '<probe>', 'exec')
+    except SyntaxError as error:
+        assert 'unpacking' in str(error)
+    else:
+        raise AssertionError(source)
+class Indexable:
+    def __index__(self):
+        return 5
+assert math.comb(Indexable(), 2) == 10
+assert math.perm(Indexable(), 2) == 20
+assert math.factorial(Indexable()) == 120
+try:
+    math.factorial(-1.0)
+except TypeError:
+    pass
+else:
+    raise AssertionError('factorial accepted a float')
 import copy
 x = {}
 x['self'] = x
