@@ -22,8 +22,16 @@ A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a
 `unittest` module. The suite measures released CPython 3.14.8 semantics;
 unsupported behaviour remains visible as a failure or error.
-The repin inventory, per-method before/after measurements, and lost-pass
-classifications are recorded in `probe/repin-report.md`.
+The release repin covered 120 source/provenance entries: 73 test/support
+files, 34 library source/adapter files, and 13 full scratch copies. SHA-256
+verification matched 105 release bodies (72 tests/support files, 20 complete
+library sources, and 13 scratch copies); thirteen documented partial runtime
+adapters remain separate. Complete library sources are unchanged beneath
+release provenance headers, with native bridges in `runtime_adapters/`.
+The only removed files were the two copies of
+`Lib/test/test_import/data/syntax_warnings.py`, which has no v3.14.8 counterpart.
+Detailed working inventories and measurements stay in the ignored worker
+scratch area rather than the repository.
 
 The suites run on the two full kernels, stack8 and microcode7, which are
 the ones that implement the `ext.` labels the languages need beyond the
