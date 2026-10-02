@@ -167,7 +167,7 @@ class _Reader:
                 node = self.choice()
                 self._close_group()
                 return ['atomic', node]
-            if marker in 'aiLmsux':
+            if marker in 'aiLmsux-':
                 return self._flags_group()
             if marker == ':':
                 self.i += 1
@@ -226,20 +226,24 @@ class _Reader:
     def _flags_group(self):
         # after '(?', the current character is a flag letter. The small
         # engine carries only ignorecase, multiline and dotall; ascii, verb
-        # locale and unicode are read and dropped.
-        add = [False, False, False]
+        # locale and unicode are read and dropped. A letter after the '-'
+        # takes its flag away for the span instead of adding it.
+        values = [None, None, None]
+        on = True
         while self.i < len(self.pattern):
             letter = self.pattern[self.i]
             if letter == '-':
-                raise 'NotImplementedError: removing an inline flag is not supported'
+                on = False
+                self.i += 1
+                continue
             if letter in 'ims':
-                add['ims'.index(letter)] = True
+                values['ims'.index(letter)] = on
                 self.i += 1
             elif letter in 'axuL':
                 self.i += 1
             else:
                 break
-        flags = (add[0], add[1], add[2])
+        flags = (values[0], values[1], values[2])
         if self.i < len(self.pattern) and self.pattern[self.i] == ':':
             self.i += 1
             node = self.choice()
@@ -408,7 +412,9 @@ def _walk(node, text, place, captures, opts):
     kind = node[0]
     if kind == 'scoped':
         flags = node[1]
-        new_opts = (opts[0] or flags[0], opts[1] or flags[1], opts[2] or flags[2])
+        new_opts = (opts[0] if flags[0] is None else flags[0],
+                    opts[1] if flags[1] is None else flags[1],
+                    opts[2] if flags[2] is None else flags[2])
         return _walk(node[2], text, place, captures, new_opts)
     if kind == 'atomic':
         return _walk(node[1], text, place, captures, opts)[:1]
