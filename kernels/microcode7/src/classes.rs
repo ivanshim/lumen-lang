@@ -1515,8 +1515,16 @@ impl<'a> Machine<'a> {
             None => {
                 let of = self.common_ancestor(); self.made += 1;
                 let holder = Rc::new(Thing {reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
-                self.routine_members.push((crate::ghost::ghost_of(code).expect("routine is weakly held"), holder));
-                self.routine_members.len() - 1
+                let entry = (crate::ghost::ghost_of(code).expect("routine is weakly held"), holder);
+                // Reuse a dead function's slot without moving live indices;
+                // a caller can keep an index while annotation code reenters.
+                if let Some(vacant) = self.routine_members.iter().position(|(key, _)| key.departed()) {
+                    self.routine_members[vacant] = entry;
+                    vacant
+                } else {
+                    self.routine_members.push(entry);
+                    self.routine_members.len() - 1
+                }
             }
         }
     }

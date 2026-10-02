@@ -10141,8 +10141,10 @@ impl<'a> Machine<'a> {
     }
 
     fn constructor_world(&self, body: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
-        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate.revive() {
-            Some(Value::Bound(code, _) | Value::Routine(code)) => Rc::ptr_eq(&code, body),
+        let wanted = Rc::as_ptr(body);
+        let (_, record) = self.routine_members.iter().find(|(candidate, _)| match candidate {
+            crate::ghost::Ghost::Bound(code, room) => code.as_ptr() == wanted && code.strong_count() != 0 && room.strong_count() != 0,
+            crate::ghost::Ghost::Routine(code) => code.as_ptr() == wanted && code.strong_count() != 0,
             _ => false,
         })?;
         let worth = record.holds.borrow().iter().find(|(word, _)| word == "\0handed")?.1.clone();
