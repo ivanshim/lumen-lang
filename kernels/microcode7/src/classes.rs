@@ -663,6 +663,10 @@ impl<'a> Machine<'a> {
                         }
                         self.apply_class_member(values[2].clone(), Vec::new())
                     }
+                    77 => match values.as_slice() {
+                        [owner @ Value::Blueprint(_), _] if self.table.has_any("ext.stmt.type_params.open") => Ok(owner.clone()),
+                        _ => Err(self.class_unready()),
+                    },
                     49 if values.is_empty() => {
                         self.type_support_namespace();
                         Ok(Value::Blueprint(self.native_kind("Generic")))
@@ -897,6 +901,10 @@ impl<'a> Machine<'a> {
         for title in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let kind = self.native_kind(title);
             kind.shared.borrow_mut().push((String::from("__module__"), Value::text("typing")));
+            if self.table.has_any("ext.stmt.type_params.open") && title == "Generic" {
+                let method = Self::wrap(5, vec![Self::wrap(77, Vec::new())]);
+                kind.shared.borrow_mut().push((self.rules.detail_getitem.to_owned(), method));
+            }
             entries.push((title.to_owned(), Value::Blueprint(kind)));
         }
         self.made += 1;
@@ -1045,7 +1053,10 @@ impl<'a> Machine<'a> {
     /// The making itself, as the kind primitive does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
-        let native=Self::native_beneath(&class);
+        let native = match Self::native_beneath(&class) {
+            Some(word) if word == "Generic" && self.table.has_any("ext.stmt.type_params.open") => None,
+            other => other,
+        };
         let allocator=self.inherited_entry(&class,self.detail("allocate"));
         // A metaclass called outright builds a class, the way the kind
         // primitive does, from a name, parents and a namespace.
@@ -2938,7 +2949,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=72))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=72|77))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

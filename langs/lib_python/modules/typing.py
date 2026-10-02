@@ -12,15 +12,11 @@ Tuple = _Hint()
 Set = _Hint()
 Callable = _Hint()
 
-class Generic:
-    def __getitem__(cls, parameters):
-        return cls
-
 class Protocol:
     def __getitem__(cls, parameters):
         return cls
 
-from _typing import TypeVar, ParamSpec, TypeVarTuple, TypeAliasType, NoDefault
+from _typing import TypeVar, ParamSpec, TypeVarTuple, TypeAliasType, Generic, NoDefault
 
 def cast(typ, value):
     return value

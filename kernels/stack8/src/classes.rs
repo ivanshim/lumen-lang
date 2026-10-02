@@ -634,6 +634,9 @@ impl<'a> Engine<'a> {
                     }
                     self.class_apply(args[2].clone(), Vec::new())
                 }
+                77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
+                    Ok(args.remove(0))
+                }
                 49 if args.is_empty() => {
                     self.typing_module();
                     Ok(Value::Class(self.kind_class("Generic")))
@@ -854,6 +857,10 @@ impl<'a> Engine<'a> {
         for name in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let class = self.kind_class(name);
             class.shared.borrow_mut().push(("__module__".into(), Value::text("typing")));
+            if name == "Generic" && self.lang.type_parameters {
+                let item = Self::adapter(77, Vec::new());
+                class.shared.borrow_mut().push((self.class_word("getitem").into(), Self::adapter(5, vec![item])));
+            }
             fields.push((name.into(), Value::Class(class)));
         }
         let sentinel_class = self.kind_class("NoDefaultType");
@@ -988,7 +995,7 @@ impl<'a> Engine<'a> {
             given.extend(args);
             return self.class_from_parts(given);
         }
-        let kind = Self::kind_beneath(&c);
+        let kind = Self::kind_beneath(&c).filter(|word| !self.lang.type_parameters || word != "Generic");
         let object = if let Some(f) = allocation {
             let mut given = vec![Value::Class(c.clone())]; given.extend(args.clone());
             self.class_apply(f,given)?
@@ -2828,7 +2835,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
