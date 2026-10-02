@@ -435,6 +435,7 @@ struct ExecutionRules<'a> {
 }
 
 pub struct Machine<'a> {
+    context_storage: crate::context::Bindings,
     rules: ExecutionRules<'a>,
     active_trace: Option<Rc<Thing>>,
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
@@ -783,7 +784,7 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 => Some(20), 42 => Some(19),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53 => Some(20), 42 => Some(19),
                 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
             };
             let mut seed = Vec::new();
@@ -1531,6 +1532,7 @@ impl<'a> Machine<'a> {
             readings: Vec::new(),
             reading_now: None,
             natives_book: None,
+            context_storage: crate::context::Bindings::new(),
             builtins_stand_in: None,
             code_kind: None,
             ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(), written_over: HashMap::new(),
@@ -2561,6 +2563,11 @@ impl<'a> Machine<'a> {
     }
 
     fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
+        let positional_base = Self::underlying(rhs).and_then(|value| {
+            let settled = value.settled();
+            if matches!(settled, Value::Tuple(_)) { Some(settled) } else { None }
+        });
+        let rhs = positional_base.as_ref().unwrap_or(rhs);
         if self.rules.has_any_ext_builtin_format {
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
             return layout.remainder(pattern, rhs, self, false);
@@ -12175,6 +12182,17 @@ impl<'a> Machine<'a> {
                         let temporary = Thing {reclassified: RefCell::new(None),  of: t.blueprint().clone(), turn: t.turn, holds: RefCell::new(copy) };
                         return Ok(Value::Thing(Rc::new(temporary)).render(self.wording()));
                     }
+                    if !quoted && !self.stands_under(&t.blueprint(), 36) {
+                        let arguments = t.holds.borrow().iter().find(|(key, _)| key == "\0raised-values").map(|(_, held)| held.clone());
+                        if let Some(Value::Arguments(items)) = arguments {
+                            if let [arg] = items.as_slice() {
+                                if Self::carries_instance(arg) {
+                                    let key_error = self.stands_under(&t.blueprint(), 7);
+                                    return self.object_words(arg, key_error);
+                                }
+                            }
+                        }
+                    }
                     return Ok(if quoted { subject.representation(self.wording()) } else { subject.render(self.wording()) });
                 }
                 // A thing over a native worth shows as that worth where
@@ -16482,16 +16500,26 @@ impl<'a> Machine<'a> {
                 #[cfg(target_os = "linux")]
                 if v.len() == 2 && self.rules.clock_parts {
                     let clock_id = match (&v[0], &v[1]) {
-                        (Value::Flag(false), Value::Flag(true)) => 0,
-                        (Value::Flag(true), Value::Flag(true)) => 1,
+                        (Value::Flag(false), Value::Flag(_)) => 0,
+                        (Value::Flag(true), Value::Flag(_)) => 1,
                         _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                     };
                     #[repr(C)]
                     struct Tick { whole: i64, fraction: i64 }
-                    extern "C" { fn clock_getres(which: i32, tick: *mut Tick) -> i32; }
+                    extern "C" {
+                        fn clock_gettime(which: i32, tick: *mut Tick) -> i32;
+                        fn clock_getres(which: i32, tick: *mut Tick) -> i32;
+                    }
                     let mut tick = Tick { whole: 0, fraction: 0 };
-                    let status = unsafe { clock_getres(clock_id, &mut tick) };
+                    let nanoseconds = matches!(v[1], Value::Flag(false));
+                    let status = if nanoseconds {
+                        unsafe { clock_gettime(clock_id, &mut tick) }
+                    } else { unsafe { clock_getres(clock_id, &mut tick) } };
                     if status != 0 { return Err(String::from("OSError: clock resolution is unavailable")); }
+                    if nanoseconds {
+                        let integer = BigInt::from(tick.whole) * BigInt::from(1_000_000_000) + BigInt::from(tick.fraction);
+                        return Ok(Value::from_big(integer));
+                    }
                     let seconds = tick.whole as f64 + (tick.fraction as f64 * 0.000000001);
                     return Ok(crate::data::worth_of_binary(seconds, self.rules.count_ext_system_real_digits.unwrap_or(15)));
                 }
@@ -17435,7 +17463,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::HeapNative | Prim::ContextStore | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -19904,9 +19932,27 @@ impl Machine<'_> {
         }
     }
 
-    /// Imported text is built above the world's old addresses. The new
-    /// names are then filed away, while its forms still reach their cells.
+    /// Find the enclosing package before walking a relative import upwards.
+    fn qualified_import_name(&self, requested: &str) -> Option<String> {
+        let distance = requested.chars().take_while(|c| *c == '.').count();
+        if distance == 0 { return Some(requested.into()); }
+        let module = self.loaded_spaces.get(&self.written_in)?;
+        let mut base = match self.written_in.rsplit('/').next() {
+            Some("__init__.py") => module.clone(),
+            _ => module.rsplit_once('.')?.0.to_owned(),
+        };
+        for _ in 1..distance { base = base.rsplit_once('.')?.0.to_owned(); }
+        match requested.get(distance..) {
+            Some("") => Some(base),
+            Some(suffix) => Some(format!("{base}.{suffix}")),
+            None => None,
+        }
+    }
+
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+        if path.starts_with('.') {
+            if let Some(full_name) = self.qualified_import_name(path) { return self.load_namespace(&full_name); }
+        }
         // A name a program's own code took out of `sys.modules` is read
         // in again rather than handed the standing instance: that is
         // where CPython keeps such a cache, and a program that empties
@@ -20061,6 +20107,11 @@ impl Machine<'_> {
             self.refresh_import_table(path);
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
         }
+        let value = match self.cached_import(path) {
+            Some(replacement) => replacement,
+            None => value,
+        };
+        self.imported.insert(path.to_owned(), value.clone());
         if let Some((owner, name)) = split {
             if let Some(Value::Thing(parent)) = self.imported.get(owner) {
                 let mut holdings = parent.holds.borrow_mut();
@@ -20184,6 +20235,8 @@ impl Machine<'_> {
     /// namespace read in under this path, and not a value the program's
     /// own __import__ answered with.
     fn is_our_namespace(&self, value: &Value, path: &str) -> bool {
+        let full_name = self.qualified_import_name(path).unwrap_or_else(|| path.to_owned());
+        let path = full_name.as_str();
         self.imported.get(path).map_or(false, |known| match (known, value) {
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             _ => false,
@@ -20191,6 +20244,8 @@ impl Machine<'_> {
     }
 
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
+        let full_name = self.qualified_import_name(path).unwrap_or_else(|| path.to_owned());
+        let path = full_name.as_str();
         if let Value::Thing(space) = value {
             for (name, cell) in space.holds.borrow().iter() {
                 if name != wanted { continue; }
@@ -21501,7 +21556,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | HeapNative | ContextStore | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -22293,7 +22348,7 @@ impl Machine<'_> {
         // one; the value is kept before it settles into a copy.
         let reverse_owner = if op == Prim::Backwards { input.first().cloned() } else { None };
         let standing = if op == Prim::GetMember { input.first().cloned() } else { None };
-        if !matches!(op, Prim::IdentityOf | Prim::HeapNative) {
+        if !matches!(op, Prim::IdentityOf | Prim::HeapNative | Prim::ContextStore) {
             for (position, item) in input.iter_mut().enumerate() {
                 if op == Prim::SetMember && position == 2 { continue; }
                 // `isinstance` asks after a view itself, not after the
@@ -22471,6 +22526,11 @@ impl Machine<'_> {
                     if !key.starts_with('\0') { entries.push((Value::text(key), item.clone())); }
                 }
                 Ok(Value::Dict(Rc::new(entries.into())))
+            }
+            ContextStore => {
+                require(1, 5)?;
+                if !self.table.has_any("ext.builtin.context_native") { return Err(self.bad_answer()); }
+                self.context_storage.apply(&input)
             }
             HeapNative => {
                 require(2, 3)?;

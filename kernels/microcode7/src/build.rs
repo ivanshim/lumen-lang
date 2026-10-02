@@ -7887,7 +7887,9 @@ impl<'a> Builder<'a> {
                 // name of the builder's own making.
                 for cell in &in_cells {
                     let slot = self.address_to_write(cell);
-                    steps.push(Form::Forget(slot));
+                    steps.push(if self.table.flag("ext.op.arithmetic.python_numbers") {
+                        Form::Release(slot)
+                    } else { Form::Forget(slot) });
                 }
                 if gives_back {
                     steps.push(self.read(&holding));
@@ -9923,8 +9925,11 @@ impl<'a> Builder<'a> {
                         _ => (),
                     }
                     if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
-                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                        if comma_before_for {
+                            return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                        }
+                        break;
                     }
                 }
                 if part.shape == Shape::Sign {

@@ -806,6 +806,8 @@
     "iterable"
   ],
   "ext.builtin.heap_native": ["__heap_native__"],
+  "ext.builtin.context_native": ["__context_native__"],
+  "ext.builtin.at_end": ["__at_end__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
   ],
@@ -879,7 +881,8 @@
     "MemoryError",
     "BufferError",
     "StopAsyncIteration",
-    "SystemError"
+    "SystemError",
+    "TimeoutError"
   ],
   "ext.builtin.exceptions.args": [
     "args"

@@ -10530,8 +10530,9 @@ impl<'a> Compiler<'a> {
                 if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
                 if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
-                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") {
+                    if separated { return Err("SyntaxError: did you forget parentheses around the comprehension target?".into()); }
+                    break;
                 }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }

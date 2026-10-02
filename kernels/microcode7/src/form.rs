@@ -361,6 +361,7 @@ pub enum Prim {
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
     HeapNative,
+    ContextStore,
     ReduceNative,
     ProductStep,
     RebuildNative,

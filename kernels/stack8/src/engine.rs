@@ -95,6 +95,7 @@ fn watch_host_signals() {
 }
 
 pub struct Engine<'a> {
+    contexts: crate::context::ContextStore,
     trace_frame: Option<Rc<Instance>>,
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
@@ -517,7 +518,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -1228,6 +1229,7 @@ impl<'a> Engine<'a> {
         let mut engine = Engine {
             class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
             native_exceptions,
+            contexts: crate::context::ContextStore::default(),
             lang,
             world,
             data: Vec::new(),
@@ -6684,6 +6686,14 @@ impl<'a> Engine<'a> {
                     let snapshot = Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: object.class_now().clone(), fields: RefCell::new(fields), mark: object.mark }));
                     return Ok(snapshot.display(&self.wording()));
                 }
+                if !representation && !self.stands_on(&object.class_now(), 36) {
+                    let row = object.fields.borrow().iter().find(|(key, _)| key == "\0arguments").map(|(_, v)| v.clone());
+                    if let Some(Value::Tuple(row)) = row {
+                        if row.len() == 1 && Self::holds_object(&row[0]) {
+                            return self.special_text(&row[0], self.stands_on(&object.class_now(), 7));
+                        }
+                    }
+                }
                 let words = self.wording();
                 return Ok(if representation { value.repr(&words) } else { value.display(&words) });
             }
@@ -11097,6 +11107,10 @@ impl<'a> Engine<'a> {
     /// thing of the program's own gives the marks that show a value its
     /// own words, as its show and its representation.
     fn rem_filled(&mut self, template: &str, arguments: &Value) -> Res<String> {
+        // PyTuple_Check accepts subclasses: their stored tuple supplies the
+        // positional fields, rather than formatting the instance as one field.
+        let tuple = Self::worth_of(arguments).map(|v| v.contents()).filter(|v| matches!(v, Value::Tuple(_)));
+        let arguments = tuple.as_ref().unwrap_or(arguments);
         if self.lang.format_builtin.is_empty() { return self.rem_text(template, arguments); }
         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
         let mut asked = |value: &Value, code: char, numbering: bool| -> Res<crate::formatting::Answer> {
@@ -16938,17 +16952,25 @@ impl<'a> Engine<'a> {
             Builtin::Clock => {
                 #[cfg(target_os = "linux")]
                 if self.lang.clock_parts && args.len() == 2 {
-                    let [Value::Flag(steady), Value::Flag(true)] = args.as_slice() else {
+                    let [Value::Flag(steady), Value::Flag(resolution_only)] = args.as_slice() else {
                         return Err(self.lang.module_helper_amiss.clone());
                     };
                     #[repr(C)]
                     struct Resolution { seconds: i64, nanos: i64 }
-                    extern "C" { fn clock_getres(clock: i32, result: *mut Resolution) -> i32; }
+                    extern "C" {
+                        fn clock_getres(clock: i32, result: *mut Resolution) -> i32;
+                        fn clock_gettime(clock: i32, result: *mut Resolution) -> i32;
+                    }
                     let mut resolution = Resolution { seconds: 0, nanos: 0 };
                     // Linux CLOCK_REALTIME is zero, CLOCK_MONOTONIC is one.
-                    if unsafe { clock_getres(i32::from(*steady), &mut resolution) } != 0 {
+                    let status = unsafe {
+                        if *resolution_only { clock_getres(i32::from(*steady), &mut resolution) }
+                        else { clock_gettime(i32::from(*steady), &mut resolution) }
+                    };
+                    if status != 0 {
                         return Err("OSError: clock resolution is unavailable".to_string());
                     }
+                    if !*resolution_only { return Ok(Value::of_big(BigInt::from(resolution.seconds) * 1_000_000_000u64 + resolution.nanos)); }
                     return Ok(crate::value::real_of(resolution.seconds as f64 + resolution.nanos as f64 / 1e9,
                         self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)));
                 }
@@ -17820,7 +17842,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::HeapNative | Builtin::ContextNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -18515,7 +18537,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::HeapNative | Builtin::ContextNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -19234,7 +19256,7 @@ impl Engine<'_> {
         // one: the value is kept before its cell is opened.
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
-        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative) {
+        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::ContextNative) {
             for (position, value) in args.iter_mut().enumerate() {
                 if b == Builtin::SetAttr && position == 2 { continue; }
                 // `isinstance` asks after a view itself, not after the
@@ -19391,6 +19413,11 @@ impl Engine<'_> {
                         _ => Value::Null,
                     }
                 } else { self.native_reduce(&args[0]) }
+            }
+            Builtin::ContextNative => {
+                arity(1, 5)?;
+                if self.lang.context_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                self.contexts.perform(&args)?
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;
@@ -19931,9 +19958,26 @@ impl Engine<'_> {
         Some(held)
     }
 
-    /// A module owns cells in the same world, under names no source can
-    /// spell. Its routines keep those addresses after the reader returns.
+    /// Relative names use the package owning the active module source.
+    fn absolute_import(&self, written: &str) -> Option<String> {
+        if !written.starts_with('.') { return Some(written.to_string()); }
+        let (_, owner) = self.module_slots.get(&self.source)?;
+        let package = if self.source.ends_with("/__init__.py") { owner.as_str() }
+            else { owner.rsplit_once('.')?.0 };
+        let level = written.bytes().take_while(|b| *b == b'.').count();
+        let mut parts: Vec<_> = package.split('.').collect();
+        if level > parts.len() { return None; }
+        parts.truncate(parts.len() + 1 - level);
+        let mut resolved = parts.join(".");
+        let tail = &written[level..];
+        if !tail.is_empty() { resolved.push('.'); resolved.push_str(tail); }
+        Some(resolved)
+    }
+
     fn import_module(&mut self, path: &str) -> Flow<Value> {
+        if path.starts_with('.') {
+            if let Some(absolute) = self.absolute_import(path) { return self.import_module(&absolute); }
+        }
         if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
         if let Some(cached) = self.module_cache_value(path) {
             if matches!(cached, Value::Null) {
@@ -20072,6 +20116,10 @@ impl Engine<'_> {
             self.importing.remove(path); self.embedded_names.remove(path);
             self.modules.remove(path); self.refresh_module_cache(path); return Err(fault);
         }
+        // Module code may replace its own entry in the Python import cache.
+        // CPython returns that replacement after the module body completes.
+        let module = self.module_cache_value(path).unwrap_or(module);
+        self.modules.insert(path.to_string(), module.clone());
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 let mut fields = parent.fields.borrow_mut();
@@ -20190,6 +20238,8 @@ impl Engine<'_> {
     /// under this path: read in by the import itself, and not a value the
     /// program's own __import__ answered with.
     fn is_builtin_module(&self, module: &Value, path: &str) -> bool {
+        let absolute = self.absolute_import(path).unwrap_or_else(|| path.to_string());
+        let path = absolute.as_str();
         self.modules.get(path).map_or(false, |known| match (known, module) {
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
             _ => false,
@@ -20197,6 +20247,8 @@ impl Engine<'_> {
     }
 
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
+        let absolute = self.absolute_import(path).unwrap_or_else(|| path.to_string());
+        let path = absolute.as_str();
         if let Value::Object(object) = module {
             if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
                 let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
