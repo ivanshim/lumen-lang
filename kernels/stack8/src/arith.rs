@@ -429,3 +429,16 @@ pub fn vector_norm(input: &[f64]) -> f64 {
     root += (next - 1.0 + (products + additions)) / (2.0 * root);
     root / scale
 }
+
+// The math_frexp special cases and binary decomposition at v3.14.8.
+pub fn binary_parts(x: f64) -> (f64, i64) {
+    if x == 0.0 || !x.is_finite() { return (x, 0); }
+    if x.abs() < f64::MIN_POSITIVE {
+        let (mantissa, exponent) = binary_parts(x * 18014398509481984.0);
+        return (mantissa, exponent - 54);
+    }
+    let encoding = x.to_bits();
+    let power = ((encoding >> 52) & 0x7ff) as i64 - 1022;
+    let mantissa = (encoding & 0x800fffffffffffff) | (1022_u64 << 52);
+    (f64::from_bits(mantissa), power)
+}

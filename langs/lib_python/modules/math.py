@@ -721,22 +721,8 @@ def modf(x):
     return (fraction, __math('fdiv', whole, 1.0))
 
 def frexp(x):
-    _check_real(x)
-    if _is_integral(x):
-        n = int(x)
-        if n == 0:
-            return (__math('fdiv', 0.0, 1.0), 0)
-        mantissa, exponent = _int_frexp(-n if n < 0 else n)
-        return (-mantissa if n < 0 else mantissa, exponent)
-    x = float(x)
-    if x == 0 or not isfinite(x):
-        return (__math('fdiv', x, 1.0), 0)
-    # A binary float's denominator is a power of two. Its exact ratio
-    # gives the exponent without scaling once per power, which matters
-    # when summation repeatedly decomposes values with large exponents.
-    numerator, denominator = x.as_integer_ratio()
-    exponent = abs(numerator).bit_length() - denominator.bit_length() + 1
-    return (__math('ldexp', x, -exponent), exponent)
+    return __math('frexp', _float_value(x))
+
 
 def ldexp(x, i):
     if type(i) != type(1) and type(i) != type(True):

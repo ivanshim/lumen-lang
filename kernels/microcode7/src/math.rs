@@ -485,3 +485,18 @@ pub fn euclidean_length(numbers: &[f64]) -> f64 {
     let correction = joined - 1.0 + ((round_product + error) + (round_sum + remainder));
     (estimate + correction / (estimate + estimate)) / factor
 }
+
+// math_frexp from release 3.14.8: preserve exceptional values and zeros,
+// then move the significand into [0.5, 1), lifting denormals first.
+pub fn split_binary(mut value: f64) -> (f64, i64) {
+    if !value.is_finite() || value == 0.0 { return (value, 0); }
+    let mut adjustment = 0_i64;
+    if value.abs() < f64::MIN_POSITIVE {
+        value *= 2.0_f64.powi(54);
+        adjustment = -54;
+    }
+    let bits = value.to_bits();
+    let exponent = ((bits & 0x7ff0000000000000) >> 52) as i64 - 1022 + adjustment;
+    let fraction = f64::from_bits((bits & !0x7ff0000000000000) + 0x3fe0000000000000);
+    (fraction, exponent)
+}

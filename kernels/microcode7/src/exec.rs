@@ -16654,6 +16654,12 @@ impl<'a> Machine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
+                if working == "frexp" && self.rules.floating_math {
+                    let (fraction, power) = math::split_binary(width(1)?);
+                    let mut first = crate::data::worth_of_binary(fraction, self.real_figures());
+                    if let Value::Frac(number) = &mut first { Rc::make_mut(number).float_style = true; }
+                    return Ok(Value::tuple(vec![first, Value::Small(power)]));
+                }
                 if self.rules.floating_math && working == "vector_norm" {
                     let mut coordinates = Vec::with_capacity(takes);
                     for at in 1..v.len() { coordinates.push(width(at)?); }

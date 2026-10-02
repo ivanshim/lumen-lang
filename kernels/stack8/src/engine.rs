@@ -17108,6 +17108,12 @@ impl<'a> Engine<'a> {
                         None => Ok(f64::NAN),
                     }
                 };
+                if working == "frexp" && self.lang.math_floating {
+                    let (mantissa, exponent) = arith::binary_parts(given(1)?);
+                    let mut fraction = crate::value::real_of(mantissa, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut fraction { Rc::make_mut(real).floating = true; }
+                    return Ok(Value::tuple(vec![fraction, Value::Small(exponent)]));
+                }
                 if working == "vector_norm" && self.lang.math_floating {
                     let points = (1..args.len()).map(given).collect::<Result<Vec<_>, _>>()?;
                     let got = arith::vector_norm(&points);
