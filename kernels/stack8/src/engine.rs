@@ -16332,6 +16332,15 @@ impl<'a> Engine<'a> {
             // int.__truediv__) is called on its first argument, as the
             // method would be on a value of that class.
             Builtin::ValueMethod => {
+                if name == "float.__getformat__" {
+                    if args.len() != 1 { return Err(format!("TypeError: float.__getformat__() takes exactly one argument ({} given)", args.len())); }
+                    let plain = Self::worth_of(&args[0]).map(|worth| worth.contents()).unwrap_or_else(|| args[0].clone());
+                    let Value::Text(selector) = plain else {
+                        return Err(format!("TypeError: __getformat__() argument must be str, not {}", Self::format_given_kind(&args[0])));
+                    };
+                    if !matches!(selector.as_ref(), "float" | "double") { return Err("ValueError: __getformat__() argument 1 must be 'double' or 'float'".into()); }
+                    return Ok(Value::text(if cfg!(target_endian = "little") { "IEEE, little-endian" } else { "IEEE, big-endian" }));
+                }
                 if args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
                 let Some((_, operation)) = name.rsplit_once('.') else { return Err(self.member_amiss(&args[0], name)) };
                 let receiver = args.remove(0);

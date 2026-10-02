@@ -7151,7 +7151,7 @@ impl<'a> Machine<'a> {
             }
             _ => return None,
         };
-        let op = self.table.prims.get(word.as_ref()).copied()?;
+        let op = self.table.prims.get(word.as_ref()).copied().or_else(|| match stands { Value::Intrinsic(working, _) => Some(*working), _ => None })?;
         let name = word.to_string();
         Some((|| {
             let mut values = self.value_list(args, frame)?;
@@ -15402,6 +15402,23 @@ impl<'a> Machine<'a> {
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
             // A method spelled with its class in front is asked of its
             // first argument, as it would be of a value of that class.
+            Prim::ValueMethod if name == "float.__getformat__" => {
+                if v.len() != 1 {
+                    return Err(format!("TypeError: float.__getformat__() takes exactly one argument ({} given)", v.len()));
+                }
+                let supplied = Self::underlying(&v[0]).unwrap_or_else(|| v[0].settled());
+                match supplied {
+                    Value::Text(ref choice) if choice.as_ref() == "double" || choice.as_ref() == "float" => {
+                        let byte_order = match cfg!(target_endian = "big") { true => "big", false => "little" };
+                        return Ok(Value::text(&format!("IEEE, {byte_order}-endian")));
+                    }
+                    Value::Text(_) => return Err(String::from("ValueError: __getformat__() argument 1 must be 'double' or 'float'")),
+                    _ => {
+                        let described = if matches!(v[0], Value::Nil) { String::from("None") } else { v[0].kind_word() };
+                        return Err(format!("TypeError: __getformat__() argument must be str, not {described}"));
+                    }
+                }
+            }
             Prim::ValueMethod if name.contains('.') => {
                 let operation = name.rsplit('.').next().unwrap_or(name).to_owned();
                 if v.is_empty() { return Err(self.method_fault("arguments")); }
@@ -16062,7 +16079,7 @@ impl<'a> Machine<'a> {
             Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
             Prim::HasMember => {
                 n(2)?;
-                if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
+                if self.has_class_order() && (matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)) || self.stands_for_a_kind(&v[0])) { return Ok(Value::Flag(true)); }
                 let word = v[1].bare();
                 if self.integer_attribute(&v[0], &word).is_some()
                     || matches!(v[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.table.spells("ext.builtin.bytes.from_int", &word) {
@@ -23154,7 +23171,7 @@ impl Machine<'_> {
                 let job = if op == Prim::SetMember { 4 } else { 5 };
                 return self.work_on_class(job, input).map_err(|fault| self.suspension_fault(fault));
             }
-            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || (matches!(op, Prim::SetMember | Prim::DropMember) && self.stands_for_a_kind(v))) {
+            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || (matches!(op, Prim::SetMember | Prim::DropMember | Prim::GetMember | Prim::HasAttribute | Prim::MembersOf) && self.stands_for_a_kind(v))) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
                 if let Some(job) = job {
                     let outcome = self.work_on_class(job, input);
