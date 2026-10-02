@@ -7522,6 +7522,14 @@ impl<'a> Engine<'a> {
         }
         if !matches!(op, Action::Same | Action::Unsame) || self.lang.identity_not.is_empty() {
             if let Value::Fields(o) = a {
+                if let (Action::At, Value::Text(key)) = (op, b) {
+                    let fields = o.fields.borrow();
+                    if !fields.iter().any(|(name, _)| name == "\0keys") {
+                        return fields.iter().find(|(name, value)| name.as_str() == key.as_ref()
+                            && !name.starts_with(['\0', '#']) && !matches!(value.contents(), Value::Blank))
+                            .map(|(_, value)| value.clone()).ok_or_else(|| self.key_absent(b));
+                    }
+                }
                 return self.special_dyad(op, &Value::Map(Rc::new(Self::fields_entries(o).into())), b);
             }
             // The view standing on the right is also a dictionary for
@@ -20738,7 +20746,12 @@ impl Engine<'_> {
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Kept::Text(at) => {
-                let (near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
+                let (mut near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
+                // A function made by exec reads globals, not the separate
+                // execution locals. That local mapping may already be gone.
+                if self.running_routine.as_ref().is_some_and(|body| body.code_flags & 1 != 0) {
+                    if let Some(globals) = &outer { near = globals.clone(); }
+                }
                 match self.book_get(&near, name) {
                     Ok(Some(held)) => return Some(Ok(held)),
                     Ok(None) => {}

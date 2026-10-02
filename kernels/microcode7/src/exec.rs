@@ -14034,6 +14034,17 @@ impl<'a> Machine<'a> {
                 Value::Flag(found != (operation == Prim::Absent))
             }
             (Prim::At, [Value::Attributes(t), key]) => {
+                // Plain names need no temporary dictionary or key objects.
+                // An additional non-string key can compare equal to a name,
+                // so that case retains the full mapping protocol below.
+                if let Value::Text(word) = key {
+                    let members = t.holds.borrow();
+                    if members.iter().all(|entry| entry.0 != "\0keys") {
+                        let answer = members.iter().find(|(name, item)| name == word.as_ref()
+                            && !name.starts_with('#') && !name.starts_with('\0') && !matches!(item.settled(), Value::Unset));
+                        return answer.map(|entry| Some(entry.1.clone())).ok_or_else(|| self.bad_answer());
+                    }
+                }
                 // The key may be a name of any kind the dictionary can
                 // hold, found by the same equality the subscript uses.
                 let wanted = self.hash_key(key)?;
@@ -20935,8 +20946,11 @@ impl<'a> Machine<'a> {
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Held::Reading(which) => {
-                let near = self.readings[which].near.clone();
                 let outer = self.readings[which].outer.clone();
+                let function_scope = self.frames_named.last().map_or(false, |body| body.flags & 1 == 1);
+                let near = if function_scope {
+                    outer.as_ref().unwrap_or(&self.readings[which].near).clone()
+                } else { self.readings[which].near.clone() };
                 match self.booked_get(&near, name) {
                     Ok(Some(worth)) => return Some(Ok(worth)),
                     Ok(None) => {}
