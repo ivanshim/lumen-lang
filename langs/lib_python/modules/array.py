@@ -53,7 +53,7 @@ class array:
             import warnings
             warnings.warn("The 'u' type code is deprecated and will be removed in Python 3.16", DeprecationWarning, stacklevel=2)
         if initializer is not _missing:
-            if isinstance(initializer, (bytes, bytearray, memoryview)):
+            if isinstance(initializer, (bytes, bytearray)):
                 self.frombytes(initializer)
             elif isinstance(initializer, str):
                 if typecode not in 'uw':
@@ -269,7 +269,10 @@ class array:
             except (ValueError, OverflowError):
                 raw = b''.join(self._encode(item) for item in values)
         else:
-            raw = b''.join(self._encode(item) for item in values)
+            for item in values:
+                if not isinstance(item, str) or len(item) != 1:
+                    self._encode(item)
+            raw = _native(1, '@' + str(len(values)) + 'I', tuple(map(ord, values)))
         self._extend_raw(raw)
 
     def tobytes(self):
