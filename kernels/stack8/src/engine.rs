@@ -16055,9 +16055,18 @@ impl<'a> Engine<'a> {
                         _ => Err("TypeError: random word expected state and position".into()),
                     };
                 }
-                if self.lang.math_floating && matches!(operation.as_ref(), "sqrt" | "exp") {
+                if self.lang.math_floating && matches!(operation.as_ref(), "sqrt" | "exp" | "frexp") {
                     if args.len() != 2 { return Err("TypeError: unary math operation expected 1 argument".into()); }
                     let number = self.math_operand(&args[1])?;
+                    if operation.as_ref() == "frexp" {
+                        if number == 0.0 || !number.is_finite() { return Ok(Value::tuple(vec![crate::complex::real(number), Value::Small(0)])); }
+                        let mut bits = number.to_bits();
+                        let mut adjustment = 0;
+                        if (bits >> 52) & 0x7ff == 0 { bits = (number * 18014398509481984.0).to_bits(); adjustment = -54; }
+                        let exponent = ((bits >> 52) & 0x7ff) as i64 - 1022 + adjustment;
+                        let mantissa = f64::from_bits((bits & 0x800fffffffffffff) | (1022_u64 << 52));
+                        return Ok(Value::tuple(vec![crate::complex::real(mantissa), Value::Small(exponent)]));
+                    }
                     if operation.as_ref() == "sqrt" && number < 0.0 {
                         return Err(format!("ValueError: expected a nonnegative input, got {}", crate::complex::real(number).display(&self.wording())));
                     }

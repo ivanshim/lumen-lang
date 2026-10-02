@@ -14646,9 +14646,20 @@ impl<'a> Machine<'a> {
                     "mt19937" if self.table.flag("ext.builtin.random.words") => {
                         return if v.len() == 4 { self.twister_draw(v) } else { self.twister_next(v) };
                     },
-                    "sqrt" | "exp" if self.table.flag("ext.builtin.math.floating") => {
+                    "sqrt" | "exp" | "frexp" if self.table.flag("ext.builtin.math.floating") => {
                         if v.len() != 2 { return Err("TypeError: unary math operation needs one value".to_owned()); }
                         let input = self.real_math_input(&v[1])?;
+                        if task.as_ref() == "frexp" {
+                            let (mantissa, power) = if input.is_finite() && input != 0.0 {
+                                let normal = input.abs() >= f64::MIN_POSITIVE;
+                                let binary = if normal { input.to_bits() } else { (input * (1_u64 << 54) as f64).to_bits() };
+                                let encoded = (binary >> 52) & 2047;
+                                let exponent = encoded as i64 - 1022 - if normal { 0 } else { 54 };
+                                let fraction = f64::from_bits((binary & !(2047_u64 << 52)) | (1022_u64 << 52));
+                                (fraction, exponent)
+                            } else { (input, 0) };
+                            return Ok(Value::tuple(vec![crate::data::worth_of_binary(mantissa, self.real_figures()), Value::Small(power)]));
+                        }
                         let result = if task.as_ref() == "exp" { input.exp() } else {
                             if input < 0.0 {
                                 let text = crate::data::worth_of_binary(input, self.real_figures()).render(self.wording());
