@@ -986,7 +986,11 @@ impl<'a> Machine<'a> {
                     Some(Prim::AsReal) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => {
                         self.open_arguments(given.clone())?.0.into_iter().take(1).collect()
                     },
-                    Some(Prim::Listed) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
+                    // A mutable container takes its members in its own
+                    // `__init__`; where the class writes one, the kind
+                    // primitive is asked only to allocate the empty thing
+                    // and the class's method is handed the arguments.
+                    Some(Prim::Listed | Prim::Dictionary) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => Vec::new(),
                     Some(Prim::Filtered) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     Some(Prim::Unchanging | Prim::Tupling) if self.table.single("ext.stmt.class.constructor").and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     _ => given.clone(),
@@ -1869,6 +1873,13 @@ impl<'a> Machine<'a> {
             }
             // The worth a thing keeps answers for the methods of its kind.
             let native=Self::underlying(&value);
+            // A mapping subclass's subscript member stays bound to the
+            // thing itself, so a key the mapping does not hold reaches
+            // its `__missing__` the way a plain subscript does.
+            if self.table.strings("ext.stmt.class.special").get(11).map_or(false, |word| word == key)
+                && native.as_ref().map_or(false, |under| matches!(under.settled(), Value::Dict(_))) {
+                return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+            }
             if let Some(set)=native.as_ref().filter(|v|matches!(v.settled(),Value::Set(_))) {
                 if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
             }
@@ -1887,7 +1898,11 @@ impl<'a> Machine<'a> {
                 }
             }
             if let Some(under)=native.filter(|v|!matches!(v.settled(),Value::Set(_))) {
-                if matches!(under.settled(), Value::Complex(_)) {
+                // A special member the kind beneath the thing answers
+                // (its extent, a place read or written, its walk) is
+                // read through the worth, as a plain value of the kind
+                // reads it.
+                if matches!(under.settled(), Value::Complex(_) | Value::Dict(_) | Value::Vector(_) | Value::Tuple(_)) {
                     if self.native_member(&under,key) { return Ok(Value::Member(Rc::new(under),key.to_owned())); }
                 }
                 if let Some(operation)=Self::kind_method_named(self.table,key){
@@ -2235,7 +2250,16 @@ impl<'a> Machine<'a> {
                 if let Some(entry)=self.inherited_entry(&t.blueprint(),key) {
                     match &entry {
                         Value::Wrapped(32,parts)=>return self.slot_change(&subject,parts,replacement),
-                        Value::Wrapped(58,_)=>return Err(self.detail("property.readonly").to_owned().into()),
+                        // A property's own document string is kept among
+                        // its fields and takes a write; its accessors do
+                        // not, as CPython keeps them read-only.
+                        Value::Wrapped(58,parts)=>{
+                            let place=parts.first().map_or(String::new(),|p|p.bare());
+                            if place!="\0doc"{return Err(self.detail("property.readonly").to_owned().into());}
+                            let mut holds=t.holds.borrow_mut();
+                            Self::change_entry(&mut holds,"\0doc",replacement);
+                            return Ok(Value::Nil);
+                        }
                         _=>{}
                     }
                     if self.writes_too(&entry) {

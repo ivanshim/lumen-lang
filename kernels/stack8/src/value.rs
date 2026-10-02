@@ -1230,6 +1230,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Declined(a), Value::Declined(b)) => a == b,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
             (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
@@ -1794,7 +1795,7 @@ impl Class {
         };
         same
             || self.base.as_ref().map_or(false, |b| b.named(name, loosely))
-            || self.answers.iter().any(|a| a.named(name, loosely))
+            || self.lineage.iter().any(|b| b.named(name, loosely))
     }
 
     /// Whether this class is that one, stands on it, or answers to it,

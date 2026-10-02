@@ -8815,7 +8815,18 @@ impl<'a> Builder<'a> {
                             self.advance();
                             given.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                             prim_call(Prim::Bid, given)
-                        } else { self.class_not_ready() }
+                        } else {
+                            // A parent's member read and not called: the
+                            // super proxy is made, then the member read
+                            // off it, bound to the receiver this method
+                            // runs upon.
+                            let private = self.parts().completed_class.ident.to_string();
+                            let proxy = invoke(
+                                constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into())),
+                                vec![self.read(&private), self.read(&receiver)],
+                            );
+                            prim_call(Prim::Of, vec![proxy, constant(Value::text(&called))])
+                        }
                     }
                     _ => self.class_not_ready(),
                 }

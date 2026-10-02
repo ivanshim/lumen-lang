@@ -2560,10 +2560,21 @@ impl<'a> Machine<'a> {
         Ok(format!("{}{}{}", delimiter, middle, delimiter))
     }
 
+    /// The right operand of a remainder: a thing standing on the tuple
+    /// kind answers with the tuple it keeps, so its items fill the marks
+    /// one by one; anything else fills a single mark as itself.
+    fn remainder_operand(&self, supplied: &Value) -> Value {
+        if let Some(worth) = Self::underlying(supplied) {
+            if matches!(worth.settled(), Value::Tuple(_)) { return worth; }
+        }
+        supplied.clone()
+    }
+
     fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
         if self.rules.has_any_ext_builtin_format {
+            let rhs = self.remainder_operand(rhs);
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
-            return layout.remainder(pattern, rhs, self, false);
+            return layout.remainder(pattern, &rhs, self, false);
         }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
@@ -8276,6 +8287,15 @@ impl<'a> Machine<'a> {
             let plain = matches!(arguments[0].settled(), Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Set(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_));
             if !plain { let drawn = self.gathered_members(&arguments[0])?; arguments[0] = Value::Vector(crate::tuples::Sequence::plain(drawn)); }
         }
+        // A mapping subclass whose subscript member was read off the
+        // thing itself reaches its `__missing__` through the subscript
+        // working, key for key, exactly as `[]` does.
+        if self.table.strings("ext.stmt.class.special").get(11).map_or(false, |word| word == name)
+            && matches!(receiver.settled(), Value::Thing(_))
+            && Self::underlying(receiver).map_or(false, |under| matches!(under.settled(), Value::Dict(_))) {
+            if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+            return self.prim(Prim::At, name, &[receiver.clone(), arguments[0].clone()]).map_err(Escape::from);
+        }
         // A special member asked for by name on a value of a native
         // kind. Each hands its work to the primitive that already does
         // it, so that the answer and the refusal are the ones the plain
@@ -10478,12 +10498,13 @@ impl<'a> Machine<'a> {
     /// machine itself, so a thing standing for one of them may answer
     /// by its own __bytes__ method.
     fn octet_filled(&mut self, pattern: &str, supplied: &Value) -> Result<Vec<u8>, String> {
+        let supplied = self.remainder_operand(supplied);
         let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
         let mut marks = OctetMarks {
             layout: crate::formatting::Layout { table: self.table, names: self.wording() },
             machine: self,
         };
-        let filled = layout.remainder(pattern, supplied, &mut marks, true)?;
+        let filled = layout.remainder(pattern, &supplied, &mut marks, true)?;
         filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.octet_error("unready"))).collect()
     }
 
@@ -11893,16 +11914,24 @@ impl<'a> Machine<'a> {
         let names = self.rules.specials;
         let word = names.get(index)?;
         let Value::Thing(thing) = subject else { return None };
-        let mut blueprint = &thing.blueprint();
-        loop {
+        let own_blueprint = &thing.blueprint();
+        // A special member is sought through the whole of the class's
+        // order, not only the first base, so a member a later base of a
+        // multiply-inheriting class carries still answers. The builtin
+        // classes laid out without an order still keep their first-base
+        // chain, so that is walked too.
+        let mut chain: Vec<&Rc<Blueprint>> = std::iter::once(own_blueprint).chain(own_blueprint.ancestry.iter()).collect();
+        let mut under = own_blueprint.under.as_ref();
+        while let Some(current) = under { chain.push(current); under = current.under.as_ref(); }
+        for blueprint in chain {
             let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.clone());
             if own.is_some() { return own; }
             if let Some((_, body)) = blueprint.methods.iter().find(|(key, _)| key == word) { return Some(Value::Routine(body.clone())); }
             // Equality given, in the methods or the namespace, without a
             // hash: the things cannot be hashed.
             if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal) || blueprint.shared.borrow().iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
-            blueprint = blueprint.under.as_ref()?;
         }
+        None
     }
 
     fn appointed(&self, subject: &Value, index: usize) -> Option<Rc<Routine>> {
@@ -22207,6 +22236,20 @@ impl Machine<'_> {
         match callable {
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::Method(..) => self.apply_class_member(callable.clone(), values).map_err(|escape| self.suspension_fault(escape)),
+            // A wrapped member (a bound class or static method, or a
+            // kind's loose entry) and an adornment (a method bound to
+            // a native value) both stand for the call they wrap, and
+            // are applied the way a direct call applies them.
+            Value::Wrapped(..) => self.apply_class_member(callable.clone(), values).map_err(|escape| self.suspension_fault(escape)),
+            Value::Adorned(member) => {
+                let mut given = values;
+                match member.manner {
+                    's' => {}
+                    'b' => given.insert(0, member.extra.clone().expect("a receiver")),
+                    _ => return Err(self.core_complaint("core.uncallable", &callable.kind_word())),
+                }
+                self.apply_class_member(member.target.clone(), given).map_err(|escape| self.suspension_fault(escape))
+            }
             Value::OctetKind { changeable, .. } => self.octet_routine(if *changeable { 1 } else { 0 }, &values),
             Value::Intrinsic(op, word) => self.prim(*op, word, &values),
             Value::Bound(program, frame) => match self.invoke(program.clone(), frame.clone(), values) {

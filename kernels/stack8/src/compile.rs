@@ -9188,9 +9188,17 @@ impl<'a> Compiler<'a> {
                         let count = self.arguments(&call)?;
                         self.act(Action::Summon(named.as_str().into()), count + 2);
                     } else {
+                        // A parent's member read and not called: the
+                        // super proxy is made, then the member read off
+                        // it, bound to the thing this method runs upon.
                         self.discard();
                         self.discard();
-                        self.class_cannot_run();
+                        let cell = self.gathering().class_cell.clone();
+                        self.read(&cell);
+                        self.read(&this);
+                        self.constant(PARENT_CALLABLE.with(Clone::clone));
+                        self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), 3);
+                        self.act(Action::Grab(Rc::from(named.as_str())), 1);
                     }
                 } else {
                     self.class_cannot_run();

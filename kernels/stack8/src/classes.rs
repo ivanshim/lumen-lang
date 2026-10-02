@@ -871,8 +871,12 @@ impl<'a> Engine<'a> {
                 Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }
-                Some(Builtin::List) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
-                    initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
+                // A mutable container takes its members in its own
+                // `__init__`; where the class writes one, the builtin is
+                // asked only to allocate the empty thing and the class's
+                // method is handed the arguments itself.
+                Some(Builtin::List | Builtin::Dict) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                    initial.clear();
                 }
                 Some(Builtin::Filter) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
@@ -1464,7 +1468,19 @@ impl<'a> Engine<'a> {
                     if let Some(method) = self.builtin_member(&word, name)? { return Ok(method); }
                 }
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|!matches!(v.contents(),Value::Set(_))) {
-                    if matches!(worth.contents(), Value::Complex(_)) && self.native_special(&worth, name) {
+                    // A mapping subclass's subscript member stays bound
+                    // to the thing itself, so that a key the mapping
+                    // does not hold reaches its `__missing__` the way a
+                    // plain subscript does.
+                    if self.lang.class_special.get(11).map_or(false, |word| word == name)
+                        && matches!(worth.contents(), Value::Map(_)) {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                    }
+                    // A special member the kind beneath the thing
+                    // answers (its length, a place read or written, its
+                    // walk) is read through the worth, as a plain value
+                    // of the kind reads it.
+                    if matches!(worth.contents(), Value::Complex(_) | Value::Map(_) | Value::Array(_) | Value::Tuple(_)) && self.native_special(&worth, name) {
                         return Ok(Value::ValueMethod(Rc::new((worth, name.to_string()))));
                     }
                     if let Some(op)=self.lang.value_methods.get(name).cloned() {
@@ -2036,7 +2052,15 @@ impl<'a> Engine<'a> {
                 if let Some(member)=self.class_value(&o.class_now(),name) {
                     if let Value::Adapter(w)=&member {
                         if w.0==16 {return self.slot_write(&subject,&w.1,value);}
-                        if w.0==28 {return Err(self.class_word("property.readonly").to_string().into());}
+                        // A property's own document string is kept among
+                        // its fields and takes a write; its accessors do
+                        // not, as CPython keeps them read-only.
+                        if w.0==28 {
+                            if w.1[0].plain() != "\0doc" { return Err(self.class_word("property.readonly").to_string().into()); }
+                            let mut fields = o.fields.borrow_mut();
+                            let _ = Self::write_members(&mut fields, "\0doc", value, false);
+                            return Ok(Value::Null);
+                        }
                     }
                     if self.takes_writes(&member) {
                         let part=if value.is_some(){"descriptor.set"}else{"descriptor.delete"};
