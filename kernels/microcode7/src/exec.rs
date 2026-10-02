@@ -13989,6 +13989,13 @@ impl<'a> Machine<'a> {
                 if let Value::Complex(pair) = &v[0] {
                     if self.table.spells("ext.builtin.complex.real", &called) { return Ok(crate::complex::decimal_value(pair.0)); }
                     if self.table.spells("ext.builtin.complex.imag", &called) { return Ok(crate::complex::decimal_value(pair.1)); }
+                    // A complex answers for its kind as anything does:
+                    // the intrinsic word that builds one.
+                    if called == self.detail("kind") {
+                        if let Some((_, word)) = self.table.prim_words.iter().find(|(p, _)| *p == Prim::ComplexMade) {
+                            return Ok(Value::Intrinsic(Prim::ComplexMade, Rc::from(word.as_str())));
+                        }
+                    }
                     return Err(crate::complex::complaint(self.table, "unready"));
                 }
                 if matches!(v[0], Value::Unpaired(_)) {
