@@ -22067,7 +22067,11 @@ impl Engine<'_> {
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
-        self.text_books.push(TextBook { near, outer, from: offset, upto: offset + names.len(), declared: local.declared_outer });
+        let mut declared = local.declared_outer;
+        for name in crate::compile::text_wide_globals(&tokens, self.lang) {
+            if !declared.contains(&name) { declared.push(name); }
+        }
+        self.text_books.push(TextBook { near, outer, from: offset, upto: offset + names.len(), declared });
         let was_reading = self.reading_in.replace(self.text_books.len() - 1);
         let answer = self.text_finished(&program, &file, shown);
         self.reading_in = was_reading;

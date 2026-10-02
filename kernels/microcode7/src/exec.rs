@@ -22223,7 +22223,9 @@ impl<'a> Machine<'a> {
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
-        self.readings.push(Namebook { near, outer, from: beginning, upto: beginning + fresh.len(), declared: built.outer_aliases.clone() });
+        let declarations: std::collections::BTreeSet<_> = built.outer_aliases.iter().cloned()
+            .chain(crate::build::text_wide_globals(&tokens, self.table)).collect();
+        self.readings.push(Namebook { near, outer, from: beginning, upto: beginning + fresh.len(), declared: declarations.into_iter().collect() });
         let was_reading = self.reading_now.replace(self.readings.len() - 1);
         let answer = self.text_concluded(&built, &file, mode, shown);
         self.reading_now = was_reading;

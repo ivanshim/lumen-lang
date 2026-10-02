@@ -444,7 +444,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
 /// wanted is only which names the text as a whole has ever declared
 /// `global`, not where, so a walk that never enters or leaves a scope
 /// answers it well enough.
-fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
+pub(crate) fn text_wide_globals(tokens: &[Token], table: &Table) -> Vec<String> {
     let sep = table.single("syntax.call.separator");
     let mut names = Vec::new();
     let mut i = 0;

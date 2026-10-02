@@ -435,7 +435,7 @@ pub fn compile_within(
 /// wanted is only which names the text as a whole has ever declared
 /// `global`, not where, so a walk that never enters or leaves a scope
 /// answers it well enough.
-fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
+pub(crate) fn text_wide_globals(tokens: &[Token], lang: &Lang) -> Vec<String> {
     let sep = lang.calling.as_ref().and_then(|c| c.between.clone());
     let mut names = Vec::new();
     let mut i = 0;
