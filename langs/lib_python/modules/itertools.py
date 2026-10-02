@@ -2,8 +2,21 @@
 # islice alone takes a finite portion without seeking an end.
 class _Count:
     def __init__(self, start, step):
-        self.start = start
+        for value in (start, step):
+            if type(value) not in (int, float, complex, bool):
+                if any(hasattr(type(value), op) for op in ('__int__', '__float__', '__index__')):
+                    raise NotImplementedError('count with user-defined numbers is not supported')
+                raise TypeError('a number is required')
+        self.start = int(start) if isinstance(start, int) and isinstance(step, int) and step == 1 else start
         self.step = step
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        current = self.start
+        self.start += self.step
+        return current
 
 class _Repeat:
     def __init__(self, value):

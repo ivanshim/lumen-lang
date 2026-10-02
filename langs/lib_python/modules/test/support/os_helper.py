@@ -1,4 +1,5 @@
 import os
+import collections.abc
 import warnings
 from contextlib import contextmanager
 from shutil import rmtree as _rmtree
@@ -104,11 +105,12 @@ def unlink(filename):
     except FileNotFoundError:
         pass
 
-# A guard over os.environ: it remembers each name's value the first
-# time a test changes or removes it, and puts every one of them back
-# when the guard closes. The mapping it edits lives inside this run
-# alone; nothing written here reaches the host process.
-class EnvironmentVarGuard:
+class EnvironmentVarGuard(collections.abc.MutableMapping):
+    """Class to help protect the environment variable properly.
+
+    Can be used as a context manager.
+    """
+
     def __init__(self):
         self._environ = os.environ
         self._changed = {}
@@ -117,11 +119,13 @@ class EnvironmentVarGuard:
         return self._environ[envvar]
 
     def __setitem__(self, envvar, value):
+        # Remember the initial value on the first access
         if envvar not in self._changed:
             self._changed[envvar] = self._environ.get(envvar)
         self._environ[envvar] = value
 
     def __delitem__(self, envvar):
+        # Remember the initial value on the first access
         if envvar not in self._changed:
             self._changed[envvar] = self._environ.get(envvar)
         if envvar in self._environ:
@@ -129,9 +133,6 @@ class EnvironmentVarGuard:
 
     def keys(self):
         return self._environ.keys()
-
-    def __contains__(self, envvar):
-        return envvar in self._environ
 
     def __iter__(self):
         return iter(self._environ)
@@ -142,20 +143,23 @@ class EnvironmentVarGuard:
     def set(self, envvar, value):
         self[envvar] = value
 
-    def unset(self, envvar):
-        del self[envvar]
+    def unset(self, envvar, /, *envvars):
+        """Unset one or more environment variables."""
+        for ev in (envvar, *envvars):
+            del self[ev]
 
     def copy(self):
-        return dict(self._environ)
+        # We do what os.environ.copy() does.
+        return dict(self)
 
     def __enter__(self):
         return self
 
     def __exit__(self, *ignore_exc):
-        for key, value in self._changed.items():
-            if value is None:
-                if key in self._environ:
-                    del self._environ[key]
+        for (k, v) in self._changed.items():
+            if v is None:
+                if k in self._environ:
+                    del self._environ[k]
             else:
-                self._environ[key] = value
-        return False
+                self._environ[k] = v
+        os.environ = self._environ

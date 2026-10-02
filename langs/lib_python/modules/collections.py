@@ -32,70 +32,50 @@ def namedtuple(typename, field_names, rename=False, defaults=None, module=None):
                 word += letter
     else:
         names = list(field_names)
-    return __derive_class(typename, _Record, {'_fields': names, '__name__': typename})
+    from keyword import iskeyword
+    for name in [typename, *names]:
+        if not isinstance(name, str) or not name.isidentifier() or iskeyword(name):
+            raise ValueError('invalid namedtuple name ' + repr(name))
+    if len(set(names)) != len(names) or any(name.startswith('_') for name in names):
+        raise ValueError('invalid namedtuple field names')
+    members = {'__module__': __frame_module(1) if module is None else module, '_fields': tuple(names), '_field_defaults': {}, '__match_args__': tuple(names), '__name__': typename, '__slots__': ()}
+    for index, name in enumerate(names):
+        members[name] = property(lambda self, index=index: tuple.__getitem__(self, index))
+    return __derive_class(typename, _Record, members)
 
-# Named records bear fields of their own. The tuple behaviour CPython
-# gives them is written out here: iteration, indexing and length walk the
-# fields in order, _make builds one from a row, and the representation and
-# equality read like the tuple they stand for. They stay writable in the
-# way any record is, since immutable tuple storage awaits the object
-# protocol.
-class _Record:
-    def __init__(self, *values):
-        if len(values) != len(self._fields):
-            raise 'TypeError: wrong number of namedtuple fields'
-        for i in range(len(values)):
-            setattr(self, self._fields[i], values[i])
-
-    def __iter__(self):
-        for name in self._fields:
-            yield getattr(self, name)
-
-    def __getitem__(self, index):
-        if type(index) == type(''):
-            return getattr(self, index)
-        return getattr(self, self._fields[index])
-
-    def __len__(self):
-        return len(self._fields)
+# Named records use the immutable tuple storage and its comparison/hash rules.
+class _Record(tuple):
+    __slots__ = ()
+    def __new__(cls, *values, **kwargs):
+        if len(values) > len(cls._fields):
+            raise TypeError('too many namedtuple arguments')
+        row = list(values)
+        for name in cls._fields[len(values):]:
+            if name not in kwargs:
+                raise TypeError('missing namedtuple argument ' + repr(name))
+            row.append(kwargs.pop(name))
+        if kwargs:
+            raise TypeError('unexpected or duplicate namedtuple argument')
+        return tuple.__new__(cls, row)
 
     def __repr__(self):
-        parts = [name + '=' + repr(getattr(self, name)) for name in self._fields]
-        return self.__class__.__name__ + '(' + ', '.join(parts) + ')'
-
-    def __eq__(self, other):
-        if not isinstance(other, _Record) or type(other) is not type(self):
-            return False
-        return list(self) == list(other)
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
-
-    def __lt__(self, other):
-        return list(self) < list(other)
-
-    def __le__(self, other):
-        return list(self) <= list(other)
-
-    def __gt__(self, other):
-        return list(self) > list(other)
-
-    def __ge__(self, other):
-        return list(self) >= list(other)
-
-    def __hash__(self):
-        return hash(tuple(self))
+        return type(self).__name__ + '(' + ', '.join(name + '=' + repr(value) for name, value in zip(self._fields, self)) + ')'
 
     @classmethod
     def _make(cls, iterable):
-        return cls(*iterable)
+        values = tuple(iterable)
+        if len(values) != len(cls._fields):
+            raise TypeError('wrong number of namedtuple fields')
+        return cls(*values)
 
     def _replace(self, **changed):
-        values = [getattr(self, name) for name in self._fields]
-        for name in self._fields:
-            if name in changed:
-                values[self._fields.index(name)] = changed[name]
-        return type(self)(*values)
+        unknown = [name for name in changed if name not in self._fields]
+        if unknown:
+            raise TypeError('Got unexpected field names: ' + repr(unknown))
+        return type(self)(*[changed.get(name, value) for name, value in zip(self._fields, self)])
+
+    def _asdict(self):
+        return dict(zip(self._fields, self))
 
 class deque:
     def __init__(self, iterable=None, maxlen=None):
@@ -211,6 +191,9 @@ class defaultdict(dict):
         return type(self), args, None, None, iter(self.items())
 
 class Counter:
+    def __repr__(self):
+        raise NotImplementedError('Counter needs object indexing methods')
+
     def __init__(self, iterable=None, **kwargs):
         raise 'NotImplementedError: Counter needs object indexing methods'
 

@@ -211,22 +211,79 @@ ALWAYS_EQ = _AlwaysEqual()
 
 # These entry points can be imported, but their absent machinery must
 # be named before a test can mistake it for a successful check.
-force_not_colorized = _identity
-# Colour is asked for by putting FORCE_COLOR in the environment, as the
-# reference's force_color does, and clearing the two variables that would
-# otherwise overrule it. The reference also swaps _colorize.can_colorize,
-# which this run's eager import would not see, so the environment alone is
-# used, and no _pyrepl is needed to answer it.
+import contextlib
+import functools
+
+@contextlib.contextmanager
+def swap_attr(obj, attr, new_val):
+    """Temporary swap out an attribute with a new object.
+
+    Usage:
+        with swap_attr(obj, "attr", 5):
+            ...
+
+        This will set obj.attr to 5 for the duration of the with: block,
+        restoring the old value at the end of the block. If `attr` doesn't
+        exist on `obj`, it will be created and then deleted at the end of the
+        block.
+
+        The old value (or None if it doesn't exist) will be assigned to the
+        target of the "as" clause, if there is one.
+    """
+    if hasattr(obj, attr):
+        real_val = getattr(obj, attr)
+        setattr(obj, attr, new_val)
+        try:
+            yield real_val
+        finally:
+            setattr(obj, attr, real_val)
+    else:
+        setattr(obj, attr, new_val)
+        try:
+            yield
+        finally:
+            if hasattr(obj, attr):
+                delattr(obj, attr)
+
+@contextlib.contextmanager
+def force_color(color: bool):
+    import _colorize
+    from .os_helper import EnvironmentVarGuard
+
+    if color:
+        try:
+            import _pyrepl  # noqa: F401
+        except ModuleNotFoundError:
+            # Can't force enable color without _pyrepl, so just skip.
+            raise unittest.SkipTest("_pyrepl is missing")
+
+    with (
+        swap_attr(_colorize, "can_colorize", lambda *, file=None: color),
+        EnvironmentVarGuard() as env,
+    ):
+        env.unset("FORCE_COLOR", "NO_COLOR", "PYTHON_COLORS")
+        env.set("FORCE_COLOR" if color else "NO_COLOR", "1")
+        yield
+
+
 def force_colorized(func):
-    from test.support.os_helper import EnvironmentVarGuard
+    """Force the terminal to be colorized."""
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        with EnvironmentVarGuard() as env:
-            env.unset('FORCE_COLOR')
-            env.unset('NO_COLOR')
-            env.unset('PYTHON_COLORS')
-            env.set('FORCE_COLOR', '1')
+        with force_color(True):
             return func(*args, **kwargs)
     return wrapper
+
+
+def force_not_colorized(func):
+    """Force the terminal NOT to be colorized."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with force_color(False):
+            return func(*args, **kwargs)
+    return wrapper
+
+
 skip_if_double_rounding = _identity
 _1G = 1073741824
 _2G = 2147483648
