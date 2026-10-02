@@ -13,7 +13,7 @@ build (`RUSTFLAGS="-D warnings" cargo build`). None of them edits a test.
 | `count_run.py <rawdir> <cap> <binary>` | Runs every `tests/python/*.py` once per kernel into `<rawdir>/<test>.<kernel>.txt` (exit, seconds, stdout, stderr), skipping files already written, so it can be restarted. Reads the tests from `$LUMEN_ROOT` (default: the current directory). One process per core (`SUITE_JOBS`), each file in its own working directory, largest first; about 5 minutes on 16 cores. |
 | `rerun_one.py <rawdir> <test> <kernel> <cap> <binary>` | Reruns one reference file on one kernel with a longer cap (for a file load pushed past the cap). |
 | `count.py <rawdir> <previous rawdir>` | Per kernel: pass and ran totals, and each file whose pass count changed. |
-| `test-debug.sh --lang python\|php\|lumen` | `test.sh` on the debug binary with a 30 s cut-off per program: every example on all six kernels, each compared with stream35. Expected: python 384, php 318, lumen 522. |
+| `test-debug.sh --lang python\|php\|lumen` | `test.sh` on the debug binary with a 30 s cut-off per program: Python examples on stack8 and microcode7 only (reference kernels ignore ext.* arithmetic), requiring exit 0 and identical output; other languages on all six kernels, each compared with stream35. Expected: python 128, php 318, lumen 522. |
 
 The shared `stderr_record.measured_line` rule uses the first stderr line.
 When that line is exactly `Traceback (most recent call last):`, it uses

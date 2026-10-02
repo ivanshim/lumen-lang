@@ -294,7 +294,10 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         if count < i32::MIN as i64 || count > i32::MAX as i64 { return Err(String::from("OverflowError: Python int too large to convert to C int")); }
     }
     let source=subject.as_ref();
-    let many=if source.is_ascii() {source.len()} else {source.chars().count()};
+    if matches!(work, COUNT|FIND|RFIND|INDEX|RINDEX|STARTSWITH|ENDSWITH) {
+        return seek(work,source,&g);
+    }
+    let many=source.chars().count();
     let answer=match work {
         ENCODE=>return Err(g.bad("encode")),
         REPR|MAKETRANS=>unreachable!(),
@@ -409,7 +412,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             result.extend((0..before).map(|_|padding));result.push_str(body);result.extend((before..spare).map(|_|padding));
             Value::text(&result)
         }
-        FIND|RFIND|INDEX|RINDEX|COUNT|STARTSWITH|ENDSWITH=>seek(work,source,&g)?,
+        FIND|RFIND|INDEX|RINDEX|COUNT|STARTSWITH|ENDSWITH=>unreachable!(),
         REPLACE=>{
             let quota=g.whole(2,-1)?;
             let maximum=if quota<0 {usize::MAX} else {quota as usize};
@@ -477,33 +480,27 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
 }
 
 fn seek(work: Work, source: &str, g: &Given) -> Result<Value,String> {
-    // An unbounded search borrows the original string instead of
-    // collecting it into letters and then copying the window back.
-    if g.tail.len()==1 && matches!(work,Work::COUNT|Work::FIND|Work::RFIND|Work::INDEX|Work::RINDEX) {
-        let sought=g.word(0)?;
-        if work==Work::COUNT {
-            let occurrences=if sought.is_empty() {source.chars().count()+1} else {source.matches(sought).count()};
-            return Ok(Value::Small(occurrences as i64));
-        }
-        let backwards=matches!(work,Work::RFIND|Work::RINDEX);
-        let place=if backwards {source.rfind(sought)} else {source.find(sought)};
-        return match place {
-            Some(byte)=>{
-                let before=&source[..byte];
-                Ok(Value::Small(if before.is_ascii() {byte as i64} else {before.chars().count() as i64}))
-            }
-            None if matches!(work,Work::INDEX|Work::RINDEX)=>Err(g.bad("missing")),
-            None=>Ok(Value::Small(-1)),
+    // A search borrows its selected bytes instead of building a row
+    // of characters and a second string. Bounds still name characters;
+    // a Unicode boundary is reached from whichever end is nearer.
+    let (begin,end,fitting,piece)=if g.tail.len()==1 {(0,0,true,source)} else {
+        let ascii=source.is_ascii();let size=if ascii {source.len()} else {source.chars().count()};
+        let bound=|place:usize,default:usize|->Result<usize,String>{
+            let number=match g.tail.get(place) {None|Some(Value::Nil)=>return Ok(default),Some(v)=>count(v,g.table)?};
+            Ok(if number>=0 {number as usize} else {(size as i64).saturating_add(number).max(0) as usize})
         };
-    }
-    let letters:Vec<char>=source.chars().collect();let size=letters.len();
-    let bound=|place:usize,default:usize|->Result<usize,String>{
-        let number=match g.tail.get(place) {None|Some(Value::Nil)=>return Ok(default),Some(v)=>count(v,g.table)?};
-        Ok(if number>=0 {number as usize} else {(size as i64).saturating_add(number).max(0) as usize})
+        let begin=bound(1,0)?;let end=bound(2,size)?.min(size);
+        let fitting=begin<=end && begin<=size;
+        let piece=if !fitting {""} else if ascii {&source[begin..end]} else {
+            let cut=|at:usize| {
+                if at==size {source.len()}
+                else if at<=size/2 {source.char_indices().nth(at).map_or(source.len(),|(byte,_)|byte)}
+                else {source.char_indices().rev().nth(size-at-1).map_or(0,|(byte,_)|byte)}
+            };
+            &source[cut(begin)..cut(end)]
+        };
+        (begin,end,fitting,piece)
     };
-    let begin=bound(1,0)?;let end=bound(2,size)?.min(size);
-    let fitting=begin<=end && begin<=size;
-    let piece:String=if fitting {letters[begin..end].iter().collect()} else {String::new()};
     if matches!(work,Work::STARTSWITH|Work::ENDSWITH) {
         let candidates=match &g.tail[0] {
             Value::Tuple(values)=>values.to_vec(),
@@ -520,7 +517,7 @@ fn seek(work: Work, source: &str, g: &Given) -> Result<Value,String> {
     }
     let sought=g.word(0)?;
     if work==Work::COUNT {
-        return Ok(Value::Small(if !fitting {0} else if sought.is_empty() {end as i64-begin as i64+1} else {piece.matches(sought).count() as i64}));
+        return Ok(Value::Small(if !fitting {0} else if sought.is_empty() {if g.tail.len()==1 {source.chars().count() as i64+1} else {end as i64-begin as i64+1}} else {piece.matches(sought).count() as i64}));
     }
     let position=if !fitting {None} else if matches!(work,Work::RFIND|Work::RINDEX) {piece.rfind(sought)} else {piece.find(sought)};
     if let Some(byte)=position {return Ok(Value::Small((begin+piece[..byte].chars().count()) as i64));}

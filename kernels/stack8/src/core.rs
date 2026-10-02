@@ -35,7 +35,14 @@ impl Value {
             // A generator the program wrote is a generator; a walk this
             // kernel made of its own, such as a map walked backwards,
             // carries the word the reference gives that walk instead.
-            Value::Generator(state) => return state.try_borrow().ok().and_then(|g| g.walked.clone()).map_or_else(|| "generator".to_string(), |w| w.to_string()),
+            Value::Generator(state) => return state.try_borrow().ok().map_or_else(|| "generator".to_string(), |g| {
+                if let Some(walked) = &g.walked { return walked.to_string(); }
+                match g.program.as_ref().map(|p| p.code_flags & (128 | 512)) {
+                    Some(512) => "async_generator".to_string(),
+                    Some(128) => "coroutine".to_string(),
+                    _ => "generator".to_string(),
+                }
+            }),
             Value::View(view) => crate::value::view_kind(&view.1),
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",
@@ -73,9 +80,12 @@ impl Value {
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
+            Value::Adapter(w) if w.0 == 14 => "builtin_function_or_method",
+            Value::Adapter(w) if w.0 == 119 => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
             Value::Adapter(w) if w.0 == 31 => "cell",
+            Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => return o.class_now().name.clone(),
@@ -157,6 +167,7 @@ impl Value {
                 let text: String = bytes.borrow().iter().map(|byte| char::from(*byte)).collect();
                 Value::text(&text).core_hash()
             }
+            Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Method(owner, code) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),

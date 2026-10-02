@@ -1,4 +1,4 @@
-# From CPython 3.15, Lib/shlex.py.
+# From CPython 3.14, Lib/shlex.py.
 # Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
 # The PSF license is kept in tests/python/LICENSE.
 """A lexical analyzer class for simple shell-like syntaxes."""

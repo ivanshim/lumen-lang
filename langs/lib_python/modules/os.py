@@ -155,6 +155,11 @@ class _Path:
         # for a file a run has made itself.
         return self.abspath(path)
 
+    def normcase(self, path):
+        # The path rules below are POSIX, where normcase is the identity;
+        # fnmatch measures it against the reference.
+        return path
+
 path = _Path()
 
 class terminal_size(tuple):

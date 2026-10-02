@@ -11,7 +11,12 @@ order the reference suites need it.
 | Directory | Source | Commit | License |
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
-| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, `test_random.py`, and the support data they read (`mathdata/`, `test_import/data/syntax_warnings.py`, `randv2_32.pck`, `randv2_64.pck`, `randv3.pck`) | `3b564385e4c9` (2026-09-07) | [python/LICENSE](python/LICENSE) (PSF License) |
+| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_random.py`, and the support data they read (`mathdata/`, `test_import/data/syntax_warnings.py`, `randv2_32.pck`, `randv2_64.pck`, `randv3.pck`) | `3b564385e4c9` (2026-09-07) | [python/LICENSE](python/LICENSE) (PSF License) |
+| `python/test/` | [python/cpython](https://github.com/python/cpython) `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper}.py` | `3b564385e4c9` (2026-09-07) | [python/LICENSE](python/LICENSE) (PSF License) |
+
+The `python/test/` package and its support, import, threading, OS, and script helpers
+are also preserved byte for byte at that commit. The embedded runtime support
+modules in `langs/lib_python/modules/test/` provide the interpreter adapters.
 
 A PHP test is a `.phpt` file: a `--FILE--` section to run and an `--EXPECT--`
 (or `--EXPECTF--`, `--EXPECTREGEX--`) section to match. A CPython test is a
