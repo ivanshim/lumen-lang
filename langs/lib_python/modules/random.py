@@ -1,6 +1,5 @@
-# From CPython 3.15, Lib/random.py.
-# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
-# The PSF license is kept in tests/python/LICENSE.
+# From CPython v3.14.8 (8e6e75d9102e), Lib/random.py.
+# Used under the PSF license in tests/python/LICENSE.
 """Random variable generators.
 
     bytes
@@ -1023,26 +1022,26 @@ if hasattr(_os, "fork"):
 def _parse_args(arg_list: list[str] | None):
     import argparse
     parser = argparse.ArgumentParser(
-        formatter_class=argparse.RawTextHelpFormatter)
+        formatter_class=argparse.RawTextHelpFormatter, color=True)
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "-c", "--choice", nargs="+",
         help="print a random choice")
     group.add_argument(
         "-i", "--integer", type=int, metavar="N",
-        help="print a random integer between 1 and `N` inclusive")
+        help="print a random integer between 1 and N inclusive")
     group.add_argument(
         "-f", "--float", type=float, metavar="N",
-        help="print a random floating-point number between 0 and `N` inclusive")
+        help="print a random floating-point number between 0 and N inclusive")
     group.add_argument(
         "--test", type=int, const=10_000, nargs="?",
         help=argparse.SUPPRESS)
     parser.add_argument("input", nargs="*",
                         help="""\
 if no options given, output depends on the input
-    string or multiple: same as `--choice`
-    integer: same as `--integer`
-    float: same as `--float`""")
+    string or multiple: same as --choice
+    integer: same as --integer
+    float: same as --float""")
     args = parser.parse_args(arg_list)
     return args, parser.format_help()
 
