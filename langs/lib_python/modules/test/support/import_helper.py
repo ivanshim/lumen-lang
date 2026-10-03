@@ -1,4 +1,5 @@
 # Imports use the same cache as import statements.
+import textwrap
 import unittest
 
 def import_module(name, deprecated=False, required_on=None):
@@ -42,7 +43,6 @@ def import_fresh_module(name, fresh=(), blocked=(), deprecated=False, usefrozen=
 # reference implementation, so it does not run here, but the name the
 # suite imports must exist.
 def ensure_lazy_imports(imported_module, modules_to_block):
-    import textwrap
     modules_to_block = frozenset(modules_to_block)
     script = textwrap.dedent(
         f"""

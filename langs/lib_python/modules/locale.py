@@ -28,11 +28,10 @@ def localeconv():
 # The name-alias engine and its two tables are CPython's Lib/locale.py at
 # v3.14.8 / 8e6e75d9102e; the encoding-name normaliser it calls is
 # CPython's Lib/encodings/__init__.py, carried here because the encodings
-# package is not part of this run's library. The encoding alias table
-# that package also supplies is the one piece left empty.
-# The encoding alias table is CPython's Lib/encodings/aliases.py at
-# v3.14.8 / 8e6e75d9102e, carried under the private name the engine
-# below reads.
+# package is not part of this run's library. Both alias tables the
+# engine reads are carried as well: Lib/encodings/aliases.py, and
+# Lib/locale.py's own locale_encoding_alias and locale_alias, each at
+# v3.14.8 / 8e6e75d9102e.
 _encoding_aliases = {
 
     # Please keep this list sorted alphabetically by value !
