@@ -2012,6 +2012,11 @@ impl<'a> Machine<'a> {
                 let mut passed = false;
                 for base in std::iter::once(&actual).chain(actual.ancestry.iter()) {
                     if passed {
+                        if key == self.detail("allocate") {
+                            if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
+                                return Ok(Self::wrap(14, vec![Value::text(&native)]));
+                            }
+                        }
                         if let Some(entry) = Self::own_entry(base, key) {
                             return self.member_binding(entry, Some(instance.clone()), actual.clone());
                         }

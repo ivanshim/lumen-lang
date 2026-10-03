@@ -955,3 +955,4 @@ def infinite_recursion(max_depth=None):
     depth = max(depth - 1, 1)  # Ignore infinite_recursion() frame.
     limit = depth + max_depth
     return set_recursion_limit(limit)
+SHORT_TIMEOUT = 30.0

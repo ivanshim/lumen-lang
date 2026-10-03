@@ -1328,7 +1328,7 @@ w ext.builtin.member.get
 w ext.builtin.member.set
 w ext.builtin.instance
 w ext.builtin.module.load
-w ext.builtin.copy
+w ext.builtin.copy | w ext.builtin.sre | w ext.builtin.method.take_bytes
 w ext.syntax.map.resized | w ext.syntax.map.unhashable | b ext.syntax.map.value_keys | w ext.builtin.method.popitem | w ext.builtin.method.fromkeys | w ext.builtin.method.error.popitem
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
@@ -2151,6 +2151,7 @@ impl Lang {
             ("ext.builtin.instance", Builtin::InstanceOf),
             ("ext.builtin.module.load", Builtin::ModuleLoad),
             ("ext.builtin.copy", Builtin::CopyValue),
+            ("ext.builtin.sre", Builtin::Sre),
             ("ext.builtin.class.derive", Builtin::DeriveClass),
             ("ext.builtin.call.outcome", Builtin::CallOutcome),
             ("ext.builtin.clock", Builtin::Clock),
@@ -2485,7 +2486,7 @@ impl Lang {
             monadic: unary,
             method_keywords: [("ext.builtin.method.sort.key", "key"), ("ext.builtin.method.sort.reverse", "reverse"), ("ext.builtin.method.split.sep", "sep"), ("ext.builtin.method.split.maxsplit", "maxsplit")].into_iter().map(|(label, purpose)| Ok((purpose, r.strings(label)?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(purpose, words)| words.into_iter().map(move |word| (word, purpose.to_string()))).collect(),
             float_from_number: r.strings("ext.builtin.method.from_number")?,
-            value_methods: ["indices", "slice_hash", "bit_count", "numerator", "denominator", "real", "imag", "__index__", "__truediv__", "fromhex", "conjugate", "upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "swapcase", "rindex", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "get", "keys", "values", "items", "mapping", "setdefault", "update", "popitem", "fromkeys", "bit_length", "is_integer", "hex", "as_integer_ratio", "__floor__", "__ceil__"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
+            value_methods: ["indices", "slice_hash", "bit_count", "numerator", "denominator", "real", "imag", "__index__", "__truediv__", "fromhex", "conjugate", "upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "swapcase", "rindex", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "take_bytes", "copy", "clear", "get", "keys", "values", "items", "mapping", "setdefault", "update", "popitem", "fromkeys", "bit_length", "is_integer", "hex", "as_integer_ratio", "__floor__", "__ceil__"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
             method_errors: ["unready", "bytes", "arguments", "separator", "substring", "pop", "index", "remove", "list_index", "format", "spec", "unicode", "key", "missing", "mixed", "fill", "hex", "hex_overflow", "popitem"].into_iter().map(|n| Ok((n.to_string(), r.head(&format!("ext.builtin.method.error.{n}"))?.unwrap_or_default()))).collect::<Result<_, String>>()?,
             pipe_words: pipes,
             range_marks: ranges,

@@ -482,8 +482,14 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
                 Value::Object(_) => return Err(fault(lang,"protocol")),
                 _=>return Err(fault(lang,"walk")),
             };
-            let mut out=String::new();for (i,v) in items.iter().enumerate() {if i>0 {out.push_str(s);}let Value::Text(t)=v else {return Err(fault(lang,"join"));};out.push_str(t);}
-            Value::text(&out)
+            let separator: Vec<u32> = s.chars().map(u32::from).collect();
+            let mut joined = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                if i != 0 { joined.extend_from_slice(&separator); }
+                let Some(codes) = item.text_codes() else { return Err(fault(lang, "join")); };
+                joined.extend(codes);
+            }
+            Value::from_codes(joined)
         }
         FormatMap => Value::text(&mapping_format(s,&params[0],lang,words,0)?),
         Maketrans | Repr => unreachable!(),

@@ -747,7 +747,11 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
-                9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
+                9 if w.1.is_empty() && args.len() == 2 => {
+                    let parent = args[0].contents();
+                    if !matches!(parent, Value::Class(_)) { return Err(self.class_refusal()); }
+                    Ok(Self::adapter(9, vec![parent, args[1].contents()]))
+                },
                 0 => Ok(w.1[0].clone()),
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
@@ -1520,6 +1524,11 @@ impl<'a> Engine<'a> {
                 let order: Vec<_> = std::iter::once(dynamic.clone()).chain(dynamic.lineage.iter().cloned()).collect();
                 if let Some(start) = order.iter().position(|class| Rc::ptr_eq(class, owner)) {
                     for class in &order[start + 1..] {
+                        if name == self.class_word("allocate") {
+                            if let Some(word) = Self::own_kind(class) {
+                                if word != self.class_word("root") { return Ok(Self::adapter(14, vec![Value::text(&word)])); }
+                            }
+                        }
                         if let Some(value) = Self::own_class_value(class, name) {
                             return self.bind_class_value(value, Some(receiver.clone()), dynamic);
                         }
