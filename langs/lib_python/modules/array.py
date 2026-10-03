@@ -1,12 +1,14 @@
 # Numeric array elements are kept in a list.
-typecodes = 'ibB'
+typecodes = 'bBuhHiIlLqQfdw'
 
 class array:
     def __init__(self, typecode, initializer=None):
-        if typecode not in ('i', 'b', 'B'):
-            raise 'NotImplementedError: array supports only signed four-byte integers and unsigned bytes'
+        if not isinstance(typecode, str) or len(typecode) != 1:
+            raise TypeError('array() argument 1 must be a unicode character')
+        if typecode not in typecodes:
+            raise ValueError('bad typecode')
         self.typecode = typecode
-        self.itemsize = 1 if typecode in ('b', 'B') else 4
+        self.itemsize = {'b': 1, 'B': 1, 'h': 2, 'H': 2, 'i': 4, 'I': 4, 'l': 8, 'L': 8, 'q': 8, 'Q': 8, 'u': 4, 'w': 4, 'f': 4, 'd': 8}[typecode]
         self.data = []
         if isinstance(initializer, (bytes, bytearray)):
             self.frombytes(initializer)
@@ -14,17 +16,21 @@ class array:
             self.extend(initializer)
 
     def append(self, value):
-        if type(value) != type(1) and type(value) != type(True):
-            raise 'TypeError: array item must be an integer'
-        if self.typecode == 'B':
-            if value < 0 or value > 255:
-                raise OverflowError('unsigned byte integer is out of range')
-        elif self.typecode == 'b':
-            if value < -128 or value > 127:
-                raise OverflowError('signed char is out of range')
-        elif value < -2147483648 or value > 2147483647:
-            raise 'OverflowError: signed integer is greater than maximum'
-        self.data = [*self.data, int(value)]
+        if self.typecode in ('u', 'w'):
+            if not isinstance(value, str) or len(value) != 1:
+                raise TypeError('array item must be unicode character')
+        elif self.typecode in ('f', 'd'):
+            raise NotImplementedError('floating-point array payload conversion is unavailable')
+        else:
+            import operator
+            value = operator.index(value)
+            bits = self.itemsize * 8
+            signed = self.typecode.islower()
+            low = -(2 ** (bits - 1)) if signed else 0
+            high = 2 ** (bits - (1 if signed else 0)) - 1
+            if value < low or value > high:
+                raise OverflowError('array item is out of range')
+        self.data = [*self.data, value]
 
     def extend(self, values):
         for value in values:
@@ -45,14 +51,16 @@ class array:
             raise ValueError('bytes length not a multiple of item size')
         import sys
         for at in range(0, len(raw), self.itemsize):
-            self.append(int.from_bytes(raw[at:at + self.itemsize], sys.byteorder, signed=self.typecode != 'B'))
+            value = int.from_bytes(raw[at:at + self.itemsize], sys.byteorder, signed=self.typecode.islower() and self.typecode not in ('u', 'w'))
+            self.append(chr(value) if self.typecode in ('u', 'w') else value)
 
     def tobytes(self):
         if self.typecode in ('B', 'b'):
             return bytes([n & 255 for n in self.data])
         result = b''
         for value in self.data:
-            result += value.to_bytes(4, __import__('sys').byteorder, signed=True)
+            number = ord(value) if self.typecode in ('u', 'w') else value
+            result += number.to_bytes(self.itemsize, __import__('sys').byteorder, signed=self.typecode.islower() and self.typecode not in ('u', 'w'))
         return result
 
     def __int__(self):

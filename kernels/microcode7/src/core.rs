@@ -74,6 +74,9 @@ impl Value {
             Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
             Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
+            Self::Wrapped(133, _) => "method_descriptor",
+            Self::Wrapped(134, _) => "builtin_function_or_method",
+            Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(133, _))) => "builtin_function_or_method",
             Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
@@ -192,6 +195,7 @@ impl Value {
                 return Self::text(&letters).hash_number();
             }
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
+            Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,

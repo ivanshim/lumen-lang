@@ -22,6 +22,7 @@ pub mod value;
 pub mod code;
 pub mod faint;
 mod core;
+mod posix;
 mod complex;
 pub mod tuples;
 

@@ -637,6 +637,7 @@ pub enum Builtin {
     /// this may run a second interpreter beside itself and read its
     /// writing back.
     Subprocess,
+    Posix,
     /// The host's own signals, one word told which step it is on
     /// (ext.builtin.signal): give a number the handler it answers with,
     /// ask which handler a number was given, or leave a number pending
@@ -707,6 +708,13 @@ pub enum Builtin {
     /// definition has no words of its own for. One label for all of
     /// them, since it is the one power the kernel is lending.
     Math,
+    /// The Mersenne Twister a library module lends its stream from,
+    /// named by the first thing it is given and worked on the rest
+    /// (ext.builtin._random): seeding a held stream, drawing a real
+    /// of the width's 53 bits or a run of whole bits from it, and
+    /// telling or restoring where it stands. One label for all of
+    /// the workings, since it is the one stream the kernel keeps.
+    Twister,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,

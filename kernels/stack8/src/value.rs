@@ -1058,6 +1058,7 @@ impl Value {
             Value::Bytes(bytes, false, _) => Ok(format!("bytes:{:?}", bytes.borrow())),
             Value::Bytes(_, true, _) => Err("bytearray"),
             Value::Native(_, word) => Ok(format!("builtin:{word}")),
+            Value::ByteKind(mutable, _) => Ok(format!("bytekind:{mutable}")),
             Value::Class(kind) => Ok(format!("class:{:p}", Rc::as_ptr(kind))),
             Value::Routine(code) => Ok(format!("function:{:p}", Rc::as_ptr(code))),
             Value::Method(owner, code, _) => Ok(format!("method:{:p}:{:p}", Rc::as_ptr(owner), Rc::as_ptr(code))),
@@ -2018,7 +2019,10 @@ pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
 pub fn real_of(x: f64, places: usize) -> Value {
     match from_binary(x) {
         // A nought that came out below nought keeps its minus.
-        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), x.is_sign_negative()),
+        Some((p, q)) => Value::Real(Rc::new(Real {
+            floating: false, p, q, places,
+            below: x == 0.0 && x.is_sign_negative(), point: false,
+        })),
         None => outside_number(x, places),
     }
 }

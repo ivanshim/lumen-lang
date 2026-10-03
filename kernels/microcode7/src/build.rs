@@ -4529,7 +4529,7 @@ impl<'a> Builder<'a> {
                 let gathered = table.has_any("ext.op.tuple");
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
-            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+            } else if self.look().shape == Shape::Bare && !(table.keywords.contains(&self.look().lexeme) && !table.spells("ext.stmt.type_alias", &self.look().lexeme))
                 && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
@@ -7039,7 +7039,25 @@ impl<'a> Builder<'a> {
         let mut first = Vec::new();
         for (at, from) in spares {
             self.pos = from;
-            let value = self.expr(0)?;
+            // Where the table requests enclosing defaults, hide the routine's own
+            // names: a default naming what a parameter also names finds
+            // the one outside, the reference reading every default
+            // before the routine it belongs to exists. The parameters
+            // stand aside under names nothing can spell, so every place
+            // and mark the routine keeps stays where it was.
+            let mut kept = Vec::new();
+            if self.table.flag("ext.stmt.fn.defaults.enclosing") {
+                for (at, name) in formals.iter().enumerate() {
+                    let away = format!("\0default aside {}", name);
+                    let ids = &mut self.layers.last_mut().expect("a layer").idents;
+                    kept.push(std::mem::replace(&mut ids[at], away));
+                }
+            }
+            let built = self.expr(0);
+            for (at, back) in kept.into_iter().enumerate() {
+                self.layers.last_mut().expect("a layer").idents[at] = back;
+            }
+            let value = built?;
             let slot = self.address_to_write(&formals[at]);
             let written = Form::Write(slot.clone(), Box::new(value));
             let test = Form::Missing(slot);
@@ -9338,6 +9356,14 @@ impl<'a> Builder<'a> {
                 }
                 self.need_sign(open, "after the parent word")?;
                 let extra = self.args("syntax.call.close", "syntax.call.separator")?;
+                // Spelled with a class and the thing it is for, where
+                // the definition asks for that form, the parent word
+                // answers with the stand-in that reads that class's
+                // forebears on that thing, their members bound to it.
+                if extra.len() == 2 && table.flag("ext.stmt.class.parent.bind") {
+                    let parent_word = constant(Value::Wrapped(9, PARENT_PAYLOAD.with(Rc::clone).into()));
+                    return self.subscript(invoke(parent_word, extra));
+                }
                 let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
@@ -10473,8 +10499,13 @@ impl<'a> Builder<'a> {
                         _ => (),
                     }
                     if parameter_lists == 0 && part.shape == Shape::Sign && part.lexeme == separator { comma_before_for = true; }
-                    if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
-                        return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                    if part.shape == Shape::Bare && part.lexeme == "for" {
+                        // The comma check belongs to the expression being
+                        // collected, ending at the first comprehension loop.
+                        if comma_before_for {
+                            return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
+                        }
+                        break;
                     }
                 }
                 if part.shape == Shape::Sign {

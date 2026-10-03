@@ -77,6 +77,9 @@ impl Value {
                 _ => "object".to_string(),
             },
             Value::Adapter(w) if w.0 == 129 => "function",
+            Value::Adapter(w) if w.0 == 63 => "method_descriptor",
+            Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
             Value::Adapter(w) if w.0 == 131 => "method",
@@ -174,6 +177,7 @@ impl Value {
                 Value::text(&text).core_hash()
             }
             Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
+            Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Method(owner, code, _) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),

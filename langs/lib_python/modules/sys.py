@@ -251,6 +251,11 @@ def exc_info():
 # Where nothing was named -- a reference kernel reads no such label --
 # the empty string stands, and a test that needs its own program skips.
 executable = __program_namespace().get('__runner__', '')
+# The embedded library is installed with the interpreter.
+base_prefix = executable.rsplit('/', 1)[0] if '/' in executable else ''
+prefix = base_prefix
+base_exec_prefix = base_prefix
+exec_prefix = base_prefix
 
 float_repr_style = 'short'
 byteorder = 'little'
@@ -367,3 +372,19 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+# Python audit hooks receive explicit runtime audit events in registration order.
+_audit_hooks = []
+
+def audit(event, *args):
+    if not isinstance(event, str):
+        raise TypeError('audit() argument 1 must be str')
+    for hook in tuple(_audit_hooks):
+        hook(event, args)
+
+def addaudithook(hook):
+    try:
+        audit('sys.addaudithook')
+    except RuntimeError:
+        return
+    _audit_hooks.append(hook)
