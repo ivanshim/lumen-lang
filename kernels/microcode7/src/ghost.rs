@@ -25,6 +25,7 @@ use crate::form::{Callee, CaseTest, Form, Input, Routine};
 pub enum Ghost {
     StaticKind(Value),
     Thing(Weak<Thing>),
+    Cell(Weak<RefCell<Value>>),
     Blueprint(Weak<Blueprint>),
     Walk(Weak<RefCell<Suspension>>),
     Set(Weak<RefCell<SetStore>>),
@@ -39,6 +40,7 @@ impl Ghost {
         match self {
             Ghost::StaticKind(kind) => Some(kind.clone()),
             Ghost::Thing(w) => w.upgrade().map(Value::Thing),
+            Ghost::Cell(w) => w.upgrade().map(Value::Shared),
             Ghost::Blueprint(w) => w.upgrade().map(Value::Blueprint),
             Ghost::Walk(w) => w.upgrade().map(Value::Generator),
             Ghost::Set(w) => w.upgrade().map(Value::Set),
@@ -95,6 +97,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
     let in_group = |ghost: &Ghost| -> bool {
         match ghost {
             Ghost::StaticKind(_) => false,
+            Ghost::Cell(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Thing(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Blueprint(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Walk(target) => lost.contains(&(target.as_ptr() as usize)),
@@ -393,6 +396,12 @@ fn case_holds(test: &CaseTest, out: &mut Vec<Knot>) {
         }
         CaseTest::Ignore | CaseTest::Keep(_) | CaseTest::Worth(_) => {}
     }
+}
+
+/// Lists and dictionaries may hold the only path into a finalizer cycle.
+pub fn note_container(storage: &Rc<RefCell<Value>>) {
+    let enabled = FAREWELL_NAME.try_with(|name| name.borrow().is_some()).unwrap_or(false);
+    if enabled { note(Ghost::Cell(Rc::downgrade(storage))); }
 }
 
 /// One place in the web: a value, or a frame, which is no value but

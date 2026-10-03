@@ -34,5 +34,15 @@ class SelfInterruptingContextManager:
         return self._within
 
 
+def get_recursion_depth():
+    import sys
+    frame = sys._getframe(1)
+    depth = 0
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    return depth
+
+
 def __getattr__(name):
     raise 'NotImplementedError: _testinternalcapi.' + name + ' is not supported'

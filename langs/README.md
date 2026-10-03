@@ -4455,6 +4455,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.maketrans` | - | - | `bytes.maketrans` `bytearray.maketrans` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.replace` | - | - | `replace` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.resize` | - | - | `resize` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.signed` | - | - | `signed` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.split` | - | - | `split` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
@@ -4551,7 +4552,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate.too_many` | - | - | `TypeError: enumerate() takes at most 2 arguments (` ` given)` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` `FileNotFoundError` `IsADirectoryError` `ModuleNotFoundError` `UnicodeEncodeError` `UnicodeDecodeError` `UnicodeTranslateError` `IndentationError` `TabError` `ReferenceError` `MemoryError` `BufferError` `StopAsyncIteration` `SystemError` `BlockingIOError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -5831,3 +5832,19 @@ files, a provenance table in tests/README.md and one table entry; no Rust or
 suite-tool change. A third series replaces the oldest entry. Refresh a micro
 pin using `git mv` for the suite and update the single table entry. Rebuild
 after either kind of registration; Cargo tracks the table and overlay files.
+
+`ext.builtin.bytes.resize` names the Python bytearray resizing method: shrink or zero-fill storage, refusing size changes while a buffer is exported. The existing `ext.builtin.bytes._export` primitive accepts an optional second argument to query outstanding exports without acquiring one.
+
+The in-memory `io` port keeps `io.py`, `_pyio.py`, `_collections_abc.py`, and
+`stat.py` from CPython v3.14.8 (8e6e75d9102e), unchanged below their PSF
+provenance headers. `_io.py` supplies the runtime counterpart: memory storage
+follows `Modules/_io/bytesio.c` and `stringio.c`, while buffered streams and
+text decoding dispatch to the original `_pyio` algorithms. The embedded
+`codecs` adapter provides incremental UTF and single-byte codecs, and the two
+Python kernels provide bytearray resizing, export leases, and buffer writes.
+Real file descriptors remain outside this port; `FileIO` refuses them, and
+`io.open` retains the existing host file adapter. Unsupported codecs still
+raise `LookupError`. The upstream memory tests retain their failures for
+collector behavior that cannot yet reclaim a cycle containing a memoryview.
+The review regressions and buffer-protocol comparisons live in
+`scratch/io-memory/`, with expected output produced by Python 3.14.
