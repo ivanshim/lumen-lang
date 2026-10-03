@@ -11,6 +11,9 @@
     "copyreg": "runtime_adapters/copyreg.py",
     "functools": "runtime_adapters/functools.py",
     "heapq": "runtime_adapters/heapq.py",
-    "operator": "runtime_adapters/operator.py"
+    "operator": "runtime_adapters/operator.py",
+    "abc": "runtime_adapters/abc.py",
+    "annotationlib": "runtime_adapters/annotationlib.py",
+    "inspect": "runtime_adapters/inspect.py"
   }
 }

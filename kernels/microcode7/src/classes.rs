@@ -809,6 +809,9 @@ impl<'a> Machine<'a> {
             Self::own_entry(parent, key).or_else(|| {
                 if !self.table.has_class_order { return None; }
                 let spelling = Self::native_word(parent)?;
+                if self.table.strings("ext.stmt.class.special").get(8).is_some_and(|hash| hash == key) {
+                    match spelling.as_str() { "dict" | "set" | "bytearray" | "list" => return Some(Value::Nil), _ => {} }
+                }
                 if !self.native_declares_protocol(&spelling, key) { return None; }
                 let sample = self.kind_stand_in(&spelling)?;
                 let protocols = self.table.strings("ext.stmt.class.special");
@@ -819,6 +822,9 @@ impl<'a> Machine<'a> {
                 Some(Self::wrap(60, vec![Value::text(&spelling), Value::text(key)]))
             })
         })
+    }
+    fn capture_title(word: &str) -> &str {
+        match word.strip_prefix("#completed_class") { Some(_) => "__class__", None => word }
     }
     fn wrap(tag:u8,items:Vec<Value>)->Value {Value::Wrapped(tag,Rc::new(items).into())}
     pub(super) fn apply_class_member(&mut self,f:Value,mut values:Vec<Value>)->Res {
@@ -2529,7 +2535,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("closure"){
                 if code.reaching.is_empty(){return Ok(Value::Nil);}
                 let mut order:Vec<usize>=(0..code.reaching.len()).collect();
-                order.sort_by(|a,b|code.reaching[*a].ident.cmp(&code.reaching[*b].ident));
+                order.sort_by(|a,b|Self::capture_title(&code.reaching[*a].ident).cmp(Self::capture_title(&code.reaching[*b].ident)));
                 let reacher=Value::Bound(code.clone(),room.clone());
                 return Ok(Value::tuple(order.into_iter().map(|at|Self::wrap(35,vec![reacher.clone(),Value::Small(at as i64)])).collect()));
             }
@@ -2613,6 +2619,12 @@ impl<'a> Machine<'a> {
                             7 => Value::Small(p.flags),
                             8 => Value::Text(p.written_in.clone().unwrap_or_else(|| self.entry_file.clone())),
                             9 => Value::Small(i64::from(p.declared_on.max(1))),
+                            11 => {
+                                let mut captured: Vec<&str> = p.reaching.iter().map(|address| Self::capture_title(&address.ident)).collect();
+                                captured.sort_unstable();
+                                captured.dedup();
+                                Value::tuple(captured.into_iter().map(Value::text).collect())
+                            }
                             _ => return Err(self.absent_attribute(&value, key)),
                         };
                         return Ok(result);
@@ -3359,6 +3371,20 @@ impl<'a> Machine<'a> {
         if op == 15 { return self.prepared_class_book(values.remove(0)); }
         if op == 16 { return self.dispatch_class_builder(values); }
         if op == 18 { return self.class_namespace_read(values); }
+        if op == 21 {
+            let (values, named) = self.open_arguments(values)?;
+            if !named.is_empty() { return Err(String::from("TypeError: sys._clear_type_descriptors() takes no keyword arguments").into()); }
+            if values.len() != 1 { return Err(format!("TypeError: sys._clear_type_descriptors() takes exactly one argument ({} given)", values.len()).into()); }
+            let target = values[0].settled();
+            let class = if let Value::Blueprint(class) = target { class } else {
+                if self.stands_for_a_kind(&target) { return Err(String::from("TypeError: argument is immutable").into()); }
+                return Err(format!("TypeError: _clear_type_descriptors() argument must be type, not {}", target.kind_word()).into());
+            };
+            if class.type_names.borrow().is_none() || Self::sealed(&class) { return Err(String::from("TypeError: argument is immutable").into()); }
+            let mut namespace = class.shared.borrow_mut();
+            namespace.retain(|entry| !matches!(entry.0.as_str(), "__dict__" | "__weakref__"));
+            return Ok(Value::Nil);
+        }
         if op == 19 || op == 20 { return self.class_namespace_write(values, op == 20); }
         if matches!(op, 3|4|5|6) {
             if let Some(name) = values.get_mut(1) {

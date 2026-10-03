@@ -700,6 +700,8 @@ impl<'a> Engine<'a> {
             Self::own_class_value(base, name).or_else(|| {
                 if !self.lang.fuller_classes { return None; }
                 let word = Self::own_kind(base)?;
+                if self.lang.class_special.get(8).is_some_and(|hash| hash == name)
+                    && matches!(word.as_str(), "list" | "dict" | "set" | "bytearray") { return Some(Value::Null); }
                 if !self.kind_owns_protocol(&word, name) { return None; }
                 let sample = self.kind_sample(&word)?;
                 if self.lang.class_special.get(8).is_some_and(|hash| hash == name)
@@ -709,6 +711,9 @@ impl<'a> Engine<'a> {
                 Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
             })
         })
+    }
+    fn closure_title(name: &str) -> &str {
+        if name.starts_with("#class_cell") { "__class__" } else { name }
     }
     pub(super) fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
     fn descriptor_apply(&mut self, callable: Value, args: Vec<Value>) -> Flow<Value> {
@@ -2056,7 +2061,7 @@ impl<'a> Engine<'a> {
                 // none.
                 if name==self.class_word("closure") {
                     if f.enclosed.is_empty() {return Ok(Value::Null);}
-                    let mut named:Vec<(&str,&Value)>=f.enclosed.iter().map(|(at,cell)|(f.idents.get(*at).map_or("",String::as_str),cell)).collect();
+                    let mut named:Vec<(&str,&Value)>=f.enclosed.iter().map(|(at,cell)|(f.idents.get(*at).map_or("", |name| Self::closure_title(name)),cell)).collect();
                     named.sort_by(|x,y|x.0.cmp(y.0));
                     return Ok(Value::tuple(named.into_iter().map(|(_,cell)|Self::adapter(31,vec![cell.clone()])).collect()));
                 }
@@ -2093,6 +2098,13 @@ impl<'a> Engine<'a> {
                             7 => Value::Small(f.code_flags),
                             8 => Value::Text(f.written_in.clone().unwrap_or_else(|| self.root_source.clone())),
                             9 => number(f.declared_on.max(1) as usize),
+                            11 => {
+                                let mut names: Vec<String> = f.enclosing.iter().map(|(slot, _)| Self::closure_title(&f.idents[*slot]).to_owned()).collect();
+                                names.extend(f.enclosed.iter().map(|(slot, _)| Self::closure_title(&f.idents[*slot]).to_owned()));
+                                names.sort();
+                                names.dedup();
+                                words(&names)
+                            }
                             _ => return Err(self.missing_member(&subject, name)),
                         };
                         return Ok(value);
@@ -3162,6 +3174,20 @@ impl<'a> Engine<'a> {
             16 => self.dispatch_class_builder(args),
             18 => self.class_namespace_read(args),
             20 => self.class_namespace_remove(args),
+            21 => {
+                let entries = self.call_items(args)?;
+                if entries.iter().any(|(name, _)| name.is_some()) { return Err("TypeError: sys._clear_type_descriptors() takes no keyword arguments".into()); }
+                let args: Vec<Value> = entries.into_iter().map(|(_, value)| value).collect();
+                if args.len() != 1 { return Err(format!("TypeError: sys._clear_type_descriptors() takes exactly one argument ({} given)", args.len()).into()); }
+                let class = match args[0].contents() {
+                    Value::Class(class) => class,
+                    value if self.stands_for_kind(&value) => return Err("TypeError: argument is immutable".into()),
+                    value => return Err(format!("TypeError: _clear_type_descriptors() argument must be type, not {}", value.core_kind()).into()),
+                };
+                if class.python_names.borrow().is_none() || class.sealed.get() { return Err("TypeError: argument is immutable".into()); }
+                class.shared.borrow_mut().retain(|(key, _)| key != "__dict__" && key != "__weakref__");
+                Ok(Value::Null)
+            }
             12 if args.len() == 1 => Ok(Value::Flag(match &one {
                 Value::Object(object) => self.slots_allow(&object.class_now(), self.class_word("namespace"))
                     && Self::kind_beneath(&object.class_now()).is_none()

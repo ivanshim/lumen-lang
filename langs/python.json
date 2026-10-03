@@ -2653,7 +2653,7 @@
   "ext.stmt.class.detail.allocate": [
     "__new__"
   ],
-  "ext.stmt.class.detail.code.fields": ["co_name", "co_qualname", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_names", "co_consts", "co_flags", "co_filename", "co_firstlineno", "__annotate__"],
+  "ext.stmt.class.detail.code.fields": ["co_name", "co_qualname", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_names", "co_consts", "co_flags", "co_filename", "co_firstlineno", "__annotate__", "co_freevars"],
   "ext.stmt.class.detail.code.replace": ["replace", "co_linetable"],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"
@@ -2833,6 +2833,7 @@
     "__init_subclass__"
   ],
   "ext.builtin.inline_values": ["_has_inline_values"],
+  "ext.builtin.type_descriptors.clear": ["__clear_type_descriptors"],
   "ext.stmt.class.detail.flags": ["__flags__"],
   "ext.stmt.class.detail.prepare": ["__prepare__"],
   "ext.stmt.class.detail.unready": [

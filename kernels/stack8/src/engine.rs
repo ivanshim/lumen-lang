@@ -3052,9 +3052,10 @@ impl<'a> Engine<'a> {
     fn keyword_twice(&self, program: &Routine, name: &str) -> String {
         let words = &self.lang.call_keyword_twice;
         if words.len() < 3 { return Self::named_fault(&self.lang.call_duplicate, name); }
+        let qualified = self.called_as(program);
         let called = match self.module_named() {
-            Some(module) if !program.qualified.is_empty() => format!("{}.{}", module, program.qualified),
-            _ => program.qualified.clone(),
+            Some(module) if !qualified.is_empty() => format!("{module}.{qualified}"),
+            _ => qualified,
         };
         self.said_whole(format!("{}{}{}{}{}", words[0], called, words[1], name, words[2]))
     }
@@ -3065,7 +3066,7 @@ impl<'a> Engine<'a> {
     /// it was written, and the words carry that name before the place.
     fn place_twice(&self, program: &Routine, name: &str) -> String {
         match self.lang.call_place_twice.as_slice() {
-            [opening, between, closing] => self.said_whole(format!("{}{}{}{}{}", opening, Self::called_as(program), between, name, closing)),
+            [opening, between, closing] => self.said_whole(format!("{}{}{}{}{}", opening, self.called_as(program), between, name, closing)),
             _ => Self::named_fault(&self.lang.call_duplicate, name),
         }
     }
@@ -3078,8 +3079,19 @@ impl<'a> Engine<'a> {
     }
 
     /// The name a routine goes by in the words about a call to it.
-    fn called_as(program: &Routine) -> &str {
-        if program.qualified.is_empty() { &program.ident } else { &program.qualified }
+    fn called_as(&self, program: &Routine) -> String {
+        if !self.lang.class_special.is_empty() {
+            if let Some((_, attributes)) = self.function_members.iter().find(|(value, _)| match value {
+                Value::Routine(code) | Value::Method(_, code) => std::ptr::eq(code.as_ref(), program),
+                _ => false,
+            }) {
+                let key = format!("\0{}", self.class_word("qualified"));
+                if let Some((_, name)) = attributes.fields.borrow().iter().find(|(word, _)| word == &key) {
+                    return name.plain();
+                }
+            }
+        }
+        if program.qualified.is_empty() { program.ident.clone() } else { program.qualified.clone() }
     }
 
     /// Names of places, each set between its marks, then joined: a pair
@@ -3105,7 +3117,7 @@ impl<'a> Engine<'a> {
         };
         let kind = if by_name { named } else { ordered };
         let ending = if names.len() == 1 { one } else { more };
-        self.said_whole(format!("{before}{}{missing}{}{required}{kind}{ending}{}", Self::called_as(program), names.len(), self.names_listed(names)))
+        self.said_whole(format!("{before}{}{missing}{}{required}{kind}{ending}{}", self.called_as(program), names.len(), self.names_listed(names)))
     }
 
     /// The words for more arguments in order than a routine has places
@@ -3117,7 +3129,7 @@ impl<'a> Engine<'a> {
         let places = rules.iter().filter(|rule| **rule < 2).count();
         let defaulted = program.carried.iter().filter(|at| rules.get(**at).map_or(false, |rule| *rule < 2)).count();
         let by_name = rules.iter().zip(frame).filter(|(rule, held)| **rule == 2 && !matches!(held, Value::Blank)).count();
-        let mut said = format!("{}{}{}", words[0], Self::called_as(program), words[1]);
+        let mut said = format!("{}{}{}", words[0], self.called_as(program), words[1]);
         if defaulted > 0 { said.push_str(&format!("{}{}{}", words[2], places - defaulted, words[3])); }
         said.push_str(&places.to_string());
         said.push_str(if places == 1 && defaulted == 0 { &words[4] } else { &words[5] });
@@ -3138,10 +3150,10 @@ impl<'a> Engine<'a> {
             .filter(|(formal, rule)| **rule == 1 && spoken.contains(formal))
             .map(|(formal, _)| formal.as_str()).collect();
         if let ([before, after, between, closing], false) = (self.lang.call_ordered.as_slice(), only_ordered.is_empty()) {
-            return self.said_whole(format!("{before}{}{after}{}{closing}", Self::called_as(program), only_ordered.join(between.as_str())));
+            return self.said_whole(format!("{before}{}{after}{}{closing}", self.called_as(program), only_ordered.join(between.as_str())));
         }
         match self.lang.call_unexpected.as_slice() {
-            [before, after, closing] => self.said_whole(format!("{before}{}{after}{name}{closing}", Self::called_as(program))),
+            [before, after, closing] => self.said_whole(format!("{before}{}{after}{name}{closing}", self.called_as(program))),
             _ => Self::named_fault(&self.lang.call_unknown, name),
         }
     }
@@ -5443,6 +5455,12 @@ impl<'a> Engine<'a> {
     }
 
     fn python_constructor_hash(value: &Value) -> Option<Value> {
+        match value {
+            Value::Bond(slot) | Value::Binding(slot) | Value::Collection(slot, _) => {
+                return Self::python_constructor_hash(&slot.borrow());
+            }
+            _ => {}
+        }
         let spelling = match value {
             Value::ByteKind(mutable, _) => if *mutable { "bytearray" } else { "bytes" },
             Value::Adapter(wrapper) if wrapper.0 == 9 && wrapper.1.is_empty() => "super",
@@ -6054,6 +6072,8 @@ impl<'a> Engine<'a> {
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
         };
+        if self.lang.class_special.get(8).is_some_and(|hash| hash == name)
+            && matches!(word.as_ref(), "list" | "dict" | "set" | "bytearray") { return Some(Value::Null); }
         let sample = self.kind_sample(&word)?;
         if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
             return Some(Value::Native(Builtin::Text(crate::strings::TextOp::Maketrans), Rc::from(name)));
@@ -19809,6 +19829,7 @@ impl Engine<'_> {
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Generator(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Adapter(callable) => Rc::as_ptr(callable) as usize as u64,
                     Value::Native(b, _) => {
                         let mut state = std::collections::hash_map::DefaultHasher::new();
                         std::hash::Hash::hash(&format!("{:?}", b), &mut state);
@@ -19854,7 +19875,8 @@ impl Engine<'_> {
                     for v in items {
                         // A member of a builtin kind with no hash of its
                         // own is refused by its kind, as the language has it.
-                        if !matches!(v, Value::Object(_) | Value::Hashed(_)) && v.core_hash().is_none() {
+                        if !matches!(v, Value::Object(_) | Value::Hashed(_)) && v.core_hash().is_none()
+                            && (self.lang.class_special.is_empty() || Self::python_constructor_hash(&v).is_none()) {
                             return Err(self.core_fault("core.unhashable", &v.core_kind()));
                         }
                         self.set_put(&gathered, v)?;
