@@ -19079,7 +19079,7 @@ impl<'a> Machine<'a> {
 
     /// Count the places first, then gather them. The step need never
     /// reach farther than the row's whole length and one place beyond.
-    fn span_selection(&self, bounds: &[Value], length: usize) -> Result<(std::ops::Range<usize>, Vec<usize>, bool), String> {
+    fn span_edges(&self, bounds: &[Value], length: usize) -> Result<([i128; 2], i128, bool), String> {
         let step = self.span_number(&bounds[2])?.unwrap_or_else(|| BigInt::from(1));
         if step == BigInt::from(0) {
             return Err(self.span_complaint("zero"));
@@ -19109,6 +19109,12 @@ impl<'a> Machine<'a> {
                 }
             };
         }
+        Ok((ends, stride, unit))
+    }
+
+    fn span_selection(&self, bounds: &[Value], length: usize) -> Result<(std::ops::Range<usize>, Vec<usize>, bool), String> {
+        let (ends, stride, unit) = self.span_edges(bounds, length)?;
+        let reverse = stride < 0;
         let distance = if reverse { ends[0] - ends[1] } else { ends[1] - ends[0] };
         let many = if distance <= 0 { 0 } else { (distance - 1) / stride.abs() + 1 };
         let picked = (0..many).map(|turn| (ends[0] + turn * stride) as usize).collect();
@@ -19236,11 +19242,26 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Span(bounds) = at {
+            if let Value::Text(text) = target {
+                if self.rules.indexed_text {
+                    let size = text.chars().count();
+                    let (limits, _, contiguous) = self.span_edges(bounds, size)?;
+                    if contiguous {
+                        if limits[1] <= limits[0] { return Ok(Value::text("")); }
+                        if limits == [0, size as i128] { return Ok(target.clone()); }
+                        let selected: String = text.chars().skip(limits[0] as usize)
+                            .take((limits[1] - limits[0]) as usize).collect();
+                        return Ok(Value::text(&selected));
+                    }
+                    let characters: Vec<char> = text.chars().collect();
+                    let (_, offsets, _) = self.span_selection(bounds, size)?;
+                    let mut sliced = String::new();
+                    for offset in offsets { sliced.push(characters[offset]); }
+                    return Ok(Value::text(&sliced));
+                }
+            }
             let row = match target {
                 Value::Vector(values) | Value::Tuple(values) => values.as_ref().clone(),
-                Value::Text(text) if self.rules.indexed_text => {
-                    text.chars().map(|letter| Value::text(&letter.to_string())).collect()
-                }
                 _ => return Err(self.span_complaint("unsupported")),
             };
             let (_, picked, _) = self.span_selection(bounds, row.len())?;

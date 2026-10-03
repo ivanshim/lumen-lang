@@ -13202,7 +13202,7 @@ impl<'a> Engine<'a> {
     /// Bring the bounds within the row before walking it. A missing
     /// last bound on a backward walk lies before the first place;
     /// an expressly written minus one lies at the last place instead.
-    fn slice_places(&self, parts: &[Value; 3], size: usize) -> Res<(usize, usize, i128, Vec<usize>)> {
+    fn slice_edges(&self, parts: &[Value; 3], size: usize) -> Res<(i128, i128, i128)> {
         let count = |v: &Value| -> Res<Option<i128>> {
             Ok(match v {
                 Value::Null => None,
@@ -13233,6 +13233,12 @@ impl<'a> Engine<'a> {
         };
         let start = bound(&parts[0], if backwards { length - 1 } else { 0 })?;
         let stop = bound(&parts[1], if backwards { -1 } else { length })?;
+        Ok((start, stop, stride))
+    }
+
+    fn slice_places(&self, parts: &[Value; 3], size: usize) -> Res<(usize, usize, i128, Vec<usize>)> {
+        let (start, stop, stride) = self.slice_edges(parts, size)?;
+        let backwards = stride < 0;
         let mut places = Vec::new();
         let mut at = start;
         while if backwards { at > stop } else { at < stop } {
@@ -13255,8 +13261,17 @@ impl<'a> Engine<'a> {
                 Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
+                let length = text.chars().count();
+                let (first, last, step) = self.slice_edges(parts, length)?;
+                if step == 1 {
+                    if first >= last { return Ok(Value::text("")); }
+                    if first == 0 && last == length as i128 { return Ok(target.clone()); }
+                    let from = text.char_indices().nth(first as usize).map_or(text.len(), |(byte, _)| byte);
+                    let until = text.char_indices().nth(last as usize).map_or(text.len(), |(byte, _)| byte);
+                    return Ok(Value::text(&text[from..until]));
+                }
                 let letters: Vec<char> = text.chars().collect();
-                let (_, _, _, places) = self.slice_places(parts, letters.len())?;
+                let (_, _, _, places) = self.slice_places(parts, length)?;
                 Ok(Value::text(&places.into_iter().map(|i| letters[i]).collect::<String>()))
             }
             _ => Err(self.lang.slice_unsupported.clone().unwrap_or_default()),
