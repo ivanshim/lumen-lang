@@ -11,8 +11,9 @@ order the reference suites need it.
 | Directory | Source | Commit | License |
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
-| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_zlib.py`, `test_gzip.py`, `test_itertools.py`, and the support data they read (`mathdata/`) | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
-| `python/test/` | [python/cpython](https://github.com/python/cpython) `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper}.py` | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
+| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_binascii.py`, `test_zlib.py`, `test_gzip.py`, `test_base64.py`, and the support data they read (`mathdata/`) | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
+| `python/test/` | [python/cpython](https://github.com/python/cpython) `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,threading_helper,os_helper,script_helper,hypothesis_helper}.py` and `Lib/test/support/_hypothesis_stubs/{__init__,strategies,_helpers}.py` | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
+| `../langs/lib_python/modules/{getopt,gettext,_encoding_aliases}.py` | [python/cpython](https://github.com/python/cpython) `Lib/{getopt,gettext,encodings/aliases}.py`, complete bodies beneath provenance headers | `8e6e75d9102e`, tag `v3.14.8` | PSF License |
 
 The `python/test/` package and its support, import, threading, OS, and script helpers
 are also preserved byte for byte at that commit. The embedded runtime support

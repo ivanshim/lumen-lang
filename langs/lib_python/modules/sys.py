@@ -168,6 +168,37 @@ class _Input:
     def isatty(self):
         return False
 
+class _BinaryOutput:
+    def __init__(self, error=False):
+        self._error = error
+
+    def write(self, data, /):
+        return _host_stream_write(data, self._error, True)
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+class _BinaryInput:
+    def read(self, size=-1, /):
+        import operator
+        size = -1 if size is None else operator.index(size)
+        return _host_stream_read(size, False, True)
+
+    def readline(self, size=-1, /):
+        import operator
+        size = -1 if size is None else operator.index(size)
+        return _host_stream_read(size, True, True)
+
+    def isatty(self):
+        return False
+
+_Output.buffer = _BinaryOutput()
+_Error.buffer = _BinaryOutput(True)
+_Input.buffer = _BinaryInput()
+
 stdout = _Output()
 stderr = _Error()
 stdin = _Input()
@@ -257,6 +288,11 @@ def exc_info():
 # Where nothing was named -- a reference kernel reads no such label --
 # the empty string stands, and a test that needs its own program skips.
 executable = globals().get('__runner__', '')
+# The library location identifies this installation's prefix.
+prefix = __file__.rsplit('/', 3)[0]
+base_prefix = prefix
+exec_prefix = prefix
+base_exec_prefix = prefix
 
 float_repr_style = 'short'
 byteorder = 'little'

@@ -10451,6 +10451,7 @@ impl<'a> Builder<'a> {
                     if part.shape == Shape::Bare && part.lexeme == "for" && comma_before_for {
                         return Err(String::from("SyntaxError: did you forget parentheses around the comprehension target?"));
                     }
+                    if part.shape == Shape::Bare && part.lexeme == "for" { break; }
                 }
                 if part.shape == Shape::Sign {
                     match part.lexeme.as_str() {

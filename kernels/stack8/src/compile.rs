@@ -11091,6 +11091,7 @@ impl<'a> Compiler<'a> {
                 if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
                     return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
                 }
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") { break; }
                 if token.shape == Shape::Sign {
                     if ["(", "[", "{"].contains(&word) { depth += 1; }
                     else if [")", "]", "}"].contains(&word) { depth = depth.saturating_sub(1); }

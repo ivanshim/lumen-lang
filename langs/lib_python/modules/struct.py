@@ -108,7 +108,38 @@ def calcsize(format):
 
 class Struct:
     def __init__(self, format):
-        raise 'NotImplementedError: Struct needs byte values'
+        if not isinstance(format, str):
+            raise TypeError('Struct() argument 1 must be a str or bytes object')
+        self.format = format
+        self.size = calcsize(format)
+        self._count = None
+        if format[:1] in ('!', '>') and format[-1:] == 'I':
+            count = format[1:-1]
+            if not count or count.isdecimal():
+                self._count = int(count) if count else 1
+        if self._count is None:
+            raise NotImplementedError('Struct supports network unsigned integers only')
+
+    def pack(self, *values):
+        import operator
+        if len(values) != self._count:
+            raise error('pack expected ' + str(self._count) + ' items for packing (got ' + str(len(values)) + ')')
+        result = b''
+        for value in values:
+            try:
+                value = operator.index(value)
+            except TypeError:
+                raise error('required argument is not an integer') from None
+            if value < 0 or value > 4294967295:
+                raise error("'I' format requires 0 <= number <= 4294967295")
+            result += value.to_bytes(4, 'big')
+        return result
+
+    def unpack(self, buffer):
+        buffer = memoryview(buffer).tobytes()
+        if len(buffer) != self.size:
+            raise error('unpack requires a buffer of ' + str(self.size) + ' bytes')
+        return tuple(int.from_bytes(buffer[i:i+4], 'big') for i in range(0, self.size, 4))
 
 def __getattr__(name):
     raise 'NotImplementedError: struct.' + name + ' needs byte values'

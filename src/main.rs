@@ -182,6 +182,7 @@ struct Invocation {
     /// A language to write the program in instead of running it (microcode11 only).
     emit: Option<Language>,
     program_args: Vec<String>,
+    module_source: Option<String>,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -550,10 +551,10 @@ fn run_all() {
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
 
-    let written = fs::read(&inv.file).unwrap_or_else(|e| {
+    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
-    });
+    }));
     let source = if inv.language.name() == "python" && honours_extensions(&inv.kernel) {
         python_file_source(written, &inv.file)
     } else {
@@ -858,6 +859,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut language: Option<Language> = None;
     let mut emit: Option<Language> = None;
     let mut file: Option<String> = None;
+    let mut module_source = None;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -906,6 +908,34 @@ fn parse_args(args: &[OsString]) -> Invocation {
             // the reference's own, and like its own they are looked for
             // only before the file: what stands after the file belongs
             // to the program and is left to it.
+            Some("-m") if file.is_none() => {
+                if rest.len() < 2 { usage(program); }
+                if language.as_ref().is_some_and(|definition| definition.name() != "python") {
+                    eprintln!("Error: -m requires the Python language");
+                    process::exit(1);
+                }
+                let module = said(&rest[1]);
+                let path = module.replace('.', "/");
+                let mut found = None;
+                for candidate in [format!("{path}.py"), format!("{path}/__main__.py")] {
+                    if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                }
+                if found.is_none() {
+                    let executable_module = format!("{module}.__main__");
+                    if let Some((_, source, filename)) = embedded_modules::MODULES.iter().find(|(name, _, _)| *name == module || *name == executable_module) {
+                        found = Some((format!("langs/lib_python/modules/{filename}"), source.to_string()));
+                    }
+                }
+                let Some((filename, source)) = found else {
+                    eprintln!("No module named {module}");
+                    process::exit(1);
+                };
+                file = Some(filename);
+                module_source = Some(source);
+                language = Some(Language::Named("python".to_string()));
+                rest = &rest[2..];
+                break;
+            }
             Some("-d") if file.is_none() => {
                 if rest.len() < 2 {
                     eprintln!("Error: -d requires a setting");
@@ -982,7 +1012,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     });
 
-    Invocation { kernel, file, serve, language, emit, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, module_source, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

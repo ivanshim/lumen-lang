@@ -806,6 +806,7 @@
     "iterable"
   ],
   "ext.builtin.zlib_native": ["__zlib_native__"],
+  "ext.builtin.binascii_native": ["__binascii_native__"],
   "ext.builtin.heap_native": ["__heap_native__"],
   "ext.builtin.reduce_native": [
     "__reduce_native__"
@@ -1540,6 +1541,7 @@
   "ext.builtin.staticmethod": [
     "staticmethod"
   ],
+  "ext.builtin.stream.binary": true,
   "ext.builtin.stream.amiss": [
     "TypeError: invalid stream arguments"
   ],
@@ -3212,6 +3214,7 @@
     "ModuleNotFoundError: No module named '",
     "'"
   ],
+  "ext.stmt.import.relative.packages": true,
   "ext.stmt.import.relative.unready": [
     "NotImplementedError: relative imports require a package context"
   ],

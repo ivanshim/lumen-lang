@@ -4437,6 +4437,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
+| `ext.builtin.binascii_native` | - | - | `__binascii_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
@@ -4828,6 +4829,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.binary` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
@@ -5372,6 +5374,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `' from '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.nonpackage` | - | - | `; '` `' is not a package` | - | - | - | - | - | - | - |
+| `ext.stmt.import.relative.packages` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |
@@ -5789,3 +5792,13 @@ other definitions keep their existing native inventory and call behavior.
 `ext.builtin.build_class` names the class body builder; `ext.stmt.class.builder` supplies its lookup name and missing-builtin error for class statements.
 
 `ext.stmt.class.detail.classcell` names the closure cell passed from the executable class body to its metaclass. The class builder prepares the body namespace before execution, then checks that class construction populated this cell.
+
+`ext.builtin.binascii_native` selects the Python binary/ASCII bridge: base64,
+uuencode, quoted-printable, hexadecimal and CRC operations, following CPython
+v3.14.8 Modules/binascii.c. Other languages do not select this bridge.
+
+`ext.stmt.import.relative.packages` selects Python package-relative module resolution; other definitions retain their configured refusal.
+
+`ext.builtin.stream.binary` allows byte-oriented reads and writes through the stream primitives with a third, true argument. The two-argument text operations retain their language-selected behavior. The byte export primitive accepts a second argument to query active leases without taking a lease.
+
+The binary-stream label also permits an optional boolean on the whole-file read primitive, preserving raw file bytes for binary Python streams.
