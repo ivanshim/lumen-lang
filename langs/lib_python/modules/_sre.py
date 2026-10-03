@@ -1,6 +1,6 @@
-# Pattern and Match adapters for CPython 3b564385e4c9 Modules/_sre/sre.c; PSF License.
+# Pattern and Match adapters for CPython v3.14.8 Modules/_sre/sre.c; PSF License.
 _native = __sre_native
-MAGIC = 20260622
+MAGIC = 20230612
 CODESIZE = 4
 MAXREPEAT = 4294967295
 MAXGROUPS = 1073741823
@@ -101,6 +101,9 @@ class Pattern:
     def finditer(self, string, pos=0, endpos=9223372036854775807):
         return _Iterator(self.scanner(string, pos, endpos))
     def findall(self, string, pos=0, endpos=9223372036854775807):
+        if type(string) is str:
+            text, pos, endpos = self._input(string, pos, endpos)
+            return _native(7, self._code, text, pos, endpos, self.groups)
         empty = b'' if not isinstance(string, str) else ''
         result = []
         for m in self.finditer(string, pos, endpos):
@@ -144,6 +147,8 @@ class Pattern:
         count = _index(0 if count is _NO_COUNT else count)
         text, pos, end = self._input(string, 0, 9223372036854775807)
         isbytes = not isinstance(string, str)
+        if type(string) is str and type(repl) is str and '\\' not in repl and -9223372036854775808 <= count <= 9223372036854775807:
+            return _native(8, self._code, text, pos, end, self.groups, count, repl)
         source = text.encode('latin1') if isbytes else text
         empty = b'' if isbytes else ''
         if not callable(repl):

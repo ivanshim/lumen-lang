@@ -243,7 +243,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Err(String::from("TypeError: argument must be str")),
         };
     }
-    if action != 0 {
+    if !matches!(action, 0 | 7 | 8) {
         let value = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return match action {
             1 | 2 => Ok(Value::Small(folded(value, action == 1) as i64)),
@@ -251,17 +251,66 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Ok(Value::Flag(has_property(value, 16))),
         };
     }
-    if input.len() != 8 { return Err(String::from("TypeError: SRE matcher needs eight arguments")); }
+    let required = if action == 7 { 6 } else { 8 };
+    if input.len() != required { return Err(String::from("TypeError: invalid SRE matcher argument count")); }
     let Value::Vector(raw) = &input[1] else { return Err(String::from("TypeError: SRE code must be a list")); };
     let program: Vec<u32> = raw.iter().map(|v| integer(v).and_then(|n| u32::try_from(n).map_err(|_| String::from("OverflowError: regular expression code size limit exceeded")))).collect::<Result<_, _>>()?;
     let subject = input[2].character_numbers().ok_or_else(|| String::from("TypeError: SRE input must be text"))?;
     let begin = integer(&input[3])?.max(0) as usize;
     let limit = (integer(&input[4])?.max(0) as usize).min(subject.len());
     let groups = integer(&input[5])?.max(0) as usize;
-    let mode = integer(&input[6])?;
-    let skip_empty = integer(&input[7])? != 0;
-    if begin > limit { return Ok(Value::Nil); }
+    let mode = if action == 0 { integer(&input[6])? } else { 2 };
+    let skip_empty = action == 0 && integer(&input[7])? != 0;
+    if begin > limit { return Ok(if action == 7 { vector(Vec::new()) } else { Value::Nil }); }
     let regex = Regex { program: &program, subject: &subject, limit };
+    if matches!(action, 7 | 8) {
+        let permitted = if action == 8 { integer(&input[6])? } else { 0 };
+        let inserted = if action == 8 { input[7].character_numbers().ok_or_else(|| String::from("TypeError: replacement must be text"))? } else { vec![] };
+        let mut output = Vec::new();
+        let mut until = begin;
+        let mut replacements = 0;
+        let mut rows = Vec::new();
+        let mut scan = begin;
+        let mut omit = false;
+        loop {
+            if permitted != 0 && replacements >= permitted { break; }
+            let origin = scan;
+            let mut matched = None;
+            while scan <= limit {
+                let state = Cursor { instruction: 0, offset: scan, captures: vec![-1; groups * 2], recent: -1, cycles: vec![] };
+                let avoid = (omit && scan == origin).then_some(origin);
+                if let Some(result) = regex.follow(state, None, false, avoid, 0)? {
+                    matched = Some(result);
+                    break;
+                }
+                scan += 1;
+            }
+            let Some(result) = matched else { break };
+            let slice = |bounds: &[i64]| {
+                if bounds[0] == -1 || bounds[1] < bounds[0] { Value::text("") }
+                else { Value::characters(subject[bounds[0] as usize..bounds[1] as usize].to_vec()) }
+            };
+            if action == 8 {
+                output.extend_from_slice(&subject[until..scan]);
+                output.extend_from_slice(&inserted);
+                until = result.offset;
+                replacements += 1;
+            } else {
+            let item = if groups == 0 {
+                Value::characters(subject[scan..result.offset].to_vec())
+            } else if groups == 1 { slice(&result.captures[..2]) }
+            else { Value::Tuple(crate::tuples::Sequence::plain(result.captures.chunks_exact(2).map(slice).collect())) };
+            rows.push(item);
+            }
+            omit = result.offset == scan;
+            scan = result.offset;
+        }
+        if action == 8 {
+            output.extend_from_slice(&subject[until..limit]);
+            return Ok(Value::tuple(vec![Value::characters(output), Value::Small(replacements)]));
+        }
+        return Ok(vector(rows));
+    }
     let mut position = begin;
     while position <= limit {
         let cursor = Cursor { instruction: 0, offset: position, captures: vec![-1; groups*2], recent: -1, cycles: vec![] };

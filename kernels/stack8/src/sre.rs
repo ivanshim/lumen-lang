@@ -1,6 +1,7 @@
 // Bytecode semantics from CPython 3b564385e4c9 Modules/_sre/{sre.c,sre_lib.h}; PSF License.
 use crate::value::Value;
 use num_traits::ToPrimitive;
+use std::rc::Rc;
 
 #[derive(Clone)]
 struct Repeat { body: usize, tail: usize, min: usize, max: usize, count: usize, before: usize }
@@ -248,12 +249,12 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         let Some(Value::Text(name)) = args.get(1) else { return Err("TypeError: argument must be str".into()); };
         return crate::unicode::named_text(name).map(|text| Value::text(&text)).ok_or_else(|| "KeyError: undefined character name".into());
     }
-    if op != 0 {
+    if !matches!(op, 0 | 7 | 8) {
         let n = u32::try_from(number(1)?).map_err(|_| "OverflowError: Python int too large to convert to C unsigned long".to_string())?;
         return Ok(if op == 1 || op == 2 { Value::Small(lower(n, op == 1) as i64) }
         else { Value::Flag(char::from_u32(n).is_some_and(|c| if op == 3 { c.is_ascii_alphabetic() } else { crate::unicode::bits(c) & 16 != 0 })) });
     }
-    if args.len() != 8 { return Err("TypeError: SRE matcher needs eight arguments".into()); }
+    if args.len() != if op == 7 { 6 } else { 8 } { return Err("TypeError: invalid SRE matcher argument count".into()); }
     let Value::Array(items) = args[1].contents() else { return Err("TypeError: SRE code must be a list".into()) };
     let mut code = Vec::with_capacity(items.len());
     for item in items.iter() { code.push(u32::try_from(item.as_big()?.to_i64().ok_or("OverflowError: regular expression code size limit exceeded")?).map_err(|_| "OverflowError: regular expression code size limit exceeded".to_string())?); }
@@ -261,10 +262,52 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     let start = number(3)?.max(0) as usize;
     let end = (number(4)?.max(0) as usize).min(text.len());
     let groups = number(5)?.max(0) as usize;
-    let mode = number(6)?;
-    let advance = number(7)? != 0;
-    if start > end { return Ok(Value::Null); }
+    let mode = if op != 0 { 2 } else { number(6)? };
+    let advance = op == 0 && number(7)? != 0;
+    if start > end { return Ok(if op == 7 { Value::array(Vec::new()) } else { Value::Null }); }
     let machine = Machine { code: &code, text: &text, end };
+    if op == 7 || op == 8 {
+        let limit = if op == 8 { number(6)? } else { 0 };
+        let replacement = if op == 8 { args[7].contents().text_codes().ok_or_else(|| "TypeError: replacement must be text".to_string())? } else { Vec::new() };
+        let mut substituted = Vec::new();
+        let mut copied = start;
+        let mut substitutions = 0;
+        let mut matches = Vec::new();
+        let mut next = start;
+        let mut must_advance = false;
+        while next <= end && (limit == 0 || substitutions < limit) {
+            let mut found = None;
+            for at in next..=end {
+                let state = State { pc: 0, pos: at, marks: vec![-1; groups * 2], last: -1, loops: Vec::new() };
+                if let Some(done) = machine.run(state, None, false, if must_advance && at == next { Some(next) } else { None }, 0)? {
+                    found = Some((at, done));
+                    break;
+                }
+            }
+            let Some((at, done)) = found else { break };
+            let capture = |begin: i64, finish: i64| {
+                if begin < 0 || finish < begin { Value::text("") }
+                else { Value::from_codes(text[begin as usize..finish as usize].to_vec()) }
+            };
+            if op == 8 {
+                substituted.extend_from_slice(&text[copied..at]);
+                substituted.extend_from_slice(&replacement);
+                copied = done.pos;
+                substitutions += 1;
+            } else { matches.push(match groups {
+                0 => capture(at as i64, done.pos as i64),
+                1 => capture(done.marks[0], done.marks[1]),
+                _ => Value::Tuple(Rc::new(done.marks.chunks_exact(2).map(|pair| capture(pair[0], pair[1])).collect::<Vec<_>>()).into()),
+            }); }
+            next = done.pos;
+            must_advance = next == at;
+        }
+        if op == 8 {
+            substituted.extend_from_slice(&text[copied..end]);
+            return Ok(Value::Tuple(Rc::new(vec![Value::from_codes(substituted), Value::Small(substitutions)]).into()));
+        }
+        return Ok(Value::array(matches));
+    }
     for p in start..=if mode == 2 { end } else { start } {
         let initial = State { pc: 0, pos: p, marks: vec![-1; groups*2], last: -1, loops: Vec::new() };
         if let Some(result) = machine.run(initial, None, mode == 1, if advance && p == start { Some(start) } else { None }, 0)? {
