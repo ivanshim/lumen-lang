@@ -5912,7 +5912,7 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+        } else if self.look().shape == Shape::Instr && !lang.keywords.iter().any(|w| w == self.look().spelling())
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).spelling()) {
             // A keyword before the mark (`try:`) heads a statement
             // and is no member being annotated.
@@ -5937,7 +5937,7 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+        } else if self.look().shape == Shape::Instr && !lang.keywords.iter().any(|w| w == self.look().spelling())
             && self.look_ahead(1).shape == Shape::Sign && lang.compound.contains_key(&self.look_ahead(1).lexeme) {
             self.class_compound()?;
         } else {
@@ -11091,7 +11091,7 @@ impl<'a> Compiler<'a> {
                 if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
                 if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
+                if depth == 0 && token.shape == Shape::Instr && token.spelling() == "for" && separated {
                     return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
                 }
                 if token.shape == Shape::Sign {

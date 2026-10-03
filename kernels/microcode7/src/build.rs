@@ -2139,7 +2139,7 @@ impl<'a> Builder<'a> {
 
     fn type_scope_fault(&self) -> Option<String> {
         if !self.table.has_any("ext.builtin.exceptions.syntax") { return None; }
-        let word = |at: usize| self.tokens.get(at).map_or("", |token| token.lexeme.as_str());
+        let word = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
         let head = word(self.pos);
         let named = match head {
             "async" if word(self.pos + 1) == "def" => self.pos + 2,
@@ -2203,7 +2203,7 @@ impl<'a> Builder<'a> {
         if head == "class" && has_types && word(cursor) == "(" {
             let mut openings = 0usize;
             for token in self.tokens.iter().skip(cursor) {
-                if let Some(kind) = match token.lexeme.as_str() { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None } {
+                if let Some(kind) = match token.spelling() { ":=" => Some("named"), "yield" => Some("yield"), "await" => Some("await"), _ => None } {
                     return Some(format!("SyntaxError: {kind} expression cannot be used within the definition of a generic"));
                 }
                 match token.lexeme.as_str() {
@@ -2218,7 +2218,7 @@ impl<'a> Builder<'a> {
             let mut inside = 0usize;
             for token in self.tokens.iter().skip(cursor + 1) {
                 if inside == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
-                let bad = match token.lexeme.as_str() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
+                let bad = match token.spelling() { ":=" => "named", "yield" => "yield", "await" => "await", _ => "" };
                 if !bad.is_empty() { return Some(format!("SyntaxError: {bad} expression cannot be used within a type alias")); }
                 if ["(", "[", "{"].contains(&token.lexeme.as_str()) { inside += 1; }
                 else if [")", "]", "}"].contains(&token.lexeme.as_str()) { inside = inside.saturating_sub(1); }
@@ -4529,7 +4529,7 @@ impl<'a> Builder<'a> {
                 let gathered = table.has_any("ext.op.tuple");
                 let value = if gathered { self.comma_value()? } else { self.expr(0)? };
                 Some((member, value))
-            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+            } else if self.look().shape == Shape::Bare && !table.keywords.iter().any(|w| w == self.look().spelling())
                 && table.spells("ext.stmt.annotation", &self.glance(1).spelling()) {
                 // A keyword ahead of the mark, as `try:`, begins a
                 // statement of the body, not an annotated member.
@@ -4550,7 +4550,7 @@ impl<'a> Builder<'a> {
                     let value = self.comma_value()?;
                     Some((member, value))
                 } else { None }
-            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+            } else if self.look().shape == Shape::Bare && !table.keywords.iter().any(|w| w == self.look().spelling())
                 && self.glance(1).shape == Shape::Sign && table.compound.contains_key(&self.glance(1).lexeme) {
                 // `x += 1`: x is read as the body reads it, out of the
                 // class's place where the body has bound it and out of
@@ -10446,7 +10446,7 @@ impl<'a> Builder<'a> {
             for part in self.tokens.iter().skip(self.pos) {
                 if inner.is_empty() && part.shape == Shape::Sign && part.lexeme == closing { break; }
                 if inner.is_empty() {
-                    match (part.shape, part.lexeme.as_str()) {
+                    match (part.shape, part.spelling()) {
                         (Shape::Sign, ":") => parameter_lists = parameter_lists.saturating_sub(1),
                         (Shape::Bare, text) if self.table.spells("ext.op.lambda", text) => parameter_lists += 1,
                         _ => (),
