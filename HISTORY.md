@@ -2441,3 +2441,22 @@ shutdown while exiting cleanly; that is left for later work.
 Measured on both kernels, the sixty files count 3224 of 3596 (3218 before): test_builtin 108 to 112, test_functools 152
 to 153, test_generators 54 to 55; no passing test was lost. The merged full check agrees on 1182 scratch programs with
 no mismatch and passes every gate (lumen 522/522, PHP 318/318, Python 128/128); kernel independence reports no problem.
+
+### 1ba. Batch 20x merged as #532; Python release selection
+
+The owner asked for lumen to say which CPython release it is identical with, and to keep the reference tests per
+release. One GPT-6.1 Sol worker built it; an independent review accepted it, and after 20x merged it was brought up
+to date and checked again.
+
+- `langs/python/versions.json` is the release table: each supported minor series (now 3.14) names its pinned release
+  (3.14.8: tag, commit, date), its test folder and its library and label overlays. The window is two minor versions.
+- The reference suite now lives in `tests/python-3.14.8/`, named by the full release, byte for byte as before; scripts,
+  counts and saved measurements are bound to the full release they measured.
+- `--python` on the command line, then `LUMEN_PYTHON`, then the configuration, then the newest release choose the
+  version. No version gives the newest; `x.y` gives that series' pinned release; an exact `x.y.z` that is pinned
+  runs silently; another micro release of a supported series runs the pinned one with a warning; anything else is an
+  error and lumen exits.
+
+Measured on both kernels, the sixty files count 3224 of 3596, identical file by file to batch 20x: the move changes no
+result. The full check agrees on 1182 scratch programs with no mismatch and passes every gate; kernel independence
+reports no problem.

@@ -12,6 +12,7 @@ name = "lumen-lang"
 path = "src/main.rs"
 
 [dependencies]
+serde_json = "1"
 lumen-room = { path = "kernels/room" }
 lumen-stream35 = { path = "kernels/stream35" }
 lumen-microcode11 = { path = "kernels/microcode11" }
@@ -19,3 +20,6 @@ lumen-microcode4 = { path = "kernels/microcode4" }
 lumen-stack5 = { path = "kernels/stack5" }
 lumen-stack8 = { path = "kernels/stack8" }
 lumen-microcode7 = { path = "kernels/microcode7" }
+
+[build-dependencies]
+serde_json = "1"
