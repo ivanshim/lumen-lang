@@ -880,7 +880,8 @@ impl<'a> Machine<'a> {
     fn make_fault(&mut self, kind: Rc<Blueprint>, row: Vec<Value>, because: Value) -> Value {
         // An OSError made with a number the reference knows a fuller
         // kind for is made as that kind.
-        let kind = if kind.name == "OSError" {
+        let native_os = self.furnished_kind(20).map_or(false, |base| Rc::ptr_eq(&kind, &base));
+        let kind = if native_os && row.len() >= 2 && row.len() <= 5 {
             let number = match row.first().map(Value::settled) {
                 Some(Value::Small(n)) => Some(n), Some(Value::Huge(n)) => n.to_i64(), Some(Value::Flag(b)) => Some(if b { 1 } else { 0 }), _ => None,
             };
@@ -905,14 +906,19 @@ impl<'a> Machine<'a> {
             }
         }
         if self.stands_under(&kind, 20) {
-            let numbered = row.len() >= 2;
+            let numbered = matches!(row.len(), 2..=5);
             for (at, key) in self.table.strings("ext.builtin.exceptions.os").iter().enumerate() {
                 holds.push((key.clone(), if numbered { row.get(at).cloned().unwrap_or(Value::Nil) } else { Value::Nil }));
             }
             if let ([opening, middle, colon, quote], true) = (self.table.strings("ext.builtin.exceptions.os.message"), numbered) {
                 let mut told = format!("{opening}{}{middle}{}", row[0].render(self.wording()), row[1].render(self.wording()));
                 if let Some(named) = row.get(2) {
-                    if !matches!(named, Value::Nil) { told = format!("{told}{colon}{}{quote}", named.render(self.wording())); }
+                    if !matches!(named, Value::Nil) {
+                        told.push_str(&format!("{colon}{}{quote}", named.render(self.wording())));
+                        if let Some(other) = row.get(4) {
+                            if !matches!(other, Value::Nil) { told.push_str(&format!(" -> {quote}{}{quote}", other.render(self.wording()))); }
+                        }
+                    }
                 }
                 holds.push(("\0told-as".to_string(), Value::text(&told)));
             }
@@ -962,7 +968,7 @@ impl<'a> Machine<'a> {
         if self.stands_under(&kind, 36) { holds.push((String::from("_metadata"), Value::Nil)); }
         let mut row = row;
         if self.stands_under(&kind, 20) {
-            let second_file = row.get(4).cloned().unwrap_or(Value::Nil);
+            let second_file = if matches!(row.len(), 2..=5) { row.get(4).cloned().unwrap_or(Value::Nil) } else { Value::Nil };
             holds.push((String::from("filename2"), second_file));
             if row.len() >= 3 && row.len() <= 5 && !matches!(row[2], Value::Nil) { row.resize(2, Value::Nil); }
         }
@@ -7867,7 +7873,12 @@ impl<'a> Machine<'a> {
             }
         }
         match value {
-            Value::Thing(t) if names.get(35).map_or(false, |s| s == name) => return Some(Value::Blueprint(t.blueprint().clone())),
+            Value::Thing(t) if names.get(35).map_or(false, |s| s == name) => {
+                return Some(match self.namespace_holding(value) {
+                    Some(_) => self.kind_named_after(value),
+                    None => Value::Blueprint(t.blueprint()),
+                });
+            }
             Value::Thing(t) if names.get(36).map_or(false, |s| s == name) => {
                 if let Some((_, mapping)) = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").cloned() {
                     return Some(mapping);
@@ -22896,7 +22907,9 @@ impl Machine<'_> {
                     let root=self.common_ancestor();
                     if Rc::ptr_eq(&root,class){return Ok(true);}
                     let actual=match item {
-                        Value::Thing(thing)=>Some(thing.blueprint().clone()),
+                        Value::Thing(thing) => Some(if self.namespace_holding(item).is_some() {
+                            match self.kind_named_after(item) { Value::Blueprint(kind) => kind, _ => thing.blueprint() }
+                        } else { thing.blueprint() }),
                         Value::Blueprint(held)=>Some(Self::builder_over(held).unwrap_or_else(||self.builder_blueprint())),
                         _=>None,
                     };

@@ -588,7 +588,7 @@ impl<'a> Engine<'a> {
     fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
         // An OSError made with a number the reference knows a fuller
         // class for is made as that class.
-        let class = if class.name == "OSError" {
+        let class = if (2..=5).contains(&args.len()) && self.furnished(20).is_some_and(|base| Rc::ptr_eq(&base, &class)) {
             let number = match args.first().map(Value::contents) {
                 Some(Value::Small(n)) => Some(n), Some(Value::Huge(n)) => n.to_i64(), Some(Value::Flag(b)) => Some(if b { 1 } else { 0 }), _ => None,
             };
@@ -617,14 +617,19 @@ impl<'a> Engine<'a> {
             }
         }
         if self.stands_on(&class, 20) {
-            let numbered = args.len() >= 2;
+            let numbered = (2..=5).contains(&args.len());
             for (at, name) in self.lang.os_members.iter().enumerate() {
                 fields.push((name.clone(), if numbered { args.get(at).cloned().unwrap_or(Value::Null) } else { Value::Null }));
             }
             if let ([before, between, colon, quote], true) = (self.lang.os_message.as_slice(), numbered) {
                 let mut shown = format!("{before}{}{between}{}", args[0].display(&sp), args[1].display(&sp));
                 if let Some(named) = args.get(2) {
-                    if !matches!(named, Value::Null) { shown = format!("{shown}{colon}{}{quote}", named.display(&sp)); }
+                    if !matches!(named, Value::Null) {
+                        shown = format!("{shown}{colon}{}{quote}", named.display(&sp));
+                        if let Some(second) = args.get(4).filter(|v| !matches!(v, Value::Null)) {
+                            shown = format!("{shown} -> {quote}{}{quote}", second.display(&sp));
+                        }
+                    }
                 }
                 fields.push(("\0shown".into(), Value::text(&shown)));
             }
@@ -668,7 +673,7 @@ impl<'a> Engine<'a> {
         }
         let mut args = args;
         if self.stands_on(&class, 20) {
-            fields.push(("filename2".into(), args.get(4).cloned().unwrap_or(Value::Null)));
+            fields.push(("filename2".into(), if (2..=5).contains(&args.len()) { args.get(4).cloned().unwrap_or(Value::Null) } else { Value::Null }));
             if (3..=5).contains(&args.len()) && !matches!(args[2], Value::Null) { args.truncate(2); }
         }
         let args = Value::tuple(args);
@@ -10142,7 +10147,11 @@ impl<'a> Engine<'a> {
                     }
                 },
                 Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
-                Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class_now().clone()),
+                Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => {
+                    let object = Value::Object(o.clone());
+                    if self.module_holding(&object).is_some() { self.named_kind(&object) }
+                    else { Value::Class(o.class_now()) }
+                },
                 Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {
                     // A thing that keeps a namespace of its own hands
                     // that over; one that keeps only fields stands as
@@ -19585,7 +19594,9 @@ impl Engine<'_> {
                 let root = self.root_class();
                 if Rc::ptr_eq(class, &root) { return Ok(true); }
                 if let Value::Object(object) = value {
-                    let actual = object.class_now();
+                    let actual = if self.module_holding(value).is_some() {
+                        match self.named_kind(value) { Value::Class(kind) => kind, _ => object.class_now() }
+                    } else { object.class_now() };
                     return Ok(Self::contains_class(&actual, class));
                 }
                 if let Value::Class(held) = value {
