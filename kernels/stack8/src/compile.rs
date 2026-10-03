@@ -6796,6 +6796,7 @@ impl<'a> Compiler<'a> {
         // after the name is still a body.
         if self.on_sep() && !self.block_ahead() {
             return self.routine(name, formals, least, true, |a| {
+            a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
                 a.constant(Value::Null);

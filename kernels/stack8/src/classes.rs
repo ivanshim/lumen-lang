@@ -432,6 +432,9 @@ impl<'a> Engine<'a> {
         // been written. Nothing stands there, and the class keeps no
         // member for it: a name a conditional never bound is no member.
         members.retain(|(_, held)| !matches!(held, Value::Blank));
+        if !self.lang.module_cache.is_empty() && members.iter().any(|(key, value)| key == "__abc_tpflags__" && matches!(value.contents(), Value::Small(flags) if flags & 96 == 96)) {
+            return Err(format!("TypeError: type {name} has both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING set").into());
+        }
         let mut lines: Vec<Vec<Rc<Class>>> = bases.iter().map(|b| {
             let mut line = vec![b.clone()]; line.extend(b.lineage.iter().cloned()); line
         }).collect();
@@ -469,6 +472,14 @@ impl<'a> Engine<'a> {
             members.retain(|(key, _)| key != self.class_word("qualified"));
             Some((title_value, qualified.clone(), self.class_word("module").to_string(), qualified))
         } else { None };
+        let mut constants = maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default();
+        if let Some(word) = &self.lang.native_type_name {
+            if let Some(at) = members.iter().position(|(key, _)| key == word) {
+                let (_, value) = members.remove(at);
+                if !matches!(value.contents(), Value::Text(_)) { return Err("TypeError: native type name must be a str".into()); }
+                constants.push(("\0native-name".to_string(), value.contents()));
+            }
+        }
         let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
         // Slot storage is fixed when the class is made, independently of
         // later replacement or mutation of its public declaration.
@@ -476,7 +487,6 @@ impl<'a> Engine<'a> {
             let slots = match value.contents() { Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(), single => vec![single] };
             slots.iter().any(|slot| !matches!(slot, Value::Text(key) if key.as_ref() == "__dict__" || key.as_ref() == "__weakref__"))
         });
-        let constants = maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default();
         let module = members.iter().find(|(key, _)| key == self.class_word("module")).map(|(_, value)| value.plain()).unwrap_or_default();
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: primary, direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
@@ -918,8 +928,10 @@ impl<'a> Engine<'a> {
                         Some(key) => Value::Tie(Rc::new((Value::text(&key), value))), None => value,
                     }).collect();
                     if values.is_empty() { return Err(self.class_refusal()); }
-                    let Value::Class(class) = values.remove(0) else { return Err(self.class_refusal()); };
-                    self.class_construct(class, values)
+                    let target = values.remove(0);
+                    if let Value::Class(class) = target { self.class_construct(class, values) }
+                    else if self.stands_for_kind(&target) { self.class_apply(target, values) }
+                    else { Err(self.class_refusal()) }
                 }
                 43 => {
                     if let Some(first) = args.first() { self.iterator(first.clone())?; }
@@ -984,7 +996,8 @@ impl<'a> Engine<'a> {
                             Err(self.class_refusal())
                         };
                     }
-                    let subject = args.remove(0);
+                    let supplied = args.remove(0);
+                    let subject = match supplied.contents() { thing @ Value::Object(_) => thing, _ => supplied };
                     // A thing of a class standing on the very kind this
                     // word names answers as its worth would, since the
                     // loose member is the kind's own and not the
@@ -1001,6 +1014,17 @@ impl<'a> Engine<'a> {
                         }
                         _ => subject.clone(),
                     };
+                    if word == "dict" && args.len() == 1 && self.lang.class_special.get(11).map_or(false, |slot| slot == &member) {
+                        if let (Value::Object(object), Value::Map(rows)) = (&subject, receiver.contents()) {
+                            let (position, _) = self.map_locate(&rows, Some(&rows), &args[0])?;
+                            if let Some(position) = position { return Ok(rows[position].1.clone()); }
+                            if let Some(hook) = self.lang.missing_key.as_ref().and_then(|name| self.class_value(&object.class_now(), name)) {
+                                let bound = self.bind_class_value(hook, Some(subject.clone()), object.class_now().clone())?;
+                                return self.class_apply(bound, args);
+                            }
+                            return Err(self.key_absent(&args[0]).into());
+                        }
+                    }
                     // A loose member is the kind's own alone, so a
                     // receiver of some other kind is refused before the
                     // member is even looked up, even where it happens
@@ -1011,6 +1035,12 @@ impl<'a> Engine<'a> {
                     // still reaches the member as before.
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
                         .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
+                    if word == "type" && self.stands_for_kind(&receiver) {
+                        if self.lang.class_special.get(17).map_or(false, |slot| slot == &member) { return self.class_apply(receiver, args); }
+                        if self.lang.class_special.get(8).map_or(false, |slot| slot == &member) && args.is_empty() {
+                            return Ok(self.builtin_call(Builtin::Hash, &member, vec![(None, receiver)])?);
+                        }
+                    }
                     let found = if of_own_kind && self.native_special(&receiver, &member) {
                         Some(Value::ValueMethod(Rc::new((subject.clone(), member.clone()))))
                     } else if of_own_kind { self.builtin_member(&receiver,&member)? } else { None };
@@ -1294,6 +1324,9 @@ impl<'a> Engine<'a> {
             let mut initial = args.clone();
             match self.lang.builtins.get(word) {
                 Some(Builtin::Set) => initial.clear(),
+                // Mutable dictionary allocation precedes the subclass initializer;
+                // its arguments belong to that initializer, not dict.update.
+                Some(Builtin::Dict) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => initial.clear(),
                 Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }
@@ -1701,6 +1734,34 @@ impl<'a> Engine<'a> {
         if let Value::Adapter(property) = &subject {
             if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
         }
+        if name == "__class_getitem__" && Lang::spells(&self.lang.builtin_bases, "tuple") {
+            let kind = match subject.contents() {
+                Value::Class(class) if self.class_value(&class, name).is_none() => Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)),
+                Value::Native(operation, word) if Self::kind_builtin(&operation) => Some(word.to_string()),
+                _ => None,
+            };
+            if matches!(kind.as_deref(), Some("tuple" | "list" | "dict" | "set" | "frozenset")) {
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+            }
+        }
+        if ["__buffer__", "__release_buffer__"].contains(&name) && Lang::spells(&self.lang.builtin_bases, "bytes") {
+            let bytes = match subject.contents() {
+                Value::ByteKind(mutable, _) | Value::Bytes(_, mutable, _) => name == "__buffer__" || mutable,
+                Value::Class(class) => matches!(Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).as_deref(), Some("bytearray")) || name == "__buffer__" && Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).as_deref() == Some("bytes"),
+                _ => false,
+            };
+            if bytes {
+                if matches!(subject.contents(), Value::Class(_) | Value::ByteKind(..)) {
+                    let word = match subject.contents() {
+                        Value::ByteKind(mutable, _) => self.byte_kind_word(mutable).to_string(),
+                        Value::Class(class) => Self::own_kind(&class).or_else(|| Self::kind_beneath(&class)).unwrap_or_default(),
+                        _ => unreachable!(),
+                    };
+                    return Ok(Value::Native(Builtin::ValueMethod, Rc::from(format!("{word}.{name}"))));
+                }
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_owned()))));
+            }
+        }
         // The kind's word, or the kind read as a class, answers for its
         // type flags from the class the kind stands for.
         if name==self.class_word("flags") && !name.is_empty() {
@@ -1713,6 +1774,13 @@ impl<'a> Engine<'a> {
             if let Some(word)=builtin {
                 let kind=self.kind_class(&word);
                 return Ok(Value::Small(self.flags_of(&kind)));
+            }
+        }
+        if let Value::ByteKind(mutable, _) = subject.contents() {
+            {
+                let word = self.byte_kind_word(mutable).to_string();
+                let kind = self.kind_class(&word);
+                return self.class_get(Value::Class(kind), name, plain);
             }
         }
         if name==self.class_word("namespace") {
@@ -1899,6 +1967,13 @@ impl<'a> Engine<'a> {
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if let Some(member)=self.loose_kind_member(&subject,name) { return Ok(member); }
+                if Self::own_kind(c).is_none() {
+                    if let Some(base) = c.lineage.iter().find(|base| Self::own_kind(base).is_some()) {
+                        if self.lang.value_methods.get(name).map(String::as_str) != Some("fromkeys") {
+                            if let Some(inherited) = self.loose_kind_member(&Value::Class(base.clone()), name) { return Ok(inherited); }
+                        }
+                    }
+                }
                 // A class standing on a builtin kind reads that kind's
                 // own class method too, bound to the class itself, so
                 // that `dictlike.fromkeys` reaches `dict.fromkeys` and
@@ -1910,6 +1985,7 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                if name == self.class_word("allocate") { return Ok(Self::adapter(1, Vec::new())); }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
                 // a thing's method is bound to the thing.
@@ -2054,7 +2130,7 @@ impl<'a> Engine<'a> {
                         _ => {}
                     }
                 }
-                if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
+                if let Some((_,v))=o.fields.borrow().iter().find(|(n,v)| n==name && !matches!(v.contents(), Value::Blank)) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class_now().clone());}
                 if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
                     let root = Self::adapter(30, vec![Value::text(name)]);
@@ -2069,7 +2145,12 @@ impl<'a> Engine<'a> {
                     if let Some(method) = self.builtin_member(&word, name)? { return Ok(method); }
                 }
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|!matches!(v.contents(),Value::Set(_))) {
-                    if matches!(worth.contents(), Value::Complex(_)) && self.native_special(&worth, name) {
+                    let collection_slot = self.lang.class_special.iter().position(|slot| slot == name).map_or(false, |slot| (10..=14).contains(&slot));
+                    if (matches!(worth.contents(), Value::Complex(_)) || collection_slot) && self.native_special(&worth, name) {
+                        if matches!(worth.contents(), Value::Map(_)) && self.lang.class_special.get(11).map_or(false, |key| key == name) {
+                            let getter = Self::adapter(29, vec![Value::text("dict"), Value::text(name)]);
+                            return Ok(Self::adapter(3, vec![getter, subject.clone()]));
+                        }
                         return Ok(Value::ValueMethod(Rc::new((worth, name.to_string()))));
                     }
                     if let Some(op)=self.lang.value_methods.get(name).cloned() {
@@ -2103,6 +2184,10 @@ impl<'a> Engine<'a> {
                             else { Value::Native(operation, Rc::from(name)) };
                         return Ok(Self::adapter(3,vec![callable,worth]));
                     }
+                }
+                if self.module_holding(&subject).is_some() {
+                    let getter = o.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, value)| value.contents());
+                    if let Some(getter) = getter { return self.class_apply(getter, vec![Value::text(name)]).map(|value| value.contents()); }
                 }
                 // A native base's reduction slots must not be replaced by
                 // the root's empty-argument reconstruction of an ordinary object.
@@ -2788,7 +2873,7 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
-                if Self::class_sealed(c) || (c.python_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|key| !self.class_word(key).is_empty() && name == self.class_word(key))) {
+                if Self::class_sealed(c) || c.constants.iter().any(|(key, _)| key == "\0native-name") || (c.python_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|key| !self.class_word(key).is_empty() && name == self.class_word(key))) {
                     return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
                 }
                 // The kinds of the two named singletons are fixed the
@@ -3027,7 +3112,8 @@ impl<'a> Engine<'a> {
         let inline = dictionary && Self::kind_beneath(c).is_none();
         let tracked = Self::own_kind(c).is_none()
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
-        512 + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+        let protocol = self.class_value(c, "__abc_tpflags__").map_or(0, |v| match v.contents() { Value::Small(n) => n, _ => 0 }) & 96;
+        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + 512 + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         if !self.lang.class_builder.is_empty() && self.names_property_class(&value.contents()) { return Ok(self.property_class()); }
@@ -3060,7 +3146,18 @@ impl<'a> Engine<'a> {
         if args.len() == 3 {
             self.type_title(&args[0])?;
             let original = args[2].clone();
-            if let Some(worth) = Self::worth_of(&original) { args[2] = worth.contents(); }
+            if let Some(worth) = Self::worth_of(&original) {
+                if matches!(worth.contents(), Value::Map(_)) {
+                    let method = self.class_get(original.clone(), "keys", false)?;
+                    let view = self.class_apply(method, Vec::new())?;
+                    let mut copied = Vec::new();
+                    for key in self.comprehension_items(&view)? {
+                        let value = self.special_dyad(&crate::code::Action::At, &original, &key)?;
+                        copied.push((key, value));
+                    }
+                    args[2] = Value::Map(Rc::new(copied.into()));
+                } else { args[2] = worth.contents(); }
+            }
             else if let Value::Object(object) = &original {
                 if object.class_now().name == "frozendict" {
                     if let Some((_, rows)) = object.fields.borrow().iter().find(|(key, _)| key == "_rows") { args[2] = rows.contents(); }

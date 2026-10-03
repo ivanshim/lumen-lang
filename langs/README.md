@@ -5321,6 +5321,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.metaclass` | - | - | `metaclass` | - | - | - | - | - | - | - |
 | `ext.stmt.class.missing` | - | - | `__missing__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
+| `ext.stmt.class.native.name` | - | - | `__native_type_name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
 | `ext.stmt.class.property` | - | - | `property` | - | - | - | - | - | - | - |
@@ -5866,3 +5867,9 @@ The `ext.builtin.host.info` helper also accepts the `build` query, exposing
 the Rust compiler flags for support-library sanitizer detection.
 
 Python `ext.builtin.at_end` registers the atexit dispatcher for interpreter shutdown.
+
+`ext.stmt.class.native.name` names an optional class-body declaration consumed by
+the full Python kernels. Source implementations of C-only types use it to supply
+the native type name used in exception messages and an immutable type namespace.
+This metadata belongs to the
+class itself and is not inherited by Python subclasses.

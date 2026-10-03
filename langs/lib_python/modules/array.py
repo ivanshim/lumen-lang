@@ -63,3 +63,7 @@ class array:
 
     def __len__(self):
         return len(self.data)
+
+# As in CPython, numeric arrays implement the mutable sequence protocol.
+from collections.abc import MutableSequence
+MutableSequence.register(array)

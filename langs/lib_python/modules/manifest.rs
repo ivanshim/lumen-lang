@@ -1,8 +1,10 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str, &str)] = &[
     ("_bisect", include_str!("_bisect.py"), "_bisect.py"),
+    ("_buffer", include_str!("_buffer.py"), "_buffer.py"),
     ("_codec_idna", include_str!("_codec_idna.py"), "_codec_idna.py"),
     ("_codec_names", include_str!("_codec_names.py"), "_codec_names.py"),
+    ("_collections", include_str!("_collections.py"), "_collections.py"),
     ("_collections_abc", include_str!("_collections_abc.py"), "_collections_abc.py"),
     ("_decimal", include_str!("_decimal.py"), "_decimal.py"),
     ("_heapq", include_str!("_heapq.py"), "_heapq.py"),
@@ -30,7 +32,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("cmath", include_str!("cmath.py"), "cmath.py"),
     ("codecs", include_str!("codecs.py"), "codecs.py"),
     ("collections.abc", include_str!("collections/abc.py"), "collections/abc.py"),
-    ("collections", concat!(include_str!("collections.py"), "\n", include_str!("runtime_adapters/collections.py")), "collections/__init__.py"),
+    ("collections", include_str!("collections.py"), "collections/__init__.py"),
     ("contextlib", include_str!("contextlib.py"), "contextlib.py"),
     ("copy", concat!(include_str!("copy.py"), "\n", include_str!("runtime_adapters/copy.py")), "copy.py"),
     ("copyreg", include_str!("copyreg.py"), "copyreg.py"),

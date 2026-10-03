@@ -405,6 +405,14 @@ def open(*args, **kwargs):
 # One-dimensional views use byte offsets into the original storage. A slice
 # keeps those offsets, and a cast groups them without copying the storage.
 class memoryview:
+    def __buffer__(self, flags, /):
+        from _buffer import getbuffer
+        return getbuffer(self, flags)
+
+    def __release_buffer__(self, view, /):
+        from _buffer import releasebuffer
+        return releasebuffer(self, view)
+
     def __init__(self, object):
         self._init_buffer(object, 284)
     def _init_buffer(self, object, flags):
