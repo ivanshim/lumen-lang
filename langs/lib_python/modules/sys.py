@@ -10,6 +10,11 @@ argv = __program_namespace()['__program_argv']
 # Callers add other directories explicitly; a program's directory is not
 # placed ahead of the embedded library merely because it contains a script.
 path = [__file__.rsplit('/', 1)[0]]
+# Where this library's own files were read from stands as the base
+# installation directory, since no other one was ever chosen at build:
+# a caller looking beside it for shared data (message catalogues among
+# them) finds only what a host actually put there.
+base_prefix = __file__.rsplit('/', 1)[0]
 maxsize = 9223372036854775807
 version_info = (3, 14, 8, 'final', 0)
 version = '3.14.8 (Lumen)'

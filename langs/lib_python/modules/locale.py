@@ -15,6 +15,19 @@ def setlocale(category, locale=None):
         raise 'NotImplementedError: locale.setlocale supports only C'
     return 'C'
 
+def normalize(localename):
+    """The name of a locale as setlocale() reads it.
+
+    The two names of the plain C locale answer as 'C', the way the
+    reference names it. Every other name comes back as it was given,
+    which is what the reference itself answers for a name its
+    catalogue of older aliases does not rewrite; that catalogue is not
+    carried in this small library, so an older name it would rewrite
+    keeps the shape it was written in."""
+    if localename in ('C', 'POSIX'):
+        return 'C'
+    return localename
+
 def getlocale(category=0):
     if category == LC_ALL:
         raise 'TypeError: category LC_ALL is not supported'
