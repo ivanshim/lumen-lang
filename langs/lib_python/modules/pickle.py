@@ -420,6 +420,16 @@ def _read_protocol(data):
             _apply_state(stack[-1], state)
         elif op == 148:
             memo[len(memo)] = stack[-1]
+        elif op in (112, 103):
+            end = data.index(b'\n', at)
+            index = int(data[at:end])
+            at = end + 1
+            if op == 112:
+                memo[index] = stack[-1]
+            else:
+                stack.append(memo[index])
+        elif op == 78:
+            stack.append(None)
         elif op in (113, 104):
             index = data[at]
             at += 1

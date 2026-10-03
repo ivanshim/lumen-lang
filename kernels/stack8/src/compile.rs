@@ -5912,7 +5912,7 @@ impl<'a> Compiler<'a> {
                 self.member_kept(&named, &slot);
                 self.mirror_member(&named, &slot)?;
             }
-        } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+        } else if self.look().shape == Shape::Instr && (!lang.keywords.contains(&self.look().lexeme) || Lang::spells(&lang.type_alias_words, &self.look().lexeme))
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
             // A keyword before the mark (`try:`) heads a statement
             // and is no member being annotated.
@@ -6796,6 +6796,10 @@ impl<'a> Compiler<'a> {
             a.piece().python_fallthrough = true;
             a.piece().asynchronous = asynchronous;
             a.piece().generator = asynchronous;
+            // A method of a definition whose blocks are indented falls
+            // off its end as a function does: with nothing, not with
+            // whatever its last bare statement came to.
+            a.piece().python_fallthrough = true;
             if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
             a.spare_values(&spares, &given)?;
             // What a parameter that names a property was given is
@@ -7132,7 +7136,26 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Missing(*at));
             let past = self.skip();
             self.pos = *from;
-            self.expr(0)?;
+            // With enclosing-scope defaults, a spare is read outside the routine's
+            // parameters: a default naming what a parameter also names
+            // finds the one outside, where the reference reads every
+            // default before the routine it belongs to exists. The
+            // parameters stand aside under names nothing can spell, so
+            // every cell and mark the routine keeps stays where it was.
+            let kept: Vec<String> = if self.lang.default_enclosing {
+                let standing: Vec<String> = (0..formals.len())
+                    .map(|at| format!("\0default aside {}", formals[at])).collect();
+                standing.iter().enumerate()
+                    .map(|(at, away)| std::mem::replace(&mut self.pieces.last_mut().expect("an open piece").idents[at], away.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let outcome = self.expr(0);
+            for (at, back) in kept.into_iter().enumerate() {
+                self.pieces.last_mut().expect("an open piece").idents[at] = back;
+            }
+            outcome?;
             self.write(&formals[*at]);
             self.land(past);
         }
@@ -11128,8 +11151,13 @@ impl<'a> Compiler<'a> {
                 if depth == 0 && Lang::spells(&self.lang.lambda_words, word) { parameters += 1; }
                 if depth == 0 && token.is_lexeme(Shape::Sign, ":") { parameters = parameters.saturating_sub(1); }
                 if depth == 0 && parameters == 0 && token.is_lexeme(Shape::Sign, ",") { separated = true; }
-                if depth == 0 && token.is_lexeme(Shape::Instr, "for") && separated {
-                    return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                if depth == 0 && token.is_lexeme(Shape::Instr, "for") {
+                    if separated {
+                        return Err("SyntaxError: did you forget parentheses around the comprehension target?".into());
+                    }
+                    // Only the result expression precedes this first clause.
+                    // Later commas may belong to an unpacking loop target.
+                    break;
                 }
                 if depth == 0 && token.is_lexeme(Shape::Instr, "for") { break; }
                 if token.shape == Shape::Sign {

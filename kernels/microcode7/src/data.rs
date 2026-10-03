@@ -688,6 +688,7 @@ impl Value {
             Value::Octets { changeable: true, .. } => Err("bytearray"),
             Value::Octets { cell, .. } => Ok(format!("octets/{:?}", cell.borrow().as_slice())),
             Value::Intrinsic(_, name) => Ok(["intrinsic/", name.as_ref()].concat()),
+            Value::OctetKind { changeable, .. } => Ok(format!("octetkind/{changeable}")),
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
@@ -1837,7 +1838,10 @@ pub fn ungrouped_figures(chars: &str, marks: &[char]) -> Option<String> {
 pub fn worth_of_binary(x: f64, figures: usize) -> Value {
     match binary_worth(x) {
         // A nought that came out under nought holds on to its minus.
-        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), x.is_sign_negative()),
+        Some((above, beneath)) => Value::Frac(Rc::new(Ratio {
+            float_style: false, above, beneath, places: Some(figures),
+            under: x == 0.0 && x.is_sign_negative(), pointed: false,
+        })),
         None => past_the_numbers(x, figures),
     }
 }

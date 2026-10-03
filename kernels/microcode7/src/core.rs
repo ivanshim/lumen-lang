@@ -64,6 +64,9 @@ impl Value {
             // method of a thing the program laid out is not.
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
+            Self::Wrapped(130, _) => "method_descriptor",
+            Self::Wrapped(131, _) => "builtin_function_or_method",
+            Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(130, _))) => "builtin_function_or_method",
             Self::Wrapped(120, _) => "wrapper_descriptor",
             Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",
@@ -182,6 +185,7 @@ impl Value {
                 return Self::text(&letters).hash_number();
             }
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
+            Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
             Self::Bound(program, frame) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(frame) as usize / 16)) as i64,

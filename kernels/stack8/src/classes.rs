@@ -748,6 +748,67 @@ impl<'a> Engine<'a> {
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
                 9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
+                // C-only draw methods can read the native stream without
+                // building a Python frame. Other calls use the full reader.
+                63 => {
+                    let bits = w.1[0].plain() == "bits";
+                    let valid = args.len() == if bits { 2 } else { 1 }
+                        && matches!(args.first().map(Value::contents), Some(Value::Object(_)))
+                        && (!bits || matches!(args[1].contents(), Value::Small(n) if n >= 0));
+                    if valid {
+                        match self.class_get(args[0].clone(), "_stream", false) {
+                            Ok(mark @ Value::Small(_)) => {
+                                let mut native = vec![w.1[0].clone(), mark];
+                                if bits { native.push(args[1].clone()); }
+                                return self.class_apply(Value::text("__random"), native);
+                            }
+                            Err(fault) if !self.attribute_fault(&fault) => return Err(fault),
+                            _ => {},
+                        }
+                    }
+                    self.class_apply(w.1[1].clone(), args)
+                }
+                // Ordinary binary64 inputs need no Python conversion frame.
+                // Domain edges and custom numeric protocols keep that frame.
+                64 => {
+                    let operation = w.1[0].plain();
+                    if operation == "fsum" && self.lang.math_fsum && args.len() == 1 {
+                        let values = match args[0].contents() { Value::Array(values) | Value::Tuple(values) => Some(values), _ => None };
+                        if values.is_some_and(|row| row.iter().all(|item| matches!(item.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_)))) {
+                            return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), args[0].clone()]);
+                        }
+                    }
+                    if args.len() == 1 {
+                        let number = args[0].contents();
+                        if operation == "floor" && matches!(number, Value::Small(_) | Value::Huge(_)) {
+                            return Ok(number);
+                        }
+                        // The representation already records finiteness and
+                        // sign. Do not round it just to inspect the domain;
+                        // the native operation performs that conversion once.
+                        let signs = match number {
+                            Value::Small(n) => Some((n >= 0, n > 0)),
+                            Value::Real(real) if !real.q.is_zero() => {
+                                let positive = !real.p.is_zero() && real.p.sign() == real.q.sign();
+                                Some((real.p.is_zero() || positive, positive))
+                            }
+                            _ => None,
+                        };
+                        if let Some((nonnegative, positive)) = signs {
+                            let domain = match operation.as_str() {
+                                "log" | "lgamma" | "log2" => positive,
+                                "sqrt" => nonnegative,
+                                "exp" | "floor" | "fabs" => true,
+                                "frexp" => self.lang.math_frexp,
+                                _ => false,
+                            };
+                            if domain {
+                                return self.class_apply(Value::text("__math"), vec![w.1[0].clone(),args[0].clone()]);
+                            }
+                        }
+                    }
+                    self.class_apply(w.1[1].clone(),args)
+                }
                 0 => Ok(w.1[0].clone()),
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
@@ -828,7 +889,7 @@ impl<'a> Engine<'a> {
                 }
                 44 => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
-                    self.data.extend([args[0].clone(), Value::Small(2)]);
+                    self.data.extend([args[0].clone(), Value::Small(3)]);
                     self.perform(&Action::Gt, 2)?;
                     if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
                     let Value::Class(owner) = &w.1[0] else { return Err(self.class_refusal()); };
@@ -1213,6 +1274,9 @@ impl<'a> Engine<'a> {
             let mut initial = args.clone();
             match self.lang.builtins.get(word) {
                 Some(Builtin::Set) => initial.clear(),
+                // A mapping is allocated empty; its initializer consumes
+                // the arguments, including an initializer supplied by a subclass.
+                Some(Builtin::Dict) if self.lang.constructor.as_deref().and_then(|key| self.class_value(&c, key)).is_some() => initial.clear(),
                 Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }
@@ -1427,6 +1491,7 @@ impl<'a> Engine<'a> {
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
             return match w.0 {
+                63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 4 => Ok(w.1[0].clone()),
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
@@ -1491,6 +1556,11 @@ impl<'a> Engine<'a> {
         let subject = if !self.lang.class_builder.is_empty() {
             match subject { Value::Bond(cell) => cell.borrow().clone(), Value::Binding(cell) => cell.borrow().clone(), value => value }
         } else { subject };
+        if let Value::Adapter(entry) = &subject {
+            if matches!(entry.0, 63 | 64) && matches!(name, "__name__" | "__qualname__" | "__doc__") {
+                return self.class_get(entry.1[1].clone(), name, plain);
+            }
+        }
         if let Value::Adapter(proxy) = &subject {
             if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
                 let dynamic = match receiver { Value::Object(o) => o.class_now().clone(), Value::Class(c) => c.clone(), _ => return Err(self.class_refusal()) };
@@ -1500,6 +1570,20 @@ impl<'a> Engine<'a> {
                         if let Some(value) = Self::own_class_value(class, name) {
                             return self.bind_class_value(value, Some(receiver.clone()), dynamic);
                         }
+                        if Self::own_kind(class).is_some() {
+                            if let Some(descriptor) = self.loose_kind_member(&Value::Class(class.clone()), name) {
+                                return Ok(Self::adapter(3, vec![descriptor, receiver.clone()]));
+                            }
+                        }
+                    }
+                    // The walk coming to the root, the root answers with
+                    // its own members as the plain read of a thing does:
+                    // the maker every ordinary class stands on, its
+                    // beginning among them.
+                    if let Some(root) = self.root_member(name, Some(&dynamic)) {
+                        if name == self.class_word("allocate") { return Ok(root); }
+                        let bound = if name == self.class_word("subclass") { Value::Class(dynamic.clone()) } else { receiver.clone() };
+                        return Ok(Self::adapter(3, vec![root, bound]));
                     }
                 }
                 return Err(self.missing_member(&subject, name));
@@ -2925,7 +3009,12 @@ impl<'a> Engine<'a> {
         if args.len() == 3 {
             self.type_title(&args[0])?;
             let original = args[2].clone();
-            if let Some(worth) = Self::worth_of(&original) { args[2] = worth.contents(); }
+            if let Some(worth) = Self::worth_of(&original) {
+                let ordered = matches!(&original, Value::Object(object) if self.lang.class_special.get(15).is_some_and(|word| self.class_value(&object.class_now(), word).is_some()));
+                args[2] = if ordered && matches!(worth.contents(), Value::Map(_)) {
+                    self.call_held(Value::Native(Builtin::Dict, Rc::from("dict")), vec![original.clone()])?.contents()
+                } else { worth.contents() };
+            }
             else if let Value::Object(object) = &original {
                 if object.class_now().name == "frozendict" {
                     if let Some((_, rows)) = object.fields.borrow().iter().find(|(key, _)| key == "_rows") { args[2] = rows.contents(); }
@@ -2952,7 +3041,8 @@ impl<'a> Engine<'a> {
             [Value::Adapter(_)] if self.kind_spelled(&args[0]).is_some()=>Ok(self.kind_maker_word()),
             // A method or a data member read off a builtin kind's own
             // word is of the descriptor kind CPython gives it.
-            [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if matches!(w.0,29|63|64)=>Ok(self.named_kind(&args[0])),
+            [Value::Adapter(w)] if w.0==3 && matches!(w.1.first(),Some(Value::Adapter(draw)) if draw.0==63)=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
             [Value::Adapter(w)] if matches!(w.0,7|14|31|32|119)=>Ok(self.named_kind(&args[0])),
             [_, _, _] => {
@@ -3179,7 +3269,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
@@ -3389,7 +3479,7 @@ impl<'a> Engine<'a> {
             if let Some(word)=Self::own_kind(c) {
                 if name==self.class_word("allocate"){return self.class_apply(Self::adapter(14,vec![Value::text(&word)]),args);}
                 if self.lang.constructor.as_deref()==Some(name){
-                    if let Some(worth) = Self::worth_of(&subject).filter(|held| matches!(held.contents(), Value::Set(_) | Value::Array(_))) {
+                    if let Some(worth) = Self::worth_of(&subject).filter(|held| matches!(held.contents(), Value::Set(_) | Value::Array(_) | Value::Map(_))) {
                         let mut given = Vec::new(); let mut named = Vec::new();
                         for (key, value) in self.call_items(args)? { match key { Some(key) => named.push((key, value)), None => given.push(value) } }
                         return Ok(self.value_method(&worth, name, given, named)?);

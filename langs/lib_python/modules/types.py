@@ -260,6 +260,9 @@ class GenericAlias:
     def __call__(self, *args, **keywords):
         return self.__origin__(*args, **keywords)
 
+    def __mro_entries__(self, bases):
+        return (self.__origin__,)
+
     def __eq__(self, other):
         if isinstance(other, GenericAlias):
             return self.__origin__ is other.__origin__ and self.__args__ == other.__args__

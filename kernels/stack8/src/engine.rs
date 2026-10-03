@@ -114,6 +114,7 @@ pub struct Engine<'a> {
     function_members: Vec<(Value, Rc<Instance>)>,
     constructor_records: HashMap<usize, usize>,
     collecting_cycles: bool,
+    kind_names: RefCell<HashMap<String, Vec<String>>>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
@@ -521,7 +522,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -1234,7 +1235,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), constructor_records: HashMap::new(), collecting_cycles: false,
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(), constructor_records: HashMap::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             native_exceptions,
             lang,
             world,
@@ -6065,7 +6066,20 @@ impl<'a> Engine<'a> {
         if self.lang.class_details.get("root.members").and_then(|words| words.get(9)).map_or(false, |word| word == name) {
             return Some(Self::adapter(30, vec![Value::text(name)]));
         }
-        if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
+        // Only the builtin kind's immutable namespace is memoized;
+        // directories of live values continue to be built normally.
+        let cached = self.kind_names.borrow().get(word.as_ref())
+            .map(|names| names.iter().any(|entry| entry == name));
+        let carries = match cached {
+            Some(answer) => answer,
+            None => {
+                let names = self.kind_member_names(&sample);
+                let answer = names.iter().any(|entry| entry == name);
+                self.kind_names.borrow_mut().insert(word.to_string(), names);
+                answer
+            }
+        };
+        if !carries { return None; }
         Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
     }
 
@@ -9809,8 +9823,32 @@ impl<'a> Engine<'a> {
                 // What was pushed: the class to stand on, then a value for
                 // every property, every value of the class's own, and
                 // every constant, in the order the plan names them.
-                let mut given = self.drop_many(argc)?.into_iter();
-                let base = match plan.extends {
+                let mut inputs = self.drop_many(argc)?;
+                let original_count = usize::from(plan.extends) + plan.answers;
+                let original_bases = Value::tuple(inputs[..original_count].to_vec());
+                let mut resolved = Vec::new();
+                let mut replaced_bases = false;
+                let base_words = self.lang.class_base_words.clone();
+                for candidate in inputs.drain(..original_count) {
+                    if base_words.len() == 2 && self.fuller_classes() && !matches!(candidate, Value::Class(_) | Value::Native(..) | Value::ByteKind(..)) {
+                        match self.class_get(candidate.clone(), &base_words[0], false) {
+                            Ok(hook) => {
+                                let answer = self.call_held(hook, vec![original_bases.clone()])?;
+                                let Value::Tuple(entries) = answer.contents() else { return Err("TypeError: __mro_entries__ must return a tuple".into()); };
+                                resolved.extend(entries.iter().cloned());
+                                replaced_bases = true;
+                                continue;
+                            }
+                            Err(fault) if self.attribute_fault(&fault) => {}
+                            Err(fault) => return Err(fault),
+                        }
+                    }
+                    resolved.push(candidate);
+                }
+                let base_count = resolved.len();
+                resolved.extend(inputs);
+                let mut given = resolved.into_iter();
+                let base = match base_count > 0 {
                     false => None,
                     true => match given.next() {
                         Some(Value::Class(c)) if Self::class_sealed(&c) => return Err(format!("TypeError: type '{}' is not an acceptable base type", c.name).into()),
@@ -9835,7 +9873,7 @@ impl<'a> Engine<'a> {
                     },
                 };
                 let mut answers = Vec::with_capacity(plan.answers);
-                for _ in 0..plan.answers {
+                for _ in 1..base_count {
                     match given.next() {
                         Some(Value::Class(c)) => answers.push(c),
                         Some(Value::Native(Builtin::SortOf, _)) if self.fuller_classes() => { let maker = self.metaclass_root(); answers.push(maker); }
@@ -9854,6 +9892,7 @@ impl<'a> Engine<'a> {
                 };
                 if self.fuller_classes() {
                     let mut members=take(&plan.shared_names);
+                    if replaced_bases { members.push((base_words[1].clone(), original_bases)); }
                     members.extend(plan.methods.iter().map(|(n,p)|(n.clone(),Value::Routine(p.clone()))));
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
@@ -9965,7 +10004,9 @@ impl<'a> Engine<'a> {
                     self.call_held(importer, vec![Value::text(path), globals, locals, fromlist, Value::Small(0)])?
                 }
             }
-            Action::ImportFrom(path, name) => {
+            Action::ImportFrom(written, name) => {
+                let resolved = self.relative_module_name(written)?;
+                let path = resolved.as_str();
                 // The member a from-import (or a dotted aliased import)
                 // names is read off the module the import itself left on
                 // the stack: a package's own submodule is read in as the
@@ -12741,6 +12782,28 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        // The binary working already converts both operands and
+        // produces an exact binary result. Plain float operations need
+        // no intermediate real allocations or second result rounding.
+        let plain=|value:&Value|matches!(value,Value::Small(_))
+            || matches!(value,Value::Real(r) if !r.q.is_zero());
+        let zero=|value:&Value|matches!(value,Value::Small(0))
+            || matches!(value,Value::Real(r) if r.p.is_zero());
+        if self.lang.math_floating && self.lang.arithmetic_binary
+            && self.lang.real_bits==Some(64) && self.lang.shortest_reals
+            && plain(a) && plain(b) && matches!((a,b),(Value::Real(_),_)|(_,Value::Real(_))) {
+            if matches!(op,Action::Div|Action::DivReal) && zero(b) {
+                return Err("ZeroDivisionError: float division by zero".into());
+            }
+            let operation=match op {
+                Action::Add=>Some(Operation::Plus),Action::Sub=>Some(Operation::Minus),
+                Action::Mul=>Some(Operation::Times),Action::Div=>Some(Operation::Over),
+                Action::DivReal=>Some(Operation::OverReal),_=>None,
+            };
+            if let Some(operation)=operation {
+                if let Some(answer)=arith::binary_work(operation,a,b) {return answer.map_err(Into::into);}
+            }
+        }
         if self.lang.power_real && matches!(op, Action::Power) {
             if let Some(answer) = self.real_power(a, b)? { return Ok(answer); }
         }
@@ -14028,7 +14091,7 @@ impl<'a> Engine<'a> {
     /// Call a value the program could call, with these arguments, and
     /// answer what it left. What the call raises, other than plain
     /// words, is kept aside and raised once the builtin has given way.
-    fn call_held(&mut self, callee: Value, args: Vec<Value>) -> Res<Value> {
+    pub(super) fn call_held(&mut self, callee: Value, args: Vec<Value>) -> Res<Value> {
         let floor = self.data.len();
         let count = args.len() + 1;
         self.data.extend(args);
@@ -16879,6 +16942,10 @@ impl<'a> Engine<'a> {
             // (anything else); a third stream told to follow the
             // second is kept as its own pipe, and the library that
             // asked reads the two together afterwards.
+            Builtin::Posix => {
+                if self.lang.posix_words.is_empty() { return Err(self.special_fault()); }
+                crate::posix::operate(args)?
+            },
             Builtin::Subprocess => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
                 let step = as_index(&args[0])?;
@@ -17332,9 +17399,34 @@ impl<'a> Engine<'a> {
                 let Some(working) = args.first().map(|v| v.display(&sp)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
+                if working == "method" && args.len() == 3 {
+                    return Ok(Self::adapter(64, vec![args[1].clone(), args[2].clone()]));
+                }
                 if working == "sumprod" && self.lang.math_sumprod {
                     if args.len() != 3 { return Err("TypeError: sumprod expected 2 arguments".into()); }
                     return self.product_sum(&args[1], &args[2]);
+                }
+                if working == "fsum" && self.lang.math_fsum {
+                    if args.len() != 2 { return Err("TypeError: fsum expected one iterable".into()); }
+                    let entries = match args[1].contents() {
+                        Value::Array(values) | Value::Tuple(values) => values,
+                        _ => return Err("NotImplementedError: native fsum requires a numeric sequence".into()),
+                    };
+                    let converted = entries.iter().map(|item| {
+                        let item = item.contents();
+                        if let Value::Flag(flag) = item { return Ok(if flag { 1.0 } else { 0.0 }); }
+                        if let Value::Real(real) = &item {
+                            if real.below && real.p.is_zero() { return Ok(if real.q.is_zero() { -f64::NAN } else { -0.0 }); }
+                        }
+                        let exact = arith::Exact::from_value(&item).ok_or("TypeError: must be real number")?;
+                        let number = crate::value::as_binary(&exact.p, &exact.q);
+                        if exact.places.is_none() && !exact.p.is_zero() && number.is_infinite() { return Err("OverflowError: int too large to convert to float".into()); }
+                        Ok(number)
+                    });
+                    let sum = arith::expansion_sum(converted)?;
+                    let mut result = crate::value::real_of(sum, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut result { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    return Ok(result);
                 }
                 let wants = match working.as_str() {
                     "copysign" | "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" | "fmin" | "fmax" => 2,
@@ -17342,6 +17434,64 @@ impl<'a> Engine<'a> {
                     "fma" => 3,
                     _ => 1,
                 };
+                // The log of the gamma curve, worked by the Lanczos
+                // ratio with the coefficients the reference's own
+                // fallback carries, a reflection through the sine of a
+                // whole turn answering for the negative half of the
+                // line. The same numbers in the same order as the
+                // library's own spelling of it, so both come to the
+                // one real of the width.
+                fn lgamma_wide(x: f64) -> f64 {
+                    match x { 1.0 | 2.0 => return 0.0, _ => {} }
+                    if x.abs() < 1e-20 { return -x.abs().ln(); }
+                    const G: f64 = 6.02468004077673;
+                    const LANCZOS: [f64; 26] = [
+                        23531376880.41076, 42919803642.6491, 35711959237.35567, 17921034426.03721,
+                        6039542586.352028, 1439720407.3117216, 248874557.86205417, 31426415.585400194,
+                        2876370.6289353725, 186056.26539522348, 8071.672002365816, 210.82427775157936,
+                        2.5066282746310002,
+                        0.0, 39916800.0, 120543840.0, 150917976.0, 105258076.0,
+                        45995730.0, 13339535.0, 2637558.0, 357423.0, 32670.0,
+                        1925.0, 66.0, 1.0,
+                    ];
+                    let summed = |x: f64| -> f64 {
+                        let (mut above, mut below) = (0.0f64, 0.0f64);
+                        if x < 5.0 {
+                            let mut at = 12usize;
+                            while at < 13 {
+                                above = above * x + LANCZOS[at];
+                                below = below * x + LANCZOS[at + 13];
+                                at = at.wrapping_sub(1);
+                            }
+                        } else {
+                            for at in 0..13 {
+                                above = above / x + LANCZOS[at];
+                                below = below / x + LANCZOS[at + 13];
+                            }
+                        }
+                        above / below
+                    };
+                    let absx = if x < 0.0 { -x } else { x };
+                    let mut r = summed(absx).ln() - G;
+                    r = (absx - 0.5).mul_add((absx + G - 0.5).ln() - 1.0, r);
+                    if x < 0.0 {
+                        // sin(pi*x) with whole and half turns folded
+                        // away, exactly as the library folds them.
+                        let y = absx % 2.0;
+                        let turn = std::f64::consts::PI;
+                        let n = (2.0 * y + 0.5) as i64;
+                        let s = match n {
+                            0 => (turn * y).sin(),
+                            1 => (turn * (y - 0.5)).cos(),
+                            2 => (turn * (1.0 - y)).sin(),
+                            3 => -(turn * (y - 1.5)).cos(),
+                            _ => (turn * (y - 2.0)).sin(),
+                        };
+                        r = 1.1447298858494002 - s.abs().ln() - absx.ln() - r;
+                    }
+                    r
+                }
+
                 if args.len() != wants + 1 {
                     return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, wants, args.len() - 1));
                 }
@@ -17486,6 +17636,20 @@ impl<'a> Engine<'a> {
                     if let Value::Real(real) = &mut number { Rc::make_mut(real).floating = self.lang.math_floating; }
                     return Ok(Value::tuple(vec![number, Value::Small(exponent)]));
                 }
+                // A floor answers with a whole number, not a real: the
+                // whole numbers reach past what any one place of the
+                // width holds, and the one beneath the given real is
+                // reached by taking toward nought and stepping back
+                // where that stepped over it.
+                if working == "floor" {
+                    if !x.is_finite() { return Err("ValueError: a non-finite value has no integer floor".into()); }
+                    let mut whole = x.trunc();
+                    if whole > x { whole -= 1.0; }
+                    return Ok(match num_traits::FromPrimitive::from_f64(whole) {
+                        Some(small) => Value::Small(small),
+                        None => Value::of_big(<BigInt as num_traits::FromPrimitive>::from_f64(whole).unwrap_or_default()),
+                    });
+                }
                 if working == "fma" {
                     let z = given(3)?;
                     let got = arith::fused(x, y, z)?;
@@ -17494,6 +17658,7 @@ impl<'a> Engine<'a> {
                     return Ok(value);
                 }
                 let got = match working.as_str() {
+                    "lgamma" => lgamma_wide(x),
                     "copysign" => x.copysign(y),
                     "sqrt" => x.sqrt(),
                     "exp" => x.exp(),
@@ -17501,6 +17666,7 @@ impl<'a> Engine<'a> {
                     "log" => x.ln(),
                     "log10" => x.log10(),
                     "log2" => x.log2(),
+                    "fabs" => x.abs(),
                     "log1p" => x.ln_1p(),
                     "sin" => x.sin(),
                     "cos" => x.cos(),
@@ -17579,6 +17745,254 @@ impl<'a> Engine<'a> {
                 let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
                 if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
                 value
+            }
+            // The Mersenne Twister stream the library lends its chance
+            // from, worked by name (ext.builtin._random): a stream
+            // begun, planted from a whole number or from the system's
+            // own disorder, drawn on as a real of the width's 53 bits
+            // or as a run of whole bits, and told or set back to where
+            // it stands. The words a stream keeps never leave the
+            // kernel: a library holds only the number its stream was
+            // lent under, and the disorder of the system itself can be
+            // asked for as raw bytes.
+            Builtin::Twister => {
+                // The six hundred and twenty-four words, and the place
+                // among them the next draw reads.
+                struct Stream { words: Vec<u32>, place: usize }
+                impl Stream {
+                    // Planted from one word, as every stream is before
+                    // a key of them reshapes it.
+                    fn planted(seed: u32) -> Stream {
+                        let mut words = vec![0u32; 624];
+                        words[0] = seed;
+                        for at in 1..624 {
+                            let behind = words[at - 1];
+                            words[at] = 1812433253u32.wrapping_mul(behind ^ (behind >> 30)).wrapping_add(at as u32);
+                        }
+                        Stream { words, place: 624 }
+                    }
+                    // Planted from a key of words, the long way round
+                    // that scatters a key of any length over the words.
+                    fn planted_from_key(&mut self, key: &[u32]) {
+                        if key.is_empty() { self.planted_from_key(&[0]); return; }
+                        *self = Stream::planted(19650218);
+                        let (mut at, mut from) = (1usize, 0usize);
+                        for _ in 0..key.len().max(624) {
+                            let behind = self.words[at - 1];
+                            self.words[at] = (self.words[at] ^ (behind ^ (behind >> 30)).wrapping_mul(1664525))
+                                .wrapping_add(key[from]).wrapping_add(from as u32);
+                            at += 1; from += 1;
+                            if at >= 624 { self.words[0] = self.words[623]; at = 1; }
+                            if from >= key.len() { from = 0; }
+                        }
+                        for _ in 0..623 {
+                            let behind = self.words[at - 1];
+                            self.words[at] = (self.words[at] ^ (behind ^ (behind >> 30)).wrapping_mul(1566083941))
+                                .wrapping_sub(at as u32);
+                            at += 1;
+                            if at >= 624 { self.words[0] = self.words[623]; at = 1; }
+                        }
+                        self.words[0] = 0x8000_0000;
+                    }
+                    // The whole of the words turned over once, so that
+                    // drawing may begin again from the first of them.
+                    fn turned(&mut self) {
+                        for at in 0..624 {
+                            let span = (self.words[at] & 0x8000_0000) | (self.words[(at + 1) % 624] & 0x7fff_ffff);
+                            self.words[at] = self.words[(at + 397) % 624] ^ (span >> 1);
+                            if span & 1 == 1 { self.words[at] ^= 0x9908_b0df; }
+                        }
+                        self.place = 0;
+                    }
+                    // One word drawn, and tempered into its final shape.
+                    fn word(&mut self) -> u32 {
+                        if self.place >= 624 { self.turned(); }
+                        let mut drawn = self.words[self.place];
+                        self.place += 1;
+                        drawn ^= drawn >> 11;
+                        drawn ^= (drawn << 7) & 0x9d2c_5680;
+                        drawn ^= (drawn << 15) & 0xefc6_0000;
+                        drawn ^= drawn >> 18;
+                        drawn
+                    }
+                }
+                thread_local! {
+                    static LENT: RefCell<Vec<Stream>> = const { RefCell::new(Vec::new()) };
+                }
+                // The system's own disorder, read from where it is kept.
+                fn read_disorder(want: usize) -> Result<Vec<u8>, String> {
+                    use std::io::Read;
+                    let mut held = Vec::new();
+                    held.try_reserve_exact(want).map_err(|_| "MemoryError: ".to_string())?;
+                    held.resize(want, 0);
+                    std::fs::File::open("/dev/urandom")
+                        .and_then(|mut source| source.read_exact(&mut held))
+                        .map_err(|_| "OSError: the source of disorder did not answer".to_string())?;
+                    Ok(held)
+                }
+                // The place the stream stands at, told as a whole
+                // number a library can hand back.
+                let whole_arg = |at: usize| -> Option<BigInt> { arith::whole_of(&args[at].contents()) };
+                let Some(working) = args.first().map(|v| v.display(&sp)) else {
+                    return Err(format!("{}() wants the name of a working first of all", name));
+                };
+                match working.as_str() {
+                    "method" if args.len() == 3 => {
+                        Self::adapter(63, vec![args[1].clone(), args[2].clone()])
+                    }
+                    "pid" => {
+                        if args.len() != 1 { return Err(self.lang.module_helper_amiss.clone()); }
+                        Value::Small(i64::from(std::process::id()))
+                    }
+                    "begin" => {
+                        if args.len() != 1 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let under = LENT.with(|held| { let mut held = held.borrow_mut(); held.push(Stream::planted(19650218)); held.len() - 1 });
+                        Value::Small(under as i64)
+                    }
+                    "seed" => {
+                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        let Some(number) = whole_arg(2) else { return Err(self.lang.module_helper_amiss.clone()); };
+                        // The number is split into words from its right
+                        // end, the way the key is read; nothing at all
+                        // still makes a key of one empty word.
+                        let mut key = number.magnitude().to_u32_digits();
+                        if key.is_empty() { key.push(0); }
+                        LENT.with(|held| match held.borrow_mut().get_mut(under) {
+                            Some(stream) => { stream.planted_from_key(&key); Ok(Value::Null) }
+                            None => Err(self.lang.module_helper_amiss.clone()),
+                        })?
+                    }
+                    "entropy" => {
+                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        match read_disorder(2496).map(|bytes| bytes.chunks_exact(4)
+                                .map(|four| u32::from_le_bytes([four[0], four[1], four[2], four[3]])).collect::<Vec<u32>>()) {
+                            Ok(key) => LENT.with(|held| match held.borrow_mut().get_mut(under) {
+                                Some(stream) => { stream.planted_from_key(&key); Ok(Value::Flag(true)) }
+                                None => Err(self.lang.module_helper_amiss.clone()),
+                            })?,
+                            Err(_) => Value::Flag(false),
+                        }
+                    }
+                    "next" => {
+                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        let (high, low) = LENT.with(|held| match held.borrow_mut().get_mut(under) {
+                            Some(stream) => Ok((stream.word() >> 5, stream.word() >> 6)),
+                            None => Err(self.lang.module_helper_amiss.clone()),
+                        })?;
+                        let drawn = (high as f64 * 67108864.0 + low as f64) * (1.0 / 9007199254740992.0);
+                        let mut value = crate::value::real_of(drawn, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                        if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                        value
+                    }
+                    "bits" => {
+                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        let Some(count) = whole_arg(2).and_then(|n| n.to_u64()) else {
+                            return Err("OverflowError: Python int too large to convert to C uint64_t".into());
+                        };
+                        if count <= 32 {
+                            let drawn = LENT.with(|held| match held.borrow_mut().get_mut(under) {
+                                Some(stream) => Ok(if count == 0 { 0 } else { stream.word() >> (32 - count) }),
+                                None => Err(self.lang.module_helper_amiss.clone()),
+                            })?;
+                            Value::Small(drawn as i64)
+                        } else {
+                            let words = ((count - 1) / 32 + 1) as usize;
+                            if words > isize::MAX as usize / 4 { return Err("MemoryError: ".into()); }
+                            // The top word holds only the bits past the
+                            // whole words beneath it, and its excess is
+                            // dropped before it is laid in place.
+                            let top = (count - 1) % 32 + 1;
+                            let drawn = LENT.with(|held| match held.borrow_mut().get_mut(under) {
+                                Some(stream) => {
+                                    let mut limbs: Vec<u32> = Vec::new();
+                                    limbs.try_reserve_exact(words).map_err(|_| "MemoryError: ".to_string())?;
+                                    for at in 0..words {
+                                        let mut word = stream.word();
+                                        if at == words - 1 { word >>= 32 - top; }
+                                        limbs.push(word);
+                                    }
+                                    Ok(limbs)
+                                }
+                                None => Err(self.lang.module_helper_amiss.clone()),
+                            })?;
+                            Value::of_big(BigInt::from(num_bigint::BigUint::new(drawn)))
+                        }
+                    }
+                    "state" => {
+                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        LENT.with(|held| match held.borrow().get(under) {
+                            Some(stream) => {
+                                let mut told: Vec<Value> = stream.words.iter().map(|w| Value::Small(*w as i64)).collect();
+                                told.push(Value::Small(stream.place as i64));
+                                Ok(Value::tuple(told))
+                            }
+                            None => Err(self.lang.module_helper_amiss.clone()),
+                        })?
+                    }
+                    "restore" => {
+                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        let row = args[2].contents();
+                        let (Value::Array(parts) | Value::Tuple(parts)) = &row else {
+                            return Err("TypeError: state vector must be a tuple".into());
+                        };
+                        if parts.len() != 625 { return Err("ValueError: state vector is the wrong size".into()); }
+                        let mut words = [0u32; 624];
+                        for at in 0..624 {
+                            let Some(given) = arith::whole_of(&parts[at].contents()) else {
+                                return Err("TypeError: an integer is required".into());
+                            };
+                            let Ok(within) = i64::try_from(given) else {
+                                return Err("OverflowError: int too large to convert to C long".into());
+                            };
+                            if within < 0 { return Err("OverflowError: can't convert negative value to unsigned int".into()); }
+                            if within > u32::MAX as i64 { return Err("OverflowError: int too large to convert to C unsigned int".into()); }
+                            words[at] = within as u32;
+                        }
+                        let Some(place) = arith::whole_of(&parts[624].contents()).and_then(|n| n.to_i64()) else {
+                            return Err("TypeError: an integer is required".into());
+                        };
+                        if !(0..=624).contains(&place) { return Err("ValueError: invalid state".into()); }
+                        LENT.with(|held| match held.borrow_mut().get_mut(under) {
+                            Some(stream) => { stream.words = words.to_vec(); stream.place = place as usize; Ok(Value::Null) }
+                            None => Err(self.lang.module_helper_amiss.clone()),
+                        })?
+                    }
+                    "bytes" => {
+                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(want) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        // Account for CPython's variable-object header,
+                        // cached hash, and terminating zero in a bytes value.
+                        let overhead = 4 * std::mem::size_of::<usize>() + 1;
+                        if want > isize::MAX as usize - overhead {
+                            return Err("OverflowError: byte string is too large".into());
+                        }
+                        match read_disorder(want) {
+                            Ok(bytes) => self.byte_make(bytes, false),
+                            Err(fault) => return Err(fault),
+                        }
+                    }
+                    _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
+                }
             }
             Builtin::OutBegun => {
                 arity(0)?;
@@ -19602,6 +20016,16 @@ impl Engine<'_> {
             Value::ByteKind(mutable, _) => self.byte_call(u8::from(*mutable), &args),
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
+            Value::Adapter(entry) if matches!(entry.0,63|64)
+                || entry.0==3 && matches!(entry.1.first(),Some(Value::Adapter(draw)) if draw.0==63) => {
+                match self.class_apply(work.clone(),args) {
+                    Ok(value)=>Ok(value),
+                    Err(fault)=>{
+                        self.carried=Some(fault);
+                        Err(self.core_fault("core.unready",&work.core_kind()))
+                    }
+                }
+            }
             Value::Method(..) => match self.class_apply(work.clone(), args) {
                 Ok(value) => Ok(value),
                 Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
@@ -20510,6 +20934,10 @@ impl Engine<'_> {
         if let Some(word) = self.lang.module_path.clone() {
             if let Some((above, _)) = parent {
                 let owner = self.import_module(above)?;
+                if let Some(cached) = self.module_cache_value(path) {
+                    if matches!(cached, Value::Null) { return Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules").into()); }
+                    return Ok(cached);
+                }
                 let package = matches!(owner, Value::Object(ref module) if module.fields.borrow().iter().any(|(name, _)| name == &word));
                 if let Some(held) = self.modules.get(path) {
                     if self.module_cache_names(path) { return Ok(held.clone()); }

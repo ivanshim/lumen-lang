@@ -415,6 +415,25 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             Value::text(&out)
         }
         Count | Find | Rfind | Index | Rindex | Startswith | Endswith => {
+            // Without explicit bounds the UTF-8 text is already the
+            // search window. Only a resulting position needs a count
+            // of characters; ASCII positions are byte positions.
+            if params.len()==1 && matches!(op,Count|Find|Rfind|Index|Rindex) {
+                let needle=text(&params[0],lang)?;
+                if op==Count {
+                    return Ok(Value::Small(if needle.is_empty() {
+                        (s.chars().count()+1) as i64
+                    } else {s.matches(needle).count() as i64}));
+                }
+                let at=if matches!(op,Rfind|Rindex) {s.rfind(needle)} else {s.find(needle)};
+                if let Some(byte)=at {
+                    let prefix=&s[..byte];
+                    let offset=if prefix.is_ascii() {byte} else {prefix.chars().count()};
+                    return Ok(Value::Small(offset as i64));
+                }
+                if matches!(op,Index|Rindex) {return Err(fault(lang,"missing"));}
+                return Ok(Value::Small(-1));
+            }
             let chars: Vec<usize>=s.char_indices().map(|(i,_)|i).chain(std::iter::once(s.len())).collect();
             let length=chars.len()-1;
             let adjust=|n:i64| if n<0 {(length as i64).saturating_add(n).max(0) as usize} else {n as usize};
