@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/test/typinganndata/ann_module2.py; PSF License.
 """
 Some correct syntax for variable annotation here.
 More examples are in test_grammar and test_parser.

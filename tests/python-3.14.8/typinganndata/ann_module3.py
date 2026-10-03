@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/test/typinganndata/ann_module3.py; PSF License.
 """
 Correct syntax for variable annotation that should fail at runtime
 in a certain manner. More examples are in test_grammar and test_parser.

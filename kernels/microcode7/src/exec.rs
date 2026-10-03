@@ -7226,6 +7226,7 @@ impl<'a> Machine<'a> {
         };
         let op = match stands {
             Value::Intrinsic(Prim::ValueMethod, spelling) if spelling.contains('.') => Prim::ValueMethod,
+            Value::Intrinsic(operation, _) => *operation,
             _ => self.table.prims.get(word.as_ref()).copied()?,
         };
         let name = word.to_string();
@@ -21428,7 +21429,7 @@ impl Machine<'_> {
         Ok(prefix)
     }
 
-    fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
+    pub(super) fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
         if path == "_typing" && self.table.has_any("ext.stmt.type_params.open") { return Ok(self.type_support_namespace()); }
 
         // A name a program's own code took out of `sys.modules` is read

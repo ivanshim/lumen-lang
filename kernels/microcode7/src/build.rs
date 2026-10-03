@@ -294,6 +294,7 @@ pub struct Builder<'a> {
     annotation_lookup: bool,
     annotation_owner: Option<(String, Vec<String>)>,
     generic_class_body: bool,
+    class_type_arguments: Vec<String>,
     annotations_as_strings: bool,
     annotation_sites: Vec<(String, usize)>,
     module_site_flags: HashMap<usize, String>,
@@ -572,7 +573,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { annotation_lookup: false, annotation_owner: None, generic_class_body: false, class_type_arguments: Vec::new(), annotations_as_strings: false, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -4900,7 +4901,10 @@ impl<'a> Builder<'a> {
         } else { Vec::new() };
         if generic {
             let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
-            args.push(Form::Apply(Callee::Code(Box::new(maker)), Vec::new()));
+            let names = std::mem::take(&mut self.class_type_arguments);
+            let types = names.iter().map(|name| self.read(name)).collect();
+            let parameters = prim_call(Prim::MakeTuple, types);
+            args.push(Form::Apply(Callee::Code(Box::new(maker)), vec![parameters]));
         }
         let header = self.gensym("class_header");
         setup.push(Form::Write(header.clone(), Box::new(prim_call(Prim::MakeTuple, args))));
@@ -4996,7 +5000,13 @@ impl<'a> Builder<'a> {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
             let book = parts.book.as_ref().expect("class namespace");
             let target = self.read_to_write(book.ident.as_ref());
-            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(crate::data::ANNOTATE_WORD)), prim_call(Prim::MakeArray, row)]));
+            let metadata = self.gensym("annotation_values");
+            setup.push(Form::Write(metadata.clone(), Box::new(prim_call(Prim::MakeArray, row))));
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(crate::data::ANNOTATE_WORD)), self.read(&metadata.ident)]));
+            let (key, action) = if self.annotations_as_strings { ("__annotations__", 25) } else { ("__annotate_func__", 24) };
+            let target = self.read_to_write(book.ident.as_ref());
+            let evaluate = prim_call(Prim::ClassWork(action), vec![self.read(&metadata.ident)]);
+            setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text(key)), evaluate]));
             let target = self.read_to_write(book.ident.as_ref());
             setup.push(prim_call(Prim::ClassWork(19), vec![target, constant(Value::text("\0string_annotations")), constant(Value::Flag(self.annotations_as_strings))]));
             for (_, routine) in &parts.annotated_names { if let Form::Glance(address) = routine { setup.push(Form::Forget(address.clone())); } }
@@ -5017,6 +5027,7 @@ impl<'a> Builder<'a> {
                 let (mut forms, names) = reader.declare_type_objects()?;
                 reader.pos = beginning;
                 reader.generic_class_body = true;
+                reader.class_type_arguments.clone_from(&names);
                 forms.push(reader.class_with_receiver()?.0);
                 forms.push(reader.give_type_parameters(&name, &names));
                 forms.push(reader.read(&name));
@@ -5108,7 +5119,9 @@ impl<'a> Builder<'a> {
         if nested {
             let generic = self.gensym("generic_parent");
             let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
-            let value = Form::Apply(Callee::Code(Box::new(maker)), Vec::new());
+            let parameters = std::mem::take(&mut self.class_type_arguments);
+            let members = parameters.iter().map(|item| self.read(item)).collect();
+            let value = Form::Apply(Callee::Code(Box::new(maker)), vec![prim_call(Prim::MakeTuple, members)]);
             setup.push(Form::Write(generic.clone(), Box::new(value)));
             if parent.is_none() { parent = Some(generic); } else { other_parents.push(generic); }
         }

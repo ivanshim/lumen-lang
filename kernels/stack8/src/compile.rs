@@ -237,6 +237,7 @@ pub struct Compiler<'a> {
     reading_annotation: bool,
     annotation_namespace: Option<(String, std::collections::HashSet<String>)>,
     reading_generic_class: bool,
+    generic_parameters: Vec<String>,
     future_annotations: bool,
     pending_annotations: Vec<(String, usize)>,
     module_annotation_marks: HashMap<usize, String>,
@@ -588,7 +589,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { reading_annotation: false, annotation_namespace: None, reading_generic_class: false, future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_parameters: Vec::new(), future_annotations: false, syntax_try_nesting: 0, syntax_finally_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -6175,8 +6176,11 @@ impl<'a> Compiler<'a> {
             self.arguments(&pair)?
         } else { 0 };
         if generic {
+            let names = std::mem::take(&mut self.generic_parameters);
+            for name in &names { self.read(name); }
+            self.act(Action::MakeTuple, names.len());
             self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
-            self.act(Action::Invoke(Rc::from("generic base")), 1);
+            self.act(Action::Invoke(Rc::from("generic base")), 2);
             count += 1;
         }
         self.act(Action::MakeTuple, count);
@@ -6271,7 +6275,13 @@ impl<'a> Compiler<'a> {
             self.constant(Value::text(crate::code::ANNOTATE_WORD));
             let count = parts.annotated.len() * 2;
             for (key, location) in &parts.annotated { self.constant(key.clone()); self.glance(location); let address = self.cell_to_write(location); self.put(Instr::Forget(address)); }
-            self.act(Action::MakeArray, count); self.read(parts.book.as_ref().expect("class namespace"));
+            self.act(Action::MakeArray, count);
+            let rows = self.gensym("annotation_rows"); self.write(&rows); self.read(&rows);
+            self.read(parts.book.as_ref().expect("class namespace"));
+            self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
+            self.constant(Value::text(if self.future_annotations { "__annotations__" } else { "__annotate_func__" }));
+            self.read(&rows); self.act(Action::Builtin(Builtin::ClassTool(if self.future_annotations { 25 } else { 24 }), Rc::from("")), 1);
+            self.read(parts.book.as_ref().expect("class namespace"));
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
             self.constant(Value::text("\0annotation_strings")); self.constant(Value::Flag(self.future_annotations)); self.read(parts.book.as_ref().expect("class namespace"));
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
@@ -6294,6 +6304,7 @@ impl<'a> Compiler<'a> {
                 let parameters = compiler.create_type_parameters()?;
                 compiler.pos = declaration;
                 compiler.reading_generic_class = true;
+                compiler.generic_parameters = parameters.clone();
                 compiler.explicit_class()?;
                 compiler.attach_type_parameters(&name, &parameters);
                 compiler.read(&name);
@@ -6387,8 +6398,11 @@ impl<'a> Compiler<'a> {
             }
         }
         if inside_wrapper {
+            let names = std::mem::take(&mut self.generic_parameters);
+            for name in &names { self.read(name); }
+            self.act(Action::MakeTuple, names.len());
             self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
-            self.act(Action::Invoke(Rc::from("generic base")), 1);
+            self.act(Action::Invoke(Rc::from("generic base")), 2);
             let generic = self.gensym("generic_base");
             self.write(&generic);
             if base.is_none() { base = Some(generic); } else { further.push(generic); }

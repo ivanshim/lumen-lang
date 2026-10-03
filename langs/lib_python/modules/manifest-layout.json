@@ -11,6 +11,7 @@
     "functools": "runtime_adapters/functools.py",
     "heapq": "runtime_adapters/heapq.py",
     "operator": "runtime_adapters/operator.py",
-    "inspect": "runtime_adapters/inspect.py"
+    "inspect": "runtime_adapters/inspect.py",
+    "annotationlib": "runtime_adapters/annotationlib.py"
   }
 }

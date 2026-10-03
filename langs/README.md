@@ -5925,3 +5925,32 @@ class itself and is not inherited by Python subclasses.
 `ext.builtin.math.frexp` enables Python binary64 mantissa/exponent decomposition through the existing math operation label, including signed zero, subnormal values and non-finite values. Other language tables leave this capability absent.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
+
+The Python-only type-parameter labels also expose `_typing` primitives to the
+unchanged CPython v3.14.8 `typing.py`. Generic subscription and subclass
+initialization call its `_generic_class_getitem` and `_generic_init_subclass`;
+implicit generic bases retain their actual type parameters. Native TypeVar,
+ParamSpec and TypeVarTuple substitution hooks call the corresponding upstream
+helpers. TypeVar defaults are prepared before specialization. `_idfunc` returns
+its one argument unchanged. Union subscription uses the native union type,
+normalizes None through `_type_check`, flattens members and removes duplicates.
+Variance validation and representations follow `Objects/typevarobject.c`.
+The other four kernels do not expose these Python extensions.
+
+This remains a partial `_typing` port: variadic annotation syntax, TypeVarTuple
+iteration/unpacking, generic union and type-alias substitution, direct
+ParamSpecArgs/ParamSpecKwargs construction and their complete comparison,
+immutable-type/descriptor details, weak-reference ownership and serialization
+still need work. The complete `test_typing.py` stops at its starred parameter
+annotation syntax. Annotationlib's type representation adapter follows the
+upstream ordinary-object branches; template AST rendering remains unavailable.
+
+Prepared Python class namespaces expose the actual deferred annotation evaluator
+as `__annotate_func__`, or the annotation string dictionary under future
+annotations. Annotationlib's namespace lookup is the unchanged CPython helper.
+This lets the upstream NamedTuple metaclass discover its fields. Ordinary Python
+classes also expose their real weak-reference list through a read-only descriptor;
+class descriptor cycles are candidates for the existing cycle collector.
+Reassigning `__bases__` to the identical direct bases is allowed; changing bases
+still raises the existing unsupported-operation exception. The pure-Python
+`__future__.py` is also carried unchanged from v3.14.8.

@@ -14448,7 +14448,7 @@ impl<'a> Engine<'a> {
         }
         if let Builtin::ClassTool(job) = builtin {
             let supplied = items.into_iter().map(|(key, value)| match key { Some(key) => Value::Tie(Rc::new((Value::text(&key), value))), None => value }).collect();
-            return self.class_work(job, supplied).map_err(|fault| { self.carried = Some(fault); self.lang.stream_failed[0].clone() });
+            return self.class_work(job, supplied).map_err(|fault| { if self.carried.is_none() { self.carried = Some(fault); } self.lang.stream_failed[0].clone() });
         }
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
@@ -21292,7 +21292,7 @@ impl Engine<'_> {
         Ok(path)
     }
 
-    fn import_module(&mut self, path: &str) -> Flow<Value> {
+    pub(super) fn import_module(&mut self, path: &str) -> Flow<Value> {
         if path == "_typing" && self.lang.type_parameters { return Ok(self.typing_module()); }
 
         if path.starts_with('.') { let resolved = self.import_path(path)?; return self.import_module(&resolved); }

@@ -1,0 +1,7 @@
+# From CPython v3.14.8 (8e6e75d9102e), Lib/test/typinganndata/fwdref_module.py; PSF License.
+from typing import ForwardRef
+
+MyList = list[int]
+MyDict = dict[str, 'MyList']
+
+fw = ForwardRef('MyDict', module=__name__)
