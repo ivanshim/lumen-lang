@@ -24,6 +24,7 @@ pub mod form;
 pub mod data;
 pub mod ghost;
 mod core;
+mod posix;
 mod complex;
 pub mod tuples;
 
@@ -639,3 +640,4 @@ fn protocol_complaint_named(table: &Table, words: &str) -> bool {
         _ => false,
     }
 }
+mod sre;

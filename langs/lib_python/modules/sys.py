@@ -19,15 +19,9 @@ platform = 'linux'
 # reference implementation asks the name here first, and the honest
 # answer -- not cpython -- is what lets such a test step aside instead
 # of measuring this kernel against machinery it does not have.
-class _Implementation:
-    name = 'lumen'
-    version = (0, 2, 0, 'final', 0)
-    hexversion = 0x000200f0
-    # Nothing is written beside a module as compiled code, and a name
-    # of None is how a Python says exactly that.
-    cache_tag = None
-
-implementation = _Implementation()
+_Implementation = __namespace_type()
+implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
+                                 hexversion=0x000200f0, cache_tag=None)
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
@@ -256,7 +250,12 @@ def exc_info():
 # a private directory of the run's own stands in the binary's place.
 # Where nothing was named -- a reference kernel reads no such label --
 # the empty string stands, and a test that needs its own program skips.
-executable = globals().get('__runner__', '')
+executable = __program_namespace().get('__runner__', '')
+# The embedded library is installed with the interpreter.
+base_prefix = executable.rsplit('/', 1)[0] if '/' in executable else ''
+prefix = base_prefix
+base_exec_prefix = base_prefix
+exec_prefix = base_prefix
 
 float_repr_style = 'short'
 byteorder = 'little'
@@ -373,3 +372,19 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+# Python audit hooks receive explicit runtime audit events in registration order.
+_audit_hooks = []
+
+def audit(event, *args):
+    if not isinstance(event, str):
+        raise TypeError('audit() argument 1 must be str')
+    for hook in tuple(_audit_hooks):
+        hook(event, args)
+
+def addaudithook(hook):
+    try:
+        audit('sys.addaudithook')
+    except RuntimeError:
+        return
+    _audit_hooks.append(hook)
