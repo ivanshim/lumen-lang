@@ -2160,7 +2160,12 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
-                if name == self.class_word("allocate") { return Ok(Self::adapter(1, Vec::new())); }
+                if name == self.class_word("allocate") {
+                    if let Some(native) = Self::kind_beneath(c).filter(|word| self.lang.builtins.get(word).is_some_and(Self::kind_builtin)) {
+                        return Ok(Self::adapter(14, vec![Value::text(&native)]));
+                    }
+                    return Ok(Self::adapter(1, Vec::new()));
+                }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
                 // a thing's method is bound to the thing.

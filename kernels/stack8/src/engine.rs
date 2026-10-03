@@ -6436,7 +6436,8 @@ impl<'a> Engine<'a> {
             // Every value is written to a specification, the writer
             // having marks of its own for each kind or words against
             // the kinds that take none.
-            74 | 82 => matches!(family, Kindred::Complex),
+            74 => family == Kindred::Complex,
+            82 => matches!(family, Kindred::Complex | Kindred::Tuple),
             72 => true,
             // A walk answers a guess at how many members it has left,
             // where the reference keeps one for a walk of its kind.
@@ -6582,6 +6583,7 @@ impl<'a> Engine<'a> {
         if place == 8 { if let Some(hash) = Self::native_hash_identity(original) { return Ok(hash); } }
         if place == 80 { return self.pickle_position(&receiver.contents(), &args[0]); }
         let family = Self::native_family(receiver).ok_or_else(|| self.special_fault())?;
+        if family == Kindred::Tuple && place == 82 { return Ok(Value::tuple(vec![receiver.contents()])); }
         if family == Kindred::Complex {
             if place == 74 { return Ok(receiver.contents()); }
             if place == 82 {

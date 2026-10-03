@@ -7505,7 +7505,8 @@ impl<'a> Machine<'a> {
             // Every worth is laid out to a specification, the layout
             // having marks of its own for each kind or words against
             // the kinds that take none.
-            74 | 82 => mark == 'c',
+            74 => mark == 'c',
+            82 => matches!(mark, 'c' | 't'),
             72 => true,
             // A walk answers a guess at how many members it has left,
             // where the table keeps one for a walk of its own kind.
@@ -7665,6 +7666,7 @@ impl<'a> Machine<'a> {
         if at == 8 { if let Some(hash) = Self::native_receiver_hash(original) { return Ok(hash); } }
         let mark = Self::native_mark(receiver).ok_or_else(|| self.bad_answer())?;
         match (mark, at) {
+            ('t', 82) => return Ok(Value::tuple(vec![receiver.settled()])),
             ('c', 74) => return Ok(receiver.settled()),
             ('c', 82) => {
                 let z = crate::complex::coordinates(&receiver.settled()).expect("complex coordinates");

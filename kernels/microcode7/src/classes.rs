@@ -2697,7 +2697,13 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            if key == self.detail("allocate") { return Ok(Self::wrap(1, vec![])); }
+            if key == self.detail("allocate") {
+                let inherited = Self::native_beneath(b).and_then(|word| self.table.prims.get(&word).filter(|op| Self::names_a_kind(op)).map(|_| word));
+                return Ok(match inherited {
+                    Some(word) => Self::wrap(14, vec![Value::text(&word)]),
+                    None => Self::wrap(1, Vec::new()),
+                });
+            }
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's
             // method is bound to the thing.
