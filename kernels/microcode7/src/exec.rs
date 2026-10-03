@@ -536,7 +536,7 @@ pub struct Machine<'a> {
     pub outermost: Rc<Env>,
     idents: Vec<String>,
     memo: HashMap<String, Value>,
-    identities: Vec<(String, u64)>,
+    identities: std::collections::BTreeMap<(String, u64), i64>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
     /// Whether the language can read what a call was handed. Where it
@@ -1236,6 +1236,7 @@ impl<'a> Machine<'a> {
 
     /// Whether a word names one of the few methods a fault answers itself.
     fn fault_method_word(&self, word: &str) -> bool {
+        if self.table.strings("ext.stmt.class.detail.root.members").get(12).is_some_and(|name| name == word) { return true; }
         ["ext.builtin.exceptions.note", "ext.builtin.exceptions.setstate", "ext.builtin.exceptions.reduce", "ext.builtin.exceptions.traceback.with", "ext.builtin.exceptions.group.split", "ext.builtin.exceptions.group.subgroup", "ext.builtin.exceptions.group.derive"]
             .iter().any(|label| self.table.single(label) == Some(word))
     }
@@ -1243,6 +1244,12 @@ impl<'a> Machine<'a> {
     /// The methods a fault answers itself: a note added, a traceback
     /// set, and a gatherer divided three ways.
     fn fault_method(&mut self, thing: Rc<Thing>, word: &str, given: &[Value]) -> Res<Value> {
+        if self.table.strings("ext.stmt.class.detail.root.members").get(12).is_some_and(|name| name == word) {
+            let mut inputs = Vec::with_capacity(given.len() + 1);
+            inputs.push(Value::Thing(thing));
+            inputs.extend(given.iter().cloned());
+            return self.root_answers(word, inputs);
+        }
         if self.stands_under(&thing.blueprint(), 19) && self.table.single("ext.stmt.class.constructor") == Some(word) {
             let fresh = self.make_fault(thing.blueprint().clone(), given.to_vec(), Value::Nil);
             if let Value::Thing(source) = fresh {
@@ -1591,7 +1598,7 @@ impl<'a> Machine<'a> {
             memo_cell: find("system.memoization"),
             idents,
             memo: HashMap::new(),
-            identities: Vec::new(),
+            identities: std::collections::BTreeMap::new(),
             reads_handed: ["ext.builtin.args.all", "ext.builtin.args.count", "ext.builtin.args.at"]
                 .iter()
                 .any(|label| table.single(label).is_some()),
@@ -6523,7 +6530,7 @@ impl<'a> Machine<'a> {
                             return self.apply_class_member(member, values);
                         }
                     }
-                    if self.has_class_order() && (matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Intrinsic(Prim::Truthful, _))) || (self.table.has_any("ext.stmt.class.builder") && matches!(&subject, Value::Intrinsic(Prim::SortOf, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
+                    if self.has_class_order() && (matches!(&subject, Value::Intrinsic(op, _) if (Self::names_a_kind(op) && self.table.single("ext.stmt.class.constructor") == Some(called.as_str()) || !Self::names_a_kind(op) && self.table.strings("ext.stmt.class.special").get(79).is_some_and(|word| word == &called))) || matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..) | Value::Intrinsic(Prim::Truthful, _))) || (self.table.has_any("ext.stmt.class.builder") && matches!(&subject, Value::Intrinsic(Prim::SortOf, _))) {let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.rules.member_pipes {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -16470,6 +16477,8 @@ impl<'a> Machine<'a> {
                 if matches!(v[0], Value::OctetKind { .. }) || matches!(v[0], Value::Octets { changeable, .. } if v[1].bare() == "__buffer__" || changeable && v[1].bare() == "__release_buffer__") { return Ok(Value::Flag(true)); }
                 if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
+                if matches!(&v[0], Value::Intrinsic(op, _) if !Self::names_a_kind(op)) && self.table.strings("ext.stmt.class.special").get(79).is_some_and(|name| name == &word) { return Ok(Value::Flag(true)); }
+                if self.table.single("ext.stmt.class.constructor") == Some(word.as_str()) && matches!(&v[0], Value::Intrinsic(op, _) if Self::names_a_kind(op)) { return Ok(Value::Flag(true)); }
                 if self.integer_attribute(&v[0], &word).is_some()
                     || matches!(v[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.table.spells("ext.builtin.bytes.from_int", &word) {
                     return Ok(Value::Flag(true));
@@ -24373,6 +24382,16 @@ impl Machine<'_> {
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Vector(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
+                    Value::Refusal(_) | Value::Ellipsis => {
+                        let word = if matches!(held, Value::Ellipsis) { "ellipsis" } else { "NotImplementedType" };
+                        Rc::as_ptr(&self.native_kind(word)) as usize as u64
+                    },
+                    Value::OctetKind { changeable, .. } => {
+                        let spelling = self.octet_kind_word(*changeable).to_owned();
+                        let class = self.native_kind(&spelling);
+                        Rc::as_ptr(&class) as usize as u64
+                    },
+                    Value::Intrinsic(Prim::Octets(0 | 1), word) => Rc::as_ptr(&self.native_kind(word)) as usize as u64,
                     Value::Intrinsic(_, word) => {
                         let mut words: Vec<_> = self.table.prims.keys().collect(); words.sort();
                         words.iter().position(|w| w.as_str() == word.as_ref()).unwrap_or(0) as u64 + 16
@@ -24401,8 +24420,9 @@ impl Machine<'_> {
                     _ => return Err(self.core_complaint("core.unready", name)),
                 };
                 let stamp = (input[0].kind_word(), address);
-                let found = self.identities.iter().position(|old| *old == stamp).unwrap_or_else(|| { self.identities.push(stamp); self.identities.len()-1 });
-                Ok(Value::Small(found as i64 + 1))
+                let next = self.identities.len() as i64 + 1;
+                let identity = *self.identities.entry(stamp).or_insert(next);
+                Ok(Value::Small(identity))
             }
             Tupling | Uniques | Unchanging => {
                 require(0, 1)?;

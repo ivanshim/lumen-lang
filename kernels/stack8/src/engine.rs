@@ -923,6 +923,7 @@ impl<'a> Engine<'a> {
 
     /// Whether a name is one of the methods an exception answers itself.
     fn exception_method_named(&self, name: &str) -> bool {
+        if self.lang.class_details.get("root.members").and_then(|words| words.get(12)).is_some_and(|word| word == name) { return true; }
         [&self.lang.note_method, &self.lang.setstate_method, &self.lang.reduce_method, &self.lang.traceback_setter, &self.lang.group_split, &self.lang.group_subgroup, &self.lang.group_derive]
             .into_iter().flatten().any(|word| word == name)
     }
@@ -930,6 +931,11 @@ impl<'a> Engine<'a> {
     /// The methods an exception answers itself: adding a note, setting
     /// a traceback, and parting a group three ways.
     fn exception_method(&mut self, object: Rc<Instance>, name: &str, args: &[Value]) -> Flow<Value> {
+        if self.lang.class_details.get("root.members").and_then(|words| words.get(12)).is_some_and(|word| word == name) {
+            let mut inputs = vec![Value::Object(object)];
+            inputs.extend_from_slice(args);
+            return self.root_work(name, inputs);
+        }
         if self.stands_on(&object.class_now(), 19) && self.lang.constructor.as_deref() == Some(name) {
             let Value::Object(fresh) = self.exception_instance(object.class_now().clone(), args.to_vec(), Value::Null) else { unreachable!() };
             let mut fields = object.fields.borrow_mut();
@@ -10323,6 +10329,8 @@ impl<'a> Engine<'a> {
                 // the kind is one a class may stand on.
                 let kind_doc = name.as_ref() == self.class_word("doc")
                     && matches!(&held, Value::Native(_, word) if Self::builtin_kind_doc(word).is_some());
+                let kind_initialiser = matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) && self.lang.constructor.as_deref() == Some(name.as_ref())
+                    || matches!(&held, Value::Native(op, _) if !Self::kind_builtin(op)) && self.lang.class_special.get(79).is_some_and(|word| word == name.as_ref());
                 let kind_namespace = name.as_ref() == self.class_word("namespace")
                     && (matches!(&held, Value::Native(op, _) if Self::kind_builtin(op)) || self.kind_spelled(&held).is_some());
                 let kind_flags = name.as_ref() == self.class_word("flags") && !name.is_empty()
@@ -10364,7 +10372,7 @@ impl<'a> Engine<'a> {
                     && (["send", "throw", "close"].contains(&name.as_ref())
                         || [15, 16].iter().any(|place| self.lang.class_special.get(*place).is_some_and(|word| word == name.as_ref()))
                         || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name.as_ref()));
-                Value::Flag(async_awaitable || matches!(&held, Value::ByteKind(..)) || matches!(&held, Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || *mutable && name.as_ref() == "__release_buffer__") || matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_namespace || kind_flags || kind_carries || lone_kind || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(async_awaitable || matches!(&held, Value::ByteKind(..)) || matches!(&held, Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || *mutable && name.as_ref() == "__release_buffer__") || matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_doc || kind_initialiser || kind_namespace || kind_flags || kind_carries || lone_kind || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -10823,7 +10831,7 @@ impl<'a> Engine<'a> {
                         return Ok(());
                     }
                 }
-                if self.fuller_classes() && (matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(&subject, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(&subject, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
+                if self.fuller_classes() && (matches!(&subject, Value::Native(op, _) if (Self::kind_builtin(op) && self.lang.constructor.as_deref() == Some(name) || !Self::kind_builtin(op) && self.lang.class_special.get(79).is_some_and(|word| word.as_str() == name.as_ref()))) || matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(&subject, Value::Native(Builtin::SortOf | Builtin::Bool, _)) || matches!(&subject, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -20787,6 +20795,17 @@ impl Engine<'_> {
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Generator(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::ByteKind(changeable, _) => {
+                        let word = self.byte_kind_word(*changeable).to_owned();
+                        Rc::as_ptr(&self.kind_class(&word)) as usize as u64
+                    },
+                    Value::Adapter(bound) => Rc::as_ptr(bound) as usize as u64,
+                    Value::Declined(_) => Rc::as_ptr(&self.kind_class("NotImplementedType")) as usize as u64,
+                    Value::Ellipsis => Rc::as_ptr(&self.kind_class("ellipsis")) as usize as u64,
+                    Value::Native(Builtin::Bytes(kind @ 0..=1), _) => {
+                        let word = self.byte_kind_word(*kind == 1).to_owned();
+                        Rc::as_ptr(&self.kind_class(&word)) as usize as u64
+                    },
                     Value::Native(b, _) => {
                         let mut state = std::collections::hash_map::DefaultHasher::new();
                         std::hash::Hash::hash(&format!("{:?}", b), &mut state);

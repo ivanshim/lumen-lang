@@ -915,6 +915,10 @@ impl<'a> Engine<'a> {
                     self.class_apply(w.1[1].clone(),args)
                 }
                 0 => Ok(w.1[0].clone()),
+                132 => {
+                    if !args.is_empty() { return Err(format!("TypeError: builtin_function_or_method.__reduce__() takes no arguments ({} given)", args.len()).into()); }
+                    Ok(w.1[0].clone())
+                },
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
                     if self.exception_class(c) { return Ok(self.exception_instance(c.clone(), args[1..].to_vec(), Value::Null)); }
@@ -927,6 +931,7 @@ impl<'a> Engine<'a> {
                     let name = self.lang.constructor.clone().unwrap_or_default();
                     self.exception_method(o, &name, &args)
                 }
+                2 if args.first().is_some_and(|value| matches!(value.contents(), Value::Tuple(_))) => Ok(Value::Null),
                 2 if args.len()==1 => Ok(Value::Null),
                 2 => {
                     let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()); };
@@ -1501,7 +1506,7 @@ impl<'a> Engine<'a> {
     }
     /// The root's own working of one of its members, handed the value
     /// it works upon first.
-    fn root_work(&mut self, name: &str, args: Vec<Value>) -> Flow<Value> {
+    pub(super) fn root_work(&mut self, name: &str, args: Vec<Value>) -> Flow<Value> {
         let place = self.lang.class_details.get("root.members").and_then(|names| names.iter().position(|n| n==name)).unwrap_or(usize::MAX);
         if place == 9 && args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone().into()); }
         let declined = || Value::Declined(Rc::from(self.lang.special_declined.first().map(String::as_str).unwrap_or("NotImplemented")));
@@ -1546,6 +1551,12 @@ impl<'a> Engine<'a> {
                 };
                 if place == 12 {
                     if let Some(answer) = self.special_call(&subject, 79, Vec::new()).map_err(Fault::Note)? { return Ok(answer); }
+                    if let Value::Object(instance) = &subject {
+                        if self.exception_class(&instance.class_now()) {
+                            let name = self.lang.reduce_method.clone().unwrap_or_default();
+                            return self.exception_method(instance.clone(), &name, &[]);
+                        }
+                    }
                 }
                 return self.object_reduction(&subject, protocol);
             }
@@ -1778,6 +1789,10 @@ impl<'a> Engine<'a> {
         }
 
         if let Value::Adapter(entry) = &subject {
+            if entry.0 == 64 {
+                if name == self.class_word("module") { return self.class_get(entry.1[1].clone(), name, plain); }
+                if self.lang.class_special.get(79).is_some_and(|word| word == name) { return Ok(Self::adapter(132, vec![entry.1[0].clone()])); }
+            }
             if matches!(entry.0, 63 | 64) && matches!(name, "__name__" | "__qualname__" | "__doc__") {
                 return self.class_get(entry.1[1].clone(), name, plain);
             }
@@ -1840,7 +1855,7 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("name") || name == self.class_word("qualified") { return Ok(Value::text(word)); }
                 if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                 if self.lang.class_special.get(79).is_some_and(|label| label == name) {
-                    return Ok(Self::adapter(0, vec![Value::text(word)]));
+                    return Ok(Self::adapter(132, vec![Value::text(word)]));
                 }
             }
         }
@@ -1849,6 +1864,9 @@ impl<'a> Engine<'a> {
             if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
         }
         if let Some(word) = self.kind_spelled(&subject) {
+            if self.lang.constructor.as_deref() == Some(name) {
+                if let Some(native) = self.spelled_kind(&word) { return self.class_read(native, name, plain); }
+            }
             if name == self.class_word("name") || name == self.class_word("qualified") { return Ok(Value::text(&word)); }
             if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
         }
@@ -2063,6 +2081,7 @@ impl<'a> Engine<'a> {
                 // the kind itself, standing loose: the value it works
                 // upon is the first it is called with.
                 if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
+                if self.lang.constructor.as_deref() == Some(name) { return Ok(Self::adapter(2, Vec::new())); }
             }
             Value::Class(c) => {
                 if !self.class_word("name").is_empty() {
@@ -3550,7 +3569,10 @@ impl<'a> Engine<'a> {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
                 let Some(builtin)=self.lang.builtins.get(word.as_ref()).copied().filter(Self::kind_builtin) else{return Err(self.unclassed(amiss));};
                 if subclass{
-                    if let Value::Class(c)=value{return Ok(Self::kind_beneath(c).as_deref()==Some(word.as_ref()));}
+                    if let Value::Class(c)=value {
+                        if builtin == Builtin::SortOf { return Ok(self.is_metaclass_root(c) || c.lineage.iter().any(|base| self.is_metaclass_root(base))); }
+                        return Ok(Self::kind_beneath(c).as_deref()==Some(word.as_ref()));
+                    }
                     let Some(under)=self.kind_spelled(value) else{return Err(self.unclassed("core.issubclass.subject"));};
                     return Ok(self.kinds_beneath(&under,word));
                 }
@@ -3603,7 +3625,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|132|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{

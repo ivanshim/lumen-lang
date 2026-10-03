@@ -1127,6 +1127,10 @@ impl<'a> Machine<'a> {
                         } else {self.apply_class_member(kept[1].clone(),values)}
                     }
                     0=>Ok(kept[0].clone()),
+                    135=>{
+                        if values.len() != 0 { return Err(format!("TypeError: builtin_function_or_method.__reduce__() takes no arguments ({} given)", values.len()).into()); }
+                        Ok(kept[0].clone())
+                    },
                     1 if !values.is_empty()=>{
                         let Some(Value::Blueprint(c))=values.first() else{return Err(self.class_unready())};
                         if self.is_fault_kind(c) { return Ok(self.make_fault(c.clone(), values[1..].to_vec(), Value::Nil)); }
@@ -1138,6 +1142,7 @@ impl<'a> Machine<'a> {
                         let key = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
                         self.fault_method(receiver, &key, &values)
                     }
+                    2 if matches!(values.first().map(Value::settled), Some(Value::Tuple(_))) => Ok(Value::Nil),
                     2 if values.len()==1=>Ok(Value::Nil),
                     2 if values.len()>1=>{
                         let Some(Value::Thing(t))=values.first() else{return Err(self.class_unready())};
@@ -2016,7 +2021,7 @@ impl<'a> Machine<'a> {
     }
     /// The root's own answer for one of its members, the value it
     /// answers about coming first.
-    fn root_answers(&mut self,named:&str,values:Vec<Value>)->Res {
+    pub(super) fn root_answers(&mut self,named:&str,values:Vec<Value>)->Res {
         let which=self.table.strings("ext.stmt.class.detail.root.members").iter().position(|word|word==named);
         if which == Some(9) && values.len() != 1 { return Err(self.method_fault("arguments").into()); }
         let not_mine=Value::Refusal(Rc::from(self.table.single("ext.stmt.class.special.declined").unwrap_or("NotImplemented")));
@@ -2063,6 +2068,12 @@ impl<'a> Machine<'a> {
                 };
                 if which == Some(12) {
                     if let Some(reduction) = self.ask_special(&first, 79, &[])? { return Ok(reduction); }
+                    if let Value::Thing(owner) = &first {
+                        if self.is_fault_kind(&owner.blueprint()) {
+                            let method = self.table.single("ext.builtin.exceptions.reduce").unwrap_or_default().to_owned();
+                            return self.fault_method(owner.clone(), &method, &[]);
+                        }
+                    }
                 }
                 return self.reduction_for_object(&first, version);
             }
@@ -2316,6 +2327,10 @@ impl<'a> Machine<'a> {
             }
         }
 
+        if let Value::Wrapped(134, kept) = &value {
+            if key == self.detail("module") { return self.read_class_member(kept[1].clone(), key, direct); }
+            if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|word| word == key) { return Ok(Self::wrap(135, vec![kept[0].clone()])); }
+        }
         match &value {
             Value::Wrapped(133|134,parts) if matches!(key,"__doc__"|"__qualname__"|"__name__")=>{
                 let original=parts[1].clone();
@@ -2394,7 +2409,7 @@ impl<'a> Machine<'a> {
                 if [self.detail("qualified"), self.detail("name")].contains(&key) { return Ok(Value::text(spelling)); }
                 if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
                 if self.table.strings("ext.stmt.class.special").get(79).is_some_and(|entry| entry == key) {
-                    return Ok(Self::wrap(0, vec![Value::text(spelling)]));
+                    return Ok(Self::wrap(135, vec![Value::text(spelling)]));
                 }
             }
             _ => ()
@@ -2551,6 +2566,7 @@ impl<'a> Machine<'a> {
             // carries, standing loose: the value worked upon is the
             // first the entry is handed when it is called.
             if let Some(carried)=self.carried_by_kind(&value,key) { return Ok(carried); }
+            if Self::names_a_kind(op) && self.table.single("ext.stmt.class.constructor") == Some(key) { return Ok(Self::wrap(2, Vec::new())); }
         }
         if self.table.spells("ext.stmt.class.builtin", "bytes") && (key == "__buffer__" || key == "__release_buffer__") {
             let provider = match &value {
@@ -3802,7 +3818,10 @@ impl<'a> Machine<'a> {
                 let Value::Text(word)=&names[0] else{return Err(self.not_a_class(amiss));};
                 let Some(op)=self.table.prims.get(word.as_ref()).copied().filter(Self::names_a_kind) else{return Err(self.not_a_class(amiss));};
                 if class_only{
-                    if let Value::Blueprint(b)=subject{return Ok(Self::native_beneath(b).as_deref()==Some(word.as_ref()));}
+                    if let Value::Blueprint(b)=subject {
+                        let follows_builder = self.builds_classes(b) || b.ancestry.iter().any(|parent| self.builds_classes(parent));
+                        return Ok(if op == Prim::SortOf { follows_builder } else { Self::native_beneath(b).as_deref()==Some(word.as_ref()) });
+                    }
                     let Some(under)=self.kind_spelling(subject) else{return Err(self.not_a_class("core.issubclass.subject"));};
                     return Ok(self.kind_under(&under,word));
                 }
@@ -3863,7 +3882,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134|135))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{
