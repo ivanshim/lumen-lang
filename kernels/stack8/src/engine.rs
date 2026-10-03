@@ -16243,6 +16243,22 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
             }
+            // A fresh empty file made at the path given: nothing where
+            // it stands afterwards, and the host's own number and words
+            // where it could not be made.
+            Builtin::FileCreate => {
+                arity(1)?;
+                let sp = self.wording();
+                match std::fs::File::create(args[0].display(&sp)) {
+                    Ok(_) => Value::Null,
+                    Err(problem) => {
+                        let number = problem.raw_os_error().unwrap_or(5) as i64;
+                        let words = problem.to_string();
+                        let words = words.split(" (os error").next().unwrap_or(words.as_str()).to_string();
+                        Value::tuple(vec![Value::Small(number), Value::text(&words)])
+                    }
+                }
+            }
             // A directory's own entries, in no particular order but
             // sorted here for a run to answer the same way twice: the
             // bare name of each, with no directory before it. False
@@ -16294,7 +16310,15 @@ impl<'a> Engine<'a> {
             Builtin::DirRemoveOne => {
                 arity(1)?;
                 let sp = self.wording();
-                Value::Flag(std::fs::remove_dir(args[0].display(&sp)).is_ok())
+                match std::fs::remove_dir(args[0].display(&sp)) {
+                    Ok(()) => Value::Null,
+                    Err(problem) => {
+                        let number = problem.raw_os_error().unwrap_or(5) as i64;
+                        let words = problem.to_string();
+                        let words = words.split(" (os error").next().unwrap_or(words.as_str()).to_string();
+                        Value::tuple(vec![Value::Small(number), Value::text(&words)])
+                    }
+                }
             }
             // One directory made to stand at the path given: true
             // when it stands afterwards, false when it stood there

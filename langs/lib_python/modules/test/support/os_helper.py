@@ -14,7 +14,10 @@ def rmtree(path):
 
 def create_empty_file(filename):
     """Create an empty file. If the file already exists, truncate it."""
-    __file_write(filename, '')
+    problem = __file_create(filename)
+    if problem is not None:
+        number, message = problem
+        raise OSError(number, message, filename)
 
 @contextmanager
 def temp_dir(path=None, quiet=False):

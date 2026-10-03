@@ -15904,6 +15904,21 @@ impl<'a> Machine<'a> {
                     Err(_) => Value::Flag(false),
                 }
             }
+            // A fresh empty file made at the path named: nothing where
+            // it stands afterwards, or the host's own number and words.
+            Prim::FileCreate => {
+                n(1)?;
+                let w = self.wording();
+                match std::fs::File::create(v[0].render(w)) {
+                    Ok(_) => Value::Nil,
+                    Err(problem) => {
+                        let number = problem.raw_os_error().unwrap_or(5) as i64;
+                        let words = problem.to_string();
+                        let words = words.split(" (os error").next().unwrap_or(words.as_str()).to_string();
+                        Value::tuple(vec![Value::Small(number), Value::text(&words)])
+                    }
+                }
+            }
             Prim::There => {
                 n(1)?;
                 let w = self.wording();
@@ -15962,7 +15977,15 @@ impl<'a> Machine<'a> {
             Prim::DirRemoveOne => {
                 n(1)?;
                 let w = self.wording();
-                Value::Flag(std::fs::remove_dir(v[0].render(w)).is_ok())
+                match std::fs::remove_dir(v[0].render(w)) {
+                    Ok(()) => Value::Nil,
+                    Err(problem) => {
+                        let number = problem.raw_os_error().unwrap_or(5) as i64;
+                        let words = problem.to_string();
+                        let words = words.split(" (os error").next().unwrap_or(words.as_str()).to_string();
+                        Value::tuple(vec![Value::Small(number), Value::text(&words)])
+                    }
+                }
             }
             // A single directory raised at the place named: true
             // when it stands there afterwards, false when it stood
