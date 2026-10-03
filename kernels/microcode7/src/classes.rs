@@ -53,6 +53,11 @@ impl<'a> Machine<'a> {
             let names = self.table.strings("ext.stmt.class.special");
             [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
         } else { Vec::new() };
+        if matches!(self.table.prims.get(word), Some(Prim::Uniques | Prim::Unchanging)) {
+            if let Some(method) = self.table.strings("ext.stmt.class.special").get(79) {
+                protocols.push((method.to_owned(), Self::wrap(136, vec![Value::text(word)])));
+            }
+        }
         if word == "Union" { protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new()))); }
         if word == "GenericAlias" {
             protocols.push(("__iter__".to_owned(), Self::wrap(125, vec![Value::Small(5)])));
@@ -1127,6 +1132,17 @@ impl<'a> Machine<'a> {
                         } else {self.apply_class_member(kept[1].clone(),values)}
                     }
                     0=>Ok(kept[0].clone()),
+                    136=>{
+                        let word = kept[0].bare();
+                        let Some(first) = values.first() else { return Err(format!("TypeError: unbound method {word}.__reduce__() needs an argument").into()); };
+                        let base = Self::underlying(first).unwrap_or_else(|| first.settled()).settled();
+                        let fixed = self.table.prims.get(&word) == Some(&Prim::Unchanging);
+                        if !matches!(base, Value::Set(_)) || base.set_sealed() != fixed {
+                            return Err(format!("TypeError: descriptor '__reduce__' for '{word}' objects doesn't apply to a '{}' object", first.kind_word()).into());
+                        }
+                        if values.len() != 1 { return Err(format!("TypeError: {}.__reduce__() takes no arguments ({} given)", first.kind_word(), values.len() - 1).into()); }
+                        self.reduction_of_set(first)
+                    },
                     135=>{
                         if values.len() != 0 { return Err(format!("TypeError: builtin_function_or_method.__reduce__() takes no arguments ({} given)", values.len()).into()); }
                         Ok(kept[0].clone())
@@ -1734,7 +1750,7 @@ impl<'a> Machine<'a> {
             }
         }
         match &entry {
-            Value::Wrapped(133 | 60 | 120 | 123 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(133 | 136 | 60 | 120 | 123 | 125 | 127, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
@@ -2075,6 +2091,8 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
+                let native = Self::underlying(&first).unwrap_or_else(|| first.settled());
+                if matches!(native.settled(), Value::Set(_)) { return self.reduction_of_set(&first); }
                 return self.reduction_for_object(&first, version);
             }
             Some(13)=>Value::Small(match &first{Value::Thing(t) if t.blueprint().name!=self.detail("root")=>24,_=>16}),
@@ -2083,6 +2101,16 @@ impl<'a> Machine<'a> {
     }
     /// What a thing holds of its own as a dictionary, or nothing where
     /// it holds nothing.
+    pub(super) fn reduction_of_set(&mut self, value: &Value) -> Res<Value> {
+        let class = self.class_from_type(vec![value.clone()])?;
+        let items = self.core_collect(value)?;
+        let state = match self.read_class_member(value.clone(), "__getstate__", false) {
+            Ok(method) => self.apply_class_member(method, vec![])?,
+            Err(fault) if self.missing_member_escape(&fault) => Self::held_as_state(value),
+            Err(fault) => return Err(fault),
+        };
+        Ok(Value::tuple(vec![class, Value::tuple(vec![Value::Vector(crate::tuples::Sequence::plain(items))]), state]))
+    }
     fn reduction_for_object(&mut self, value: &Value, version: i32) -> Res {
         self.reduction_permitted(value)?;
         let copyreg = self.load_namespace("copyreg")?;
@@ -2866,6 +2894,12 @@ impl<'a> Machine<'a> {
             if self.table.strings("ext.stmt.class.detail.root.members").get(9).is_some_and(|word| word == key) {
                 let root = Self::wrap(36, vec![Value::text(key)]);
                 return Ok(Self::wrap(3, vec![root, value.clone()]));
+            }
+            if Self::underlying(&value).is_some_and(|base| matches!(base.settled(), Value::Set(_))) {
+                if let Some(slot) = self.table.strings("ext.stmt.class.special").iter().position(|word| word == key).filter(|slot| *slot == 79 || *slot == 81) {
+                    let method = if slot == 79 { "set_reduce" } else { "set_reduce_ex" };
+                    return Ok(Value::Member(Rc::new(value.clone()), method.to_owned()));
+                }
             }
             // The worth a thing keeps answers for the methods of its kind.
             let native=Self::underlying(&value);
@@ -3882,7 +3916,7 @@ impl<'a> Machine<'a> {
         if op<=1 {
             return Err(self.wrong_count(&self.class_tool_word(op),2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134|135))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind {..}|Value::Member(..))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|36|44..=48|50..=57|59|60|70..=74|77..=79|132|133|134|135|136))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.blueprint(),self.detail("call")).is_some())));}
         // getattr and hasattr want the receiver and a name, and take a
         // name of any kind but a string only to say so.
         if (op==3||op==6)&&values.len()>=2{

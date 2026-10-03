@@ -7518,7 +7518,7 @@ impl<'a> Machine<'a> {
             // A walk answers a guess at how many members it has left,
             // where the table keeps one for a walk of its own kind.
             78 | 80 => mark == 'w',
-            79 | 81 => matches!(mark, 'w' | 'p'),
+            79 | 81 => matches!(mark, 'w' | 'p' | 'e' | 'E'),
             _ => false,
         }
     }
@@ -8054,6 +8054,12 @@ impl<'a> Machine<'a> {
         if names.get(35).map_or(false, |s| s == name) && matches!(value.settled(), Value::Refusal(_) | Value::Ellipsis) {
             return Some(self.kind_named_after(&value.settled()));
         }
+        if matches!(value, Value::Set(_)) {
+            if let Some(slot) = self.table.strings("ext.stmt.class.special").iter().position(|word| word == name).filter(|slot| *slot == 79 || *slot == 81) {
+                let word = if slot == 81 { "set_reduce_ex" } else { "set_reduce" };
+                return Some(Value::Member(Rc::new(value.clone()), word.to_owned()));
+            }
+        }
         if let Value::Span(bounds) = value {
             if let Some(which) = self.span_bound_named(name) { return Some(bounds[which].clone()); }
             let slot = self.table.strings("ext.stmt.class.special").iter().position(|entry| entry == name)?;
@@ -8560,6 +8566,20 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if (matches!(name, "set_reduce" | "set_reduce_ex") || self.table.strings("ext.stmt.class.special").get(79).is_some_and(|word| word == name) || self.table.strings("ext.stmt.class.special").get(81).is_some_and(|word| word == name)) && matches!(Self::underlying(receiver).unwrap_or_else(|| receiver.settled()).settled(), Value::Set(_)) {
+            let expected = usize::from(name == "set_reduce_ex" || self.table.strings("ext.stmt.class.special").get(81).is_some_and(|word| word == name));
+            let method_name = if expected == 0 { "__reduce__" } else { "__reduce_ex__" };
+            if !keywords.is_empty() { return Err(format!("TypeError: {}.{method_name}() takes no keyword arguments", receiver.kind_word()).into()); }
+            if arguments.len() != expected {
+                let phrase = if expected == 1 { "exactly one argument" } else { "no arguments" };
+                return Err(format!("TypeError: {}.{method_name}() takes {phrase} ({} given)", receiver.kind_word(), arguments.len()).into());
+            }
+            if expected == 0 { return self.reduction_of_set(receiver); }
+            let method = self.table.strings("ext.stmt.class.detail.root.members").get(12).cloned().unwrap_or_default();
+            let mut inputs = vec![receiver.clone()];
+            inputs.extend(arguments);
+            return self.root_answers(&method, inputs);
+        }
         if let Value::Window(owner, 'm') = receiver {
             if matches!(name, "get" | "keys" | "values" | "items" | "copy") {
                 if matches!(owner.as_ref(), Value::Blueprint(_)) {

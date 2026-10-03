@@ -6321,6 +6321,11 @@ impl<'a> Engine<'a> {
                 return Ok(Some(Value::of_big(match at { 0 => row.start.clone(), 1 => row.stop.clone(), _ => row.step.clone() })));
             }
         }
+        if matches!(held, Value::Set(_)) {
+            if let Some(slot) = self.lang.class_special.iter().position(|word| word == name).filter(|at| matches!(at, 79 | 81)) {
+                return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), if slot == 79 { "set_reduce" } else { "set_reduce_ex" }.to_owned())))));
+            }
+        }
         if let Value::Slice(bounds) = &held {
             if let Some(at) = self.slice_bound_named(name) { return Ok(Some(bounds[at].clone())); }
             if let Some(at) = self.lang.class_special.iter().position(|word| word == name).filter(|at| matches!(at, 79 | 81)) {
@@ -6448,7 +6453,7 @@ impl<'a> Engine<'a> {
             // A walk answers a guess at how many members it has left,
             // where the reference keeps one for a walk of its kind.
             78 | 80 => matches!(family, Kindred::Walk),
-            79 | 81 => matches!(family, Kindred::Walk | Kindred::Counted),
+            79 | 81 => matches!(family, Kindred::Walk | Kindred::Counted | Kindred::Set(_)),
             _ => false,
         }
     }
@@ -14646,6 +14651,25 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if (matches!(operation, "set_reduce" | "set_reduce_ex") || self.lang.class_special.get(79).is_some_and(|name| name == operation) || self.lang.class_special.get(81).is_some_and(|name| name == operation)) && matches!(Self::worth_of(receiver).unwrap_or_else(|| receiver.contents()).contents(), Value::Set(_)) {
+            let extended = operation == "set_reduce_ex" || self.lang.class_special.get(81).is_some_and(|name| name == operation);
+            let word = if extended { "__reduce_ex__" } else { "__reduce__" };
+            if !named.is_empty() { return Err(format!("TypeError: {}.{word}() takes no keyword arguments", receiver.core_kind())); }
+            if args.len() != usize::from(extended) {
+                let expectation = if extended { "exactly one argument" } else { "no arguments" };
+                return Err(format!("TypeError: {}.{word}() takes {expectation} ({} given)", receiver.core_kind(), args.len()));
+            }
+            let answer = if !extended { self.set_reduction(receiver) } else {
+                let name = self.lang.class_details.get("root.members").and_then(|words| words.get(12)).cloned().unwrap_or_default();
+                let mut inputs = vec![receiver.clone()]; inputs.extend(args);
+                self.root_work(&name, inputs)
+            };
+            return match answer {
+                Ok(value) => Ok(value),
+                Err(Fault::Note(words)) => Err(words),
+                Err(thrown) => { self.carried = Some(thrown); Err(String::new()) }
+            };
+        }
         if let Value::View(view) = receiver {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&operation) {
                 if let Value::Class(_) = &view.0 {

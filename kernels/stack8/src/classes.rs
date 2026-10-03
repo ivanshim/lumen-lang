@@ -39,6 +39,9 @@ impl<'a> Engine<'a> {
                 if let Some(name) = self.lang.class_special.get(place) { hooks.push((name.clone(), Self::adapter(119, vec![Value::Small(mode)]))); }
             }
         }
+        if matches!(self.lang.builtins.get(word), Some(Builtin::Set | Builtin::Frozen)) {
+            if let Some(name) = self.lang.class_special.get(79) { hooks.push((name.clone(), Self::adapter(133, vec![Value::text(word)]))); }
+        }
         if word == "Union" {
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
         }
@@ -915,6 +918,16 @@ impl<'a> Engine<'a> {
                     self.class_apply(w.1[1].clone(),args)
                 }
                 0 => Ok(w.1[0].clone()),
+                133 => {
+                    let owner = w.1[0].plain();
+                    if args.is_empty() { return Err(format!("TypeError: unbound method {owner}.__reduce__() needs an argument").into()); }
+                    let native = Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents()).contents();
+                    if !matches!(&native, Value::Set(_)) || native.set_fixed() != (self.lang.builtins.get(&owner) == Some(&Builtin::Frozen)) {
+                        return Err(format!("TypeError: descriptor '__reduce__' for '{owner}' objects doesn't apply to a '{}' object", args[0].core_kind()).into());
+                    }
+                    if args.len() > 1 { return Err(format!("TypeError: {}.__reduce__() takes no arguments ({} given)", args[0].core_kind(), args.len() - 1).into()); }
+                    return self.set_reduction(&args[0]);
+                },
                 132 => {
                     if !args.is_empty() { return Err(format!("TypeError: builtin_function_or_method.__reduce__() takes no arguments ({} given)", args.len()).into()); }
                     Ok(w.1[0].clone())
@@ -1558,6 +1571,7 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                if matches!(Self::worth_of(&subject).unwrap_or_else(|| subject.contents()).contents(), Value::Set(_)) { return self.set_reduction(&subject); }
                 return self.object_reduction(&subject, protocol);
             }
             13 => Value::Small(match &subject { Value::Object(o) if o.class_now().name != self.class_word("root") => 24, _ => 16 }),
@@ -1566,6 +1580,16 @@ impl<'a> Engine<'a> {
     }
     /// What a thing holds of its own, as a dictionary, or nothing where
     /// it holds nothing.
+    pub(super) fn set_reduction(&mut self, subject: &Value) -> Flow<Value> {
+        let kind = self.class_type(vec![subject.clone()])?;
+        let members = self.core_members(subject).map_err(Fault::Note)?;
+        let state = match self.class_get(subject.clone(), "__getstate__", false) {
+            Ok(reader) => self.class_apply(reader, Vec::new())?,
+            Err(fault) if self.attribute_fault(&fault) => self.root_state(subject),
+            Err(fault) => return Err(fault),
+        };
+        Ok(Value::tuple(vec![kind, Value::tuple(vec![Value::array(members)]), state]))
+    }
     fn object_reduction(&mut self, subject: &Value, protocol: i32) -> Flow<Value> {
         self.check_native_reduction(subject).map_err(Fault::Note)?;
         let registry = self.import_module("copyreg")?;
@@ -1710,7 +1734,7 @@ impl<'a> Engine<'a> {
                 return Ok(Value::ValueMethod(Rc::new((Value::Class(class), w.1[1].plain()))));
             }
             return match w.0 {
-                29 | 122 | 124 | 126 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 122 | 124 | 126 | 133 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 4 => Ok(w.1[0].clone()),
@@ -2336,6 +2360,12 @@ impl<'a> Engine<'a> {
                     return Ok(Self::adapter(3, vec![root, subject.clone()]));
                 }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
+                if Self::worth_of(&subject).is_some_and(|value| matches!(value.contents(), Value::Set(_))) {
+                    if let Some(slot) = self.lang.class_special.iter().position(|word| word == name).filter(|at| *at == 79 || *at == 81) {
+                        let operation = if slot == 81 { "set_reduce_ex" } else { "set_reduce" };
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), operation.to_owned()))));
+                    }
+                }
                 // The worth a thing keeps answers for the methods of its kind.
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|matches!(v.contents(),Value::Set(_))) {
                     if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }
@@ -3625,7 +3655,7 @@ impl<'a> Engine<'a> {
             // Both questions want two arguments and name themselves
             // where they are handed another number of them.
             0|1=>Err(self.arity_told(&self.class_tool_word(which),2,args.len())),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|132|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..)|Value::Native(..)|Value::ByteKind(..)|Value::ValueMethod(_))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29|30|40..=48|77..=80|131|132|133|63|64))||matches!(&one,Value::Object(o) if self.class_value(&o.class_now(),self.class_word("call")).is_some()))),
             // getattr and hasattr want the receiver and a name, and take
             // a name of any kind but a string only to say so.
             3|6 if args.len()>=2=>{
