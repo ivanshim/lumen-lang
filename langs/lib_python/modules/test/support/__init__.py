@@ -843,3 +843,20 @@ def captured_output(stream_name):
         yield getattr(sys, stream_name)
     finally:
         setattr(sys, stream_name, orig_stdout)
+
+is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
+
+def get_attribute(obj, name):
+    try:
+        return getattr(obj, name)
+    except AttributeError:
+        raise unittest.SkipTest("object has no attribute " + name)
+
+def subTests(param_name, param_values):
+    def decorate(func):
+        def wrapper(self):
+            for value in param_values:
+                with self.subTest(**{param_name: value}):
+                    func(self, value)
+        return wrapper
+    return decorate

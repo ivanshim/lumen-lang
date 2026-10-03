@@ -199,10 +199,16 @@ class _HostFile:
         self._lines_at = 0
         self._lines_pos = 0
         reading = 'r' in mode or '+' in mode and 'w' not in mode and 'a' not in mode
-        writing = 'w' in mode
+        writing = 'w' in mode or 'x' in mode
         appending = 'a' in mode
         if not (reading or writing or appending):
             reading = True
+        if writing:
+            import posix
+            flags = posix.O_WRONLY | posix.O_CREAT
+            flags |= posix.O_EXCL if 'x' in mode else posix.O_TRUNC
+            fd = posix.open(name, flags, 0o666)
+            posix.close(fd)
         if writing:
             self._dirty = True
             if _host_file_exists(name) and _host_file_kind(name) == 2:
@@ -212,10 +218,10 @@ class _HostFile:
             if _host_file_exists(name):
                 if _host_file_kind(name) == 2:
                     raise IsADirectoryError(21, 'Is a directory', name)
-                brought = _host_file_read(name)
+                brought = self._read_host(name)
                 self._buffer = brought if brought is not False else ''
             else:
-                self._buffer = ''
+                self._buffer = b'' if self._binary else ''
             self._pos = len(self._buffer)
         else:
             kind = _host_file_kind(name)
@@ -223,7 +229,7 @@ class _HostFile:
                 raise FileNotFoundError(2, 'No such file or directory', name)
             if kind == 2:
                 raise IsADirectoryError(21, 'Is a directory', name)
-            brought = _host_file_read(name)
+            brought = self._read_host(name)
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
@@ -236,10 +242,25 @@ class _HostFile:
         return 'r' in self.mode or '+' in self.mode
 
     def writable(self):
-        return 'w' in self.mode or 'a' in self.mode or '+' in self.mode
+        return 'w' in self.mode or 'x' in self.mode or 'a' in self.mode or '+' in self.mode
+
+    def _read_host(self, name):
+        if not self._binary:
+            return _host_file_read(name)
+        import posix
+        fd = posix.open(name, posix.O_RDONLY)
+        try:
+            data = b''
+            while True:
+                piece = posix.read(fd, 65536)
+                if not piece:
+                    return data
+                data += piece
+        finally:
+            posix.close(fd)
 
     def _carried(self, text):
-        return text.encode('utf-8') if self._binary else text
+        return text if isinstance(text, bytes) or not self._binary else text.encode('utf-8')
 
     def read(self, size=-1):
         self._open()
@@ -330,7 +351,19 @@ class _HostFile:
     def flush(self):
         self._open()
         if self._dirty:
-            wrote = _host_file_write(self.name, self._buffer)
+            if self._binary:
+                import posix
+                descriptor = posix.open(self.name, posix.O_WRONLY | posix.O_CREAT | posix.O_TRUNC, 0o666)
+                try:
+                    pending = self._buffer
+                    while pending:
+                        written = posix.write(descriptor, pending)
+                        pending = pending[written:]
+                    wrote = len(self._buffer)
+                finally:
+                    posix.close(descriptor)
+            else:
+                wrote = _host_file_write(self.name, self._buffer)
             if wrote is False:
                 raise FileNotFoundError(2, 'No such file or directory', self.name)
             self._dirty = False
@@ -603,10 +636,19 @@ class memoryview:
 # copyright, credits, exit, help, license,
 # quit, __build_class__, GeneratorExit, StopAsyncIteration, BufferError,
 # MemoryError, ReferenceError, SystemError, FloatingPointError,
-# IndentationError, TabError, and the OSError kinds
-# the operating system raises besides FileNotFoundError and
-# IsADirectoryError -- BlockingIOError, BrokenPipeError,
-# ChildProcessError, ConnectionError and its four kinds,
-# FileExistsError, InterruptedError, NotADirectoryError,
-# PermissionError, ProcessLookupError and TimeoutError -- along with
-# the old spellings EnvironmentError and IOError.
+# IndentationError and TabError.
+
+# POSIX error kinds supplied by the native exception hierarchy.
+BlockingIOError = BlockingIOError
+BrokenPipeError = BrokenPipeError
+ChildProcessError = ChildProcessError
+ConnectionError = ConnectionError
+ConnectionAbortedError = ConnectionAbortedError
+ConnectionRefusedError = ConnectionRefusedError
+ConnectionResetError = ConnectionResetError
+FileExistsError = FileExistsError
+InterruptedError = InterruptedError
+NotADirectoryError = NotADirectoryError
+PermissionError = PermissionError
+ProcessLookupError = ProcessLookupError
+TimeoutError = TimeoutError

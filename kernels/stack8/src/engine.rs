@@ -150,6 +150,8 @@ pub struct Engine<'a> {
     // an empty table leaves ordinary builtin calls on their fast path.
     wildcard_slots: HashMap<Rc<str>, HashMap<String, usize>>,
     module_slots: HashMap<Rc<str>, (usize, String)>,
+    module_books: Vec<(String, Rc<RefCell<Value>>)>,
+    book_source: Option<Rc<str>>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
     /// `builtins` asks for itself this way -- is handed the instance
@@ -517,7 +519,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(56), Some(56), Some(56), Some(20), Some(20), Some(20), Some(20), Some(20), Some(20)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -570,6 +572,17 @@ impl<'a> Engine<'a> {
     }
 
     fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
+        let mut class = class;
+        if self.lang.posix_word.is_some() && (2..=5).contains(&args.len()) && self.furnished(20).is_some_and(|root| Rc::ptr_eq(&root, &class)) {
+            let number = args[0].as_big().ok().and_then(|n| n.to_i64());
+            let at = match number {
+                Some(2) => Some(40), Some(21) => Some(41), Some(11) => Some(53), Some(32) => Some(54),
+                Some(10) => Some(55), Some(103) => Some(57), Some(111) => Some(58), Some(104) => Some(59),
+                Some(17) => Some(60), Some(4) => Some(61), Some(20) => Some(62), Some(1 | 13) => Some(63),
+                Some(3) => Some(64), Some(110) => Some(65), _ => None,
+            };
+            if let Some(specific) = at.and_then(|at| self.furnished(at)) { class = specific; }
+        }
         let mut fields = class.all_fields();
         let sp = self.wording();
         // The fuller account of an exception: a traceback standing as
@@ -1296,6 +1309,8 @@ impl<'a> Engine<'a> {
             modules: HashMap::new(),
             wildcard_slots: HashMap::new(),
             module_slots: HashMap::new(),
+            module_books: Vec::new(),
+            book_source: None,
             importing: std::collections::HashSet::new(),
             fetching_names: false,
             registry,
@@ -2781,6 +2796,7 @@ impl<'a> Engine<'a> {
                 }
             }
             if slot.near.is_empty() && self.registry.idents[slot.far].starts_with("\0module:") {
+                if let Some(kept) = self.book_of(slot.far) { self.write_booked(kept, &slot.ident, Some(value.clone())); }
                 if let Value::Bond(cell) = &self.world[slot.far] { *cell.borrow_mut() = value; return Ok(()); }
             }
             self.put_cell(slot, frame, value);
@@ -4732,9 +4748,11 @@ impl<'a> Engine<'a> {
     }
 
     fn run_portion(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), suspended: Option<&mut Generator>) -> Flow<Passage> {
+        let previous_book_source = std::mem::replace(&mut self.book_source, program.written_in.clone());
         if self.trace_frame.is_none() { self.trace_frame = self.make_frame(program, frame, None); }
         let result = self.run_portion_inner(program, frame, instrs, span, suspended);
         self.refresh_observed_frame();
+        self.book_source = previous_book_source;
         if self.lang.trace_fields.len() < 11 { return result; }
         let result = match result {
             Err(Fault::Note(words)) => match self.carried.take() {
@@ -9107,7 +9125,7 @@ impl<'a> Engine<'a> {
                 return Err(told.into());
             }
             Action::Invoke(name) => {
-                let top = self.drop_top()?;
+                let top = self.drop_top()?.contents();
                 let callee = self.what_it_spells(top);
                 return match callee {
                     Value::ValueMethod(method) => {
@@ -16355,6 +16373,28 @@ impl<'a> Engine<'a> {
             // The working directory (or nothing), the word for the
             // system, the word for the machine, and the environment as
             // a map, in that order.
+            Builtin::PosixCall => {
+                match args.first().map(Value::contents) {
+                    Some(Value::Text(op)) if op.as_ref() == "fspath" => { arity(2)?; self.filesystem_path(args[1].clone())? },
+                    Some(Value::Text(op)) if op.as_ref() == "structseq_new" => {
+                        arity(4)?;
+                        let Value::Class(class) = args[1].contents() else { return Err("TypeError: a class is required".into()); };
+                        let payload = Value::tuple(one_after_another(&args[2]));
+                        let extra = Value::tuple(one_after_another(&args[3]));
+                        self.made += 1;
+                        Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class,
+                            fields: RefCell::new(vec![("\0worth".into(), payload), ("\0structseq".into(), extra)]), mark: self.made }))
+                    }
+                    Some(Value::Text(op)) if op.as_ref() == "structseq_get" => {
+                        arity(3)?;
+                        let Value::Object(object) = args[1].contents() else { return Err("TypeError: a struct sequence is required".into()); };
+                        let fields = object.fields.borrow();
+                        let Some((_, Value::Tuple(extra))) = fields.iter().find(|(name, _)| name == "\0structseq") else { return Err("TypeError: a struct sequence is required".into()); };
+                        extra.get(as_index(&args[2])?).cloned().ok_or_else(|| "IndexError: tuple index out of range".to_string())?
+                    }
+                    _ => crate::posix::call(args)?,
+                }
+            },
             Builtin::HostFacts => {
                 arity(0)?;
                 let directory = std::env::current_dir().ok().and_then(|d| d.to_str().map(Value::text)).unwrap_or(Value::Null);
@@ -19933,7 +19973,34 @@ impl Engine<'_> {
 
     /// A module owns cells in the same world, under names no source can
     /// spell. Its routines keep those addresses after the reader returns.
+    fn filesystem_path(&mut self, offered: Value) -> Res<Value> {
+        let path = offered.contents();
+        let acceptable = |value: &Value| matches!(value, Value::Text(_) | Value::Codepoints(_) | Value::Bytes(_, false, _))
+            || matches!(value, Value::Object(object) if matches!(Self::kind_beneath(&object.class_now()).as_deref(), Some("str" | "bytes")));
+        if acceptable(&path) { return Ok(offered); }
+        if !matches!(path, Value::Object(_) | Value::Class(_)) {
+            return Err(format!("TypeError: expected str, bytes or os.PathLike object, not {}", Self::shown_kind(&path)));
+        }
+        let kind = match self.class_type(vec![path.clone()]) {
+            Ok(Value::Class(kind)) => kind,
+            Ok(_) => return Err(format!("TypeError: expected str, bytes or os.PathLike object, not {}", Self::shown_kind(&path))),
+            Err(fault) => {self.carried = Some(fault); return Err(self.special_fault());}
+        };
+        let missing = || format!("TypeError: expected str, bytes or os.PathLike object, not {}", Self::shown_kind(&path));
+        let Some(function) = self.class_value(&kind, "__fspath__").filter(|v| !matches!(v, Value::Null)) else {return Err(missing());};
+        let invoked = self.bind_class_value(function, Some(path.clone()), kind).and_then(|method| self.class_apply(method, Vec::new()));
+        let answer = match invoked { Ok(value) => value, Err(fault) => {self.carried = Some(fault); return Err(self.special_fault());} };
+        if acceptable(&answer.contents()) { return Ok(answer); }
+        Err(format!("TypeError: expected {}.__fspath__() to return str or bytes, not {}", Self::shown_kind(&path), Self::shown_kind(&answer)))
+    }
+
     fn import_module(&mut self, path: &str) -> Flow<Value> {
+        // OS owns initialization of its circular path-module group.
+        if self.lang.posix_word.is_some() && matches!(path, "genericpath" | "posixpath")
+            && !self.modules.contains_key("os") && !self.importing.contains("os") {
+            self.import_module("os")?;
+        }
+
         if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
         if let Some(cached) = self.module_cache_value(path) {
             if matches!(cached, Value::Null) {
@@ -19958,6 +20025,17 @@ impl Engine<'_> {
         if let Some(word) = self.lang.module_path.clone() {
             if let Some((above, _)) = parent {
                 let owner = self.import_module(above)?;
+                if let (Some(member), Value::Object(parent)) = (self.module_aliases.get(path), &owner) {
+                    let candidate = parent.fields.borrow().iter().find(|(word, _)| word == member).map(|(_, value)| value.contents());
+                    if let Some(Value::Object(alias)) = candidate {
+                        if self.modules.values().any(|v| matches!(v, Value::Object(module) if Rc::ptr_eq(module, &alias))) {
+                            let value = Value::Object(alias);
+                            self.modules.insert(path.to_string(), value.clone());
+                            self.refresh_module_cache(path);
+                            return Ok(value);
+                        }
+                    }
+                }
                 let package = matches!(owner, Value::Object(ref module) if module.fields.borrow().iter().any(|(name, _)| name == &word));
                 if let Some(held) = self.modules.get(path) {
                     if self.module_cache_names(path) { return Ok(held.clone()); }
@@ -20059,6 +20137,7 @@ impl Engine<'_> {
             fields: RefCell::new(fields), mark: self.made,
         });
         let module = Value::Object(object);
+        self.module_books.retain(|(name, _)| name != path);
         self.modules.insert(path.to_string(), module.clone());
         let embedded = self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.embedded_names.remove(path);
@@ -20276,6 +20355,7 @@ struct TextBook {
 /// the dictionary of the outermost names, or in those of a text read in.
 #[derive(Clone, Copy)]
 enum Kept {
+    Module(usize),
     Outer,
     Text(usize),
 }
@@ -20328,6 +20408,11 @@ impl Engine<'_> {
     /// in one: a slot text was given, or any the program may name once
     /// the outermost dictionary has been handed out.
     fn book_of(&self, far: usize) -> Option<Kept> {
+        let ident = self.registry.idents.get(far)?;
+        if let Some(rest) = ident.strip_prefix("\0module:") {
+            let path = rest.splitn(3, ':').nth(1)?;
+            if let Some(at) = self.module_books.iter().position(|(name, _)| name == path) { return Some(Kept::Module(at)); }
+        }
         if self.outer_book.is_none() && self.text_books.is_empty() { return None; }
         let name = self.registry.idents.get(far)?;
         if !Self::public_name(name.rsplit(':').next().unwrap_or(name)) { return None; }
@@ -20362,6 +20447,18 @@ impl Engine<'_> {
     /// the world is to be read after all.
     fn read_booked(&mut self, kept: Kept, far: usize, name: &str) -> Option<Res<Value>> {
         match kept {
+            Kept::Module(at) => {
+                if !Self::public_name(name) { return None; }
+                if let Some(held) = book_entry(&self.module_books[at].1, name) {
+                    let value = match (&held, &self.world[far]) {
+                        (Value::Bond(cell), Value::Bond(slot)) if Rc::ptr_eq(cell, slot) => cell.borrow().clone(),
+                        _ => held,
+                    };
+                    return Some(Ok(value));
+                }
+                if self.left_out(name, &self.world[far].contents()) { return None; }
+                Some(Err(format!("Undefined variable: {name}")))
+            }
             Kept::Outer => {
                 let book = self.outer_book.clone()?;
                 // The name of the builtins dictionary is read as the
@@ -20440,6 +20537,7 @@ impl Engine<'_> {
     /// Write a name into the dictionary it is kept in, or take it out.
     fn write_booked(&mut self, kept: Kept, name: &str, value: Option<Value>) {
         match kept {
+            Kept::Module(at) => if Self::public_name(name) { book_write(&self.module_books[at].1, name, value) },
             Kept::Outer => if let Some(book) = &self.outer_book { book_write(book, name, value) },
             Kept::Text(at) => {
                 let book = &self.text_books[at];
@@ -20640,6 +20738,18 @@ impl Engine<'_> {
                 (Some(outer), true) => outer.clone(),
                 _ => book.near.clone(),
             };
+        }
+        if let Some((_, path)) = self.book_source.as_ref().and_then(|source| self.module_slots.get(source)).cloned() {
+            if let Some((_, book)) = self.module_books.iter().find(|(name, _)| name == &path) { return book.clone(); }
+            if let Some(Value::Object(module)) = self.modules.get(&path) {
+                let pairs = module.fields.borrow().iter().filter_map(|(name, value)| {
+                    if name.starts_with('\0') || matches!(value.contents(), Value::Blank) { None }
+                    else { Some((Value::text(name), value.clone())) }
+                }).collect();
+                let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs))));
+                self.module_books.push((path, book.clone()));
+                return book;
+            }
         }
         self.outer_book_made()
     }
@@ -21628,7 +21738,7 @@ impl Engine<'_> {
         let held = &fields.iter().find(|(word, _)| word == member)?.1;
         let Value::Map(entries) = held.contents() else { return None };
         entries.iter().find_map(|(key, value)| {
-            matches!(key, Value::Text(word) if word.as_ref() == path).then(|| value.contents())
+            key_spells(key, path).then(|| value.contents())
         })
     }
 
@@ -21639,7 +21749,7 @@ impl Engine<'_> {
         let Some((_, held)) = module.fields.borrow().iter().find(|(name, _)| name == member).cloned() else { return true };
         let cache = held.contents();
         match cache {
-            Value::Map(pairs) => pairs.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == path)),
+            Value::Map(pairs) => pairs.iter().any(|(key, _)| key_spells(key, path)),
             _ => true,
         }
     }
@@ -21654,7 +21764,7 @@ impl Engine<'_> {
         } else {
             match place.contents() { Value::Map(row) => row.to_vec(), _ => Vec::new() }
         };
-        entries.retain(|(key, _)| !matches!(key, Value::Text(word) if word.as_ref() == path));
+        entries.retain(|(key, _)| !key_spells(key, path));
         if let Some(value) = self.modules.get(path) { entries.push((Value::text(path), value.clone())); }
         let map = Value::Map(Rc::new(entries.into()));
         if let Some(cell) = Self::map_cell(place) { *cell.borrow_mut() = map; }

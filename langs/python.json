@@ -87,6 +87,7 @@
   "ext.builtin.dir.remove_tree": [
     "__remove_tree"
   ],
+  "ext.builtin.posix": ["__posix"],
   "ext.builtin.host.info": [
     "__host_info"
   ],
@@ -879,7 +880,20 @@
     "MemoryError",
     "BufferError",
     "StopAsyncIteration",
-    "SystemError"
+    "SystemError",
+    "BlockingIOError",
+    "BrokenPipeError",
+    "ChildProcessError",
+    "ConnectionError",
+    "ConnectionAbortedError",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "FileExistsError",
+    "InterruptedError",
+    "NotADirectoryError",
+    "PermissionError",
+    "ProcessLookupError",
+    "TimeoutError"
   ],
   "ext.builtin.exceptions.args": [
     "args"

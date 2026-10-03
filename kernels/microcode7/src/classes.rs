@@ -2209,6 +2209,11 @@ impl<'a> Machine<'a> {
         }
         let success=match &subject {
             Value::Thing(t)=>{
+                let named_sequence = t.holds.borrow().iter().any(|entry| entry.0 == "\0named-sequence");
+                if named_sequence {
+                    if key.starts_with("st_") {return Err("AttributeError: readonly attribute".to_string().into());}
+                    return Err(format!("AttributeError: 'os.stat_result' object has no attribute '{}' and no __dict__ for setting new attributes", key).into());
+                }
                 if self.is_fault_kind(&t.blueprint()) && self.table.single("ext.builtin.exceptions.args") == Some(key) {
                     if let Some(supplied) = replacement.as_ref() {
                         let sequence = match supplied.settled() {

@@ -594,6 +594,7 @@ impl<'a> Engine<'a> {
     pub(super) fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
         match callable {
+            Value::Bond(cell) => { let held = cell.borrow().clone(); self.class_apply(held, args) },
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A method bound to a value of a builtin kind, reached as a
             // value in its own right and then called.
@@ -2007,6 +2008,9 @@ impl<'a> Engine<'a> {
         let absent=self.missing_member(&subject,name);
         match &subject {
             Value::Object(o) => {
+                if o.fields.borrow().iter().any(|(key, _)| key == "\0structseq") {
+                    return Err(if name.starts_with("st_") { "AttributeError: readonly attribute".to_string().into() } else { format!("AttributeError: 'os.stat_result' object has no attribute '{}' and no __dict__ for setting new attributes", name).into() });
+                }
                 if self.exception_class(&o.class_now()) && self.lang.exception_args.as_deref() == Some(name) {
                     if let Some(v) = value.as_ref() {
                         let items = match v.contents() {

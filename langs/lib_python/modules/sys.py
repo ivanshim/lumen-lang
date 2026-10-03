@@ -256,7 +256,7 @@ def exc_info():
 # a private directory of the run's own stands in the binary's place.
 # Where nothing was named -- a reference kernel reads no such label --
 # the empty string stands, and a test that needs its own program skips.
-executable = globals().get('__runner__', '')
+executable = __program_namespace().get('__runner__', '')
 
 float_repr_style = 'short'
 byteorder = 'little'
@@ -373,3 +373,12 @@ def _getframe(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
+
+# POSIX is supplied by the host bridge carried by this interpreter.
+builtin_module_names = ("posix",)
+
+def getfilesystemencoding():
+    return "utf-8"
+
+def getfilesystemencodeerrors():
+    return "surrogateescape"
