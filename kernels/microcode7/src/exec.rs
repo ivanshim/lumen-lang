@@ -840,10 +840,16 @@ impl<'a> Machine<'a> {
                 45 => seed.push(("\0unicode-translate".to_string(), Value::Flag(true))),
                 _ => {}
             }
+            let mut shared = vec![("__module__".to_owned(), Value::text("builtins"))];
+            // A group's own maker, so that a subclass's __new__ can reach
+            // it through super() as the reference's does.
+            if number == 37 || number == 38 {
+                shared.push(("__new__".to_owned(), Value::Wrapped(82, crate::tuples::Sequence::plain(Vec::new()))));
+            }
             let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                 name: word.clone(), under: parent.and_then(|p| chain.get(p).cloned()),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
-                shared: RefCell::new(vec![("__module__".to_owned(), Value::text("builtins"))]), constants: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
+                shared: RefCell::new(shared), constants: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), type_names: std::cell::RefCell::new(None),
             };
             chain.push(Rc::new(kind));
         }
@@ -1084,8 +1090,8 @@ impl<'a> Machine<'a> {
             if row.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", kind.name, wanted, row.len()).into()); }
         }
         let made = if kind.every_field().iter().any(|(key, _)| key == "\0gathers") {
-            let given = row.len() + named.len();
-            if given != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({given} given)").into()); }
+            if row.len() != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({} given)", row.len()).into()); }
+            if !named.is_empty() { return Err(format!("TypeError: {title}() takes no keyword arguments").into()); }
             let heading = row[0].clone();
             if !matches!(heading.settled(), Value::Text(_)) {
                 let kind = match heading.settled() { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word().to_string() };
@@ -1411,8 +1417,13 @@ impl<'a> Machine<'a> {
         let Some((kind, heading, _)) = Self::gathered(&whole) else { return Err(unready.into()) };
         let [chooser] = given else { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()) };
         if self.table.single("ext.builtin.exceptions.group.derive") == Some(word) {
-            let members = match chooser.settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
-            return self.gather_faults(kind, heading, Value::tuple(members.clone()), members);
+            let members = match chooser.settled() {
+                Value::Vector(items) | Value::Tuple(items) => items.to_vec(),
+                Value::Thing(t) if self.inherited_entry(&t.blueprint(), "__getitem__").is_some() => self.core_collect(chooser)?,
+                _ => Vec::new(),
+            };
+            let base = self.furnished_kind(37).unwrap_or(kind);
+            return self.gather_faults(base, heading, chooser.clone(), members);
         }
         let is_callable = self.work_on_class(2, vec![chooser.clone()])?.is_true();
         let sieve = match chooser {
@@ -6392,6 +6403,9 @@ impl<'a> Machine<'a> {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
                     if self.is_fault_kind(&class) {
+                        if self.inherited_entry(&class, self.detail("allocate")).is_some_and(|entry| !matches!(entry, Value::Wrapped(82, _))) {
+                            return self.construct_ordered(class, values);
+                        }
                         if Self::fault_methods(&class) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
                         return self.fault_from_call(class, values);
                     }
@@ -8059,6 +8073,9 @@ impl<'a> Machine<'a> {
             return self.apply_class_member(answering, given);
         }
         if self.is_fault_kind(&class) {
+            if self.inherited_entry(&class, self.detail("allocate")).is_some_and(|entry| !matches!(entry, Value::Wrapped(82, _))) {
+                return self.construct_ordered(class, args);
+            }
             if Self::fault_methods(&class) {
                 return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into());
             }
@@ -17515,14 +17532,26 @@ impl<'a> Machine<'a> {
             Prim::Join => Value::text(&format!("{}{}", self.told(&v[0], w), self.told(&v[1], w))),
             Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
-                // The class's own item entry answers with the key: a
-                // class method bound to the class, a plain routine given
-                // the class before the key.
-                let Some(entry)=self.inherited_entry(class,self.rules.detail_getitem) else{return Err(self.rules.detail_unready.to_owned())};
-                let asked=if matches!(&entry,Value::Wrapped(5,_)){
-                    match self.member_binding(entry,None,class.clone()){Ok(bound)=>self.apply_class_member(bound,vec![v[1].clone()]),Err(escape)=>Err(escape)}
-                }else{self.apply_class_member(entry,vec![v[0].clone(),v[1].clone()])};
-                asked.map_err(|fault|self.suspension_fault(fault))?
+                // A group kind is parameterisable, as the reference's is;
+                // the other fault kinds are not subscriptable at all.
+                if self.is_fault_kind(class) {
+                    if class.every_field().iter().any(|(k, _)| k == "\0gathers") {
+                        let namespace = self.load_namespace("types")?;
+                        let alias_class = self.namespace_item(&namespace, "types", "GenericAlias")?;
+                        self.apply_class_member(alias_class, vec![v[0].clone(), v[1].clone()]).map_err(|escape| self.suspension_fault(escape))?
+                    } else {
+                        return Err(format!("TypeError: type '{}' is not subscriptable", class.name).into());
+                    }
+                } else {
+                    // The class's own item entry answers with the key: a
+                    // class method bound to the class, a plain routine given
+                    // the class before the key.
+                    let Some(entry)=self.inherited_entry(class,self.rules.detail_getitem) else{return Err(self.rules.detail_unready.to_owned())};
+                    let asked=if matches!(&entry,Value::Wrapped(5,_)){
+                        match self.member_binding(entry,None,class.clone()){Ok(bound)=>self.apply_class_member(bound,vec![v[1].clone()]),Err(escape)=>Err(escape)}
+                    }else{self.apply_class_member(entry,vec![v[0].clone(),v[1].clone()])};
+                    asked.map_err(|fault|self.suspension_fault(fault))?
+                }
             }
             Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
             Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,

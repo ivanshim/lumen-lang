@@ -828,6 +828,14 @@ impl<'a> Machine<'a> {
     fn wrap(tag:u8,items:Vec<Value>)->Value {Value::Wrapped(tag,Rc::new(items).into())}
     pub(super) fn apply_class_member(&mut self,f:Value,mut values:Vec<Value>)->Res {
         match f {
+            Value::Wrapped(82, _) => {
+                // A group's own maker: the kind to make, then its heading
+                // and its members, as the reference's __new__.
+                let Some(Value::Blueprint(class)) = values.first().map(|value| value.settled()) else { return Err(self.class_unready()); };
+                let class = class.clone();
+                let rest = values[1..].to_vec();
+                self.fault_from_call(class, rest)
+            }
             Value::Bound(code,environment)=>self.invoke(code,environment,values),
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),
             // A method tied to a value of a native kind, reached as a

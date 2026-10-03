@@ -534,6 +534,10 @@ impl<'a> Engine<'a> {
             if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
             if at == 37 || at == 38 { fields.push(("\0group".into(), Value::Flag(at == 38))); }
             if at == 38 { if let Some(ordinary) = classes.get(1) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
+            // A group's own maker, so that a subclass's __new__ can reach
+            // it through super() as the reference's does.
+            let mut shared = Vec::new();
+            if at == 37 || at == 38 { shared.push(("__new__".into(), Self::adapter(82, Vec::new()))); }
             // The three Unicode codec faults carry an encoding, the
             // object worked on, a start and end index and a reason,
             // and show themselves by those rather than by their args.
@@ -543,7 +547,7 @@ impl<'a> Engine<'a> {
             classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
+                constants: vec![("__module__".into(), Value::text("builtins"))], shared: RefCell::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
             }));
         }
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
@@ -778,8 +782,8 @@ impl<'a> Engine<'a> {
             if args.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", class.name, wanted, args.len()).into()); }
         }
         let made = if class.all_fields().iter().any(|(n, _)| n == "\0group") {
-            let given = args.len() + named.len();
-            if given != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({given} given)").into()); }
+            if args.len() != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({} given)", args.len()).into()); }
+            if !named.is_empty() { return Err(format!("TypeError: {class_name}() takes no keyword arguments").into()); }
             let heading = args[0].clone();
             if !matches!(heading.contents(), Value::Text(_)) {
                 let kind = match &heading { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind().to_string() };
@@ -1077,8 +1081,13 @@ impl<'a> Engine<'a> {
         let Some((class, heading, _)) = Self::group_parts(&whole) else { return Err(unready.into()) };
         let [given] = args else { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()) };
         if derive {
-            let members = match given.contents() { Value::Array(row) | Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
-            return self.make_group(class, heading, Value::tuple(members.clone()), members);
+            let members = match given.contents() {
+                Value::Array(row) | Value::Tuple(row) => row.to_vec(),
+                Value::Object(o) if self.class_value(&o.class_now(), "__getitem__").is_some() => self.special_items(given)?,
+                _ => Vec::new(),
+            };
+            let base = self.furnished(37).unwrap_or(class);
+            return self.make_group(base, heading, given.clone(), members);
         }
         let is_callable = self.class_work(2, vec![given.clone()])?.is_true();
         let chooser = match given {
@@ -7695,6 +7704,28 @@ impl<'a> Engine<'a> {
         // method is bound to the class first, a plain routine is given
         // the class before the key.
         if let (Action::At, Value::Class(c), true) = (op, a, self.fuller_classes()) {
+            // A group class is parameterisable, as the reference's is;
+            // the other fault kinds are not subscriptable at all.
+            if self.exception_class(c) {
+                if c.all_fields().iter().any(|(n, _)| n == "\0group") {
+                    let module = match self.import_module("types") {
+                        Ok(module) => module,
+                        Err(Fault::Note(words)) => return Err(words),
+                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                    };
+                    let maker = match self.class_get(module, "GenericAlias", false) {
+                        Ok(maker) => maker,
+                        Err(Fault::Note(words)) => return Err(words),
+                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
+                    };
+                    return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
+                        Ok(alias) => Ok(alias),
+                        Err(Fault::Note(words)) => Err(words),
+                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
+                    };
+                }
+                return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
+            }
             if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
                 let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
                     match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
@@ -9929,6 +9960,13 @@ impl<'a> Engine<'a> {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
                 if self.exception_class(&class) {
+                    // A subclass that writes its own maker is made through
+                    // it; the builtin classes still make themselves here.
+                    if self.class_value(&class, self.class_word("allocate")).is_some_and(|value| !matches!(value, Value::Adapter(_))) {
+                        let made = self.class_construct(class, args)?;
+                        self.data.push(made);
+                        return Ok(());
+                    }
                     if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
                     let object = self.exception_new(class, args)?;
                     self.data.push(object);

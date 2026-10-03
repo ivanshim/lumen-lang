@@ -747,6 +747,14 @@ impl<'a> Engine<'a> {
             Value::Object(o) => {let f=self.class_value(&o.class_now(),self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
+                82 => {
+                    // A group's own maker: the class to make, then its
+                    // heading and exceptions, as the reference's __new__.
+                    let Some(Value::Class(class)) = args.first().map(|value| value.contents()) else { return Err(self.class_refusal()); };
+                    let class = class.clone();
+                    let rest = args[1..].to_vec();
+                    self.exception_new(class, rest)
+                }
                 9 if w.1.is_empty() && args.len() == 2 && matches!(args[0], Value::Class(_)) => Ok(Self::adapter(9, args)),
                 0 => Ok(w.1[0].clone()),
                 1 => {
