@@ -431,21 +431,21 @@ class memoryview:
         if isinstance(object, memoryview):
             object._check()
             self._source = object._source
-            self._offsets = object._offsets[:]
+            self._offsets = object._offsets
             self._format = object._format
             self._itemsize = object._itemsize
             self._readonly = object._readonly
             self._shape = object._shape
         elif isinstance(object, bytes) or isinstance(object, bytearray):
             self._source = object
-            self._offsets = list(range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object)))
+            self._offsets = range(bytes.__len__(object) if isinstance(object, bytes) else bytearray.__len__(object))
             self._format = 'B'
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
             self._shape = (len(self._offsets),)
         elif isinstance(object, array):
             self._source = object
-            self._offsets = list(range(0, len(object._buffer), object.itemsize))
+            self._offsets = range(0, len(object._buffer), object.itemsize)
             self._format = "w" if object.typecode in "uw" else object.typecode
             self._itemsize = object.itemsize
             self._readonly = False
@@ -528,7 +528,7 @@ class memoryview:
     @property
     def c_contiguous(self):
         self._check()
-        return all(self._offsets[i] == self._offsets[i-1] + self.itemsize for i in range(1, len(self._offsets)))
+        return len(self._offsets) < 2 or self._offsets.step == self.itemsize
 
     def __len__(self):
         self._check()
@@ -569,10 +569,16 @@ class memoryview:
                 raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
             if format not in ('B', 'b'):
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
-            values = list(value)
-            if len(places) != len(values):
+            raw = value.tobytes() if isinstance(value, memoryview) else bytes(value)
+            if len(places) != len(raw):
                 raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
-            for at, item in zip(places, values):
+            if len(places) < 2 or places.step == 1:
+                from array import array
+                target = self._source._buffer if isinstance(self._source, array) else self._source
+                start = places[0] if places else 0
+                bytearray.__setitem__(target, slice(start, start + len(raw)), raw)
+                return
+            for at, item in zip(places, raw):
                 self._put_byte(at, item % 256)
         else:
             try:
@@ -615,6 +621,14 @@ class memoryview:
 
     def tobytes(self):
         self._check()
+        if self.c_contiguous:
+            from array import array
+            source = self._source._buffer if isinstance(self._source, array) else self._source
+            start = self._offsets[0] if self._offsets else 0
+            span = slice(start, start + self.nbytes)
+            if isinstance(source, bytes):
+                return bytes.__getitem__(source, span)
+            return bytes(bytearray.__getitem__(source, span))
         return bytes([self._byte(at + i) for at in self._offsets for i in range(self._itemsize)])
 
     def __bytes__(self):
@@ -642,9 +656,8 @@ class memoryview:
             raise TypeError('shape must be a list or a tuple')
         if self._offsets:
             start = self._offsets[0]
-            for index, offset in enumerate(self._offsets):
-                if offset != start + index * self._itemsize:
-                    raise TypeError('memoryview: casts are restricted to C-contiguous views')
+            if not self.c_contiguous:
+                raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
         format.encode('ascii')
@@ -675,7 +688,7 @@ class memoryview:
         result = memoryview(self)
         result._format = format
         result._itemsize = width
-        result._offsets = list(range(start, start + self.nbytes, width))
+        result._offsets = range(start, start + self.nbytes, width)
         result._shape = dimensions
         return result
 
@@ -690,11 +703,16 @@ class memoryview:
         self._export = None
         self._object = None
         if self._owner is not None:
-            callback = getattr(type(self._owner), '__release_buffer__', None)
-            if callback is not None:
-                callback(self._owner, self._owner_view)
+            owner, view = self._owner, self._owner_view
             self._owner = None
             self._owner_view = None
+            callback = getattr(type(owner), '__release_buffer__', None)
+            if callback is not None:
+                try:
+                    callback(owner, view)
+                except BaseException as error:
+                    import sys
+                    sys._report_unraisable(error, error.__traceback__, owner, 'buffer')
 
     def __enter__(self):
         self._check()

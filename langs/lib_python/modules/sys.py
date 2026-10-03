@@ -358,13 +358,15 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
             raise exc_value
         except BaseException as raised:
             exc_traceback = raised.__traceback__
-    if kind == 'deallocator':
+    if kind == 'buffer':
+        message = 'Exception ignored in __release_buffer__ of ' + type(about).__name__
+    elif kind == 'deallocator':
         message = 'Exception ignored while calling deallocator ' + repr(about)
     elif kind == 'generator':
         message = 'Exception ignored while closing generator ' + repr(about)
     else:
         message = None
-    target = None if kind == 'generator' else about
+    target = None if kind in ('generator', 'buffer') else about
     try:
         unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
                                          exc_traceback, message, target))
