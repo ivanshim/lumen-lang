@@ -12,7 +12,7 @@ impl OctetLease {
         OCTET_LEASES.with(|leases| { let mut entries = leases.borrow_mut(); *entries.entry(address).or_insert(0) += 1; });
         Self { address }
     }
-    fn held(bytes: &Rc<RefCell<Vec<u8>>>) -> bool {
+    pub(crate) fn held(bytes: &Rc<RefCell<Vec<u8>>>) -> bool {
         OCTET_LEASES.with(|leases| leases.borrow().get(&(Rc::as_ptr(bytes) as usize)).copied().unwrap_or(0) != 0)
     }
 }
@@ -2489,7 +2489,11 @@ impl<'a> Machine<'a> {
         if self.reaping { return 0; }
         self.reaping = true;
         let mut web = self.round_web(&[]);
-        let original = web.unreachable();
+        let mut original = web.unreachable();
+        original.sort_by(|left, right| {
+            let birth = |knot: &Knot| match knot { Knot::Held(Value::Thing(thing)) => thing.turn, _ => usize::MAX };
+            birth(left).cmp(&birth(right))
+        });
         let notices = crate::ghost::silence_group(&original);
         for (notify, bearer) in notices {
             self.call_unheard(notify, vec![bearer], "callback");
@@ -6978,8 +6982,14 @@ impl<'a> Machine<'a> {
             'b' => given.insert(0, member.extra.clone().expect("a receiver")),
             _ => return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_string().into()),
         }
+        // A routine kept by a descriptor already belongs to its defining
+        // namespace; reading it as a new closure would capture the caller.
+        let target = match &member.target {
+            Value::Routine(body) => Value::Bound(body.clone(), self.outermost.clone()),
+            held => held.clone(),
+        };
         let expressions = given.into_iter().map(Form::Const).collect();
-        let apply = Form::Apply(Callee::Code(Box::new(Form::Const(member.target.clone()))), expressions);
+        let apply = Form::Apply(Callee::Code(Box::new(Form::Const(target))), expressions);
         self.value_of(&apply, frame)
     }
 
@@ -9680,6 +9690,23 @@ impl<'a> Machine<'a> {
         Ok(None)
     }
 
+    fn numeric_octets(&mut self, subject: &Value) -> Result<Option<Vec<u8>>, String> {
+        let Value::Thing(thing) = subject else { return Ok(None); };
+        let titles = self.table.strings("ext.builtin.buffer.hooks");
+        let [obtain, relinquish] = titles else { return Ok(None); };
+        let Some(obtain) = self.inherited_entry(&thing.blueprint(), obtain) else { return Ok(None); };
+        let window = self.apply_class_member(obtain, vec![subject.clone(), Value::Small(0)])
+            .map_err(|escape| self.suspension_fault(escape))?;
+        let bytes = self.octet_argument(&window);
+        let interrupted = self.got_away.take();
+        if let Some(done) = self.inherited_entry(&thing.blueprint(), relinquish) {
+            let finished = self.apply_class_member(done, vec![subject.clone(), window]);
+            if bytes.is_ok() { finished.map_err(|escape| self.suspension_fault(escape))?; }
+        }
+        if let Some(interrupted) = interrupted { self.got_away = Some(interrupted); }
+        bytes
+    }
+
     fn whole_from_call(&mut self, values: &[Value]) -> Result<Value, String> {
         if values.len() > 2 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
         if values.is_empty() { return Ok(Value::Small(0)); }
@@ -9756,7 +9783,13 @@ impl<'a> Machine<'a> {
             Value::Frac(ratio) if ratio.past_numbers() && self.table.has_any(if ratio.answers_none() { "ext.builtin.to_int.nan" } else { "ext.builtin.to_int.infinity" }) => {
                 Err(self.table.single(if ratio.answers_none() { "ext.builtin.to_int.nan" } else { "ext.builtin.to_int.infinity" }).unwrap_or_default().to_owned())
             }
-            other => math::whole_part(other).map(Value::from_big).ok_or_else(|| self.argument_fault("ext.syntax.call.amiss", None)),
+            other => {
+                if let Some(number) = math::whole_part(other) { return Ok(Value::from_big(number)); }
+                match self.numeric_octets(other)? {
+                    Some(content) => self.whole_from_call(&[self.octets(content, false)]),
+                    None => Err(self.argument_fault("ext.syntax.call.amiss", None)),
+                }
+            },
         }
     }
 
@@ -18281,11 +18314,16 @@ impl<'a> Machine<'a> {
                     },
                 }
             }
+            Prim::ReadOctetFile => {
+                n(1)?;
+                let filename = v[0].render(w);
+                if let Ok(raw) = std::fs::read(filename) { self.octets(raw, false) } else { Value::Flag(false) }
+            }
             Prim::Tupled => {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::BinaryAscii | Prim::ZlibNative | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::BinaryAscii | Prim::BinaryFormat | Prim::ZlibNative | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -18524,7 +18562,17 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     x @ Value::Frac(e) if e.places.is_some() => x.clone(),
                     x => {
-                        let exact = math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("TypeError: float() argument must be a string or a real number, not '{}'", x.kind_word()))?;
+                        let exact = if let Some(number) = math::to_decimal(x, math::DEFAULT_PLACES) { number }
+                        else {
+                            if let Some(octets) = self.numeric_octets(x)? {
+                                let buffer = self.octets(octets, false);
+                                let interpreted = self.prim(Prim::AsReal, name, &[buffer]);
+                                if interpreted.is_ok() { return interpreted; }
+                                let printed = self.object_words(x, true)?;
+                                return Err(format!("ValueError: could not convert string to float: {printed}"));
+                            }
+                            return Err(format!("TypeError: float() argument must be a string or a real number, not '{}'", x.kind_word()));
+                        };
                         if let Value::Frac(e) = &exact {
                             if !e.above.is_zero() && crate::data::nearest_binary(&e.above, &e.beneath).is_infinite() {
                                 return Err("OverflowError: int too large to convert to float".to_string());
@@ -19420,6 +19468,11 @@ impl<'a> Machine<'a> {
                 if positions.len() != incoming.len() { return Err(self.octet_error("arguments")); }
                 for (index, byte) in positions.into_iter().zip(incoming) { cell.borrow_mut()[index] = byte; }
             }
+            return Ok(());
+        }
+        if self.appointment(held, 12).is_some() {
+            let slice = Value::Span(crate::tuples::Sequence::plain(bounds.to_vec()));
+            self.ask_special(held, 12, &[slice, handed.clone()])?;
             return Ok(());
         }
         let Value::Vector(row) = held else { return Err(self.span_complaint("unsupported")) };
@@ -22607,7 +22660,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | BinaryAscii | ZlibNative | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | BinaryAscii | BinaryFormat | ZlibNative | HeapNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -23631,6 +23684,10 @@ impl Machine<'_> {
             BinaryAscii => {
                 require(2, 5)?;
                 self.ascii_binary_work(&input)
+            }
+            BinaryFormat => {
+                require(2, 3)?;
+                crate::byteformat::perform(&input)
             }
             HeapNative => {
                 require(2, 3)?;

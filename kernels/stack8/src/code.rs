@@ -585,6 +585,7 @@ pub enum Builtin {
     /// whether a file is there at all; and taking one away
     /// (ext.builtin.file.*). Only a language that spells these reaches
     /// outside the run at all.
+    FileReadBytes,
     FileRead,
     FileWrite,
     FileThere,
@@ -744,6 +745,7 @@ pub enum Builtin {
     /// its opposite number reads back into the very value again.
     ZlibNative,
     BinAscii,
+    StructNative,
     HeapNative,
     ReduceNative,
     RebuildNative,

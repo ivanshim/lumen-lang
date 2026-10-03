@@ -2,6 +2,7 @@
 _host_file_exists = __file_exists
 _host_file_kind = __file_kind
 _host_file_read = __file_read
+_host_file_read_bytes = __file_read_bytes
 _host_file_write = __file_write
 
 # The names a program reaches without naming a module at all.
@@ -245,6 +246,8 @@ class _HostFile:
 
     def read(self, size=-1):
         self._open()
+        if not self.readable():
+            raise OSError('File not open for reading')
         if size is None or size < 0:
             size = len(self._buffer) - self._pos
         value = self._buffer[self._pos:self._pos + size]
@@ -320,9 +323,7 @@ class _HostFile:
         if not self.writable():
             raise ValueError('File not open for writing')
         if self._binary:
-            if not isinstance(data, bytes) and not isinstance(data, bytearray):
-                raise TypeError('a bytes-like object is required, not ' + type(data).__name__)
-            data = bytes(data)
+            data = memoryview(data).tobytes()
         elif not isinstance(data, str):
             raise TypeError('write() argument must be str, not ' + type(data).__name__)
         self._buffer = self._buffer[:self._pos] + data + self._buffer[self._pos + len(data):]
@@ -439,17 +440,17 @@ class memoryview:
             self._itemsize = 1
             self._readonly = isinstance(object, bytes)
             self._shape = (len(self._offsets),)
-        elif isinstance(object, array) and object.typecode in ('B', 'b', 'i'):
+        elif isinstance(object, array):
             self._source = object
-            self._offsets = list(range(0, len(object.data) * object.itemsize, object.itemsize))
-            self._format = object.typecode
+            self._offsets = list(range(0, len(object._buffer), object.itemsize))
+            self._format = "w" if object.typecode in "uw" else object.typecode
             self._itemsize = object.itemsize
             self._readonly = False
             self._shape = (len(self._offsets),)
         else:
             raise TypeError("memoryview: a bytes-like object is required, not '" + type(object).__name__ + "'")
         self._released = False
-        self._export = _export(self._source) if isinstance(self._source, bytearray) else None
+        self._export = _export(self._source._buffer) if isinstance(self._source, array) else _export(self._source) if isinstance(self._source, bytearray) else None
 
     def _check(self):
         if self._released:
@@ -458,10 +459,7 @@ class memoryview:
     def _byte(self, offset):
         from array import array
         if isinstance(self._source, array):
-            if self._source.typecode in ('B', 'b'):
-                return self._source.data[offset] & 255
-            word = self._source.data[offset // 4]
-            return word.to_bytes(4, 'little', signed=True)[offset % 4]
+            return self._source._buffer[offset]
         if isinstance(self._source, bytes):
             return bytes.__getitem__(self._source, offset)
         return bytearray.__getitem__(self._source, offset)
@@ -469,13 +467,8 @@ class memoryview:
     def _put_byte(self, offset, value):
         from array import array
         if isinstance(self._source, array):
-            if self._source.typecode in ('B', 'b'):
-                self._source.data[offset] = value - 256 if self._source.typecode == 'b' and value >= 128 else value
-            else:
-                index = offset // 4
-                data = bytearray(self._source.data[index].to_bytes(4, 'little', signed=True))
-                data[offset % 4] = value
-                self._source.data[index] = int.from_bytes(data, 'little', signed=True)
+            storage = self._source._buffer
+            storage[offset] = value
         else:
             self._source[offset] = value
 
@@ -554,10 +547,15 @@ class memoryview:
         except TypeError:
             raise TypeError('memoryview: invalid slice key')
         raw = bytes([self._byte(first + i) for i in range(self._itemsize)])
-        return int.from_bytes(raw, 'little', signed=self._format not in ('B', 'I'))
+        import struct
+        if self._format == 'w':
+            raise NotImplementedError('memoryview: format w not supported')
+        format = self._format[1:] if self._format.startswith('@') else self._format
+        return struct.unpack('@' + format, raw[:struct.calcsize('@' + format)])[0]
 
     def __setitem__(self, key, value):
         self._check()
+        format = self._format[1:] if self._format.startswith('@') else self._format
         if self.ndim != 1:
             raise NotImplementedError('multi-dimensional assignments are not implemented')
         if self._readonly:
@@ -566,7 +564,7 @@ class memoryview:
             places = self._offsets[key]
             if not isinstance(value, (bytes, bytearray, memoryview)):
                 raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
-            if self._format not in ('B', 'b'):
+            if format not in ('B', 'b'):
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
             values = list(value)
             if len(places) != len(values):
@@ -580,11 +578,32 @@ class memoryview:
                 raise IndexError('index out of bounds on dimension 1')
             except TypeError:
                 raise TypeError('memoryview: invalid slice key')
+            if format == 'w':
+                raise NotImplementedError('memoryview: format w not supported')
+            if format == 'c':
+                if not isinstance(value, bytes) or len(value) != 1:
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
+            elif format == '?':
+                value = bool(value)
+            elif format in 'efd':
+                if not isinstance(value, (int, float)) and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
+                value = float(value)
+            else:
+                if not isinstance(value, int) and not hasattr(type(value), '__index__'):
+                    raise TypeError("memoryview: invalid type for format '" + format + "'")
+                import operator
+                value = operator.index(value)
+            import struct
             try:
-                raw = value.to_bytes(self._itemsize, 'little', signed=self._format not in ('B', 'I'))
+                raw = struct.pack('@' + format, value)
+            except struct.error:
+                raise ValueError("memoryview: invalid value for format '" + format + "'")
             except OverflowError:
-                raise ValueError("memoryview: invalid value for format '" + self._format + "'")
-            for i in range(self._itemsize):
+                if format != 'f':
+                    raise
+                raw = struct.pack('@f', float('-inf') if value < 0 else float('inf'))
+            for i in range(len(raw)):
                 self._put_byte(first + i, raw[i])
 
     def tolist(self):
@@ -613,11 +632,11 @@ class memoryview:
         return self.tobytes().hex(sep, bytes_per_sep)
 
     def cast(self, format, shape=None):
+        if not isinstance(format, str):
+            raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
         self._check()
         if shape is not None and not isinstance(shape, (list, tuple)):
             raise TypeError('shape must be a list or a tuple')
-        if format not in ('B', 'b', 'i', 'I'):
-            raise TypeError('memoryview: destination format must be a native single character format')
         if self._offsets:
             start = self._offsets[0]
             for index, offset in enumerate(self._offsets):
@@ -625,7 +644,15 @@ class memoryview:
                     raise TypeError('memoryview: casts are restricted to C-contiguous views')
         else:
             start = 0
-        width = 4 if format in ('i', 'I') else 1
+        format.encode('ascii')
+        destination = format[1:] if format.startswith('@') else format
+        if len(destination) != 1 or destination not in 'cbBhHiIlLqQnNfde?P':
+            raise ValueError("memoryview: destination format must be a native single character format prefixed with an optional '@'")
+        source = self._format[1:] if self._format.startswith('@') else self._format
+        if source not in ('b', 'B', 'c') and destination not in ('b', 'B', 'c'):
+            raise TypeError('memoryview: cannot cast between two non-byte formats')
+        import struct
+        width = struct.calcsize('@' + destination)
         if self.nbytes % width:
             raise TypeError('memoryview: length is not a multiple of itemsize')
         dimensions = (self.nbytes // width,)

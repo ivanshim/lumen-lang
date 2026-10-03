@@ -24,6 +24,7 @@ pub mod faint;
 mod core;
 mod posix;
 mod complex;
+mod structpack;
 pub mod tuples;
 
 use lang::Lang;

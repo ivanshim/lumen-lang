@@ -13,7 +13,7 @@ impl ByteExport {
         BYTE_EXPORTS.with(|counts| *counts.borrow_mut().entry(key).or_default() += 1);
         Self(key)
     }
-    fn active(cell: &Rc<RefCell<Vec<u8>>>) -> bool {
+    pub(crate) fn active(cell: &Rc<RefCell<Vec<u8>>>) -> bool {
         BYTE_EXPORTS.with(|counts| counts.borrow().contains_key(&(Rc::as_ptr(cell) as usize)))
     }
 }
@@ -1826,7 +1826,8 @@ impl<'a> Engine<'a> {
         if self.collecting_cycles { return 0; }
         self.collecting_cycles = true;
         let mut graph = self.cycle_graph(&[]);
-        let group = graph.unreached();
+        let mut group = graph.unreached();
+        group.sort_by_key(|value| match value { Value::Object(object) => object.mark, _ => usize::MAX });
         for (callback, bearer) in crate::faint::clear_group(&group) {
             self.speak_ignoring(callback, vec![bearer], "callback");
         }
@@ -13299,6 +13300,11 @@ impl<'a> Engine<'a> {
     }
 
     fn write_slice(&mut self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
+        if self.special_method(&target, 12).is_some() {
+            let key = Value::Slice(Rc::new(parts.clone()));
+            self.special_call(&target, 12, vec![key, given])?;
+            return Ok(target);
+        }
         let given = collection_contents(&given);
         if let Value::Bytes(row, mutable, _) = &target {
             if !mutable { return Err(self.byte_fault("immutable")); }
@@ -14928,6 +14934,32 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    fn number_buffer(&mut self, value: &Value) -> Res<Option<Vec<u8>>> {
+        let Value::Object(object) = value else { return Ok(None) };
+        let hooks = self.lang.buffer_hooks.clone();
+        if hooks.len() != 2 { return Ok(None); }
+        let Some(getter) = self.class_value(&object.class_now(), &hooks[0]) else { return Ok(None); };
+        let view = match self.class_apply(getter, vec![value.clone(), Value::Small(0)]) {
+            Ok(view) => view,
+            Err(Fault::Note(words)) => return Err(words),
+            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+        };
+        let content = self.bytes_argument(&view);
+        let pending = self.carried.take();
+        if let Some(release) = self.class_value(&object.class_now(), &hooks[1]) {
+            let released = self.class_apply(release, vec![value.clone(), view]);
+            if content.is_ok() {
+                match released {
+                    Ok(_) => (),
+                    Err(Fault::Note(words)) => return Err(words),
+                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
+                }
+            }
+        }
+        if pending.is_some() { self.carried = pending; }
+        content
+    }
+
     fn integer_call(&mut self, args: &[Value]) -> Res<Value> {
         if args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
         let Some(value) = args.first() else { return Ok(Value::Small(0)) };
@@ -14960,7 +14992,11 @@ impl<'a> Engine<'a> {
                     if let Some(said) = said { return Err(said.clone()); }
                 }
             }
-            return arith::whole_of(value).map(Value::of_big).ok_or_else(|| self.lang.call_amiss[0].clone());
+            if let Some(whole) = arith::whole_of(value) { return Ok(Value::of_big(whole)); }
+            if let Some(content) = self.number_buffer(value)? {
+                return self.integer_call(&[self.byte_make(content, false)]);
+            }
+            return Err(self.lang.call_amiss[0].clone());
         };
         let invalid = || {
             if self.lang.integer_text_detail.len() == 2 {
@@ -16615,6 +16651,13 @@ impl<'a> Engine<'a> {
             // Reaching outside the run: only a language that spells
             // these labels can, and what cannot be done gives false
             // back rather than stopping, as such a language expects.
+            Builtin::FileReadBytes => {
+                arity(1)?;
+                match std::fs::read(args[0].display(&self.wording())) {
+                    Ok(data) => self.byte_make(data, false),
+                    Err(_) => Value::Flag(false),
+                }
+            }
             Builtin::FileRead => {
                 let binary = self.lang.binary_streams && args.len() == 2 && self.truth(&args[1]);
                 if !(self.lang.binary_streams && args.len() == 2) { arity(1)?; }
@@ -18277,7 +18320,22 @@ impl<'a> Engine<'a> {
                 match &args[0] {
                     v @ Value::Real(_) => v.clone(),
                     v => {
-                        let exact = arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("TypeError: float() argument must be a string or a real number, not '{}'", v.core_kind()))?;
+                        let exact = match arith::to_real(v, arith::DEFAULT_PLACES) {
+                            Some(exact) => exact,
+                            None => {
+                                if let Some(content) = self.number_buffer(v)? {
+                                    let mut forwarded = vec![self.byte_make(content, false)];
+                                    return match self.builtin(Builtin::AsReal, name, &mut forwarded) {
+                                        Ok(number) => Ok(number),
+                                        Err(_) => {
+                                            let original = self.special_text(v, true)?;
+                                            Err(format!("ValueError: could not convert string to float: {original}"))
+                                        }
+                                    };
+                                }
+                                return Err(format!("TypeError: float() argument must be a string or a real number, not '{}'", v.core_kind()));
+                            }
+                        };
                         if let Value::Real(r) = &exact {
                             if !r.p.is_zero() && crate::value::as_binary(&r.p, &r.q).is_infinite() {
                                 return Err("OverflowError: int too large to convert to float".to_string());
@@ -18706,7 +18764,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::BinAscii | Builtin::ZlibNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::BinAscii | Builtin::StructNative | Builtin::ZlibNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -19401,7 +19459,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::BinAscii | Builtin::ZlibNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::BinAscii | Builtin::StructNative | Builtin::ZlibNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -20338,6 +20396,10 @@ impl Engine<'_> {
                 arity(2, 5)?;
                 if self.lang.binascii_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
                 self.binary_ascii(&args)?
+            }
+            Builtin::StructNative => {
+                arity(2, 3)?;
+                crate::structpack::apply(&args)?
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;

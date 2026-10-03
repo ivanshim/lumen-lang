@@ -26,6 +26,7 @@ pub mod ghost;
 mod core;
 mod posix;
 mod complex;
+mod byteformat;
 pub mod tuples;
 
 use std::cell::RefCell;

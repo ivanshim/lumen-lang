@@ -4253,6 +4253,17 @@ Those files use the extension labels, so the host gives them only to the
 kernels that read them; the reference kernels get the ported library
 alone.
 
+The Python binary modules follow CPython v3.14.8 (`8e6e75d9102e`).
+`struct.py` is unchanged beneath its source and PSF provenance header.
+Its `_struct` interface uses native format layouts, integer and IEEE float
+conversion, and byte-buffer operations in stack8 and microcode7, following
+[Modules/_struct.c](https://github.com/python/cpython/blob/v3.14.8/Modules/_struct.c).
+The Python `array` interface translates the C-only
+[Modules/arraymodule.c](https://github.com/python/cpython/blob/v3.14.8/Modules/arraymodule.c)
+and stores typed bytes with native buffer export tracking. Its storage and
+byte conversion therefore share the kernels' binary operations rather than
+representing array elements only as Python lists.
+
 ## What a kernel does not implement
 
 A kernel reads past a core label it gives no meaning to, exactly as it
@@ -4470,6 +4481,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
+| `ext.builtin.buffer.hooks` | - | - | `__buffer__` `__release_buffer__` | - | - | - | - | - | - | - |
 | `ext.builtin.build_class` | - | - | `__build_class__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
@@ -4617,6 +4629,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.read` | - | - | `__file_read` | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | `__file_write` | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.file_read.bytes` | - | - | `__file_read_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.frame.module` | - | - | `__frame_module` | - | - | - | - | - | - | - |
@@ -4866,6 +4879,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
+| `ext.builtin.struct_native` | - | - | `__struct_native` | - | - | - | - | - | - | - |
 | `ext.builtin.subprocess` | - | - | `__subprocess` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
@@ -5864,3 +5878,9 @@ The review regressions and buffer-protocol comparisons live in
 `ext.builtin.math.frexp` enables Python binary64 mantissa/exponent decomposition through the existing math operation label, including signed zero, subnormal values and non-finite values. Other language tables leave this capability absent.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
+
+`ext.builtin.struct_native` selects Python binary format compilation and byte-exact packing and unpacking for `_struct` and `array`.
+
+`ext.builtin.file_read.bytes` reads binary file contents without decoding, for Python buffer consumers such as `array.fromfile`.
+
+`ext.builtin.buffer.hooks` names Python buffer acquisition and release methods used by numeric constructors to read actual exported bytes.

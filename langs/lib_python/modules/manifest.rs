@@ -17,6 +17,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_random", include_str!("_random.py"), "_random.py"),
     ("_sha2", include_str!("_sha2.py"), "_sha2.py"),
     ("_string", include_str!("_string.py"), "_string.py"),
+    ("_struct", include_str!("_struct.py"), "_struct.py"),
     ("_testcapi", include_str!("_testcapi.py"), "_testcapi.py"),
     ("_testinternalcapi", include_str!("_testinternalcapi.py"), "_testinternalcapi.py"),
     ("_testlimitedcapi", include_str!("_testlimitedcapi.py"), "_testlimitedcapi.py"),

@@ -371,6 +371,8 @@ pub enum Prim {
     /// its opposite number reads back into the very value again.
     ZlibNative,
     BinaryAscii,
+    ReadOctetFile,
+    BinaryFormat,
     HeapNative,
     ReduceNative,
     ProductStep,
