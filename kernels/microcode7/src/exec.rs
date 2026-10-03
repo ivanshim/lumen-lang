@@ -23205,14 +23205,17 @@ impl Machine<'_> {
             let slot = worth;
             {
                 match slot {
-                    Value::Shared(cell) | Value::Mutable(cell, _) => {
-                        let nested = matches!(&*cell.borrow(), Value::Shared(_) | Value::Mutable(..));
-                        if nested {
-                            let inner = cell.borrow().clone();
-                            if let Value::Shared(inner) | Value::Mutable(inner, _) = inner { *inner.borrow_mut() = dictionary; }
-                        } else { *cell.borrow_mut() = dictionary; }
+                    Value::Shared(cell) => {
+                        let current = cell.borrow().clone();
+                        match current {
+                            Value::Shared(contents) | Value::Mutable(contents, _) => {
+                                *contents.borrow_mut() = dictionary;
+                            }
+                            _ => { *cell.borrow_mut() = self.collection_cell(dictionary); }
+                        }
                     }
-                    _ => { *slot = dictionary; }
+                    Value::Mutable(contents, _) => { *contents.borrow_mut() = dictionary; }
+                    _ => { *slot = self.collection_cell(dictionary); }
                 }
             }
             break;

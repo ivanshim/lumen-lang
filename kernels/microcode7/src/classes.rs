@@ -2290,7 +2290,7 @@ impl<'a> Machine<'a> {
                 // code reads through; a new value goes into the cell.
                 if self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, t))) {
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
-                    if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = v; return Ok(Value::Nil); }
+                    if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = self.collection_cell(v); return Ok(Value::Nil); }
                 }
                 // A blueprint naming the entries its things hold, and
                 // holding one of its own under a name not among them,
