@@ -36,15 +36,17 @@ def _buffer(data):
         return data
     if isinstance(data, bytearray):
         return bytes(data)
-    try:
-        view = memoryview(data)
-    except TypeError:
+    from array import array
+    if not isinstance(data, (memoryview, array)) and not hasattr(type(data), '__buffer__'):
         raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
+    from builtins import _buffer_view
+    view = _buffer_view(data, 0)
     try:
-        view = view.cast('B')
-    except TypeError:
-        raise BufferError('memoryview: underlying buffer is not C-contiguous')
-    return view.tobytes()
+        if not view.c_contiguous:
+            raise BufferError('memoryview: underlying buffer is not C-contiguous')
+        return view.tobytes()
+    finally:
+        view.release()
 
 def _indexed(value):
     if not isinstance(value, int) and not hasattr(type(value), '__index__'):
