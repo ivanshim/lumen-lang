@@ -6,9 +6,9 @@ use std::ffi::{CStr, CString};
 use std::rc::Rc;
 use num_traits::ToPrimitive;
 
-struct Directory(*mut libc::DIR);
+struct Directory(*mut libc::DIR, bool);
 impl Drop for Directory {
-    fn drop(&mut self) { unsafe { libc::closedir(self.0); } }
+    fn drop(&mut self) { unsafe { if self.1 {libc::rewinddir(self.0);} libc::closedir(self.0); } }
 }
 thread_local! {
     static DIRECTORIES: RefCell<(i64, std::collections::HashMap<i64, Directory>)> = RefCell::new((0, std::collections::HashMap::new()));
@@ -29,6 +29,11 @@ fn raw(value: &Value) -> Result<Vec<u8>, String> {
                 else { return Err("UnicodeEncodeError: surrogates not allowed".to_string()); }
             }
             Ok(encoded)
+        },
+        Value::Object(object) => {
+            let payload = object.fields.borrow().iter().find(|(name, _)| name == "\0worth")
+                .map(|(_, value)| value.clone());
+            match payload {Some(value) => raw(&value), None => Err("TypeError: expected str or bytes".into())}
         },
         _ => Err("TypeError: expected str or bytes".into()),
     }
@@ -158,7 +163,8 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
             }
         },
         "scandir" => {
-            let directory = if matches!(a[0].contents(), Value::Small(_) | Value::Huge(_)) {
+            let from_fd = matches!(a[0].contents(), Value::Small(_) | Value::Huge(_));
+            let directory = if from_fd {
                 let fd = libc::fcntl(number(0)? as i32, libc::F_DUPFD_CLOEXEC, 0);
                 if fd == -1 { std::ptr::null_mut() } else {
                     let dir = libc::fdopendir(fd);
@@ -167,7 +173,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
                 }
             } else {libc::opendir(pathname(0)?.as_ptr())};
             if directory.is_null() {Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))}
-            else {Ok(DIRECTORIES.with(|held| {let mut held = held.borrow_mut(); held.0 += 1; let key = held.0; held.1.insert(key, Directory(directory)); Value::Small(key)}))}
+            else {Ok(DIRECTORIES.with(|held| {let mut held = held.borrow_mut(); held.0 += 1; let key = held.0; held.1.insert(key, Directory(directory, from_fd)); Value::Small(key)}))}
         },
         "scandir_next" => {
             let handle = number(0)?;

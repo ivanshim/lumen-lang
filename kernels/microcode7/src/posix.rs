@@ -4,9 +4,9 @@ use num_traits::ToPrimitive;
 use num_bigint::BigInt;
 use std::{cell::RefCell, ffi::{CString, CStr}, rc::Rc};
 
-struct DirStream { pointer: *mut libc::DIR }
+struct DirStream { pointer: *mut libc::DIR, reset: bool }
 impl Drop for DirStream {
-    fn drop(&mut self) {unsafe {let _ = libc::closedir(self.pointer);}}
+    fn drop(&mut self) {unsafe {if self.reset {libc::rewinddir(self.pointer);} let _ = libc::closedir(self.pointer);}}
 }
 thread_local! {
     static OPEN_DIRS: RefCell<std::collections::BTreeMap<i64, DirStream>> = const {RefCell::new(std::collections::BTreeMap::new())};
@@ -34,6 +34,12 @@ fn data_of(item: &Value) -> Result<Vec<u8>, String> {
                 }
             }
             Ok(bytes)
+        }
+        Value::Thing(instance) => {
+            let saved = instance.holds.borrow();
+            let (_, native) = saved.iter().find(|field| field.0 == "\0underlying")
+                .ok_or_else(|| String::from("TypeError: expected str or bytes"))?;
+            data_of(native)
         }
         _ => Err(String::from("TypeError: expected str or bytes")),
     }
@@ -173,7 +179,8 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
             }
             "scandir" => {
                 let stream;
-                if matches!(params[0].settled(), Value::Small(_) | Value::Huge(_)) {
+                let via_descriptor = matches!(params[0].settled(), Value::Small(_) | Value::Huge(_));
+                if via_descriptor {
                     let copied = libc::fcntl(int(0)? as _, libc::F_DUPFD_CLOEXEC, 0);
                     stream = if copied < 0 {std::ptr::null_mut()} else {
                         let opened = libc::fdopendir(copied);
@@ -183,7 +190,7 @@ pub fn perform(given: &[Value]) -> Result<Value, String> {
                 } else {stream = libc::opendir(path(0)?.as_ptr());}
                 if stream.is_null() {Err(errno())} else {
                     let token = NEXT_DIR.with(|counter| {let value = counter.get(); counter.set(value + 1); value});
-                    OPEN_DIRS.with(|entries| {entries.borrow_mut().insert(token, DirStream {pointer: stream});});
+                    OPEN_DIRS.with(|entries| {entries.borrow_mut().insert(token, DirStream {pointer: stream, reset: via_descriptor});});
                     Ok(Value::Small(token))
                 }
             }

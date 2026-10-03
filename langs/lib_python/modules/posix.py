@@ -48,6 +48,10 @@ def _cint(value):
     return number
 
 
+def _is_fd_path(value):
+    return not isinstance(value, (str, bytes)) and hasattr(type(value), '__index__')
+
+
 def _descriptor(value):
     if isinstance(value, bool):
         import warnings
@@ -146,7 +150,7 @@ def _stat(data):
 
 
 def stat(path, *, dir_fd=None, follow_symlinks=True):
-    if isinstance(path, int):
+    if _is_fd_path(path):
         if dir_fd is not None:
             raise ValueError("stat: can't specify dir_fd without matching path")
         if not follow_symlinks:
@@ -174,7 +178,7 @@ def getcwd():
 
 
 def chdir(path):
-    if isinstance(path, int):
+    if _is_fd_path(path):
         _call('fchdir', _descriptor(path))
     else:
         original = _path(path)
@@ -188,7 +192,7 @@ def fchdir(fd):
 def listdir(path=None):
     if path is None:
         path = '.'
-    original = _descriptor(path) if isinstance(path, int) else _path(path)
+    original = _descriptor(path) if _is_fd_path(path) else _path(path)
     result = []
     with scandir(original) as entries:
         for entry in entries:
@@ -284,7 +288,7 @@ def access(path, mode, *, dir_fd=None, effective_ids=False, follow_symlinks=True
 
 
 def chmod(path, mode, *, dir_fd=None, follow_symlinks=True):
-    if isinstance(path, int):
+    if _is_fd_path(path):
         if dir_fd is not None or not follow_symlinks:
             raise ValueError('chmod: cannot use fd and follow_symlinks together')
         return fchmod(path, mode)
@@ -322,7 +326,7 @@ def utime(path, times=None, *, ns=None, dir_fd=None, follow_symlinks=True):
         moments = [0, 0]
     sec1, nano1 = divmod(moments[0], 1000000000)
     sec2, nano2 = divmod(moments[1], 1000000000)
-    if isinstance(path, int):
+    if _is_fd_path(path):
         if dir_fd is not None or not follow_symlinks:
             raise ValueError('utime: cannot use fd and follow_symlinks together')
         _call('futime', _descriptor(path), sec1, nano1, sec2, nano2, int(times is not None or ns is not None))
@@ -489,7 +493,7 @@ class _ScandirIterator:
     def __init__(self, path):
         self._closed = True
         self._path = path
-        self._handle = _call('scandir', path, filename=None if isinstance(path, int) else path)
+        self._handle = _call('scandir', path, filename=None if _is_fd_path(path) else path)
         self._closed = False
     def __iter__(self):
         return self
@@ -522,4 +526,4 @@ class _ScandirIterator:
 def scandir(path=None):
     if path is None:
         path = '.'
-    return _ScandirIterator(_descriptor(path) if isinstance(path, int) else _path(path))
+    return _ScandirIterator(_descriptor(path) if _is_fd_path(path) else _path(path))
