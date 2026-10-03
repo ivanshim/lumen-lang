@@ -231,6 +231,11 @@ def _has_code_flag(f, flag):
     wrapper wrapping a function or a functools.partialmethod wrapping a
     function) whose code object has the given ``flag``
     set in its flags."""
+    f = functools._unwrap_partial(f)
+    if not (isfunction(f) or ismethod(f) or
+            isinstance(f, functools.partialmethod) or
+            hasattr(f, '__partialmethod__') or _signature_is_functionlike(f)):
+        return False
     f = functools._unwrap_partialmethod(f)
     while ismethod(f):
         f = f.__func__
