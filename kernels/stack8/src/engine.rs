@@ -3945,7 +3945,7 @@ impl<'a> Engine<'a> {
                 _ => vec![Value::Null, Value::Null, Value::Null],
             };
             let (method, receiver) = match &object {
-                Value::Method(o, p) => (p.clone(), Value::Object(o.clone())),
+                Value::Method(o, p, _) => (p.clone(), Value::Object(o.clone())),
                 _ => (self.special_method(&object, 34).ok_or_else(|| self.special_fault())?, object.clone()),
             };
             let kept = self.data.len();
@@ -6901,7 +6901,7 @@ impl<'a> Engine<'a> {
         // A bound method is written by the routine's own full name and
         // the thing it is bound to, as CPython writes it; a language
         // with no word for the running module keeps the old writing.
-        if let Value::Method(receiver, routine) = value {
+        if let Value::Method(receiver, routine, _) = value {
             if !self.class_word("main").is_empty() {
                 let of = self.special_text(&Value::Object(receiver.clone()), true)?;
                 let named = if routine.qualified.is_empty() { routine.ident.as_str() } else { routine.qualified.as_str() };
@@ -9389,7 +9389,7 @@ impl<'a> Engine<'a> {
                         Ok(())
                     },
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
-                    Value::Method(object, method) => {
+                    Value::Method(object, method, _) => {
                         let args = self.drop_many(argc - 1)?;
                         let mut given = vec![Value::Object(object)];
                         given.extend(args);
@@ -10209,13 +10209,13 @@ impl<'a> Engine<'a> {
                             self.data.push(Value::Class(o.class_now().clone()));
                             self.perform(&Action::Reach(name.clone()), 1)?;
                             match self.drop_top()? {
-                                Value::Routine(method) => Value::Method(o, method),
+                                Value::Routine(method) => Value::Method(o, method, Rc::new(())),
                                 held => held,
                             }
                         }
                         None if self.lang.member_pipes && o.class_now().method(name).is_some() => {
                             let method = o.class_now().method(name).expect("the member exists").clone();
-                            Value::Method(o, method)
+                            Value::Method(o, method, Rc::new(()))
                         }
                         None if self.reads_for(&o).is_some() => {
                             let method = self.reads_for(&o).expect("the method");
@@ -12213,8 +12213,8 @@ impl<'a> Engine<'a> {
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Routine(x), Value::Routine(y)) => Rc::ptr_eq(x,y),
                     (Value::Adapter(x), Value::Adapter(y)) => Rc::ptr_eq(x,y),
-                    // A method is bound afresh at every read; no two reads are one.
-                    (Value::Method(..), Value::Method(..)) => false,
+                    // Copies retain the marker of one binding; a new binding has another.
+                    (Value::Method(_, _, place), Value::Method(_, _, other)) => Rc::ptr_eq(place, other),
                     (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
                     (Value::Object(_), Value::Text(_)) | (Value::Text(_), Value::Object(_)) => false,
@@ -17110,7 +17110,7 @@ impl<'a> Engine<'a> {
                 let found = field.or_else(|| class.and_then(|c| {
                     if let Some(holder) = c.holder(&name) { return holder.shared.borrow().iter().find(|(n, _)| n == &name).map(|(_, v)| v.clone()); }
                     c.constant(&name).cloned().or_else(|| c.method(&name).map(|m| match value {
-                        Value::Object(o) => Value::Method(o.clone(), m.clone()), _ => Value::Routine(m.clone()),
+                        Value::Object(o) => Value::Method(o.clone(), m.clone(), Rc::new(())), _ => Value::Routine(m.clone()),
                     }))
                 }));
                 match found.or_else(|| args.get(2).cloned()) {
@@ -19841,7 +19841,7 @@ impl Engine<'_> {
                     Value::Text(a) => a.as_ptr() as usize as u64,
                     Value::Object(a) | Value::Fields(a) => Rc::as_ptr(a) as usize as u64,
                     Value::ValueMethod(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Method(owner, routine) => (Rc::as_ptr(owner) as usize as u64).wrapping_add((Rc::as_ptr(routine) as usize as u64).rotate_left(17)),
+                    Value::Method(_, _, place) => Rc::as_ptr(place) as usize as u64,
                     Value::Class(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Bytes(cell, ..) => Rc::as_ptr(cell) as usize as u64,
                     Value::Slice(bounds) => Rc::as_ptr(bounds) as usize as u64,

@@ -44,7 +44,7 @@ impl Ghost {
             Ghost::Set(w) => w.upgrade().map(Value::Set),
             Ghost::Bound(p, e) => Some(Value::Bound(p.upgrade()?, e.upgrade()?)),
             Ghost::Routine(w) => w.upgrade().map(Value::Routine),
-            Ghost::Method(p, t) => Some(Value::Method(p.upgrade()?, t.upgrade()?)),
+            Ghost::Method(p, t) => Some(Value::Method(p.upgrade()?, t.upgrade()?, Rc::new(()))),
         }
     }
 
@@ -279,7 +279,7 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
         Value::Set(s) => Ghost::Set(Rc::downgrade(s)),
         Value::Bound(p, e) => Ghost::Bound(Rc::downgrade(p), Rc::downgrade(e)),
         Value::Routine(p) => Ghost::Routine(Rc::downgrade(p)),
-        Value::Method(p, t) => Ghost::Method(Rc::downgrade(p), Rc::downgrade(t)),
+        Value::Method(p, t, _) => Ghost::Method(Rc::downgrade(p), Rc::downgrade(t)),
         _ => return None,
     })
 }
@@ -557,7 +557,7 @@ impl Knot {
     fn parts(self) -> Vec<Knot> {
         match self {
             Knot::Held(Value::Bound(body, env)) => vec![Knot::Held(Value::Routine(body)), Knot::Frame(env)],
-            Knot::Held(Value::Method(body, thing)) => vec![Knot::Held(Value::Routine(body)), Knot::Held(Value::Thing(thing))],
+            Knot::Held(Value::Method(body, thing, _)) => vec![Knot::Held(Value::Routine(body)), Knot::Held(Value::Thing(thing))],
             Knot::Held(Value::Keyed(k, v)) => vec![Knot::Held((*k).clone()), Knot::Held((*v).clone())],
             other => vec![other],
         }

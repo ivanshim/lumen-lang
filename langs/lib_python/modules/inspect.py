@@ -188,3 +188,100 @@ def signature(obj, *, follow_wrapped=True, globals=None, locals=None,
                                    globals=globals, locals=locals,
                                    eval_str=eval_str,
                                    annotation_format=annotation_format)
+
+
+# Coroutine predicates from CPython v3.14.8 (8e6e75d9102e), Lib/inspect.py; PSF License.
+import functools
+import types
+_void = object()
+_is_coroutine_mark = object()
+
+# Read the actual runtime kinds; types still has a separate function constructor.
+_function_kind = type(lambda: None)
+class _MethodKind:
+    def method(self):
+        pass
+_method_kind = type(_MethodKind().method)
+del _MethodKind
+
+def ismethod(object):
+    """Return true if the object is an instance method."""
+    return isinstance(object, _method_kind)
+
+def isfunction(object):
+    """Return true if the object is a user-defined function.
+
+    Function objects provide these attributes:
+        __doc__         documentation string
+        __name__        name with which this function was defined
+        __qualname__    qualified name of this function
+        __module__      name of the module the function was defined in or None
+        __code__        code object containing compiled function bytecode
+        __defaults__    tuple of any default values for arguments
+        __globals__     global namespace in which this function was defined
+        __annotations__ dict of parameter annotations
+        __kwdefaults__  dict of keyword only parameters with defaults
+        __dict__        namespace which is supporting arbitrary function attributes
+        __closure__     a tuple of cells or None
+        __type_params__ tuple of type parameters"""
+    return isinstance(object, _function_kind)
+
+def _has_code_flag(f, flag):
+    """Return true if ``f`` is a function (or a method or functools.partial
+    wrapper wrapping a function or a functools.partialmethod wrapping a
+    function) whose code object has the given ``flag``
+    set in its flags."""
+    f = functools._unwrap_partialmethod(f)
+    while ismethod(f):
+        f = f.__func__
+    f = functools._unwrap_partial(f)
+    if not (isfunction(f) or _signature_is_functionlike(f)):
+        return False
+    # If it's a pure Python function, or an object that is duck type
+    # of a Python function (Cython and Mock functions, for instance), then:
+    return bool(f.__code__.co_flags & flag)
+
+def _has_coroutine_mark(f):
+    while ismethod(f):
+        f = f.__func__
+    f = functools._unwrap_partial(f)
+    return getattr(f, "_is_coroutine_marker", None) is _is_coroutine_mark
+
+def markcoroutinefunction(func):
+    """
+    Decorator to ensure callable is recognised as a coroutine function.
+    """
+    if hasattr(func, '__func__'):
+        func = func.__func__
+    func._is_coroutine_marker = _is_coroutine_mark
+    return func
+
+def iscoroutinefunction(obj):
+    """Return true if the object is a coroutine function.
+
+    Coroutine functions are normally defined with "async def" syntax, but may
+    be marked via markcoroutinefunction.
+    """
+    return _has_code_flag(obj, CO_COROUTINE) or _has_coroutine_mark(obj)
+
+def _signature_is_functionlike(obj):
+    """Private helper to test if `obj` is a duck type of FunctionType.
+    A good example of such objects are functions compiled with
+    Cython, which have all attributes that a pure Python function
+    would have, but have their code statically compiled.
+    """
+
+    if not callable(obj) or isclass(obj):
+        # All function-like objects are obviously callables,
+        # and not classes.
+        return False
+
+    name = getattr(obj, '__name__', None)
+    code = getattr(obj, '__code__', None)
+    defaults = getattr(obj, '__defaults__', _void) # Important to use _void ...
+    kwdefaults = getattr(obj, '__kwdefaults__', _void) # ... and not None here
+
+    return (isinstance(code, types.CodeType) and
+            isinstance(name, str) and
+            (defaults is None or isinstance(defaults, tuple)) and
+            (kwdefaults is None or isinstance(kwdefaults, dict)))

@@ -43,6 +43,12 @@ The only removed files were the two copies of
 Detailed working inventories and measurements stay in the ignored worker
 scratch area rather than the repository.
 
+The runtime `test.support.subTests` helper retains the v3.14.8 synchronous
+and asynchronous wrappers, parameter materialization, and cleanup handling.
+Coroutine detection in the `inspect` adapter follows that release's partial
+and partial-method unwrapping, using the runtime's actual callable kinds.
+These are partial adapters, separate from the unchanged support source copy.
+
 The suites run on the two full kernels, stack8 and microcode7, which are
 the ones that implement the `ext.` labels the languages need beyond the
 core (see `langs/README.md`); the report scores each suite directory on

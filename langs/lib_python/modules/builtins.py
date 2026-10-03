@@ -284,7 +284,8 @@ class _HostFile:
         if size is not None and size >= 0:
             start = self._pos
             limit = min(len(self._buffer), start + size)
-            found = self._buffer.find('\n', start, limit)
+            delimiter = b'\n' if self._binary else '\n'
+            found = self._buffer.find(delimiter, start, limit)
             stop = limit if found < 0 else found + 1
             self._pos = stop
             self._lines = None

@@ -735,7 +735,7 @@ impl<'a> Engine<'a> {
                     Ok(answer?)
                 } else { Ok(self.value_method(&bound.0, &bound.1, args, Vec::new())?) }
             },
-            Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
+            Value::Method(o,p, _) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A thing called stands on its own call member, which may be
             // a thing again: each such step is counted with the calls
             // standing, so a thing whose call member is a thing of its
@@ -1443,7 +1443,7 @@ impl<'a> Engine<'a> {
             return self.call_descriptor(&value, reader, vec![subject.unwrap_or(Value::Null), Value::Class(class)]);
         }
         match (value,subject) {
-            (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::Method(o,f)),
+            (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::Method(o,f, Rc::new(()))),
             (Value::Routine(f),Some(other)) => Ok(Self::adapter(3, vec![Value::Routine(f), other])),
             (v,_) => Ok(v),
         }
@@ -1994,7 +1994,7 @@ impl<'a> Engine<'a> {
                     return Ok(Self::adapter(3,vec![root,receiver]));
                 }
             }
-            Value::Method(o,f) => {
+            Value::Method(o,f, _) => {
                 if name==self.class_word("receiver") {return Ok(Value::Object(o.clone()));}
                 if name==self.class_word("function") {return Ok(Value::Routine(f.clone()));}
                 return self.class_get(Value::Routine(f.clone()),name,true);
@@ -3274,7 +3274,7 @@ impl<'a> Engine<'a> {
                 let word=self.class_word(part);
                 if !word.is_empty() { names.push(word.to_string()); }
             }
-            let routine=match one {Value::Method(_,f)=>Value::Routine(f.clone()),other=>other.clone()};
+            let routine=match one {Value::Method(_,f, _)=>Value::Routine(f.clone()),other=>other.clone()};
             names.extend(self.routine_member_names(&routine));
             names.sort();names.dedup();
             return Value::array(names.iter().map(|n|Value::text(n)).collect());

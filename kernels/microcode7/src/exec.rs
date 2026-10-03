@@ -5303,7 +5303,7 @@ impl<'a> Machine<'a> {
             if matches!(&stands,Value::Wrapped(..)) { values=self.opened_arguments(values)?; }
             return self.apply_class_member(stands,values);
         }
-        if let Value::Method(body, object) = &stands {
+        if let Value::Method(body, object, _) = &stands {
             let mut given = vec![Value::Thing(object.clone())];
             given.extend(self.value_list(args, frame)?);
             return self.invoke(body.clone(), self.outermost.clone(), given).map_err(Escape::from);
@@ -7991,7 +7991,7 @@ impl<'a> Machine<'a> {
         }
         if let Some(value) = class.constant(name) { return Some(value.clone()); }
         class.program(name).map(|body| match value {
-            Value::Thing(o) => Value::Method(body.clone(), o.clone()),
+            Value::Thing(o) => Value::Method(body.clone(), o.clone(), Rc::new(())),
             _ => Value::Bound(body.clone(), self.outermost.clone()),
         })
     }
@@ -8085,7 +8085,7 @@ impl<'a> Machine<'a> {
                     if matches!(&stands,Value::Wrapped(..)) { given=self.opened_arguments(given)?; }
                     return Ok(Next::Value(self.apply_class_member(stands,given)?));
                 }
-                if let Value::Method(body, object) = &stands {
+                if let Value::Method(body, object, _) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
                     let value = self.invoke(body.clone(), self.outermost.clone(), given)?;
@@ -12517,7 +12517,7 @@ impl<'a> Machine<'a> {
             // and the thing it is bound to, as CPython writes it; a
             // language with no word for the running module keeps the
             // old writing.
-            Value::Method(routine, receiver) if !self.rules.detail_main.is_empty() => {
+            Value::Method(routine, receiver, _) if !self.rules.detail_main.is_empty() => {
                 let of = self.object_words(&Value::Thing(receiver.clone()), true)?;
                 let named = if routine.qualification.is_empty() { routine.ident.as_str() } else { routine.qualification.as_str() };
                 Ok(format!("<bound method {named} of {of}>"))
@@ -17466,7 +17466,7 @@ impl<'a> Machine<'a> {
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
                     (Value::Bound(a,here), Value::Bound(b,there)) => Rc::ptr_eq(a,b) && Rc::ptr_eq(here,there),
                     // Every read of a method ties it afresh: two reads are never one value.
-                    (Value::Method(..), Value::Method(..)) => false,
+                    (Value::Method(_, _, left_handle), Value::Method(_, _, right_handle)) => Rc::ptr_eq(left_handle, right_handle),
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
                     (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
@@ -23234,7 +23234,7 @@ impl Machine<'_> {
                     Value::Thing(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Attributes(owner) => Rc::as_ptr(owner) as usize as u64,
                     Value::Member(receiver, _) => Rc::as_ptr(receiver) as usize as u64,
-                    Value::Method(code, instance) => (Rc::as_ptr(code) as usize as u64).rotate_right(9) ^ (Rc::as_ptr(instance) as usize as u64),
+                    Value::Method(_, _, handle) => Rc::as_ptr(handle) as usize as u64,
                     Value::Wrapped(_, payload) => Rc::as_ptr(payload) as usize as u64,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Octets { cell, .. } => Rc::as_ptr(cell) as usize as u64,

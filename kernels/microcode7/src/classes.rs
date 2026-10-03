@@ -77,7 +77,7 @@ impl<'a> Machine<'a> {
         // A routine lists the members it can honestly answer for,
         // alongside any it was given of its own.
         let routine=match item {
-            Value::Method(code,_)=>Some(Value::Routine(code.clone())),
+            Value::Method(code,_, _)=>Some(Value::Routine(code.clone())),
             Value::Wrapped(3,items) if matches!(items.first(),Some(Value::Routine(_)|Value::Bound(..)))=>Some(items[0].clone()),
             Value::Routine(_)|Value::Bound(..)=>Some(item.clone()),
             _=>None,
@@ -837,7 +837,7 @@ impl<'a> Machine<'a> {
                     answer
                 }
             },
-            Value::Method(code,thing)=>{values.insert(0,Value::Thing(thing));self.invoke(code,self.outermost.clone(),values)},
+            Value::Method(code,thing, _)=>{values.insert(0,Value::Thing(thing));self.invoke(code,self.outermost.clone(),values)},
             // A thing called stands on its own call member, which may
             // be a thing again. Reaching through one makes no frame, so
             // the step is counted among the calls standing all the
@@ -1497,7 +1497,7 @@ impl<'a> Machine<'a> {
             return self.through_descriptor(&entry,reader,vec![receiver.unwrap_or(Value::Nil),Value::Blueprint(owner)]);
         }
         match receiver {
-            Some(Value::Thing(t))=>match entry {Value::Routine(code)=>Ok(Value::Method(code,t)),Value::Bound(..)=>Ok(Self::wrap(3,vec![entry,Value::Thing(t)])),_=>Ok(entry)},
+            Some(Value::Thing(t))=>match entry {Value::Routine(code)=>Ok(Value::Method(code,t, Rc::new(()))),Value::Bound(..)=>Ok(Self::wrap(3,vec![entry,Value::Thing(t)])),_=>Ok(entry)},
             Some(other) if matches!(entry,Value::Routine(_)|Value::Bound(..))=>Ok(Self::wrap(3,vec![entry,other])),
             _=>Ok(entry),
         }
@@ -1508,14 +1508,14 @@ impl<'a> Machine<'a> {
     pub(super) fn routine_standing(&self,value:&Value)->(Rc<Routine>,Rc<Env>) {
         match value {
             Value::Bound(code,room)=>self.as_now_written(code.clone(),room.clone()),
-            Value::Routine(code)|Value::Method(code,_)=>self.as_now_written(code.clone(),self.outermost.clone()),
+            Value::Routine(code)|Value::Method(code,_, _)=>self.as_now_written(code.clone(),self.outermost.clone()),
             _=>unreachable!("only a routine stands this way"),
         }
     }
     fn written_key(value:&Value,outermost:&Rc<Env>)->(usize,usize) {
         match value {
             Value::Bound(code,room)=>(Rc::as_ptr(code) as usize,Rc::as_ptr(room) as usize),
-            Value::Routine(code)|Value::Method(code,_)=>(Rc::as_ptr(code) as usize,Rc::as_ptr(outermost) as usize),
+            Value::Routine(code)|Value::Method(code,_, _)=>(Rc::as_ptr(code) as usize,Rc::as_ptr(outermost) as usize),
             _=>(0,0),
         }
     }
@@ -1523,7 +1523,7 @@ impl<'a> Machine<'a> {
     /// code was written over it.
     fn code_run_by(&self,value:&Value)->Rc<Routine> {
         if let Some(entry)=self.written_over.get(&Self::written_key(value,&self.outermost)) {return entry.4.clone();}
-        match value {Value::Bound(code,_)|Value::Routine(code)|Value::Method(code,_)=>code.clone(),_=>unreachable!("only a routine runs code")}
+        match value {Value::Bound(code,_)|Value::Routine(code)|Value::Method(code,_, _)=>code.clone(),_=>unreachable!("only a routine runs code")}
     }
     /// The builtins a routine reaches its unbound names through: what
     /// the dictionary it was handed keeps under that name, else the
@@ -1654,7 +1654,7 @@ impl<'a> Machine<'a> {
             // Writing a routine's own program back leaves it as it was
             // made: the shadow the earlier write put there is taken away
             // rather than layered over once more.
-            let own=match subject {Value::Bound(c,_)=>c.clone(),Value::Routine(c)|Value::Method(c,_)=>c.clone(),_=>return Err(self.class_unready())};
+            let own=match subject {Value::Bound(c,_)=>c.clone(),Value::Routine(c)|Value::Method(c,_, _)=>c.clone(),_=>return Err(self.class_unready())};
             let source_program=match source {Value::Routine(p)|Value::Bound(p,_)=>p.clone(),_=>return Err(self.class_unready())};
             if Rc::ptr_eq(&source_program,&own) {
                 self.written_over.remove(&Self::written_key(subject,&self.outermost));
@@ -1695,7 +1695,7 @@ impl<'a> Machine<'a> {
         };
         let (was,was_room)=match subject {
             Value::Bound(c,r)=>(c.clone(),r.clone()),
-            Value::Routine(c)|Value::Method(c,_)=>(c.clone(),self.outermost.clone()),
+            Value::Routine(c)|Value::Method(c,_, _)=>(c.clone(),self.outermost.clone()),
             _=>return Err(self.class_unready()),
         };
         let place=Self::written_key(subject,&self.outermost);
@@ -1836,7 +1836,7 @@ impl<'a> Machine<'a> {
     /// none), or the module the file it came of was read as.
     pub(super) fn routine_module(&self, code: &Rc<Routine>) -> Value {
         let apart = format!("{}\0", self.detail("module"));
-        let kept = self.routine_members.iter().find(|(held, _)| matches!(held, Value::Routine(r) | Value::Bound(r, _) | Value::Method(r, _) if Rc::ptr_eq(r, code)));
+        let kept = self.routine_members.iter().find(|(held, _)| matches!(held, Value::Routine(r) | Value::Bound(r, _) | Value::Method(r, _, _) if Rc::ptr_eq(r, code)));
         if let Some((_, members)) = kept {
             if let Some((_, v)) = members.holds.borrow().iter().find(|(k, _)| **k == apart) { return v.clone(); }
         }
@@ -2472,7 +2472,7 @@ impl<'a> Machine<'a> {
                     return Ok(Self::wrap(3,vec![callable,under]));
                 }
             }
-        }else if let Value::Method(code,t)=&value {
+        }else if let Value::Method(code,t, _)=&value {
             if key==self.detail("receiver"){return Ok(Value::Thing(t.clone()));}
             if key==self.detail("function"){return Ok(Value::Routine(code.clone()));}
             return self.read_class_member(Value::Routine(code.clone()),key,true);

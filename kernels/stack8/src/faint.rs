@@ -42,7 +42,7 @@ impl Hold {
             Hold::Generator(w) => Value::Generator(w.upgrade()?),
             Hold::Set(w) => Value::Set(w.upgrade()?),
             Hold::Routine(w) => Value::Routine(w.upgrade()?),
-            Hold::Method(o, r) => Value::Method(o.upgrade()?, r.upgrade()?),
+            Hold::Method(o, r) => Value::Method(o.upgrade()?, r.upgrade()?, Rc::new(())),
         })
     }
 
@@ -335,7 +335,7 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
         Value::Generator(g) => Some(Hold::Generator(Rc::downgrade(g))),
         Value::Set(s) => Some(Hold::Set(Rc::downgrade(s))),
         Value::Routine(r) => Some(Hold::Routine(Rc::downgrade(r))),
-        Value::Method(o, r) => Some(Hold::Method(Rc::downgrade(o), Rc::downgrade(r))),
+        Value::Method(o, r, _) => Some(Hold::Method(Rc::downgrade(o), Rc::downgrade(r))),
         _ => None,
     }
 }
@@ -579,7 +579,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
 /// count on their members.
 fn external_places(value: Value, out: &mut Vec<Value>) {
     match value {
-        Value::Method(object, routine) => {
+        Value::Method(object, routine, _) => {
             out.push(Value::Object(object));
             out.push(Value::Routine(routine));
         }
@@ -598,7 +598,7 @@ impl Graph {
         let mut bookkeeping = HashMap::new();
         for value in &extra {
             let parts = match value {
-                Value::Method(object, routine) => vec![Value::Object(object.clone()), Value::Routine(routine.clone())],
+                Value::Method(object, routine, _) => vec![Value::Object(object.clone()), Value::Routine(routine.clone())],
                 other => vec![other.clone()],
             };
             for part in parts {
@@ -617,7 +617,7 @@ impl Graph {
     }
 
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
-        let function = match function { Value::Method(_, routine) => Value::Routine(routine.clone()), other => other.clone() };
+        let function = match function { Value::Method(_, routine, _) => Value::Routine(routine.clone()), other => other.clone() };
         if let (Some(from), Some(to)) = (place_of(&function), place_of(holder)) {
             if let Some(node) = self.nodes.get_mut(&from) { node.reaches.push(to); }
         }
@@ -641,7 +641,7 @@ impl Graph {
             for child in children.drain(..) {
                 // A bound method is not a place of its own but two.
                 let parts: Vec<Value> = match child {
-                    Value::Method(o, r) => vec![Value::Object(o), Value::Routine(r)],
+                    Value::Method(o, r, _) => vec![Value::Object(o), Value::Routine(r)],
                     other => vec![other],
                 };
                 for part in parts {
@@ -665,7 +665,7 @@ impl Graph {
     /// function bookkeeping is left out of the strong holds.
     pub fn unowned(&self, value: &Value) -> bool {
         match value {
-            Value::Method(object, routine) => self.unowned(&Value::Object(object.clone())) && self.unowned(&Value::Routine(routine.clone())),
+            Value::Method(object, routine, _) => self.unowned(&Value::Object(object.clone())) && self.unowned(&Value::Routine(routine.clone())),
             other => place_of(other).and_then(|place| self.nodes.get(&place)).is_some_and(|node| !node.marked),
         }
     }

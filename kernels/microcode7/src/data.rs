@@ -265,7 +265,7 @@ pub enum Value {
     Thing(Rc<Thing>),
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
-    Method(Rc<Routine>, Rc<Thing>),
+    Method(Rc<Routine>, Rc<Thing>, Rc<()>),
     Adorned(Rc<Adornment>),
     /// A weak hold on a thing behind a pointer: it keeps nothing about
     /// and gives the thing back only while it is still there.
@@ -684,7 +684,7 @@ impl Value {
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
-            Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
+            Value::Method(program, receiver, _) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
 
             // A progression is addressed by the places it names: their
             // count, where they begin and how far apart they stand, so
@@ -1068,7 +1068,7 @@ impl Value {
             // One object is itself and nothing else; two classes are one
             // when they carry the same name.
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
-            (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
+            (Value::Method(p, a, _), Value::Method(q, b, _)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
@@ -1398,7 +1398,7 @@ impl Value {
                 let title = if p.qualification.is_empty() { p.ident.clone() } else { p.qualification.clone() };
                 format!("<function {title} at 0x1>")
             }
-            Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Method(p, _, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => {
                 if let Some(title) = b.python_title() { return format!("<class '{title}'>"); }
@@ -1458,7 +1458,7 @@ impl Value {
                 out.push(')');
             }
             Value::Adorned(a) => out.push_str(&format!("d{:p}", Rc::as_ptr(a))),
-            Value::Method(p, t) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
+            Value::Method(p, t, _) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
             Value::Shared(cell) => cell.borrow().memo_key(out),
