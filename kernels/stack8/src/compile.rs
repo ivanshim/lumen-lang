@@ -5341,11 +5341,13 @@ impl<'a> Compiler<'a> {
             let (body, formals, spares) = self.method(&named)?;
             // What a parameter falls back on is read where the method
             // is written, and the reading goes with the routine, as the
-            // reference reads a default once at the definition. The
-            // method's own parameters stand aside while it is read, so a
-            // name spelled like one of them still means the one outside.
+            // reference reads a default once at the definition -- but
+            // only in a language that binds names the Python way; every
+            // other language keeps its call-time default. The method's
+            // own parameters stand aside while it is read, so a name
+            // spelled like one of them still means the one outside.
             let after = self.pos;
-            for (_, from) in &spares {
+            for (_, from) in spares.iter().filter(|_| self.lang.bind_names) {
                 self.pos = *from;
                 // A default that is one bare name spelled like a
                 // parameter means the name outside, as the reference
@@ -5365,7 +5367,7 @@ impl<'a> Compiler<'a> {
             }
             self.pos = after;
             self.constant(Value::Routine(body));
-            if !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
+            if self.lang.bind_names && !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
         }
         for (kind, held) in saved.into_iter().rev() {
             if kind == 0 {
@@ -5609,7 +5611,7 @@ impl<'a> Compiler<'a> {
             self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
             let after = self.pos;
-            for (_, from) in &spares {
+            for (_, from) in spares.iter().filter(|_| self.lang.bind_names) {
                 self.pos = *from;
                 // A default that is one bare name spelled like a
                 // parameter means the name outside, as the reference
@@ -5629,7 +5631,7 @@ impl<'a> Compiler<'a> {
             }
             self.pos = after;
             self.constant(Value::Routine(method.clone()));
-            if !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
+            if self.lang.bind_names && !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
             let wrapped=!decorators.is_empty();
             for place in decorators.into_iter().rev() {self.read(&place);self.act(Action::Invoke(Rc::from("")),2);}
             self.write(&slot);
@@ -5643,7 +5645,7 @@ impl<'a> Compiler<'a> {
             // always has, since the arm may not run. One carrying the
             // values its parameters fall back on stands in its place,
             // since the table of routines as compiled knows no such value.
-            match wrapped || self.gathering().arms > 0 || reaches_out || !spares.is_empty() {
+            match wrapped || self.gathering().arms > 0 || reaches_out || (self.lang.bind_names && !spares.is_empty()) {
                 true => self.member_kept(&named, &slot),
                 false => {
                     self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot.clone());

@@ -4317,12 +4317,16 @@ impl<'a> Builder<'a> {
             let decorated=!wrappers.is_empty();
             // What a parameter falls back on is read where the method
             // stands, and goes with the routine, as the reference reads
-            // a default once at the definition.
+            // a default once at the definition -- in a language that
+            // binds names the Python way; anywhere else the call-time
+            // writing stands as it always did.
             let resume = self.pos;
             let mut default_values = Vec::new();
-            for (_, start) in &spares {
-                self.pos = *start;
-                default_values.push(self.expr(0)?);
+            if self.table.flag("ext.syntax.call.bind_names") {
+                for (_, start) in &spares {
+                    self.pos = *start;
+                    default_values.push(self.expr(0)?);
+                }
             }
             self.pos = resume;
             let mut expression=constant(Value::Routine(body.clone()));
@@ -4352,7 +4356,7 @@ impl<'a> Builder<'a> {
             // A method carrying the values its parameters fall back on
             // is handed over from its address too, since the table of
             // routines as compiled knows no such value.
-            match decorated || self.parts().arms > 0 || stands_in_routine || !spares.is_empty() {
+            match decorated || self.parts().arms > 0 || stands_in_routine || (self.table.flag("ext.syntax.call.bind_names") && !spares.is_empty()) {
                 true => self.member_noted(&method_name, slot.clone()),
                 false => {
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot.clone());
@@ -4728,9 +4732,11 @@ impl<'a> Builder<'a> {
             let (routine, spares) = self.method(&word)?;
             let resume = self.pos;
             let mut default_values = Vec::new();
-            for (_, start) in &spares {
-                self.pos = *start;
-                default_values.push(self.expr(0)?);
+            if self.table.flag("ext.syntax.call.bind_names") {
+                for (_, start) in &spares {
+                    self.pos = *start;
+                    default_values.push(self.expr(0)?);
+                }
             }
             self.pos = resume;
             decorated = constant(Value::Routine(routine));
