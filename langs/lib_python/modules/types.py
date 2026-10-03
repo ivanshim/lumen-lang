@@ -147,37 +147,8 @@ class method:
 MethodType = method
 
 
-# A place to hang names on, which is all a module is from here. The
-# metaclass first names the run's own module kind, so that a module
-# made by the run answers to ModuleType itself, and then falls back
-# to the ordinary class line, so that a subclass is asked about by
-# its own ancestry and a made ModuleType comes back as one.
-class _ModuleKind(type):
-    def __instancecheck__(cls, instance):
-        if cls is ModuleType and type(instance) is type(sys):
-            return True
-        for base in getattr(type(instance), '__mro__', ()):
-            if base is cls:
-                return True
-        return False
-
-    def __subclasscheck__(cls, subclass):
-        if cls is ModuleType and subclass is type(sys):
-            return True
-        for base in getattr(subclass, '__mro__', ()):
-            if base is cls:
-                return True
-        return False
-
-
-class ModuleType(metaclass=_ModuleKind):
-    def __init__(self, name, doc=None):
-        self.__name__ = name
-        if doc is not None:
-            self.__doc__ = doc
-
-    def __repr__(self):
-        return "<module '" + str(getattr(self, '__name__', '?')) + "'>"
+# The run's own module kind is the reference's ModuleType.
+ModuleType = type(sys)
 
 
 # A reading of a mapping that cannot be written through.

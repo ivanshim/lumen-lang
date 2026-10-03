@@ -784,7 +784,7 @@ impl<'a> Machine<'a> {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
                 22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 => Some(20), 42 => Some(19),
-                43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
+                43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), 53 | 54 => Some(20), _ => Some(1),
             };
             let mut seed = Vec::new();
             match number {
@@ -830,7 +830,27 @@ impl<'a> Machine<'a> {
         self.furnished_kind(place).map_or(false, |ancestor| Self::fault_descends(kind, &ancestor))
     }
 
+    /// The fuller kind the reference gives an operating-system number,
+    /// where it has one.
+    fn errno_kind(&self, number: i64) -> Option<Rc<Blueprint>> {
+        let name = match number {
+            2 => "FileNotFoundError",
+            1 | 13 => "PermissionError",
+            20 => "NotADirectoryError",
+            21 => "IsADirectoryError",
+            _ => return None,
+        };
+        match self.fault_kinds.get(name) { Some(Value::Blueprint(kind)) => Some(kind.clone()), _ => None }
+    }
     fn make_fault(&mut self, kind: Rc<Blueprint>, row: Vec<Value>, because: Value) -> Value {
+        // An OSError made with a number the reference knows a fuller
+        // kind for is made as that kind.
+        let kind = if kind.name == "OSError" {
+            let number = match row.first().map(Value::settled) {
+                Some(Value::Small(n)) => Some(n), Some(Value::Huge(n)) => n.to_i64(), Some(Value::Flag(b)) => Some(if b { 1 } else { 0 }), _ => None,
+            };
+            number.and_then(|n| self.errno_kind(n)).unwrap_or(kind)
+        } else { kind };
         self.made += 1;
         let mut holds = kind.every_field();
         // The rest of what a fault holds: a traceback that is nil, the
@@ -12192,6 +12212,11 @@ impl<'a> Machine<'a> {
                                 None => format!("<module '{name}' (built-in)>"),
                             });
                         }
+                        // A module made by hand shows by the name it keeps.
+                        if Self::native_beneath(&t.blueprint()).as_deref() == Some("module") {
+                            let name = t.holds.borrow().iter().find(|(n, _)| n == "__name__").map(|(_, v)| v.settled().bare()).unwrap_or_default();
+                            return Ok(format!("<module '{name}'>"));
+                        }
                         let module = self.rules.detail_main;
                         Ok(if t.blueprint().under.is_none() && t.blueprint().name == "object" { "<object object at 0x1>".to_owned() }
                             else if let Some(title) = t.blueprint().python_title() { format!("<{title} object at 0x1>") }
@@ -13740,7 +13765,10 @@ impl<'a> Machine<'a> {
             },
             (Prim::NextItem, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
             (Prim::Belongs, [one, Value::Blueprint(class)]) => {
-                Value::Flag(matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false)))
+                let named = matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false));
+                // The run's own module objects answer to the native module kind.
+                let module = Self::native_beneath(class).as_deref() == Some("module") && self.namespace_holding(one).is_some();
+                Value::Flag(named || module)
             }
             (Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::Hashed | Prim::Ordered | Prim::Iterator | Prim::NextItem | Prim::Belongs, _) => return Err(self.bad_answer()),
             _ => return Ok(None),
@@ -22275,6 +22303,8 @@ impl Machine<'_> {
                 // kind's own name, no word standing in its place.
                 if let Some(word) = Self::native_beneath(class) {
                     if !self.table.prims.contains_key(&word) {
+                        // The run’s own module objects answer to the native module kind.
+                        if word == "module" && Self::native_word(class).as_deref() == Some("module") && self.namespace_holding(item).is_some() { return Ok(true); }
                         if let Value::Thing(thing) = item {
                             return Ok(std::iter::once(&thing.blueprint()).chain(thing.blueprint().ancestry.iter()).any(|parent| Rc::ptr_eq(parent, class)));
                         }

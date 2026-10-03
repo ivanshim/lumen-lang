@@ -885,7 +885,9 @@
     "MemoryError",
     "BufferError",
     "StopAsyncIteration",
-    "SystemError"
+    "SystemError",
+    "NotADirectoryError",
+    "PermissionError"
   ],
   "ext.builtin.exceptions.args": [
     "args"

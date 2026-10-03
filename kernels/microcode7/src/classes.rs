@@ -246,6 +246,18 @@ impl<'a> Machine<'a> {
             made.born=Some(born);
             return Ok(Value::Routine(Rc::new(made)));
         }
+        // A module made by hand: ModuleType is the run's own module
+        // kind, so calling it makes a thing carrying the name it was
+        // handed and, when one was handed, its documentation.
+        if word=="module" {
+            let (positional,_)=self.open_arguments(given)?;
+            let mut holds:Vec<(String,Value)>=Vec::new();
+            let mut handed=positional.into_iter();
+            if let Some(name)=handed.next(){holds.push(("__name__".to_owned(),name));}
+            if let Some(doc)=handed.next(){holds.push(("__doc__".to_owned(),doc));}
+            self.made+=1;
+            return Ok(Value::Thing(Rc::new(Thing{reclassified:RefCell::new(None), of:class, holds:RefCell::new(holds), turn:self.made})));
+        }
         let Some(op)=self.table.prims.get(word).copied()else{return Err(self.class_unready());};
         let (positional,named)=self.open_arguments(given)?;
         let made=if named.is_empty(){self.prim(op,word,&positional)?}else{self.core_primitive(op,word,positional,named)?};
@@ -1034,7 +1046,7 @@ impl<'a> Machine<'a> {
         if !self.missing_member_escape(&escaped) { return escaped; }
         let said = match value {
             Value::Blueprint(kind) => format!("type object '{}' has no attribute '{key}'", self.full_class_name(kind)),
-            Value::Thing(thing) if thing.blueprint().name == "ModuleType" => {
+            Value::Thing(thing) if Self::native_beneath(&thing.blueprint()).as_deref() == Some("module") => {
                 let held = thing.holds.borrow();
                 let label = held.iter().find(|(name, _)| name == "__name__").and_then(|(_, item)| match item.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
                 label.map_or_else(|| format!("module has no attribute '{key}'"), |label| format!("module '{label}' has no attribute '{key}'"))
@@ -2632,6 +2644,10 @@ impl<'a> Machine<'a> {
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
         }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
+        // The run’s own module objects answer to the native module kind.
+        if !class_only && self.namespace_holding(&subject.settled()).is_some() {
+            if let Value::Blueprint(kind)=choice.settled() { if Self::native_beneath(&kind).as_deref()==Some("module") { return Ok(true); } }
+        }
         // The byte kinds are values in their own right rather than
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), choice, class_only); }
@@ -2778,7 +2794,7 @@ impl<'a> Machine<'a> {
             }
             if let Value::Thing(object) = &values[0] {
                 let blueprint = object.blueprint();
-                if blueprint.ancestry.iter().any(|parent| parent.name == "ModuleType") {
+                if Self::native_beneath(&blueprint).as_deref() == Some("module") {
                     if let Some(dict) = Self::own_entry(&blueprint, self.detail("namespace")) {
                         if !matches!(dict.settled(), Value::Dict(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".to_owned().into()); }
                     }
@@ -2786,7 +2802,7 @@ impl<'a> Machine<'a> {
             }
             if let Value::Thing(module) = &values[0] {
                 let blueprint=module.blueprint();
-                let module_kind=blueprint.name == "ModuleType" || blueprint.ancestry.iter().any(|parent| parent.name == "ModuleType");
+                let module_kind=Self::native_beneath(&blueprint).as_deref() == Some("module");
                 let class_directory=self.table.strings("ext.stmt.class.special").get(75)
                     .and_then(|word| self.inherited_entry(&blueprint,word)).is_some();
                 if (module_kind || self.namespace_holding(&values[0]).is_some()) && !class_directory {

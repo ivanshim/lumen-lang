@@ -517,7 +517,7 @@ enum Chooser {
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -569,7 +569,27 @@ impl<'a> Engine<'a> {
         self.furnished(at).map_or(false, |wanted| Self::exception_beneath(class, &wanted))
     }
 
+    /// The fuller class the reference gives an operating-system
+    /// number, where it has one.
+    fn errno_class(&self, number: i64) -> Option<Rc<Class>> {
+        let name = match number {
+            2 => "FileNotFoundError",
+            1 | 13 => "PermissionError",
+            20 => "NotADirectoryError",
+            21 => "IsADirectoryError",
+            _ => return None,
+        };
+        match self.native_exceptions.get(name) { Some(Value::Class(class)) => Some(class.clone()), _ => None }
+    }
     fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
+        // An OSError made with a number the reference knows a fuller
+        // class for is made as that class.
+        let class = if class.name == "OSError" {
+            let number = match args.first().map(Value::contents) {
+                Some(Value::Small(n)) => Some(n), Some(Value::Huge(n)) => n.to_i64(), Some(Value::Flag(b)) => Some(if b { 1 } else { 0 }), _ => None,
+            };
+            number.and_then(|n| self.errno_class(n)).unwrap_or(class)
+        } else { class };
         let mut fields = class.all_fields();
         let sp = self.wording();
         // The fuller account of an exception: a traceback standing as
@@ -6705,6 +6725,11 @@ impl<'a> Engine<'a> {
                         let origin = self.module_file_path(&path).map_or_else(|| " (built-in)".to_owned(), |file| format!(" from '{file}'"));
                         return Ok(format!("<module '{path}'{origin}>"));
                     }
+                    // A module made by hand shows by the name it keeps.
+                    if Self::kind_beneath(&object.class_now()).as_deref() == Some("module") {
+                        let name = object.fields.borrow().iter().find(|(n, _)| n == "__name__").map(|(_, v)| v.contents().plain()).unwrap_or_default();
+                        return Ok(format!("<module '{name}'>"));
+                    }
                     let module = self.class_word("main");
                     Ok(if object.class_now().base.is_none() && object.class_now().name == "object" { "<object object at 0x1>".to_owned() }
                         else if let Some(title) = object.class_now().python_title() { format!("<{title} object at 0x1>") }
@@ -8125,7 +8150,10 @@ impl<'a> Engine<'a> {
             }
             Builtin::InstanceOf if args.len() == 2 => {
                 let Value::Class(class) = &args[1] else { return Err(self.special_fault()) };
-                Value::Flag(matches!(&args[0], Value::Object(o) if o.class_now().named(&class.name, false)))
+                let named = matches!(&args[0], Value::Object(o) if o.class_now().named(&class.name, false));
+                // The run's own module objects answer to the native module kind.
+                let module = Self::own_kind(class).as_deref() == Some("module") && self.module_holding(&args[0]).is_some();
+                Value::Flag(named || module)
             }
             Builtin::Repr | Builtin::Ascii | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
             _ => return Ok(None),
@@ -19191,6 +19219,8 @@ impl Engine<'_> {
             // name, there being no builtin word to ask in its place.
             if let Some(kind) = Self::kind_beneath(class) {
                 if !self.lang.builtins.contains_key(&kind) {
+                    // The run's own module objects answer to the native module kind.
+                    if kind == "module" && Self::own_kind(class).as_deref() == Some("module") && self.module_holding(value).is_some() { return Ok(true); }
                     return Ok(match value {
                         Value::Object(o) => Rc::ptr_eq(&o.class_now(), class) || o.class_now().lineage.iter().any(|c| Rc::ptr_eq(c, class)),
                         _ => Self::own_kind(class).is_some() && value.core_kind() == kind,

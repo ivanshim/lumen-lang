@@ -156,6 +156,17 @@ impl<'a> Engine<'a> {
             self.made += 1;
             return Ok(Value::Routine(Rc::new(made)));
         }
+        // A module made by hand: the reference's ModuleType is the run's
+        // own module kind, so calling it makes a thing carrying the name
+        // it was handed and, where one was handed, its documentation.
+        if word == "module" {
+            let mut given = self.call_items(args)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value));
+            let mut fields: Vec<(String, Value)> = Vec::new();
+            if let Some(name) = given.next() { fields.push(("__name__".to_string(), name)); }
+            if let Some(doc) = given.next() { fields.push(("__doc__".to_string(), doc)); }
+            self.made += 1;
+            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c, fields: RefCell::new(fields), mark: self.made })));
+        }
         let Some(op) = self.lang.builtins.get(word).copied() else { return Err(self.class_refusal()); };
         let items = self.call_items(args)?;
         let made = self.builtin_call(op, word, items)?;
@@ -1022,7 +1033,7 @@ impl<'a> Engine<'a> {
         if !self.attribute_fault(&failure) { return failure; }
         let qualified = match subject {
             Value::Class(class) => format!("type object '{}' has no attribute '{name}'", self.qualified_class(class)),
-            Value::Object(instance) if instance.class_now().name == "ModuleType" => {
+            Value::Object(instance) if Self::kind_beneath(&instance.class_now()).as_deref() == Some("module") => {
                 let fields = instance.fields.borrow();
                 let label = fields.iter().find(|(key, _)| key == "__name__").and_then(|(_, value)| match value.contents() { Value::Text(word) => Some(word.to_string()), _ => None });
                 label.map_or_else(|| format!("module has no attribute '{name}'"), |label| format!("module '{label}' has no attribute '{name}'"))
@@ -1414,6 +1425,7 @@ impl<'a> Engine<'a> {
                     return self.class_apply(f,vec![subject.clone(),Value::text(name)]);
                 } }
                 if name == self.class_word("kind") {
+                    if self.module_holding(&subject).is_some() { return Ok(self.named_kind(&subject)); }
                     let actual = o.class_now().clone();
                     if let Some(overridden) = self.class_value(&actual, name) {
                         return self.bind_class_value(overridden, Some(subject.clone()), actual);
@@ -2523,6 +2535,9 @@ impl<'a> Engine<'a> {
             if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
             // Everything stands beneath the class every other one does.
             if c.name==self.class_word("root"){return Ok(true);}
+            // The run's own module objects answer to the native module
+            // kind, whatever class a module keeps for its members.
+            if Self::own_kind(c).as_deref()==Some("module") && self.module_holding(value).is_some(){return Ok(true);}
             if !subclass && !matches!(value, Value::Object(_)) {
                 if let Some(word)=Self::own_kind(c) { return Ok(value.core_kind()==word); }
             }
@@ -2620,7 +2635,7 @@ impl<'a> Engine<'a> {
                 }
                 if let Value::Object(thing) = &one {
                     let class = thing.class_now();
-                    if class.lineage.iter().any(|base| base.name == "ModuleType") {
+                    if Self::kind_beneath(&class).as_deref() == Some("module") {
                         if let Some(value) = Self::own_class_value(&class, self.class_word("namespace")) {
                             if !matches!(value.contents(), Value::Map(_)) { return Err("TypeError: <module>.__dict__ is not a dictionary".into()); }
                         }
@@ -2628,7 +2643,7 @@ impl<'a> Engine<'a> {
                 }
                 if let Value::Object(module) = &one {
                     let class=module.class_now();
-                    let module_kind=class.name == "ModuleType" || class.lineage.iter().any(|base| base.name == "ModuleType");
+                    let module_kind=Self::kind_beneath(&class).as_deref() == Some("module");
                     let class_directory=self.lang.class_special.get(75)
                         .and_then(|word| self.class_value(&class,word)).is_some();
                     if (module_kind || self.module_holding(&one).is_some()) && !class_directory {
