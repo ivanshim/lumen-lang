@@ -69,7 +69,7 @@ def _decode(value):
 
 
 def strerror(code, /):
-    return _call('strerror', _fd(code))
+    return _call('strerror', _cint(code))
 
 
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
@@ -198,7 +198,7 @@ def listdir(path=None):
 
 def mkdir(path, mode=0o777, *, dir_fd=None):
     original = _path(path)
-    _call('mkdir', original, _fd(mode), _dir(dir_fd), filename=original)
+    _call('mkdir', original, _cint(mode), _dir(dir_fd), filename=original)
 
 
 def rmdir(path, *, dir_fd=None):
@@ -226,7 +226,7 @@ def replace(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
 
 def open(path, flags, mode=0o777, *, dir_fd=None):
     original = _path(path)
-    return _call('open', original, _fd(flags), _fd(mode), _dir(dir_fd), filename=original)
+    return _call('open', original, _cint(flags), _cint(mode), _dir(dir_fd), filename=original)
 
 
 def close(fd):
@@ -255,7 +255,7 @@ def write(fd, data, /):
 
 
 def lseek(fd, position, whence, /):
-    return _call('lseek', _cint(fd), _fd(position), _fd(whence))
+    return _call('lseek', _cint(fd), _fd(position), _cint(whence))
 
 
 def ftruncate(fd, length, /):
@@ -280,7 +280,7 @@ def link(src, dst, *, src_dir_fd=None, dst_dir_fd=None, follow_symlinks=True):
 
 def access(path, mode, *, dir_fd=None, effective_ids=False, follow_symlinks=True):
     original = _path(path)
-    return _call('access', original, _fd(mode), _dir(dir_fd), int(bool(effective_ids)), int(bool(follow_symlinks)))
+    return _call('access', original, _cint(mode), _dir(dir_fd), int(bool(effective_ids)), int(bool(follow_symlinks)))
 
 
 def chmod(path, mode, *, dir_fd=None, follow_symlinks=True):
@@ -290,7 +290,7 @@ def chmod(path, mode, *, dir_fd=None, follow_symlinks=True):
         return fchmod(path, mode)
     original = _path(path)
     try:
-        _call('chmod', original, _fd(mode), _dir(dir_fd), int(bool(follow_symlinks)), filename=original)
+        _call('chmod', original, _cint(mode), _dir(dir_fd), int(bool(follow_symlinks)), filename=original)
     except OSError as error:
         if not follow_symlinks and error.errno == 95:
             if dir_fd is not None:
@@ -300,11 +300,11 @@ def chmod(path, mode, *, dir_fd=None, follow_symlinks=True):
 
 
 def fchmod(fd, mode):
-    _call('fchmod', _cint(fd), _fd(mode))
+    _call('fchmod', _cint(fd), _cint(mode))
 
 
 def umask(mask, /):
-    return _call('umask', _fd(mask))
+    return _call('umask', _cint(mask))
 
 
 def utime(path, times=None, *, ns=None, dir_fd=None, follow_symlinks=True):
@@ -383,7 +383,7 @@ def device_encoding(fd):
 
 def mkfifo(path, mode=0o666, *, dir_fd=None):
     original = _path(path)
-    _call('mkfifo', original, _fd(mode), _dir(dir_fd), filename=original)
+    _call('mkfifo', original, _cint(mode), _dir(dir_fd), filename=original)
 
 
 class uname_result(tuple):
