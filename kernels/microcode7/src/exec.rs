@@ -8566,9 +8566,14 @@ impl<'a> Machine<'a> {
         // to it. The member coming in is looked at for a way home to
         // the cell; the ones already there were looked at on the way in.
         if name == "append" && keywords.is_empty() && arguments.len() == 1 {
-            if let Value::Mutable(cell, _) = receiver {
+            let storage = match receiver {
+                Value::Mutable(cell, _) if !self.names_in_calls => Some(cell.clone()),
+                _ if self.names_in_calls => Self::native_cell(receiver),
+                _ => None,
+            };
+            if let Some(cell) = storage {
                 if matches!(&*cell.borrow(), Value::Vector(_)) {
-                    if crate::members::circular(&arguments[0], cell, 1) { return Err(self.method_fault("unready").into()); }
+                    if crate::members::circular(&arguments[0], &cell, 1) { return Err(self.method_fault("unready").into()); }
                     if let Value::Vector(members) = &mut *cell.borrow_mut() { Rc::make_mut(members).push(arguments[0].clone()); }
                     return Ok(Value::Nil);
                 }

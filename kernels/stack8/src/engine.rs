@@ -14591,9 +14591,11 @@ impl<'a> Engine<'a> {
         // cell; whatever is in the row already was searched when it
         // went in.
         if operation == "append" && named.is_empty() && args.len() == 1 {
-            if let Value::Collection(cell, _) = receiver {
+            let cell = if self.lang.bind_names { Self::holding_cell(receiver) }
+                else { match receiver { Value::Collection(cell, _) => Some(cell.clone()), _ => None } };
+            if let Some(cell) = cell {
                 if matches!(&*cell.borrow(), Value::Array(_)) {
-                    if crate::methods::reaches(&args[0], cell, 1) { return Err(self.lang.method_errors["unready"].clone()); }
+                    if crate::methods::reaches(&args[0], &cell, 1) { return Err(self.lang.method_errors["unready"].clone()); }
                     if let Value::Array(row) = &mut *cell.borrow_mut() { Rc::make_mut(row).push(args[0].clone()); }
                     return Ok(Value::Null);
                 }
