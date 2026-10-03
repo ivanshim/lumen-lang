@@ -101,6 +101,12 @@ def getgeneratorstate(generator):
     return GEN_CREATED
 
 
+def iscoroutinefunction(func):
+    # A function written async def carries the coroutine flag in its
+    # code, the same number the reference gives it.
+    code = getattr(func, '__code__', None)
+    return code is not None and (code.co_flags & 128) != 0
+
 def getcoroutinestate(coroutine):
     if coroutine.cr_running:
         return CORO_RUNNING

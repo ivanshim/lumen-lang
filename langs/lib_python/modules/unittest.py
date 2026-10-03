@@ -356,7 +356,16 @@ class TestCase:
             self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
         self.setUp()
         try:
-            getattr(self, self._method)()
+            returned = getattr(self, self._method)()
+            if type(returned).__name__ == 'coroutine':
+                # An async test body is driven to its end, the way the
+                # reference's async runner awaits it: the assertions it
+                # holds are made, not discarded with the coroutine.
+                while True:
+                    try:
+                        returned.send(None)
+                    except StopIteration:
+                        break
         finally:
             self.tearDown()
 
