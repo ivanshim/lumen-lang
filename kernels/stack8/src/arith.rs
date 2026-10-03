@@ -82,8 +82,17 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
         };
     }
     let (p, q) = if q.is_negative() { (-p, -q) } else { (p, q) };
-    let g = p.gcd(&q);
-    let (p, q) = if g.is_one() { (p, q) } else { (&p / &g, &q / &g) };
+    // A dyadic fraction loses only its common trailing zero bits.
+    // Integer denominators already have no common factor to remove.
+    let (p, q) = if q.is_one() {
+        (p, q)
+    } else if q.trailing_zeros() == Some(q.bits() - 1) {
+        let remove = p.trailing_zeros().unwrap().min(q.bits() - 1) as usize;
+        (p >> remove, q >> remove)
+    } else {
+        let divisor = p.gcd(&q);
+        if divisor.is_one() { (p, q) } else { (&p / &divisor, &q / &divisor) }
+    };
     match places {
         Some(places) => Value::Real(Rc::new(Real { floating: false, p, q, places, below: false, point: false })),
         None if q.is_one() => Value::of_big(p),

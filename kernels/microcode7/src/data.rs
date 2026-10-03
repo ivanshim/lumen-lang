@@ -16,12 +16,13 @@ use crate::form::{Prim, Routine};
 /// A run-time frame: slots, and the frame the program was made in.
 pub struct Env {
     pub cells: RefCell<Vec<Value>>,
+    pub capture_slots: RefCell<HashSet<usize>>,
     pub outer: Option<Rc<Env>>,
 }
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), outer: parent })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent })
     }
 }
 
@@ -1425,7 +1426,10 @@ impl Value {
                 let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
-            Value::Thing(t) => format!("<object {}>", t.blueprint().name),
+            Value::Thing(t) => match t.holds.borrow().iter().find(|entry| entry.0 == "\0type-display") {
+                Some(entry) => entry.1.bare(),
+                None => format!("<object {}>", t.blueprint().name),
+            },
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(|bound| bound.quoted(false)).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
@@ -1594,6 +1598,8 @@ pub struct Blueprint {
     /// program's can reach it: the class takes no write to a member of
     /// it and stands as no class's base.
     pub sealed: Cell<bool>,
+    /// Instance slot storage established when the class was constructed.
+    pub has_slot_storage: bool,
 }
 
 impl Blueprint {
@@ -1860,6 +1866,9 @@ pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
         0 => (rest, -1074i64),
         _ => (rest | (1u64 << 52), step - 1075),
     };
+    // Return lowest terms directly, including subnormal mantissas.
+    let cancelled = run.trailing_zeros();
+    let (run, halvings) = (run >> cancelled, halvings + cancelled as i64);
     let mut above = BigInt::from(run);
     if under {
         above = -above;
@@ -2175,6 +2184,11 @@ pub(crate) fn decimal_roundtrip(worth: f64) -> String {
 /// the exact remainder choose the last one. No rounded quotient is used.
 fn rounded_binary(above: &BigInt, beneath: &BigInt) -> f64 {
     if above.is_zero() || beneath.is_zero() { return nearest_binary(above, beneath); }
+    let exact_dyadic = above.bits() < 54 && beneath.bits() < 1076
+        && beneath.trailing_zeros().is_some_and(|shift| shift + 1 == beneath.bits());
+    // No quotient or remainder is needed when all bits already fit the
+    // binary format; whole numbers use its integer rounding directly.
+    if exact_dyadic || beneath.is_one() { return nearest_binary(above, beneath); }
     let signed = (above.is_negative() != beneath.is_negative()) as u64 * (1u64 << 63);
     let positive = above.abs();
     let divisor = beneath.abs();

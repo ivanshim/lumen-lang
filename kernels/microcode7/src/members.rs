@@ -155,11 +155,9 @@ impl Request<'_> {
         }
         if self.operation=="as_integer_ratio"{
             let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(r)=>return Err(if r.above.is_zero() { String::from("ValueError: cannot convert NaN to integer ratio") } else { String::from("OverflowError: cannot convert Infinity to integer ratio") }),other=>(other.as_big()?,BigInt::from(1))};
-            let mut divisor=pair.0.abs();let mut remainder=pair.1.clone();
-            while !remainder.is_zero(){let next=&divisor%&remainder;divisor=remainder;remainder=next;}
             // The two whole numbers are handed back as a tuple, which
             // is what they are, and not a row that only reads like one.
-            return Ok(Value::tuple(vec![Value::from_big(pair.0/&divisor),Value::from_big(pair.1/divisor)]));
+            return Ok(Value::tuple(vec![Value::from_big(pair.0),Value::from_big(pair.1)]));
         }
         if self.operation=="hex" && real {
             let Value::Frac(ratio)=value else {unreachable!()};
