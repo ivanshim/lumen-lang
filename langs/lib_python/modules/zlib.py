@@ -86,12 +86,16 @@ def adler32(data, value=1, /):
 class Compress:
     def __init__(self, level=-1, method=DEFLATED, wbits=MAX_WBITS,
                  memLevel=DEF_MEM_LEVEL, strategy=Z_DEFAULT_STRATEGY, zdict=_UNSET):
+        level = _integer(level)
+        method = _integer(method)
+        window = _integer(wbits)
+        memory = _integer(memLevel)
+        strategy = _integer(strategy)
         dictionary = b'' if zdict is _UNSET else _buffer(zdict)
         if len(dictionary) > 4294967295:
             raise OverflowError('zdict length does not fit in an unsigned int')
-        reply = _invoke(1, int(zdict is not _UNSET), data=dictionary, a=_integer(level),
-                        b=_integer(method), c=_integer(wbits),
-                        d=_integer(memLevel), e=_integer(strategy))
+        reply = _invoke(1, int(zdict is not _UNSET), data=dictionary,
+                        a=level, b=method, c=window, d=memory, e=strategy)
         if reply[5] == -1:
             raise ValueError('Invalid dictionary' if reply[0] == -2 else 'deflateSetDictionary()')
         if reply[0] == -2:
@@ -262,6 +266,8 @@ def decompressobj(wbits=MAX_WBITS, zdict=_UNSET):
 
 def compress(data, /, level=-1, wbits=MAX_WBITS):
     data = _buffer(data)
+    level = _integer(level)
+    wbits = _integer(wbits)
     try:
         obj = compressobj(level, wbits=wbits)
     except ValueError:
@@ -270,6 +276,7 @@ def compress(data, /, level=-1, wbits=MAX_WBITS):
 
 def decompress(data, /, wbits=MAX_WBITS, bufsize=DEF_BUF_SIZE):
     data = _buffer(data)
+    wbits = _integer(wbits)
     if _size(bufsize) < 0:
         raise ValueError('bufsize must be non-negative')
     try:
