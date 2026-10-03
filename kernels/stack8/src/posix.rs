@@ -19,6 +19,11 @@ pub(crate) fn operate(args: &[Value]) -> Result<Value, String> {
                 Value::tuple(row.into_iter().map(Value::Small).collect())
             })
         }
+        "mkdir" => {
+            use std::os::unix::fs::DirBuilderExt;
+            let mode = args.get(2).ok_or("TypeError: directory mode is required")?.as_big()?.to_string().parse::<i32>().map_err(|_| "OverflowError: mode does not fit an int")?;
+            std::fs::DirBuilder::new().mode(mode as u32).create(&file).map(|()| Value::Null)
+        }
         "rmdir" => std::fs::remove_dir(&file).map(|()| Value::Null),
         "readlink" => std::fs::read_link(&file).map(|path| Value::text(&path.to_string_lossy())),
         "access" => {

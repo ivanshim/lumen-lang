@@ -25,6 +25,12 @@ pub(crate) fn perform(values: &[Value]) -> Result<Value, String> {
                 Value::tuple(fields.iter().copied().map(Value::Small).collect())
             })
         }
+        "mkdir" => {
+            let permissions = integer(2)?;
+            let mut builder = std::fs::DirBuilder::new();
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, permissions as u32);
+            builder.create(path).map(|_| Value::Nil)
+        }
         "rmdir" => std::fs::remove_dir(path).map(|_| Value::Nil),
         "readlink" => std::fs::read_link(path).map(|destination| Value::text(destination.to_string_lossy().as_ref())),
         "access" => {

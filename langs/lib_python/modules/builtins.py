@@ -182,6 +182,9 @@ IsADirectoryError = IsADirectoryError
 class _HostFile:
     def __init__(self, name, mode, encoding=None, errors=None):
         self.name = name
+        from os import fsdecode
+        name = fsdecode(name)
+        self._path = name
         self.mode = mode
         self._binary = 'b' in mode
         self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
@@ -339,7 +342,7 @@ class _HostFile:
     def flush(self):
         self._open()
         if self._dirty:
-            wrote = _host_file_write(self.name, self._buffer)
+            wrote = _host_file_write(self._path, self._buffer)
             if wrote is False:
                 raise FileNotFoundError(2, 'No such file or directory', self.name)
             self._dirty = False
@@ -394,9 +397,9 @@ def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline
     # mode.
     if isinstance(file, (bytes, bytearray)) and b'\x00' in bytes(file):
         raise ValueError('embedded null byte')
-    if not isinstance(file, str):
-        raise TypeError("expected str, bytes or os.PathLike object, not " + type(file).__name__)
-    if '\x00' in file:
+    from os import fsdecode
+    pathname = fsdecode(file)
+    if '\x00' in pathname:
         raise ValueError('embedded null byte')
     for letter in mode:
         if letter not in 'rwaxb+t':
