@@ -9299,6 +9299,10 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?).contents();
+                // A thing of a class standing on a builtin kind is taken
+                // apart by the worth that kind left it, unless the class
+                // says how it is walked itself.
+                let source = match self.worth_free_of(&source, &[15]) { Some(worth) => worth, None => source };
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
                 let mut items = match source {
                     Value::Generator(ref generator) => {

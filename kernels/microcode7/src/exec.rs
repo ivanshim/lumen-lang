@@ -14986,7 +14986,11 @@ impl<'a> Machine<'a> {
                 _ => return Err("Tuple portion is not an array".to_string()),
             },
             Prim::Partition(wanted, star) => {
-                let mut values: Vec<Value> = match &v[0] {
+                // A thing of a blueprint standing on a native kind is
+                // taken apart by what it keeps of that kind, unless its
+                // own blueprint says how it is walked.
+                let source = match self.underlying_unless(&v[0], &[15]) { Some(under) => under, None => v[0].clone() };
+                let mut values: Vec<Value> = match &source {
                     Value::Generator(state) => {
                         let mut yielded = Vec::new();
                         loop {
