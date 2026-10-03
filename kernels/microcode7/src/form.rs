@@ -790,6 +790,7 @@ pub struct Routine {
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
     pub lexical_origin: Rc<str>,
+    pub body_boundary: usize,
     pub referenced: Vec<String>,
     pub locals: Vec<String>,
     pub flags: i64,
@@ -938,7 +939,7 @@ impl Form {
             if let Some((_, wanted)) = chosen {
                 *value = match (&*value, wanted) {
                     (Value::Routine(current), Value::Routine(template)) => {
-                        if current.lexical_origin != template.lexical_origin || current.declared_on != template.declared_on || current.formals != template.formals || current.referenced != template.referenced {
+                        if current.lexical_origin != template.lexical_origin || current.body_boundary != template.body_boundary || current.declared_on != template.declared_on || current.formals != template.formals || current.referenced != template.referenced {
                             return Err(String::from("NotImplementedError: replacing a nested instruction body is unavailable"));
                         }
                         let mut adjusted = current.with_literals(&template.literals)?;

@@ -890,6 +890,7 @@ pub struct Routine {
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
     pub source_tokens: Rc<str>,
+    pub source_end: usize,
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
     pub code_flags: i64,
@@ -1021,7 +1022,7 @@ impl Routine {
             };
             match (value, &replacements[at]) {
                 (Value::Routine(existing), Value::Routine(wanted)) => {
-                    if existing.source_tokens != wanted.source_tokens || existing.declared_on != wanted.declared_on || existing.formals != wanted.formals || existing.code_names != wanted.code_names {
+                    if existing.source_tokens != wanted.source_tokens || existing.source_end != wanted.source_end || existing.declared_on != wanted.declared_on || existing.formals != wanted.formals || existing.code_names != wanted.code_names {
                         return Err("NotImplementedError: replacing a nested instruction body is unavailable".into());
                     }
                     let mut body = existing.replacing_constants(&wanted.code_constants)?;
