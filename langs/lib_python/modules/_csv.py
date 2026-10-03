@@ -233,6 +233,7 @@ class Reader:
         self._dialect = dialect
         self._fields = None
         self._field = []
+        self._field_length = 0
         self._state = START_RECORD
         self._unquoted = False
         self._line_num = 0
@@ -259,12 +260,18 @@ class Reader:
                     quoting in (QUOTE_NONNUMERIC, QUOTE_STRINGS):
                 field = float(field)
             self._field = []
+        self._field_length = 0
         self._fields.append(field)
 
     def _add_char(self, c):
-        if len(self._field) >= _field_limit:
+        self._add_text(c)
+
+    def _add_text(self, text):
+        size = self._field_length + len(text)
+        if size > _field_limit:
             raise Error('field larger than field limit (%d)' % _field_limit)
-        self._field.append(c)
+        self._field.append(text)
+        self._field_length = size
 
     def _process_char(self, c):
         d = self._dialect
@@ -371,6 +378,7 @@ class Reader:
     def __next__(self):
         self._fields = []
         self._field = []
+        self._field_length = 0
         self._state = START_RECORD
         self._unquoted = False
         while True:
@@ -390,8 +398,31 @@ class Reader:
             if self._fields is None:
                 raise Error('iterator has already advanced the reader')
             self._line_num += 1
-            for c in lineobj:
-                self._process_char(c)
+            if type(lineobj) is str:
+                position = 0
+                length = len(lineobj)
+                while position < length:
+                    if self._state in (IN_FIELD, IN_QUOTED_FIELD):
+                        d = self._dialect
+                        if self._state == IN_FIELD:
+                            stops = (d.delimiter, d.escapechar, '\r', '\n')
+                        else:
+                            stops = (d.escapechar, d.quotechar if d.quoting != QUOTE_NONE else None)
+                        end = length
+                        for stop in stops:
+                            if stop is not None:
+                                found = lineobj.find(stop, position)
+                                if found >= 0 and found < end:
+                                    end = found
+                        if end > position:
+                            self._add_text(lineobj[position:end])
+                            position = end
+                            continue
+                    self._process_char(lineobj[position])
+                    position += 1
+            else:
+                for c in lineobj:
+                    self._process_char(c)
             self._process_char(_EOL)
             if self._state == START_RECORD:
                 break
@@ -420,6 +451,22 @@ class Writer:
                 raise Error('empty field must be quoted if delimiter is a '
                             'space and skipinitialspace is true')
             quoted = True
+        if chars and type(chars) is str:
+            plain = True
+            for stop in (d.delimiter, d.escapechar, d.quotechar, '\n', '\r') + tuple(d.lineterminator):
+                if stop is not None and chars.find(stop) >= 0:
+                    plain = False
+                    break
+            if plain:
+                if self._num_fields:
+                    self._rec.append(d.delimiter)
+                if quoted:
+                    self._rec.append(d.quotechar)
+                self._rec.append(chars)
+                if quoted:
+                    self._rec.append(d.quotechar)
+                self._num_fields += 1
+                return
         for c in chars:
             if c == d.delimiter or c == d.escapechar or c == d.quotechar or \
                     c == '\n' or c == '\r' or c in d.lineterminator:
