@@ -11,10 +11,19 @@ order the reference suites need it.
 | Directory | Source | Commit | License |
 |---|---|---|---|
 | `php/lang`, `php/basic`, `php/func` | [php/php-src](https://github.com/php/php-src) `tests/lang`, `tests/basic`, `tests/func` | `8b0088a41de2` (2026-09-07) | [php/LICENSE](php/LICENSE) (The PHP License 3.01) |
-| `python/` | [python/cpython](https://github.com/python/cpython) `Lib/test`, the core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_getopt.py`, `test_optparse.py`, and the support data they read (`mathdata/`) | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
-| `python/test/` | [python/cpython](https://github.com/python/cpython) `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | `8e6e75d9102e` (2026-09-30), tag `v3.14.8` | [python/LICENSE](python/LICENSE) (PSF License) |
 
-The `python/test/` package and its support, import, threading, OS, and script helpers
+## CPython 3.14.8 suite
+
+The supported pins and directories come from
+[`langs/python/versions.json`](../langs/python/versions.json). One release per
+series is retained, in a window of two series; only 3.14 is registered today.
+
+| Directory | Source | Release / tag | Commit / release date | License |
+|---|---|---|---|---|
+| `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_getopt.py`, `test_optparse.py`, and support data (`mathdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
+The `python-3.14.8/test/` package and its support, import, threading, OS, and script helpers
 are also preserved byte for byte at that commit. The embedded runtime support
 modules in `langs/lib_python/modules/test/` provide the interpreter adapters.
 
@@ -47,3 +56,11 @@ The suites are not part of `test.sh`: they measure distance, they do not gate. R
 python3 scripts/reference_tests.py            # both full kernels
 python3 scripts/reference_tests.py --kernel microcode7
 ```
+
+The report runs every registered suite with its exact `--python` pin. To select
+one suite, pass `--python 3.14`; `--binary target/debug/lumen-lang --no-build`
+uses an existing debug build. Count tools accept the same `--python` option,
+then `LUMEN_PYTHON`, then the newest registered release. Never edit a reference
+file. A bugfix refresh uses `git mv` on its full-release directory and replaces
+the table pin; it does not keep an older micro release. Add a provenance table
+here for each newly registered series.
