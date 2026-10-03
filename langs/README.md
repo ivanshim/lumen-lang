@@ -3540,7 +3540,11 @@ only. The extension labels so far, all from PHP:
   the reference object bearing the hold and a routine to call with that
   object once the value goes, and refuses any other kind in the words of
   `.refused` around the kind's name; the second answers the held value
-  while it is still there and nothing afterwards; the last finds the
+  while it is still there and nothing afterwards. Given a reference class,
+  `.make` allocates and interns native weak references; `.get` also exposes
+  their callback state, cached hash, referent equality, reference list,
+  proxy dereference and conditional dead-reference dictionary removal.
+  The last finds the
   rounds of values holding one another that nothing else reaches, runs
   their finalisers, breaks them so that counting frees them, and answers
   how many it found. A value's finaliser and the routines waiting on its
@@ -4435,7 +4439,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
-| `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
+| `ext.builtin.at_end` | - | - | `__at_end` | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
@@ -5857,3 +5861,8 @@ The review regressions and buffer-protocol comparisons live in
 Python `ext.builtin.method.take_bytes` drains a selected prefix of a bytearray into immutable bytes, respecting active buffer exports.
 
 `ext.builtin.namespace_type` provides the native namespace class used by `sys.implementation` and discovered by the pure Python `types` fallback.
+
+The `ext.builtin.host.info` helper also accepts the `build` query, exposing
+the Rust compiler flags for support-library sanitizer detection.
+
+Python `ext.builtin.at_end` registers the atexit dispatcher for interpreter shutdown.

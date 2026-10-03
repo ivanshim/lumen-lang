@@ -1533,3 +1533,17 @@ def no_rerun(reason):
             _has_run = True
         return wrapper
     return deco
+
+# Build sanitizer detection for the runtime Rust compiler flags.
+_build_flags = __host_info
+
+def check_sanitizer(*, address=False, memory=False, ub=False, thread=False,
+                    function=True):
+    if not (address or memory or ub or thread):
+        raise ValueError('At least one of address, memory, ub or thread must be True')
+    flags = _build_flags('build')
+    requested = ((address, 'address'), (memory, 'memory'),
+                 (ub, 'undefined'), (thread, 'thread'), (function, 'function'))
+    return any(enabled and ('sanitizer=' + name in flags or
+                            '-fsanitize=' + name in flags)
+               for enabled, name in requested)

@@ -450,14 +450,11 @@ impl<'a> Engine<'a> {
         kinds.dedup();
         if kinds.len() > 1 { return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into()); }
         let primary = self.layout_parent(&bases)?;
-        let active = self.trace_frame.as_ref().and_then(|frame| frame.fields.borrow().iter()
-            .find(|(name, _)| name == "\0routine").map(|(_, value)| value.contents()));
-        let module = match active {
-            Some(Value::Routine(body)) => self.routine_home(&body),
-            _ => self.module_slots.get(&self.source).map(|(_, name)| name.clone()).unwrap_or_else(|| self.class_word("main").to_string()),
-        };
+        let calling_code = self.trace_frame.as_ref().and_then(|frame| frame.fields.borrow().iter()
+            .find_map(|(key, value)| if key == "\0routine" { match value { Value::Routine(code) => Some(code.clone()), _ => None } } else { None }));
+        let module = calling_code.as_ref().map_or_else(|| Value::text(self.class_word("main")), |code| self.routine_module(code));
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
-            members.push((self.class_word("module").to_string(), Value::text(&module)));
+            members.push((self.class_word("module").to_string(), module));
         }
         if let Some((_, held)) = members.iter().find(|(n, _)| n == self.class_word("qualified")) {
             if !matches!(if self.class_word("name").is_empty() { Self::worth_of(held).unwrap_or_else(|| held.contents()) } else { held.type_text() }, Value::Text(_) | Value::Codepoints(_)) { return Err(format!("TypeError: type __qualname__ must be a str, not {}", Self::type_argument_kind(held)).into()); }
@@ -480,6 +477,7 @@ impl<'a> Engine<'a> {
             slots.iter().any(|slot| !matches!(slot, Value::Text(key) if key.as_ref() == "__dict__" || key.as_ref() == "__weakref__"))
         });
         let constants = maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default();
+        let module = members.iter().find(|(key, _)| key == self.class_word("module")).map(|(_, value)| value.plain()).unwrap_or_default();
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: primary, direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants,
@@ -799,7 +797,7 @@ impl<'a> Engine<'a> {
                     Ok(answer?)
                 } else { Ok(self.value_method(&bound.0, &bound.1, args, Vec::new())?) }
             },
-            Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
+            Value::Method(o,p,_) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A thing called stands on its own call member, which may be
             // a thing again: each such step is counted with the calls
             // standing, so a thing whose call member is a thing of its
@@ -1436,7 +1434,13 @@ impl<'a> Engine<'a> {
     fn root_state(&self, subject: &Value) -> Value {
         let Value::Object(o) = subject else { return Value::Null };
         let entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
-        if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) }
+        let dictionary = if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) };
+        let slots: Vec<_> = o.fields.borrow().iter().filter_map(|(key, value)| {
+            let slot = key.strip_prefix("\0slot:")?.rsplit_once(':')?.0;
+            (!matches!(value, Value::Blank)).then(|| (Value::text(slot), value.clone()))
+        }).collect();
+        if slots.is_empty() { dictionary }
+        else { Value::tuple(vec![dictionary, Value::Map(Rc::new(slots.into()))]) }
     }
     pub(super) fn qualified_class(&self, class: &Class) -> String {
         let fields = class.shared.borrow();
@@ -1538,7 +1542,7 @@ impl<'a> Engine<'a> {
             return self.call_descriptor(&value, reader, vec![subject.unwrap_or(Value::Null), Value::Class(class)]);
         }
         match (value,subject) {
-            (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::Method(o,f)),
+            (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::method(o, f)),
             (Value::Routine(f),Some(other)) => Ok(Self::adapter(3, vec![Value::Routine(f), other])),
             (v,_) => Ok(v),
         }
@@ -1582,6 +1586,18 @@ impl<'a> Engine<'a> {
         let subject = if !self.lang.class_builder.is_empty() {
             match subject { Value::Bond(cell) => cell.borrow().clone(), Value::Binding(cell) => cell.borrow().clone(), value => value }
         } else { subject };
+        if !self.lang.weak_refused.is_empty() {
+            if let Value::Object(proxy) = subject.contents() {
+                if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
+                    let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
+                    if let Some(Value::Faint(weak)) = weak {
+                        let target = weak.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
+                        return self.class_get(target, name, plain);
+                    }
+                }
+            }
+        }
+
         if let Value::Adapter(proxy) = &subject {
             if let (9, [Value::Class(owner), receiver]) = (proxy.0, proxy.1.as_slice()) {
                 let dynamic = match receiver { Value::Object(o) => o.class_now().clone(), Value::Class(c) => c.clone(), _ => return Err(self.class_refusal()) };
@@ -2101,7 +2117,7 @@ impl<'a> Engine<'a> {
                     return Ok(Self::adapter(3,vec![root,receiver]));
                 }
             }
-            Value::Method(o,f) => {
+            Value::Method(o, f, _) => {
                 if name==self.class_word("receiver") {return Ok(Value::Object(o.clone()));}
                 if name==self.class_word("function") {return Ok(Value::Routine(f.clone()));}
                 return self.class_get(Value::Routine(f.clone()),name,true);
@@ -2438,7 +2454,7 @@ impl<'a> Engine<'a> {
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
     fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
-        let (_,members)=self.function_members.iter().find(|(v,_)| v.equals(subject))?;
+        let (_,members)=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject)))?;
         let fields=members.fields.borrow();
         {
             let own=format!("\0{name}");
@@ -2455,7 +2471,7 @@ impl<'a> Engine<'a> {
     }
     /// The names a routine's own namespace holds, for its directory.
     fn routine_member_names(&self, subject: &Value) -> Vec<String> {
-        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.equals(subject)) else {return Vec::new()};
+        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject))) else {return Vec::new()};
         let fields=members.fields.borrow();
         if let Some((_,book))=fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
             let Value::Map(pairs)=book.contents() else {return Vec::new()};
@@ -2507,17 +2523,12 @@ impl<'a> Engine<'a> {
         fresh
     }
     fn function_storage(&mut self, function: &Value) -> usize {
-        if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
+        if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
-        let at = self.function_members.len();
-        match function {
-            Value::Routine(program) => { self.constructor_records.entry(Rc::as_ptr(program) as usize).or_insert(at); }
-            _ => {}
-        }
-        self.function_members.push((function.clone(), fields));
-        at
+        self.function_members.push((crate::faint::hold_of(function).expect("function has a weak identity"), fields));
+        self.function_members.len() - 1
     }
     /// The annotations a class carries: its own, worked out the first
     /// time they are asked for from the routines its body kept and held
@@ -2562,6 +2573,18 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Null);
             }
         }
+        if !self.lang.weak_refused.is_empty() {
+            if let Value::Object(proxy) = subject.contents() {
+                if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
+                    let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
+                    if let Some(Value::Faint(weak)) = weak {
+                        let target = weak.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
+                        return self.class_write(target, name, value, plain);
+                    }
+                }
+            }
+        }
+
         if !self.class_word("name").is_empty() && !matches!(&subject, Value::Class(_)) {
             if let Some(kind) = self.kind_word_of(&subject.contents()) {
                 return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{kind}'").into());
@@ -3009,7 +3032,10 @@ impl<'a> Engine<'a> {
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         if !self.lang.class_builder.is_empty() && self.names_property_class(&value.contents()) { return Ok(self.property_class()); }
         match value.contents() {
-            Value::Class(class) if Self::class_sealed(&class) => Err(format!("TypeError: type '{}' is not an acceptable base type", class.name).into()),
+            Value::Class(class) if Self::class_sealed(&class) => {
+                let name = if !self.lang.weak_refused.is_empty() && matches!(class.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", class.name) } else { class.name.clone() };
+                Err(format!("TypeError: type '{name}' is not an acceptable base type").into())
+            },
             Value::Class(class) => Ok(class),
             Value::ByteKind(mutable, _) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
                 let word = self.byte_kind_word(mutable).to_string();
@@ -3386,7 +3412,7 @@ impl<'a> Engine<'a> {
                 let word=self.class_word(part);
                 if !word.is_empty() { names.push(word.to_string()); }
             }
-            let routine=match one {Value::Method(_,f)=>Value::Routine(f.clone()),other=>other.clone()};
+            let routine=match one {Value::Method(_, f, _)=>Value::Routine(f.clone()),other=>other.clone()};
             names.extend(self.routine_member_names(&routine));
             names.sort();names.dedup();
             return Value::array(names.iter().map(|n|Value::text(n)).collect());

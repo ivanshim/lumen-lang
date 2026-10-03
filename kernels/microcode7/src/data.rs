@@ -18,11 +18,18 @@ pub struct Env {
     pub cells: RefCell<Vec<Value>>,
     pub capture_slots: RefCell<HashSet<usize>>,
     pub outer: Option<Rc<Env>>,
+    /// Slots used by closures after this call returns.
+
+    pub weak_callback_frame: Cell<bool>,
+}
+
+impl Drop for Env {
+    fn drop(&mut self) { crate::ghost::anything_departing(); }
 }
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent, weak_callback_frame: Cell::new(false) })
     }
 }
 
@@ -211,6 +218,12 @@ pub struct TraceLink {
     pub following: Value,
 }
 
+#[derive(Debug)]
+pub struct MethodMark;
+impl Drop for MethodMark {
+    fn drop(&mut self) { crate::ghost::anything_departing(); }
+}
+
 #[derive(Clone)]
 pub enum Value {
     Unpaired(Rc<[u32]>),
@@ -265,7 +278,7 @@ pub enum Value {
     Thing(Rc<Thing>),
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
-    Method(Rc<Routine>, Rc<Thing>),
+    Method(Rc<Routine>, Rc<Thing>, Rc<MethodMark>),
     Adorned(Rc<Adornment>),
     /// A weak hold on a thing behind a pointer: it keeps nothing about
     /// and gives the thing back only while it is still there.
@@ -553,6 +566,8 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
 }
 
 impl Value {
+    pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
+
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }
 
     pub fn point_kept(&self) -> bool {
@@ -704,7 +719,7 @@ impl Value {
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
-            Value::Method(program, receiver) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
+            Value::Method(program, receiver, _) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
 
             // A progression is addressed by the places it names: their
             // count, where they begin and how far apart they stand, so
@@ -1088,7 +1103,7 @@ impl Value {
             // One object is itself and nothing else; two classes are one
             // when they carry the same name.
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
-            (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
+            (Value::Method(p, a, _), Value::Method(q, b, _)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => {
                 let is_union = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "Union"));
@@ -1432,7 +1447,7 @@ impl Value {
                 let title = if p.qualification.is_empty() { p.ident.clone() } else { p.qualification.clone() };
                 format!("<function {title} at 0x1>")
             }
-            Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Method(p, _, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => {
                 if let Some(title) = b.python_title() { return format!("<class '{title}'>"); }
@@ -1492,7 +1507,7 @@ impl Value {
                 out.push(')');
             }
             Value::Adorned(a) => out.push_str(&format!("d{:p}", Rc::as_ptr(a))),
-            Value::Method(p, t) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
+            Value::Method(p, t, _) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
             Value::Shared(cell) => cell.borrow().memo_key(out),

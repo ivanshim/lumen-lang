@@ -31,7 +31,8 @@ pub enum Ghost {
     Set(Weak<RefCell<SetStore>>),
     Bound(Weak<Routine>, Weak<Env>),
     Routine(Weak<Routine>),
-    Method(Weak<Routine>, Weak<Thing>),
+    Method(Weak<Routine>, Weak<Thing>, Weak<crate::data::MethodMark>),
+    WrappedMethod(Weak<Vec<Value>>),
 }
 
 impl Ghost {
@@ -46,7 +47,8 @@ impl Ghost {
             Ghost::Set(w) => w.upgrade().map(Value::Set),
             Ghost::Bound(p, e) => Some(Value::Bound(p.upgrade()?, e.upgrade()?)),
             Ghost::Routine(w) => w.upgrade().map(Value::Routine),
-            Ghost::Method(p, t) => Some(Value::Method(p.upgrade()?, t.upgrade()?)),
+            Ghost::Method(p, t, identity) => Some(Value::Method(p.upgrade()?, t.upgrade()?, identity.upgrade()?)),
+            Ghost::WrappedMethod(parts) => Some(Value::Wrapped(3, parts.upgrade()?.into())),
         }
     }
 
@@ -61,19 +63,19 @@ impl Ghost {
 pub struct Dim {
     pub ghost: Ghost,
     pub bearer: Weak<Thing>,
-    pub notify: Option<Value>,
-    dead: Cell<bool>,
+    pub notify: RefCell<Option<Value>>,
+    pub hash: RefCell<Option<Value>>,
+    pub detached: Cell<bool>,
 }
+
 
 impl Dim {
-    /// A cleared reference stays dead across resurrection; a later
-    /// reference to the same target begins live.
     pub fn revive(&self) -> Option<Value> {
-        if self.dead.get() { None } else { self.ghost.revive() }
+        (!self.detached.get()).then(|| self.ghost.revive()).flatten()
     }
-
-    fn departed(&self) -> bool { self.dead.get() || self.ghost.departed() }
+    pub fn departed(&self) -> bool { self.detached.get() || self.ghost.departed() }
 }
+
 
 thread_local! {
     static FAREWELL_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -97,6 +99,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
     let in_group = |ghost: &Ghost| -> bool {
         match ghost {
             Ghost::StaticKind(_) => false,
+            Ghost::WrappedMethod(parts) => lost.contains(&(parts.as_ptr() as usize)),
             Ghost::Cell(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Thing(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Blueprint(target) => lost.contains(&(target.as_ptr() as usize)),
@@ -104,24 +107,24 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             Ghost::Set(target) => lost.contains(&(target.as_ptr() as usize)),
             Ghost::Bound(body, frame) => lost.contains(&(body.as_ptr() as usize)) || lost.contains(&(frame.as_ptr() as usize)),
             Ghost::Routine(target) => lost.contains(&(target.as_ptr() as usize)),
-            Ghost::Method(body, receiver) => lost.contains(&(body.as_ptr() as usize)) || lost.contains(&(receiver.as_ptr() as usize)),
+            Ghost::Method(body, receiver, _) => lost.contains(&(body.as_ptr() as usize)) || lost.contains(&(receiver.as_ptr() as usize)),
         }
     };
     let _ = REFERENCES.try_with(|references| {
         references.borrow_mut().retain(|entry| match entry.upgrade() {
             None => false,
-            Some(dim) => { if in_group(&dim.ghost) { dim.dead.set(true); } true }
+            Some(dim) => { if in_group(&dim.ghost) { dim.detached.set(true); } true }
         });
     });
     LISTENERS.try_with(|listeners| {
         let mut listeners = listeners.borrow_mut();
         let mut notices = Vec::new();
         listeners.retain(|dim| {
-            if !dim.dead.get() { return true; }
+            if !dim.detached.get() { return true; }
             // A listener in the same lost group has no live owner to
             // receive a notice, even though the web still holds it.
             if !lost.contains(&(dim.bearer.as_ptr() as usize)) {
-                if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), &dim.notify) {
+                if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), &*dim.notify.borrow()) {
                     notices.push((notify.clone(), Value::Thing(bearer)));
                 }
             }
@@ -168,6 +171,8 @@ pub fn bidding() -> bool {
 
 /// Whether the machine has anything to attend to before its next step.
 pub fn stirred() -> bool {
+    let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
+    if gone_method { anything_departing(); }
     STIRRED.try_with(|s| s.get()).unwrap_or(false) || anchor_ready()
 }
 
@@ -253,20 +258,21 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
         let _ = LISTENERS.try_with(|l| {
             let mut all = l.borrow_mut();
             let mut still = Vec::with_capacity(all.len());
-            for dim in all.drain(..) {
+            for dim in all.drain(..).rev() {
+                if dim.bearer.strong_count() == 0 { continue; }
                 if !dim.departed() {
                     still.push(dim);
-                } else if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), dim.notify.as_ref()) {
-                    notices.push((notify.clone(), Value::Thing(bearer)));
+                } else if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), dim.notify.borrow_mut().take()) {
+                    notices.push((notify, Value::Thing(bearer)));
                 }
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
+            still.reverse();
             *all = still;
         });
     }
     // Listeners are registered in time order; departure tells the most
     // recent listener on a target before its earlier listeners.
-    notices.reverse();
     (farewells, walks, notices)
 }
 
@@ -282,7 +288,8 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
         Value::Set(s) => Ghost::Set(Rc::downgrade(s)),
         Value::Bound(p, e) => Ghost::Bound(Rc::downgrade(p), Rc::downgrade(e)),
         Value::Routine(p) => Ghost::Routine(Rc::downgrade(p)),
-        Value::Method(p, t) => Ghost::Method(Rc::downgrade(p), Rc::downgrade(t)),
+        Value::Method(p, t, identity) => Ghost::Method(Rc::downgrade(p), Rc::downgrade(t), Rc::downgrade(identity)),
+        Value::Wrapped(3, parts) => Ghost::WrappedMethod(Rc::downgrade(parts)),
         _ => return None,
     })
 }
@@ -292,13 +299,11 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
 pub fn dim(ghost: Ghost, bearer: Weak<Thing>, notify: Option<Value>) -> Value {
     note(ghost.clone());
     let wants_telling = notify.is_some();
-    let held = Rc::new(Dim { ghost, bearer, notify, dead: Cell::new(false) });
-    let _ = REFERENCES.try_with(|all| {
-        let mut all = all.borrow_mut();
-        if all.len() >= all.capacity().max(64) {
-            all.retain(|weak| weak.strong_count() > 0);
-        }
-        all.push(Rc::downgrade(&held));
+    let held = Rc::new(Dim { ghost, bearer, notify: RefCell::new(notify), hash: RefCell::new(None), detached: Cell::new(false) });
+    REFERENCES.with(|refs| {
+        let mut refs = refs.borrow_mut();
+        refs.retain(|weak| weak.strong_count() != 0);
+        refs.push(Rc::downgrade(&held));
     });
     if wants_telling {
         let _ = LISTENERS.try_with(|l| l.borrow_mut().push(held.clone()));
@@ -417,6 +422,7 @@ impl Knot {
         Some(match self {
             Knot::Frame(env) => Rc::as_ptr(env) as *const () as usize,
             Knot::Held(value) => match value {
+                Value::Dim(d) => Rc::as_ptr(d) as *const () as usize,
                 Value::Thing(t) | Value::Attributes(t) => Rc::as_ptr(t) as *const () as usize,
                 Value::Blueprint(b) => Rc::as_ptr(b) as *const () as usize,
                 Value::Generator(g) => Rc::as_ptr(g) as *const () as usize,
@@ -442,6 +448,7 @@ impl Knot {
         match self {
             Knot::Frame(env) => Rc::strong_count(env),
             Knot::Held(value) => match value {
+                Value::Dim(d) => Rc::strong_count(d).saturating_sub(usize::from(d.notify.borrow().is_some())),
                 Value::Thing(t) | Value::Attributes(t) => Rc::strong_count(t),
                 Value::Blueprint(b) => Rc::strong_count(b),
                 Value::Generator(g) => Rc::strong_count(g),
@@ -474,6 +481,7 @@ impl Knot {
                 if let Some(outer) = &env.outer { out.push(Knot::Frame(outer.clone())); }
             }
             Knot::Held(value) => match value {
+                Value::Dim(d) => if let Some(callback) = d.notify.borrow().as_ref() { held(out, callback); },
                 Value::Thing(t) | Value::Attributes(t) => {
                     out.push(Knot::Held(Value::Blueprint(t.of.clone())));
                     if let Ok(members) = t.holds.try_borrow() {
@@ -566,7 +574,7 @@ impl Knot {
     fn parts(self) -> Vec<Knot> {
         match self {
             Knot::Held(Value::Bound(body, env)) => vec![Knot::Held(Value::Routine(body)), Knot::Frame(env)],
-            Knot::Held(Value::Method(body, thing)) => vec![Knot::Held(Value::Routine(body)), Knot::Held(Value::Thing(thing))],
+            Knot::Held(Value::Method(body, thing, _)) => vec![Knot::Held(Value::Routine(body)), Knot::Held(Value::Thing(thing))],
             Knot::Held(Value::Keyed(k, v)) => vec![Knot::Held((*k).clone()), Knot::Held((*v).clone())],
             other => vec![other],
         }
@@ -783,4 +791,29 @@ impl Web {
         }
         taken
     }
+}
+
+/// Living public weak references, with the two reusable kinds at the head.
+pub fn refs_for(subject: &Value) -> Vec<Value> {
+    let mut found = REFERENCES.with(|refs| refs.borrow().iter().rev().filter_map(|entry| {
+        let dim = entry.upgrade()?;
+        let target = dim.revive()?;
+        if !subject.one_place(&target) { return None; }
+        dim.bearer.upgrade().map(Value::Thing)
+    }).collect::<Vec<_>>());
+    found.sort_by_key(|item| {
+        let Value::Thing(thing) = item else { return 2; };
+        let no_callback = thing.holds.borrow().iter().any(|(key, held)| {
+            key == "\0weak" && matches!(held, Value::Dim(dim) if dim.notify.borrow().is_none())
+        });
+        if no_callback {
+            match thing.blueprint().name.as_str() {
+                "ReferenceType" => return 0,
+                "ProxyType" | "CallableProxyType" => return 1,
+                _ => (),
+            }
+        }
+        2
+    });
+    found
 }
