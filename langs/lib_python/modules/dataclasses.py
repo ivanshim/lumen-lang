@@ -4,31 +4,44 @@ class _Missing:
 
 MISSING = _Missing()
 
+class FrozenInstanceError(AttributeError):
+    pass
+
 class field:
     def __init__(self, default=MISSING, default_factory=MISSING, **options):
-        if len(options):
+        unknown = [name for name in options if name != 'kw_only']
+        if len(unknown):
             raise 'NotImplementedError: these field options are not supported'
         if default is not MISSING and default_factory is not MISSING:
             raise 'ValueError: cannot specify both default and default_factory'
         self.default = default
         self.default_factory = default_factory
+        self.kw_only = options.get('kw_only', MISSING)
+
+# What a call of field() makes: the factory and the type are one here.
+Field = field
 
 class _Record:
     def __init__(self, *args, **keywords):
         names = self._fields
-        if len(args) > len(names):
+        kw_only = getattr(type(self), '_kw_only_fields', [])
+        positional_names = [name for name in names if name not in kw_only]
+        if len(args) > len(positional_names):
             raise 'TypeError: too many dataclass arguments'
         for name in list(keywords):
             if name not in names:
                 raise 'TypeError: unexpected dataclass argument'
+        given = {}
+        for i in range(len(args)):
+            given[positional_names[i]] = args[i]
+        for name in keywords:
+            if name in given:
+                raise 'TypeError: duplicate dataclass argument'
+            given[name] = keywords[name]
         for i in range(len(names)):
             name = names[i]
-            if i < len(args):
-                if name in keywords:
-                    raise 'TypeError: duplicate dataclass argument'
-                value = args[i]
-            elif name in keywords:
-                value = keywords[name]
+            if name in given:
+                value = given[name]
             else:
                 specification = self._defaults[i]
                 if specification.default_factory is not MISSING:
@@ -38,6 +51,20 @@ class _Record:
                 else:
                     raise 'TypeError: missing dataclass argument'
             setattr(self, name, value)
+        post = getattr(self, '__post_init__', None)
+        if post is not None:
+            post()
+        self._frozen_sealed = True
+
+    def __setattr__(self, name, value):
+        if getattr(self, '_frozen_sealed', False) and name in self._fields:
+            raise FrozenInstanceError("cannot assign to field '" + name + "'")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        if getattr(self, '_frozen_sealed', False) and name in self._fields:
+            raise FrozenInstanceError('cannot delete field ' + repr(name))
+        object.__delattr__(self, name)
 
     def __replace__(self, /, **changes):
         for name in changes:
@@ -73,17 +100,31 @@ class _Record:
 # Stub: a fresh record class is made. Frozen records, inheritance and
 # custom methods are not provided.
 def dataclass(cls=None, frozen=False, **options):
-    if frozen or len(options):
-        raise 'NotImplementedError: these dataclass options are not supported'
     if cls is None:
-        return dataclass
-    if len(cls.__bases__) and cls.__bases__[0].__name__ != 'object':
-        raise 'NotImplementedError: dataclass inheritance is not supported'
-    if len(__class_methods(cls)):
-        raise 'NotImplementedError: dataclasses with custom methods are not supported'
+        return lambda c: dataclass(c, frozen=frozen, **options)
+    unknown = [name for name in options if name != 'kw_only']
+    if len(unknown):
+        raise 'NotImplementedError: these dataclass options are not supported'
+    kw_only_class = bool(options.get('kw_only', False))
+    base = cls.__bases__[0] if len(cls.__bases__) else None
+    base_fields = []
+    base_defaults = []
+    base_kw_only = []
+    if base is not None and base.__name__ != 'object':
+        if getattr(base, '_fields', None) is not None:
+            # Building on a record, each of the two frozen or not.
+            if getattr(base, '_frozen', False) and not frozen:
+                raise 'TypeError: cannot inherit non-frozen dataclass from a frozen one'
+            if not getattr(base, '_frozen', False) and frozen:
+                raise 'TypeError: cannot inherit frozen dataclass from a non-frozen one'
+            base_fields = list(base._fields)
+            base_defaults = list(base._defaults)
+            base_kw_only = list(getattr(base, '_kw_only_fields', []))
     names = list(getattr(cls, '__annotations__', {}))
     defaults = []
-    optional = False
+    kw_only = []
+    optional = len(base_defaults) > 0 and any(
+        s.default is not MISSING or s.default_factory is not MISSING for s in base_defaults)
     for name in names:
         value = getattr(cls, name, MISSING)
         specification = value if isinstance(value, field) else field(default=value)
@@ -92,7 +133,15 @@ def dataclass(cls=None, frozen=False, **options):
             raise 'TypeError: non-default argument follows default argument'
         optional = optional or supplied
         defaults.append(specification)
-    return __derive_class(cls.__name__, _Record, {'_fields': names, '_defaults': defaults, '_record_name': cls.__name__, '_record_token': _Missing(), '__name__': cls.__name__, '__annotations__': getattr(cls, '__annotations__', {})})
+        if kw_only_class or specification.kw_only is True:
+            kw_only.append(name)
+    namespace = {'_fields': base_fields + names, '_defaults': base_defaults + defaults,
+                 '_kw_only_fields': base_kw_only + kw_only, '_record_name': cls.__name__,
+                 '_record_token': _Missing(), '__name__': cls.__name__,
+                 '__annotations__': getattr(cls, '__annotations__', {}),
+                 '__init__': _Record.__init__, '__setattr__': _Record.__setattr__,
+                 '__delattr__': _Record.__delattr__, '_frozen': frozen}
+    return __derive_class(cls.__name__, cls, namespace)
 
 def asdict(obj):
     if not isinstance(obj, _Record):

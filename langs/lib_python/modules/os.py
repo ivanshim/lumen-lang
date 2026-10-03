@@ -62,6 +62,17 @@ def remove(path, *, dir_fd=None):
 
 unlink = remove
 
+class terminal_size(tuple):
+    __slots__ = ()
+    def __new__(cls, fields):
+        return tuple.__new__(cls, fields)
+    @property
+    def columns(self):
+        return self[0]
+    @property
+    def lines(self):
+        return self[1]
+
 class stat_result(tuple):
     __slots__ = ()
     def __new__(cls, fields):

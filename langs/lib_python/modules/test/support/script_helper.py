@@ -144,7 +144,7 @@ def run_python_until_end(*args, **env_vars):
         subprocess._cleanup()
         p.stdout.close()
         p.stderr.close()
-    return _PythonRunResult(p.returncode, out, err)
+    return _PythonRunResult(p.returncode, out, err), cmd_line
 
 
 @support.requires_subprocess()
