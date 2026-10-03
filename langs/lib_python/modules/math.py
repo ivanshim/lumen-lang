@@ -367,15 +367,14 @@ def isqrt(n):
     n = index(n)
     if n < 0:
         raise 'ValueError: isqrt argument must be non-negative'
-    low = 0
-    high = n + 1
-    while high - low > 1:
-        mid = (low + high) // 2
-        if mid * mid <= n:
-            low = mid
-        else:
-            high = mid
-    return low
+    if n < 2:
+        return n
+    estimate = 1 << ((n.bit_length() + 1) // 2)
+    while True:
+        next_estimate = (estimate + n // estimate) // 2
+        if next_estimate >= estimate:
+            return estimate
+        estimate = next_estimate
 
 def hypot(*coordinates):
     values = []
